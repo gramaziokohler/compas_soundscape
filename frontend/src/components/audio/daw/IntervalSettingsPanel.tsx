@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { RangeSlider } from '@/components/ui/RangeSlider';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { useAudioControlsStore } from '@/store/audioControlsStore';
@@ -55,6 +55,16 @@ export function IntervalSettingsPanel({
     });
     useAudioControlsStore.getState().handleTimestampsChange(soundId, ts);
   };
+
+  // Apply the seeded distribution as soon as the panel opens — otherwise the
+  // timeline only updates once a slider is dragged.
+  const didInitRef = useRef(false);
+  useEffect(() => {
+    if (didInitRef.current) return;
+    didInitRef.current = true;
+    recompute(seedIntervalSeconds, 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Live-update on every drag step; one undo entry per drag (pause/commit).
   const intervalSlider = useBatchedSlider<number>(

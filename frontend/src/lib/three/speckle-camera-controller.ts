@@ -16,6 +16,7 @@
 
 import * as THREE from 'three';
 import type { Viewer, CameraController } from '@speckle/viewer';
+import { FPS_FOCAL } from '@/utils/constants';
 
 /**
  * SpeckleCameraController class
@@ -34,6 +35,11 @@ export class SpeckleCameraController {
   // Camera state before entering first-person mode (for restoration)
   private savedCameraPosition: THREE.Vector3 | null = null;
   private savedCameraTarget: THREE.Vector3 | null = null;
+  private savedCameraFov: number | null = null;
+
+  // First-person focal length (mm). Seeded from the persisted user preference
+  // (or the camera's current focal length) on FPS entry; adjusted by the wheel.
+  private firstPersonFocalLength: number | null = null;
 
   // True while FPS mode has switched Speckle's active controls to FlyControls.
   // FlyControls.update() early-returns when disabled, so our direct camera
@@ -74,6 +80,16 @@ export class SpeckleCameraController {
     if (!this.firstPersonMode) {
       this.savedCameraPosition = this.cameraController.controls.getPosition().clone();
       this.savedCameraTarget = this.cameraController.controls.getTarget().clone();
+
+      // Remember the orbit fov so it can be restored on exit, then seed the
+      // FPS focal length from the persisted user preference (falling back to
+      // the camera's current focal length so entering FPS does not jump-zoom).
+      const camera = this.viewer.getRenderer().renderingCamera as THREE.PerspectiveCamera;
+      this.savedCameraFov = camera.fov;
+      this.firstPersonFocalLength =
+        this.readStoredFocalLength() ?? camera.getFocalLength();
+      camera.setFocalLength(this.firstPersonFocalLength);
+      camera.updateProjectionMatrix();
 
       // Switch to FlyControls so disabling the controller actually stops its
       // update loop (SmoothOrbitControls.update() ignores enabled and keeps
@@ -173,6 +189,15 @@ export class SpeckleCameraController {
       );
       this.savedCameraPosition = null;
       this.savedCameraTarget = null;
+    }
+
+    // Restore the pre-FPS field of view so orbit mode is unaffected by the
+    // focal-length changes made while in first-person mode.
+    if (this.savedCameraFov !== null) {
+      const camera = this.viewer.getRenderer().renderingCamera as THREE.PerspectiveCamera;
+      camera.fov = this.savedCameraFov;
+      camera.updateProjectionMatrix();
+      this.savedCameraFov = null;
     }
 
     // Re-enable Speckle's camera controls
@@ -292,6 +317,74 @@ export class SpeckleCameraController {
 
     // Update camera immediately
     this.updateFirstPersonCamera();
+  }
+
+  // ============================================================================
+  // First-Person Focal Length (mouse-wheel / middle-button scroll)
+  // ============================================================================
+
+  /**
+   * Adjust the first-person focal length from a wheel event's deltaY.
+   * Scrolling up (deltaY < 0) lengthens the focal → zoom in; scrolling down
+   * (deltaY > 0) shortens it → zoom out. The step is multiplicative so it feels
+   * even across the whole range, and the value is clamped to [MIN_MM, MAX_MM].
+   * @param deltaY - WheelEvent.deltaY (pixels)
+   */
+  public adjustFirstPersonFocal(deltaY: number): void {
+    if (!this.firstPersonMode || this.firstPersonFocalLength === null) {
+      return;
+    }
+
+    const camera = this.viewer.getRenderer().renderingCamera as THREE.PerspectiveCamera;
+    const factor = Math.exp(-deltaY * FPS_FOCAL.SCROLL_SENSITIVITY);
+    const next = THREE.MathUtils.clamp(
+      this.firstPersonFocalLength * factor,
+      FPS_FOCAL.MIN_MM,
+      FPS_FOCAL.MAX_MM
+    );
+    if (next === this.firstPersonFocalLength) return;
+
+    this.firstPersonFocalLength = next;
+    camera.setFocalLength(next);
+    camera.updateProjectionMatrix();
+
+    // Re-apply the FPS camera so the Speckle pipeline receives its `stationary`
+    // event. A bare requestRender() after a projection change leaves the
+    // dynamic-stage edge overlay frozen on screen (black geometry outline in
+    // the foreground) until the next rotation emits `stationary`. Reusing
+    // updateFirstPersonCamera() keeps the shaded render and clears the overlay.
+    this.updateFirstPersonCamera();
+
+    this.persistFocalLength(next);
+  }
+
+  /** Current first-person focal length (mm), or null when not in FPS mode. */
+  public getFirstPersonFocalLength(): number | null {
+    return this.firstPersonFocalLength;
+  }
+
+  /** Read the persisted focal-length preference, or null if unset/invalid. */
+  private readStoredFocalLength(): number | null {
+    if (typeof window === 'undefined') return null;
+    try {
+      const raw = window.localStorage.getItem(FPS_FOCAL.STORAGE_KEY);
+      if (raw === null) return null;
+      const value = Number(raw);
+      if (!Number.isFinite(value)) return null;
+      return THREE.MathUtils.clamp(value, FPS_FOCAL.MIN_MM, FPS_FOCAL.MAX_MM);
+    } catch {
+      return null;
+    }
+  }
+
+  /** Persist the focal-length preference for the next session. */
+  private persistFocalLength(mm: number): void {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(FPS_FOCAL.STORAGE_KEY, String(mm));
+    } catch {
+      /* ignore unavailable storage */
+    }
   }
 
   // ============================================================================

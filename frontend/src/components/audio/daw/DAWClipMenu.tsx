@@ -22,12 +22,20 @@ export interface DAWClipMenuProps {
   triggerExpression?: string | null;
   onPickVariant: (variantIndex: number) => void;
   onPickEntity: (entityId: string, entityIndex: number | undefined) => void;
+  /** Fill every iteration of this track with the currently active variant. */
+  onApplyVariantToAll: () => void;
+  /** Fill every iteration of this track with the currently linked entity. */
+  onApplyEntityToAll: () => void;
   onClose: () => void;
 }
 
 const MENU_WIDTH = 150;
 
-/** Right-click context menu for a DAW clip: variant override + linked-entity override. */
+/**
+ * Right-click context menu for a DAW clip: variant override + linked-entity
+ * override for the clicked iteration, plus bulk actions that fill every
+ * iteration of the track with the currently active variant / linked entity.
+ */
 export function DAWClipMenu({
   x,
   y,
@@ -38,9 +46,14 @@ export function DAWClipMenu({
   triggerExpression,
   onPickVariant,
   onPickEntity,
+  onApplyVariantToAll,
+  onApplyEntityToAll,
   onClose,
 }: DAWClipMenuProps) {
   const [submenuOpen, setSubmenuOpen] = useState<'variants' | 'entities' | null>(null);
+  const activeVariantLabel = String.fromCharCode(65 + (currentVariantIndex ?? 0));
+  const showApplyVariant = variants.length > 1;
+  const showApplyEntity = !!currentEntityNodeId;
 
   return (
     <div
@@ -157,6 +170,31 @@ export function DAWClipMenu({
                   </div>
                 );
               })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {(showApplyVariant || showApplyEntity) && (
+        <div style={{ borderTop: '1px solid var(--color-border)', marginTop: '4px', paddingTop: '4px' }}>
+          {showApplyVariant && (
+            <div
+              style={{ padding: '6px 12px', cursor: 'pointer', color: 'var(--foreground)', whiteSpace: 'nowrap' }}
+              onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--color-border)')}
+              onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+              onClick={() => { onApplyVariantToAll(); onClose(); }}
+            >
+              Apply variant {activeVariantLabel} to all iterations
+            </div>
+          )}
+          {showApplyEntity && (
+            <div
+              style={{ padding: '6px 12px', cursor: 'pointer', color: 'var(--foreground)', whiteSpace: 'nowrap' }}
+              onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--color-border)')}
+              onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+              onClick={() => { onApplyEntityToAll(); onClose(); }}
+            >
+              Apply linked object to all iterations
             </div>
           )}
         </div>

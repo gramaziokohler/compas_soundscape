@@ -363,7 +363,7 @@ export class AnechoicMode implements IAudioMode {
     const node = this.audioContext.createBufferSource();
     node.buffer = source.audioBuffer;
     node.loop = false;
-    applyFadeInOut(node, source.gainNode, opts ? { ...opts, durationSec: duration } : {});
+    applyFadeInOut(node, source.gainNode, opts ? { ...opts, durationSec: duration, startTimeSec: when } : {});
 
     if (duration !== undefined && duration > 0) {
       node.start(when, offset, duration);

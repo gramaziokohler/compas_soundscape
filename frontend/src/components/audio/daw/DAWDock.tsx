@@ -10,12 +10,13 @@ import { IntervalSettingsPanel } from './IntervalSettingsPanel';
 import { useDawView } from './useDawView';
 import { useClipSelection } from './useClipSelection';
 import { useClipGesture, ensureTrackMaterialized, type ClipDescriptor, type TriggerDep } from './useClipGesture';
+import { parseTriggerRef } from '@/lib/audio/utils/trigger-ref';
 import { useAudioControlsStore } from '@/store/audioControlsStore';
 import { useSoundscapeStore } from '@/store/soundscapeStore';
 import { useSpeckleStore } from '@/store/speckleStore';
 import { useUIStore } from '@/store/uiStore';
 import { DAW, DEFAULT_DBFS, UI_SIDEBAR_RESIZE, UI_SIDEBAR_TOGGLE } from '@/utils/constants';
-import type { TimelineSound } from '@/types/audio';
+import type { TimelineSound, IterationLink } from '@/types/audio';
 import type { PlaybackSchedulerService } from '@/lib/audio/playback-scheduler-service';
 
 const GROUP_ORDER = ['background', 'sound_event', 'speech'];
@@ -96,6 +97,7 @@ export function DAWDock({
   const handleSolo = useAudioControlsStore((s) => s.handleSolo);
   const handleVolumeChange = useAudioControlsStore((s) => s.handleVolumeChange);
   const setIterationLink = useAudioControlsStore((s) => s.setIterationLink);
+  const setIterationLinkForAllIterations = useAudioControlsStore((s) => s.setIterationLinkForAllIterations);
   const clearIterationLink = useAudioControlsStore((s) => s.clearIterationLink);
   const clearAllIterationLinksForSound = useAudioControlsStore((s) => s.clearAllIterationLinksForSound);
   const bakeOrchestrateSchedule = useAudioControlsStore((s) => s.bakeOrchestrateSchedule);
@@ -188,6 +190,7 @@ export function DAWDock({
       if (!timelineSound) return;
       entryIdMap.set(meta.entryId, { soundId: timelineSound.id, configIndex: ci });
     });
+    const knownEntryIds = new Set(entryIdMap.keys());
 
     soundConfigs.forEach((config, ci) => {
       const meta = config.orchestrateMeta;
@@ -197,11 +200,10 @@ export function DAWDock({
       const thisSoundId = timelineSound.id;
       meta.trigger.expression.forEach((expr, i) => {
         if (!expr) return;
-        const m = expr.match(/^(after|alignEnd)\((.+)_(\d+)\)$/);
-        if (!m) return;
-        const [, , refEntryId, iterStr] = m;
-        const refIterIdx = parseInt(iterStr, 10) - 1;
-        const ref = entryIdMap.get(refEntryId);
+        const parsed = parseTriggerRef(expr, knownEntryIds);
+        if (!parsed) return;
+        const refIterIdx = parsed.iterIdx;
+        const ref = entryIdMap.get(parsed.entryId);
         if (!ref) return;
         const fromKey = `${thisSoundId}-${i}`;
         if (!forward.has(fromKey)) forward.set(fromKey, []);
@@ -656,8 +658,22 @@ export function DAWDock({
       ? `${orchestrateMeta.trigger?.expression?.[iterationIndex] ?? '-'}${orchestrateMeta.trigger?.delay?.[iterationIndex] ? ` +${orchestrateMeta.trigger.delay[iterationIndex]}s` : ''}`
       : null;
 
-    return { soundId, iterationIndex, cardIndex, currentLink, variants, linkedEntities, triggerExpression, configEntities };
+    // Original indices of every clip rendered on this track — the target set for
+    // the menu's "apply to all iterations" bulk actions.
+    const iterationIndices = timelineSound
+      ? (timelineSound.scheduledIterationOriginalIndices ?? timelineSound.scheduledIterations.map((_, i) => i))
+      : [];
+
+    return { soundId, iterationIndex, cardIndex, currentLink, variants, linkedEntities, triggerExpression, configEntities, iterationIndices };
   }, [contextMenu, iterationLinks, sounds, generatedSounds, soundConfigs, objectSoundLinks]);
+
+  // Bulk-fill every iteration of the right-clicked track with one override
+  // (variant or linked entity) in a single store commit.
+  const applyLinkToAllIterations = useCallback((partial: Partial<IterationLink>) => {
+    if (!contextMenuData || contextMenuData.iterationIndices.length === 0) return;
+    setIterationLinkForAllIterations(contextMenuData.soundId, contextMenuData.iterationIndices, partial);
+    scheduleBakeOrchestrate();
+  }, [contextMenuData, setIterationLinkForAllIterations, scheduleBakeOrchestrate]);
 
   return (
     <div
@@ -941,6 +957,16 @@ export function DAWDock({
                 : undefined;
             setIterationLink(contextMenuData.soundId, contextMenuData.iterationIndex, { entityNodeId: entityId, entityPosition, entityIndex });
           }}
+          onApplyVariantToAll={() =>
+            applyLinkToAllIterations({ variantIndex: contextMenuData.currentLink.variantIndex ?? 0 })
+          }
+          onApplyEntityToAll={() =>
+            applyLinkToAllIterations({
+              entityNodeId: contextMenuData.currentLink.entityNodeId,
+              entityPosition: contextMenuData.currentLink.entityPosition,
+              entityIndex: contextMenuData.currentLink.entityIndex,
+            })
+          }
           onClose={() => setContextMenu(null)}
         />
       )}

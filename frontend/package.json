@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "next dev --turbopack --hostname 0.0.0.0",
     "build": "next build --turbopack",
-    "start": "next start"
+    "start": "next start",
+    "test": "vitest run"
   },
   "dependencies": {
     "@elevenlabs/elevenlabs-js": "^2.35.0",
@@ -38,6 +39,7 @@
     "@types/react-dom": "^19",
     "@types/three": "^0.180.0",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^5.0.1"
   }
 }

@@ -210,6 +210,15 @@ export function useSpeckleFPS({
       event.preventDefault();
     };
 
+    // Wheel = focal-length (zoom) control while in FPS mode. preventDefault
+    // stops the page from scrolling under the canvas. Attached non-passive so
+    // the default can be cancelled.
+    const handleWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      const { coordinator } = useSpeckleEngineStore.getState();
+      coordinator?.adjustFirstPersonFocal(event.deltaY);
+    };
+
     const tick = (time: number) => {
       if (lastTimeRef.current === 0) {
         lastTimeRef.current = time;
@@ -257,6 +266,7 @@ export function useSpeckleFPS({
     window.addEventListener('pointermove', handlePointerMove);
     window.addEventListener('pointerup', handlePointerUp);
     container.addEventListener('contextmenu', handleContextMenu);
+    container.addEventListener('wheel', handleWheel, { passive: false });
     animFrameRef.current = requestAnimationFrame(tick);
 
     return () => {
@@ -268,6 +278,7 @@ export function useSpeckleFPS({
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
       container.removeEventListener('contextmenu', handleContextMenu);
+      container.removeEventListener('wheel', handleWheel);
       rollReturningRef.current = false;
       lastTimeRef.current = 0;
     };

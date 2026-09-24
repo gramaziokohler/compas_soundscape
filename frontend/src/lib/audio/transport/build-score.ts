@@ -14,7 +14,7 @@ import type { TimelineScore, ScoreTrack, ScoreClip } from './score';
 import { useAudioControlsStore } from '@/store/audioControlsStore';
 import { useSoundscapeStore } from '@/store/soundscapeStore';
 import { resolveVariantSoundIdByPrompt } from '@/lib/audio/utils/variant-sound-id';
-import { AUDIO_PLAYBACK } from '@/utils/constants';
+import { resolveClipFade } from '@/lib/audio/utils/fade-envelope';
 
 export function buildScoreFromTimelineSounds(
   timelineSounds: TimelineSound[],
@@ -33,6 +33,7 @@ export function buildScoreFromTimelineSounds(
     const trim = soundTrims[ts.id];
     const loopable = !!soundLoopable[ts.id];
     const trimStartFraction = trim?.start ?? 0;
+    const fade = resolveClipFade(ts.soundGroup, loopable);
 
     const clips: ScoreClip[] = ts.scheduledIterations.map((startMs, i): ScoreClip => {
       const originalIdx = ts.scheduledIterationOriginalIndices?.[i] ?? i;
@@ -61,8 +62,8 @@ export function buildScoreFromTimelineSounds(
         durationMs,
         sourceId,
         trimStartFraction,
-        fadeInMs: loopable ? AUDIO_PLAYBACK.LOOPABLE_SEAM_FADE_MS : undefined,
-        fadeOutMs: loopable ? AUDIO_PLAYBACK.LOOPABLE_SEAM_FADE_MS : undefined,
+        fadeInMs: fade?.fadeInMs,
+        fadeOutMs: fade?.fadeOutMs,
         position,
       };
     });

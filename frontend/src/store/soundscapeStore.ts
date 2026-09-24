@@ -33,6 +33,7 @@ import {
   TTS_DEFAULT_VOICE,
 } from '@/utils/constants';
 import { loadAudioFile, revokeAudioUrl } from '@/lib/audio/utils/audio-upload';
+import { parseTriggerRef } from '@/lib/audio/utils/trigger-ref';
 import { calculateSoundPosition, type GeometryBounds } from '@/utils/positioning';
 import { createSoundEventFromUpload } from '@/utils/event-factory';
 import { generateSoundEffect } from '@/services/elevenlabs';
@@ -661,13 +662,17 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               .flatMap((c) => [c.orchestrateMeta?.entryId, c.scenarioSource?.entryId])
               .filter((e): e is string => !!e),
           );
+          const knownEntryIds = new Set<string>([
+            ...soundConfigs.flatMap((c) => [c.orchestrateMeta?.entryId, c.scenarioSource?.entryId]),
+            ...removedEntryIds,
+          ].filter((e): e is string => !!e));
           const pruneTriggerRefs = (c: SoundGenerationConfig): SoundGenerationConfig => {
             const meta = c.orchestrateMeta;
             if (!meta || removedEntryIds.size === 0) return c;
             let changed = false;
             const expression = meta.trigger.expression.map((expr) => {
-              const m = expr?.match(/^(after|alignEnd)\((.+)_(\d+)\)$/);
-              if (m && removedEntryIds.has(m[2])) {
+              const ref = parseTriggerRef(expr, knownEntryIds);
+              if (ref && removedEntryIds.has(ref.entryId)) {
                 changed = true;
                 return '';
               }

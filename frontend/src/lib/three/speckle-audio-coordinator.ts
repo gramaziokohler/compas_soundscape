@@ -613,6 +613,12 @@ export class SpeckleAudioCoordinator {
     this.speckleCameraController.rotateFirstPersonView(deltaYaw, deltaPitch, deltaRoll);
   }
 
+  /** Adjust the first-person focal length (mm) from a wheel event's deltaY. */
+  public adjustFirstPersonFocal(deltaY: number): void {
+    if (!this.speckleCameraController) return;
+    this.speckleCameraController.adjustFirstPersonFocal(deltaY);
+  }
+
   public setOnSpeckleObjectSelected(callback: (objectIds: string[], intersectionPoint?: THREE.Vector3) => void): void {
     if (!this.eventBridge) return;
     this.eventBridge.setOnSpeckleObjectSelected(callback);

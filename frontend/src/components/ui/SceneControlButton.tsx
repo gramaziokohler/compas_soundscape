@@ -1,7 +1,7 @@
 "use client";
 
 import { ReactNode } from "react";
-import { UI_SCENE_BUTTON } from "@/utils/constants";
+import { NOTIFICATIONS, UI_BORDER_RADIUS, UI_SCENE_BUTTON } from "@/utils/constants";
 
 interface SceneControlButtonProps {
   onClick: () => void;
@@ -14,6 +14,8 @@ interface SceneControlButtonProps {
   background?: boolean
   /** Optional DOM id (e.g. for anchor/animation targets). */
   buttonId?: string
+  /** Optional count badge (e.g. unread notifications). Hidden when 0/undefined. */
+  badge?: number
 }
 
 /**
@@ -47,7 +49,8 @@ export function SceneControlButton({
   inactiveBackground = 'var(--sidebar-bg)',
   border = true ,
   background = true,
-  buttonId
+  buttonId,
+  badge
 }: SceneControlButtonProps) {
   return (
     <button
@@ -55,6 +58,7 @@ export function SceneControlButton({
       onClick={onClick}
       className="frosted-surface backdrop-blur-lg backdrop-saturate-150 shadow-lg transition-all duration-200 flex items-center justify-center group"
       style={{
+        position: 'relative',
         width: UI_SCENE_BUTTON.SIZE,
         height: UI_SCENE_BUTTON.SIZE,
         borderRadius: UI_SCENE_BUTTON.BORDER_RADIUS,
@@ -84,6 +88,27 @@ export function SceneControlButton({
       title={title}
     >
       {icon}
+      {badge != null && badge > 0 && (
+        <span
+          className="pointer-events-none flex items-center justify-center"
+          style={{
+            position: 'absolute',
+            top: '-5px',
+            right: '-5px',
+            minWidth: '14px',
+            height: '14px',
+            padding: '0 3px',
+            borderRadius: UI_BORDER_RADIUS.FULL,
+            backgroundColor: 'var(--color-error)',
+            color: 'var(--color-on-blue)',
+            fontSize: '9px',
+            fontWeight: 700,
+            lineHeight: 1,
+          }}
+        >
+          {badge > NOTIFICATIONS.BADGE_MAX ? `${NOTIFICATIONS.BADGE_MAX}+` : badge}
+        </span>
+      )}
     </button>
   );
 }

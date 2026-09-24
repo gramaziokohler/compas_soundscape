@@ -901,7 +901,7 @@ export class AmbisonicIRMode implements IAudioMode {
     const node = this.audioContext.createBufferSource();
     node.buffer = chain.audioBuffer;
     node.loop = false;
-    applyFadeInOut(node, chain.gainNode, opts ? { ...opts, durationSec: duration } : {});
+    applyFadeInOut(node, chain.gainNode, opts ? { ...opts, durationSec: duration, startTimeSec: when } : {});
 
     if (duration !== undefined && duration > 0) {
       node.start(when, offset, duration);

@@ -278,6 +278,14 @@ export const UI_SCENE_BUTTON = {
   GAP: "8px",                // gap-2 between buttons
 } as const;
 
+// Notifications (errorsStore + NotificationCenter scene panel)
+export const NOTIFICATIONS = {
+  TOAST_DURATION_MS: 5000,              // transient toast auto-dismiss delay
+  PANEL_WIDTH: 340,                     // notification dropdown width (px)
+  PANEL_MAX_HEIGHT: "min(420px, 60dvh)",// clamped-fluid scroll height
+  BADGE_MAX: 9,                         // counts above this render as "9+"
+} as const;
+
 // Helper hint — transient bottom-right viewer hint positioned left of the scene control buttons.
 export const UI_HELPER_HINT = {
   BOTTOM: 56,                 // px above the bottom edge (clears the Object Explorer toggle)
@@ -643,6 +651,11 @@ export const AUDIO_PLAYBACK = {
 
   // Seam fade (ms) applied at each loopable window edge so the wrap is silent.
   LOOPABLE_SEAM_FADE_MS: 5,
+
+  // Subtle fade (ms) applied to non-looping, non-background one-shot clips so
+  // their abrupt start/end does not click.
+  ONE_SHOT_FADE_IN_MS: 8,
+  ONE_SHOT_FADE_OUT_MS: 20,
 } as const;
 
 // ============================================================================
@@ -1224,6 +1237,18 @@ export const CAMERA_CONFIG = {
   INIT_Y: 10,
   INIT_Z: 15,
   FRAME_MULTIPLIER: 0.95
+} as const;
+
+// First-person focal-length control (mouse wheel over the 3D canvas).
+// Focal length is expressed in millimetres on a 35 mm film gauge (THREE default).
+// Scroll is multiplicative (deltaY · SCROLL_SENSITIVITY exponent) so each notch is
+// an even zoom step across the range, independent of frame rate.
+export const FPS_FOCAL = {
+  MIN_MM: 12,
+  MAX_MM: 200,
+  SCROLL_SENSITIVITY: 0.0015,
+  /** Direct localStorage key — camera preferences bypass Zustand persist (AGENTS Rule 6). */
+  STORAGE_KEY: 'compas-fps-focal-mm',
 } as const;
 
 // Sound Spheres

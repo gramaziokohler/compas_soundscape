@@ -93,6 +93,7 @@ export function useSpeckleTimeline({
   const isBakingSchedule        = useAudioControlsStore((s) => s.isBakingSchedule);
   const iterationLinks          = useAudioControlsStore((s) => s.iterationLinks);
   const soundBufferDurations    = useAudioControlsStore((s) => s.soundBufferDurations);
+  const soundLoopable           = useAudioControlsStore((s) => s.soundLoopable);
   const setIterationLink      = useAudioControlsStore((s) => s.setIterationLink);
   const soundConfigs          = useSoundscapeStore((s) => s.soundConfigs);
 
@@ -289,6 +290,7 @@ export function useSpeckleTimeline({
         mutedSounds,
         soloedSound,
         soundTrims,
+        soundLoopable,
         iterationLinks,
         simulationName: activeSimulation?.display_name ?? null,
       };
@@ -309,6 +311,7 @@ export function useSpeckleTimeline({
     mutedSounds,
     soloedSound,
     soundTrims,
+    soundLoopable,
     listenerOrientation,
     isFirstPersonMode,
   ]);

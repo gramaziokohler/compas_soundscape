@@ -23,6 +23,7 @@ import { AudioMode } from '@/types/audio';
 import { cartesianToSpherical } from './utils/ambisonic-utils';
 import { applyAmbisonicRotation } from './utils/ambisonic-rotation';
 import { OmnitoneDecoder } from './decoders/OmnitoneDecoder';
+import { applyFadeInOut, resolveClipFade, type FadeOptions } from './utils/fade-envelope';
 
 // ============================================================================
 // Public Types
@@ -78,6 +79,9 @@ export interface SoundscapeExportConfig {
 
   /** Audio trim settings per sound (start/end as fraction 0-1 of buffer duration) */
   soundTrims?: Record<string, { start: number; end: number }>;
+
+  /** Per-sound loopable flag — mirrored from playback so export fades match. */
+  soundLoopable?: Record<string, boolean>;
 
   /** Per-iteration variant/entity links (for resolving variant buffers per iteration) */
   iterationLinks?: Record<string, IterationLink>;
@@ -332,7 +336,7 @@ async function buildAnechoicGraph(
     distNode.connect(encoder.in);
     encoder.out.connect(mixBus);
 
-    scheduleIterations(offlineCtx, resolveIterationBuffers(sound, sourceRegistry, config.iterationLinks), sound.scheduledIterations, gainNode, durationSecs(offlineCtx), config.soundTrims?.[sound.id]);
+    scheduleIterations(offlineCtx, resolveIterationBuffers(sound, sourceRegistry, config.iterationLinks), sound.scheduledIterations, gainNode, durationSecs(offlineCtx), config.soundTrims?.[sound.id], resolveClipFade(sound.soundGroup, !!config.soundLoopable?.[sound.id]));
   }
 }
 
@@ -445,7 +449,7 @@ async function buildAmbisonicIRGraph(
     gainNode.connect(convolver.in);
     convolver.out.connect(mixBus);
 
-    scheduleIterations(offlineCtx, resolveIterationBuffers(sound, sourceRegistry, config.iterationLinks), sound.scheduledIterations, gainNode, durationSecs(offlineCtx), config.soundTrims?.[sound.id]);
+    scheduleIterations(offlineCtx, resolveIterationBuffers(sound, sourceRegistry, config.iterationLinks), sound.scheduledIterations, gainNode, durationSecs(offlineCtx), config.soundTrims?.[sound.id], resolveClipFade(sound.soundGroup, !!config.soundLoopable?.[sound.id]));
   }
 }
 
@@ -562,7 +566,7 @@ async function buildResonanceGraph(
       gainNode.gain.value = soundGains.get(sound.id) ?? 1.0;
       gainNode.connect(resonanceSource.input);
 
-      scheduleIterations(offlineCtx, resolveIterationBuffers(sound, sourceRegistry, config.iterationLinks), sound.scheduledIterations, gainNode, durationSecs(offlineCtx), config.soundTrims?.[sound.id]);
+      scheduleIterations(offlineCtx, resolveIterationBuffers(sound, sourceRegistry, config.iterationLinks), sound.scheduledIterations, gainNode, durationSecs(offlineCtx), config.soundTrims?.[sound.id], resolveClipFade(sound.soundGroup, !!config.soundLoopable?.[sound.id]));
     }
 
     // Omnitone's HOARenderer.initialize() is async (Promise).  Yield to the
@@ -616,7 +620,7 @@ async function buildSimpleMixGraph(
     gainNode.gain.value = soundGains.get(sound.id) ?? 1.0;
     gainNode.connect(masterGain);
 
-    scheduleIterations(offlineCtx, resolveIterationBuffers(sound, sourceRegistry, config.iterationLinks), sound.scheduledIterations, gainNode, durationSecs(offlineCtx), config.soundTrims?.[sound.id]);
+    scheduleIterations(offlineCtx, resolveIterationBuffers(sound, sourceRegistry, config.iterationLinks), sound.scheduledIterations, gainNode, durationSecs(offlineCtx), config.soundTrims?.[sound.id], resolveClipFade(sound.soundGroup, !!config.soundLoopable?.[sound.id]));
   }
 }
 
@@ -782,6 +786,7 @@ function scheduleIterations(
   destination: AudioNode,
   maxDurationSecs: number,
   trim?: { start: number; end: number },
+  fade?: FadeOptions,
 ): void {
   const count = Math.min(buffers.length, timestampsMs.length);
 
@@ -799,7 +804,11 @@ function scheduleIterations(
 
     const src = offlineCtx.createBufferSource();
     src.buffer = buffer;
-    src.connect(destination);
+    if (fade && (fade.fadeInMs || fade.fadeOutMs)) {
+      applyFadeInOut(src, destination, { ...fade, durationSec: duration, startTimeSec: startSec });
+    } else {
+      src.connect(destination);
+    }
     if (duration !== undefined && duration > 0) {
       src.start(startSec, offset, duration);
     } else {

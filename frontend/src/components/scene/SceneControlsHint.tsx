@@ -35,6 +35,7 @@ const VIEWER_HINTS: ControlHint[] = [
 
 const FPS_HINTS: ControlHint[] = [
   { label: 'Look around', command: 'Left-drag' },
+  { label: 'Focal length', command: 'Scroll' },
   { label: 'Roll', command: 'Right-drag' },
   { label: 'Rotate view', command: 'Arrow keys' },
   { label: 'Exit first-person', command: 'Esc' },

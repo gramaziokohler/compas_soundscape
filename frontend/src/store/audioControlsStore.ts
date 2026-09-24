@@ -24,6 +24,8 @@ import { devtools, persist, createJSONStorage } from 'zustand/middleware';
 import type { SoundState, SoundGenerationConfig } from '@/types';
 import type { IterationLink } from '@/types/audio';
 import { parseSoundCopyIndex } from '@/lib/audio/utils/variant-sound-id';
+import { isParamExpression } from '@/lib/audio/utils/trigger-ref';
+import { solveOrchestrateSchedule } from '@/lib/audio/orchestrate-schedule';
 import { pausePreviewInstance, pauseAllPreviewInstances } from '@/lib/audio/previewRegistry';
 import { AUDIO_PLAYBACK, AUDIO_TIMELINE, AUDIO_OUTPUT, DEFAULT_DBFS, DEFAULT_MAXIMUM_FOLEY_SOUNDS, TTS_DEFAULT_LANGUAGE } from '@/utils/constants';
 import { apiService } from '@/services/api';
@@ -142,6 +144,8 @@ export interface AudioControlsStoreState {
   /** Shift iterationLinks for one track so a newly-inserted clip at `insertAt` doesn't silently reassign existing overrides. */
   remapIterationLinksForInsert: (soundId: string, insertAt: number) => void;
   setIterationLink: (soundId: string, iterationIndex: number, link: Partial<IterationLink>) => void;
+  /** Apply one override (variant / entity) to every listed iteration of a track in a single store commit. */
+  setIterationLinkForAllIterations: (soundId: string, iterationIndices: number[], link: Partial<IterationLink>) => void;
   clearIterationLink: (soundId: string, iterationIndex: number) => void;
   clearAllIterationLinksForSound: (soundId: string) => void;
   /** Re-derive every iteration link's stored `entityPosition` from the current
@@ -254,6 +258,18 @@ let _pendingBakeId = 0;
 // replaced by a newer bake (e.g. a late buffer load), the newer bake invokes it
 // instead — so the final applied schedule is the one captured.
 let _pendingBakeOnDone: (() => void) | null = null;
+// Signature of the last broken-link set surfaced to the user, so a persistent
+// failure (e.g. a cycle) does not fire a toast on every re-bake.
+let _lastReportedBrokenLinks = '';
+
+/** Parse an `MM:SS` (or plain seconds) trigger hint; `null` when absent/invalid. */
+function parseMMSSTime(s: string | null | undefined): number | null {
+  if (s === null || s === undefined || s === '') return null;
+  const m = s.match(/^(\d+):(\d+(?:\.\d+)?)$/);
+  if (m) return parseInt(m[1], 10) * 60 + parseFloat(m[2]);
+  const n = parseFloat(s);
+  return Number.isNaN(n) ? null : n;
+}
 
 export const useAudioControlsStore = create<AudioControlsStoreState>()(
   persist(
@@ -482,6 +498,21 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             },
             false,
             'audio/setIterationLink',
+          ),
+
+        setIterationLinkForAllIterations: (soundId, iterationIndices, link) =>
+          set(
+            (state) => {
+              if (iterationIndices.length === 0) return {};
+              const next = { ...state.iterationLinks };
+              for (const iterationIndex of iterationIndices) {
+                const key = `${soundId}-${iterationIndex}`;
+                next[key] = { ...(next[key] ?? {}), ...link };
+              }
+              return { iterationLinks: next };
+            },
+            false,
+            'audio/setIterationLinkForAllIterations',
           ),
 
         clearIterationLink: (soundId, iterationIndex) =>
@@ -931,418 +962,99 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
               })
             );
 
-          // Iterative resolution until convergence
-          let changed = true;
-          let passes = 0;
-          const MAX_PASSES = 30;
+          // ── Strict constraint resolution (lib/audio/orchestrate-schedule) ──────
+          // Every slot is resolved by its exact formula. Cycles are detected and
+          // broken deterministically; any broken link is reported — never silently
+          // replaced with the authored MM:SS times (which overlap once real audio
+          // durations exceed the nominal ones).
+          const solver = solveOrchestrateSchedule(
+            Array.from(entryMap.entries()).map(([eid, entry]) => ({
+              entryId: eid,
+              expressions: entry.meta.trigger.expression,
+              delays: entry.meta.trigger.delay ?? [],
+              variants: entry.meta.variants ?? [],
+              variantDurations: entry.variantDurations,
+              authoredTimestamps: entry.meta.timestamps ?? [],
+            })),
+          );
 
-          while (changed && passes++ < MAX_PASSES) {
-            changed = false;
-
-            entryMap.forEach((entry) => {
-              const { meta, variantDurations, timestamps } = entry;
-              const expressions = meta.trigger.expression;
-              const delays = meta.trigger.delay ?? [];
-
-              expressions.forEach((expr, i) => {
-                if (timestamps[i] !== null) return; // already resolved
-
-                // Absolute timestamp: "MM:SS" format
-                const absMatch = expr.match(/^(\d+):(\d+(?:\.\d+)?)$/);
-                if (absMatch) {
-                  const mm = parseInt(absMatch[1], 10);
-                  const ss = parseFloat(absMatch[2]);
-                  timestamps[i] = mm * 60 + ss + (delays[i] ?? 0);
-                  changed = true;
-                  return;
-                }
-
-                // Parametric: after(ENTRYID_N) or alignEnd(ENTRYID_N)
-                // Match last _N suffix (entry IDs can contain underscores)
-                const paramMatch = expr.match(/^(after|alignEnd)\((.+)_(\d+)\)$/);
-                if (!paramMatch) return;
-                const [, op, refEntryId, iterStr] = paramMatch;
-                const refIterIdx = parseInt(iterStr, 10) - 1; // 1-based → 0-based
-
-                const refEntry = entryMap.get(refEntryId);
-                if (!refEntry) return;
-
-                const refStart = refEntry.timestamps[refIterIdx];
-                if (refStart === null) return; // ref start not yet resolved
-
-                // Determine which variant/copy plays at that ref iteration
-                const refVariantIdx = (refEntry.meta.variants[refIterIdx] ?? 1) - 1;
-                const refDuration = refEntry.variantDurations[refVariantIdx] ??
-                  refEntry.variantDurations[0] ?? null;
-
-                if (op === 'after') {
-                  if (refDuration === null) return; // need ref's generated duration
-                  timestamps[i] = refStart + refDuration + (delays[i] ?? 0);
-                  changed = true;
-                } else { // alignEnd: this sound ends when ref starts
-                  // Need the effective duration of THIS sound's copy at this iteration
-                  const thisVariantIdx = (meta.variants[i] ?? 1) - 1;
-                  const thisDuration = entry.variantDurations[thisVariantIdx] ??
-                    entry.variantDurations[0] ?? null;
-                  if (thisDuration === null) return; // need THIS sound's generated duration
-                  timestamps[i] = Math.max(0, refStart - thisDuration + (delays[i] ?? 0));
-                  changed = true;
-                }
-              });
-            });
-          }
-
-          // ── Cycle-breaking: DFS back-edge detection + theoretical forward-pass ──
-          //
-          // After MAX_PASSES some timestamps can still be null because their
-          // dependency graph contains a cycle (A→B→C→A).  We handle this with:
-          //
-          //  Step 1 — Build a directed graph of (entryId, iterIdx) nodes.
-          //  Step 2 — DFS with a colour-map (white/grey/black).  A grey→grey
-          //           edge is a back-edge that closes a cycle.
-          //  Step 3 — For each back-edge (u → v) cut the edge by assigning u
-          //           a "theoretical anchor": treat v's timestamp as the resolved
-          //           frontier (the furthest point any already-resolved,
-          //           real-duration sound reaches — not v's stale nominal
-          //           MM:SS guess) and propagate forward through the
-          //           linearised chain until u gets a concrete time.
-          //  Step 4 — Re-run the normal resolution loop with the new anchors.
-          //           Only the minimum number of edges are broken; everything
-          //           else remains fully parametric.
-
-          type NodeKey = string; // `${entryId}:${iterIdx}`
-          const nodeKey = (eid: string, ii: number): NodeKey => `${eid}:${ii}`;
-
-          // Helper: get the outgoing dependency of a given slot (null = none / absolute)
-          const getEdge = (eid: string, ii: number): { refEid: string; refIi: number } | null => {
-            const e = entryMap.get(eid);
-            if (!e) return null;
-            const expr = e.meta.trigger.expression[ii];
-            if (!expr) return null;
-            const m = expr.match(/^(after|alignEnd)\((.+)_(\d+)\)$/);
-            if (!m) return null;
-            return { refEid: m[2], refIi: parseInt(m[3], 10) - 1 };
-          };
-
-          // Resolve a single slot given its ref's already-set timestamp (used in the
-          // theoretical forward-pass after cycle-breaking).
-          const resolveSlot = (entry: EntryInfo, i: number, refEntry: EntryInfo, refIi: number): number => {
-            const expr = entry.meta.trigger.expression[i];
-            const delays = entry.meta.trigger.delay ?? [];
-            const m = expr.match(/^(after|alignEnd)\((.+)_(\d+)\)$/)!;
-            const op = m[1];
-            const refStart = refEntry.timestamps[refIi] ?? 0;
-            const refVariantIdx = (refEntry.meta.variants[refIi] ?? 1) - 1;
-            const refDur = refEntry.variantDurations[refVariantIdx] ??
-              refEntry.variantDurations[0] ?? 5;
-            if (op === 'after') {
-              return Math.max(0, refStart + refDur + (delays[i] ?? 0));
-            }
-            const thisVariantIdx = (entry.meta.variants[i] ?? 1) - 1;
-            const thisDur = entry.variantDurations[thisVariantIdx] ??
-              entry.variantDurations[0] ?? 5;
-            return Math.max(0, refStart - thisDur + (delays[i] ?? 0));
-          };
-
-          const parseMMSS = (s: string | undefined | null): number | null => {
-            if (!s) return null;
-            const m = s.match(/^(\d+):(\d+(?:\.\d+)?)$/);
-            if (m) return parseInt(m[1], 10) * 60 + parseFloat(m[2]);
-            const n = parseFloat(s);
-            return isNaN(n) ? null : n;
-          };
-
-          // Gather all still-null slots
-          const nullSlots: Array<NodeKey> = [];
           entryMap.forEach((entry, eid) => {
-            entry.timestamps.forEach((t, i) => {
-              if (t === null) nullSlots.push(nodeKey(eid, i));
-            });
+            const resolved = solver.byEntry[eid];
+            if (resolved) entry.timestamps = resolved.timestamps;
           });
 
-          if (nullSlots.length > 0) {
-            if (allDurationsKnown) {
-            // ── DFS ──────────────────────────────────────────────────────────
-            const colour = new Map<NodeKey, 0 | 1 | 2>(); // 0=white 1=grey 2=black
-            // Set of back-edges to cut: key = node u that closes a cycle; value = the
-            // ref-node v it was pointing to (the anchor for the theoretical pass).
-            const backEdgeCuts = new Map<NodeKey, NodeKey>();
-
-            const dfs = (key: NodeKey) => {
-              colour.set(key, 1); // grey = in stack
-              const [eid, iiStr] = key.split(':');
-              const ii = parseInt(iiStr, 10);
-              const edge = getEdge(eid, ii);
-              if (edge) {
-                const refKey = nodeKey(edge.refEid, edge.refIi);
-                const c = colour.get(refKey) ?? 0;
-                if (c === 1) {
-                  // Back-edge found: cut this dependency (u=key depends on v=refKey)
-                  backEdgeCuts.set(key, refKey);
-                } else if (c === 0) {
-                  dfs(refKey);
-                }
-              }
-              colour.set(key, 2); // black = done
-            };
-
-            for (const key of nullSlots) {
-              if ((colour.get(key) ?? 0) === 0) dfs(key);
-            }
-
-            if (backEdgeCuts.size > 0) {
-              // Furthest point any already-resolved (real-duration) sound reaches —
-              // i.e. the actual "now" of the timeline at this point in baking.
-              // Recomputed per-cut since earlier cuts in this same forEach may have
-              // pushed the frontier further out.
-              const getResolvedFrontier = (): number => {
-                let frontier = 0;
-                entryMap.forEach((e) => {
-                  e.timestamps.forEach((t, idx) => {
-                    if (t === null) return;
-                    const variantIdx = (e.meta.variants[idx] ?? 1) - 1;
-                    const dur = e.variantDurations[variantIdx] ?? e.variantDurations[0] ?? 0;
-                    frontier = Math.max(frontier, t + (dur as number));
-                  });
-                });
-                return frontier;
-              };
-
-              // ── Theoretical forward-pass ────────────────────────────────────
-              // For each cut back-edge (u → v), set v's anchor to where the
-              // timeline has actually progressed to (see getResolvedFrontier above),
-              // then re-run up to MAX_PASSES so all nodes that were blocked by the
-              // cycle can now resolve through the cut anchor.
-              backEdgeCuts.forEach((_anchorKey, cutKey) => {
-                const [eid, iiStr] = cutKey.split(':');
-                const ii = parseInt(iiStr, 10);
-                const entry = entryMap.get(eid);
-                if (!entry || entry.timestamps[ii] !== null) return;
-
-                // The "theoretical" anchor: walk the chain from the back-edge
-                // target (anchorKey / refNode) assuming it starts at the resolved
-                // frontier, propagate forward through the now-linear subgraph to
-                // produce a concrete starting time for the cut node.
-                const [anchorEid, anchorIiStr] = _anchorKey.split(':');
-                const anchorIi = parseInt(anchorIiStr, 10);
-                const anchorEntry = entryMap.get(anchorEid);
-
-                // Prefer the anchor's own resolved (real-duration) timestamp. If it's
-                // also stuck in the cycle (still null), do NOT fall back to the
-                // scenario's original nominal MM:SS guess (meta.timestamps) — that
-                // value was authored assuming theoretical/placeholder durations and
-                // can be far behind (or ahead of) where the timeline has actually
-                // progressed once real durations are known, which is exactly what
-                // caused dependent sounds/dialogue to bunch up or overlap. Instead,
-                // anchor to the resolved frontier — the furthest any real-duration
-                // sound has already reached — so the cut node picks up right where
-                // the rest of the schedule really is. Only fall back to the nominal
-                // hint as an absolute last resort, when nothing has resolved yet.
-                const resolvedFrontier = getResolvedFrontier();
-                const anchorStart = anchorEntry?.timestamps[anchorIi]
-                  ?? (resolvedFrontier > 0
-                    ? resolvedFrontier
-                    : parseMMSS(anchorEntry?.meta.timestamps?.[anchorIi]))
-                  ?? 0;
-
-                // Forward-pass: walk from anchorKey → … → cutKey and accumulate time
-                // (BFS along the FORWARD direction of the back-edge's target chain)
-                const tempTs = new Map<NodeKey, number>();
-                tempTs.set(_anchorKey, anchorStart);
-
-                // Propagate through null-slots until we can compute the cut node
-                let propagated = true;
-                for (let p = 0; p < 20 && propagated; p++) {
-                  propagated = false;
-                  nullSlots.forEach((k) => {
-                    if (tempTs.has(k)) return; // already set
-                    const [kEid, kIiStr] = k.split(':');
-                    const kIi = parseInt(kIiStr, 10);
-                    const kEntry = entryMap.get(kEid);
-                    if (!kEntry) return;
-                    const kEdge = getEdge(kEid, kIi);
-                    if (!kEdge) return;
-                    const kRefKey = nodeKey(kEdge.refEid, kEdge.refIi);
-                    // Use tempTs if available, else real resolved timestamp, else skip
-                    const refTime = tempTs.get(kRefKey) ??
-                      entryMap.get(kEdge.refEid)?.timestamps[kEdge.refIi] ??
-                      null;
-                    if (refTime === null) return;
-                    const refEntryFwd = entryMap.get(kEdge.refEid)!;
-                    // Temporarily set refEntry timestamp so resolveSlot can read it
-                    const savedRef = refEntryFwd.timestamps[kEdge.refIi];
-                    refEntryFwd.timestamps[kEdge.refIi] = refTime;
-                    tempTs.set(k, resolveSlot(kEntry, kIi, refEntryFwd, kEdge.refIi));
-                    refEntryFwd.timestamps[kEdge.refIi] = savedRef;
-                    propagated = true;
-                  });
-                }
-
-                // Apply the theoretical anchor for the cut node
-                const theoretical = tempTs.get(cutKey);
-                if (theoretical !== undefined) {
-                  entry.timestamps[ii] = theoretical;
-                } else {
-                  // Absolute last resort: place after last resolved content
-                  let maxT = 0;
-                  entryMap.forEach(({ timestamps: ts }) => {
-                    ts.forEach(t => { if (t !== null) maxT = Math.max(maxT, t); });
-                  });
-                  entry.timestamps[ii] = maxT + 5;
-                }
-              });
-
-              // Re-run normal resolution so nodes downstream of the broken cycle
-              // can now propagate from the newly-set anchor.
-              let postChanged = true;
-              let postPass = 0;
-              while (postChanged && postPass++ < MAX_PASSES) {
-                postChanged = false;
-                entryMap.forEach((entry) => {
-                  const { meta, variantDurations, timestamps } = entry;
-                  meta.trigger.expression.forEach((expr, i) => {
-                    if (timestamps[i] !== null) return;
-                    const m = expr?.match(/^(after|alignEnd)\((.+)_(\d+)\)$/);
-                    if (!m) return;
-                    const [, op, refEid, iterStr] = m;
-                    const refIi = parseInt(iterStr, 10) - 1;
-                    const refEntry = entryMap.get(refEid);
-                    if (!refEntry) return;
-                    const refStart = refEntry.timestamps[refIi];
-                    if (refStart === null) return;
-                    const refVariantIdx = (refEntry.meta.variants[refIi] ?? 1) - 1;
-                    const refDur = refEntry.variantDurations[refVariantIdx] ??
-                      refEntry.variantDurations[0] ?? null;
-                    const delays = meta.trigger.delay ?? [];
-                    if (op === 'after') {
-                      if (refDur === null) return;
-                      timestamps[i] = refStart + refDur + (delays[i] ?? 0);
-                    } else {
-                      const thisVariantIdx = (meta.variants[i] ?? 1) - 1;
-                      const thisDur = variantDurations[thisVariantIdx] ??
-                        variantDurations[0] ?? null;
-                      if (thisDur === null) return;
-                      timestamps[i] = Math.max(0, refStart - thisDur + (delays[i] ?? 0));
-                    }
-                    postChanged = true;
-                  });
-                });
-              }
-
-              // Log which back-edges were cut so prompt engineers can fix the issue
-              const cutList = [...backEdgeCuts.entries()].map(
-                ([u, v]) => `${u}→${v}`,
-              ).join(', ');
-              console.warn(
-                `[bakeOrchestrateSchedule] Circular dependencies detected and broken via DFS back-edge cut: ${cutList}. ` +
-                `Cut nodes were assigned theoretical anchors; all downstream nodes re-resolved normally.`,
-              );
-            }
-            } // allDurationsKnown
-
-            // Safety net: any slot still null after all passes means the parametric
-            // trigger approach failed even after cycle-breaking. Fall back, per sound
-            // and per variant/track iteration, to the original foley/speech timestamp
-            // passed through on the orchestrate entry. Only when that is also missing
-            // do we place the slot after the last resolved content.
-            let fallbackT = 0;
-            entryMap.forEach(({ timestamps: ts }) => {
-              ts.forEach(t => { if (t !== null) fallbackT = Math.max(fallbackT, t); });
-            });
-            nullSlots.forEach((key) => {
-              const [eid, iiStr] = key.split(':');
-              const ii = parseInt(iiStr, 10);
-              const entry = entryMap.get(eid);
-              if (!entry || entry.timestamps[ii] !== null) return;
-              // Priority 0 — existing manually-dragged timestamp preserved in soundTimestamps
-              if (entry.soundId && soundTimestamps[entry.soundId]?.[ii] != null) {
-                const existing = soundTimestamps[entry.soundId][ii];
+          // Fallback for slots the solver could not resolve (unknown duration,
+          // missing dependency, or a dead parametric edge). Priority:
+          //   0. a manually-dragged timestamp preserved in soundTimestamps
+          //   1. the authored MM:SS timestamp for that iteration
+          //   2. place after the last resolved content.
+          let fallbackT = 0;
+          entryMap.forEach(({ timestamps: ts }) => {
+            ts.forEach(t => { if (t !== null) fallbackT = Math.max(fallbackT, t); });
+          });
+          entryMap.forEach((entry) => {
+            entry.timestamps.forEach((t, i) => {
+              if (t !== null) return;
+              if (entry.soundId && soundTimestamps[entry.soundId]?.[i] != null) {
+                const existing = soundTimestamps[entry.soundId][i];
                 if (existing < 99999 && existing >= 0) {
-                  entry.timestamps[ii] = existing;
+                  entry.timestamps[i] = existing;
                   fallbackT = Math.max(fallbackT, existing);
                   return;
                 }
               }
-              // Fallback 1 — original timestamp for this iteration (MM:SS → seconds).
-              const fromTs = parseMMSS(entry.meta.timestamps?.[ii]);
+              const fromTs = parseMMSSTime(entry.meta.timestamps?.[i]);
               if (fromTs !== null) {
-                entry.timestamps[ii] = fromTs;
+                entry.timestamps[i] = fromTs;
                 fallbackT = Math.max(fallbackT, fromTs);
                 return;
               }
-              // Fallback 2 — place after the last resolved content.
               fallbackT += 5;
-              entry.timestamps[ii] = fallbackT;
-            });
-          }
-
-          // ── Post-bake validation ──────────────────────────────────────────────
-          // Verify parametric links are respected, detect broken links (from DFS
-          // cycle-breaking or safety-net fallback), and fix overlapping iterations
-          // per track by pushing later iterations right recursively.
-
-          const getIterDuration = (entry: EntryInfo, iterIdx: number): number => {
-            const variantIdx = (entry.meta.variants[iterIdx] ?? 1) - 1;
-            return (entry.variantDurations[variantIdx] ?? entry.variantDurations[0] ?? 0) as number;
-          };
-
-          // (a) Check that every param link still produces the expected timestamp.
-          // Any significant deviation means DFS or safety-net overrode the formula.
-          const brokenLinks: string[] = [];
-          entryMap.forEach((entry, eid) => {
-            const { meta, timestamps } = entry;
-            const delays = meta.trigger.delay ?? [];
-            meta.trigger.expression.forEach((expr, i) => {
-              if (!expr || timestamps[i] === null) return;
-              const paramMatch = expr.match(/^(after|alignEnd)\((.+)_(\d+)\)$/);
-              if (!paramMatch) return;
-              const [, op, refEntryId, iterStr] = paramMatch;
-              const refIterIdx = parseInt(iterStr, 10) - 1;
-              const refEntry = entryMap.get(refEntryId);
-              if (!refEntry || refEntry.timestamps[refIterIdx] === null) return;
-
-              const refStart = refEntry.timestamps[refIterIdx]!;
-              const refDur = getIterDuration(refEntry, refIterIdx);
-              const thisDur = getIterDuration(entry, i);
-              const delay = delays[i] ?? 0;
-
-              let expected: number;
-              if (op === 'after') {
-                expected = refStart + refDur + delay;
-              } else {
-                expected = Math.max(0, refStart - thisDur + delay);
-              }
-
-              if (Math.abs(timestamps[i]! - expected) > 0.05) {
-                brokenLinks.push(
-                  `${op === 'after' ? 'after ' : 'before'} | ${eid}[${i}] actual=${timestamps[i]!.toFixed(1)}s expected=${expected.toFixed(1)}s (ref ${refEntryId}[${refIterIdx}] @ ${refStart.toFixed(1)}s)`,
-                );
-              }
+              entry.timestamps[i] = fallbackT;
             });
           });
-          if (brokenLinks.length > 0) {
+
+          // Surface broken links once per distinct set, and only on an
+          // authoritative bake (all real durations known) to avoid toast spam.
+          if (solver.brokenLinks.length > 0 || solver.cycles.length > 0) {
             console.warn(
-              `[bakeOrchestrateSchedule] ${brokenLinks.length} broken parametric link(s) — DFS cycle-breaking or safety-net overrode the formula:\n  ` +
-              brokenLinks.join('\n  '),
+              `[bakeOrchestrateSchedule] ${solver.brokenLinks.length} broken parametric link(s)` +
+              (solver.cycles.length ? ` / ${solver.cycles.length} cycle(s):\n  ${solver.cycles.join('\n  ')}` : '') +
+              `\n  ${solver.brokenLinks.join('\n  ')}`,
             );
+            const signature = [...solver.brokenLinks, ...solver.cycles].join('|');
+            if (allDurationsKnown && signature !== _lastReportedBrokenLinks) {
+              _lastReportedBrokenLinks = signature;
+              void import('@/store/errorsStore').then(({ notifyError }) => {
+                notifyError(
+                  `Orchestrate: ${solver.brokenLinks.length + solver.cycles.length} timing link(s) could not be strictly honoured (cycle or missing dependency).`,
+                  'warning',
+                );
+              });
+            }
+          } else {
+            _lastReportedBrokenLinks = '';
           }
 
-          // (b) Fix overlapping iterations per track (recursively).
-          // DFS anchors and safety-net fallback can place iterations too close
-          // together. Walk each track's sorted iterations and push later ones
-          // right when they start before the previous one ends.
+          // Conservative per-track monotonic guard: only nudge iterations that
+          // carry NO parametric dependency, so it can never violate an
+          // after()/alignEnd() link.
           {
             let overlapPass = 0;
             let overlapsFixed = true;
             while (overlapsFixed && overlapPass++ < 100) {
               overlapsFixed = false;
               entryMap.forEach((entry) => {
-                const { timestamps, meta } = entry;
-                const items = timestamps
+                const exprs = entry.meta.trigger.expression;
+                const items = entry.timestamps
                   .map((t, i) => ({
                     idx: i,
                     start: t,
-                    dur: getIterDuration(entry, i),
+                    dur: (() => {
+                      const variantIdx = (entry.meta.variants[i] ?? 1) - 1;
+                      return (entry.variantDurations[variantIdx] ?? entry.variantDurations[0] ?? 0) as number;
+                    })(),
+                    param: isParamExpression(exprs[i]),
                   }))
                   .filter(it => it.start !== null && it.dur > 0)
                   .sort((a, b) => a.start! - b.start!);
@@ -1350,6 +1062,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
                 for (let i = 1; i < items.length; i++) {
                   const prev = items[i - 1];
                   const curr = items[i];
+                  if (prev.param || curr.param) continue;
                   const prevEnd = prev.start! + prev.dur;
                   if (prevEnd > curr.start! + 0.001) {
                     entry.timestamps[curr.idx] = parseFloat(prevEnd.toFixed(3));
@@ -1358,14 +1071,6 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
                 }
               });
             }
-          }
-
-          // ── Final summary: entryId → resolved timestamps + durations ──────────
-          {
-            const summary: Record<string, { timestamps: (number | null)[]; variantDurations: (number | null)[] }> = {};
-            entryMap.forEach((entry, eid) => {
-              summary[eid] = { timestamps: entry.timestamps, variantDurations: entry.variantDurations };
-            });
           }
 
           // Apply resolved timestamps — use actual generated sound ID as key.
