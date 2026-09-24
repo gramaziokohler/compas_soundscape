@@ -321,8 +321,9 @@ export const useUIStore = create<UIStoreState>()(
       setShowGroundGrid: (v) => set({ showGroundGrid: v }, false, 'ui/setShowGroundGrid'),
       groundGridSpacing: 2,
       setGroundGridSpacing: (v) => set({ groundGridSpacing: v }, false, 'ui/setGroundGridSpacing'),
-      // Empty = follow `--color-primary` at apply time (color picker needs a hex).
-      groundGridColor: '',
+      // Primary brand blue (mirrors `--color-primary` in globals.css). A literal
+      // hex is required because the `<input type="color">` picker needs a value.
+      groundGridColor: '#002aff',
       setGroundGridColor: (v) => set({ groundGridColor: v }, false, 'ui/setGroundGridColor'),
       showGroundGridLabels: true,
       setShowGroundGridLabels: (v) => set({ showGroundGridLabels: v }, false, 'ui/setShowGroundGridLabels'),
@@ -439,6 +440,18 @@ export const useUIStore = create<UIStoreState>()(
     name: 'compas-ui-state',
     storage: createJSONStorage(() => localStorage),
     skipHydration: true,
+    // v0 persisted the legacy grid defaults `#888888` (old grey default) or
+    // `''` (intermediate "follow --color-primary" value). Normalize both to the
+    // primary blue hex so existing profiles stop rendering the grid/title grey.
+    version: 1,
+    migrate: (persistedState: unknown, version: number) => {
+      const s = (persistedState ?? {}) as Partial<UIStoreState>;
+      if (version >= 1) return s as UIStoreState;
+      if (s.groundGridColor === undefined || s.groundGridColor === '' || s.groundGridColor === '#888888') {
+        return { ...s, groundGridColor: '#002aff' } as UIStoreState;
+      }
+      return s as UIStoreState;
+    },
     partialize: (state: UIStoreState) => {
       const { globalModelFile, globalSpeckleData, speckleModelUrl, speckleBounds,
         hoveredIRSourceReceiver, activeGradientMap, selectedIRId, selectedIRMetadata,
