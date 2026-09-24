@@ -2,22 +2,16 @@
 
 import asyncio
 import os
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 from dotenv import load_dotenv, find_dotenv
 
-# Force UTF-8 stdout/stderr before anything is written. On production hosts whose
-# default encoding is a legacy code page (Windows cp1252 "charmap"), printing the
-# LLM's non-ASCII streamed output raises UnicodeEncodeError and fails the job
-# (e.g. speech agent → no TTS cards). See utils/console.py.
-from utils.console import configure_utf8_stdio
-
-configure_utf8_stdio()
-
 # --- Load environment variables FIRST ---
 # .env.local takes precedence over .env. This MUST run before importing
-# config/services so module-level constants (e.g. CF_ACCESS_*, REDIS_URL) read
-# the configured values instead of their defaults.
+# config/services (or ANY project package: importing e.g. ``utils.*`` executes
+# ``utils/__init__``) so module-level constants (CF_ACCESS_*, REDIS_URL, ...)
+# read the configured values instead of their defaults.
 # find_dotenv() searches upward from main.py's directory, so it finds files
 # at the repo root even when uvicorn is launched from a different CWD.
 _env_local = find_dotenv('.env.local', raise_error_if_not_found=False, usecwd=False)
@@ -28,6 +22,16 @@ if _env:
     load_dotenv(_env)
 print(f"[env] .env.local: {_env_local or 'not found'}")
 print(f"[env] .env:       {_env or 'not found'}")
+
+# Now that the environment is loaded, configure UTF-8 stdio (project imports
+# below may execute config.constants, which snapshots os.environ).
+# Force UTF-8 stdout/stderr before anything is written. On production hosts whose
+# default encoding is a legacy code page (Windows cp1252 "charmap"), printing the
+# LLM's non-ASCII streamed output raises UnicodeEncodeError and fails the job
+# (e.g. speech agent → no TTS cards). See utils/console.py.
+from utils.console import configure_utf8_stdio
+
+configure_utf8_stdio()
 
 from starlette.requests import Request
 from starlette.responses import Response
@@ -54,6 +58,32 @@ from config.constants import (
     TEMP_JANITOR_INTERVAL_S,
     TEMP_JANITOR_MAX_AGE_H,
     REDIS_URL,
+    AUTH_DEV_BYPASS,
+    CF_ACCESS_AUD,
+    CF_ACCESS_REQUIRE,
+    CF_ACCESS_TEAM_DOMAIN,
+    DEV_USER_EMAIL,
+)
+
+# Print the resolved identity mode once at boot so a production deploy can be
+# verified at a glance: if this says "anonymous session cookie" while the app is
+# supposed to sit behind Cloudflare Access, then CF_ACCESS_TEAM_DOMAIN /
+# CF_ACCESS_AUD are not set in the .env the process loaded (see the [env] lines
+# above) and every user will be anonymous.
+if CF_ACCESS_TEAM_DOMAIN and CF_ACCESS_AUD:
+    _IDENTITY_MODE = f"Cloudflare Access ({CF_ACCESS_TEAM_DOMAIN})"
+elif AUTH_DEV_BYPASS:
+    _IDENTITY_MODE = f"dev bypass ({DEV_USER_EMAIL})"
+else:
+    _IDENTITY_MODE = "anonymous session cookie"
+print(
+    f"[auth] identity mode: {_IDENTITY_MODE}; CF_ACCESS_REQUIRE={CF_ACCESS_REQUIRE}; "
+    f"env_local={_env_local!r}; "
+    f"raw_team={os.environ.get('CF_ACCESS_TEAM_DOMAIN')!r}; "
+    f"raw_aud_set={bool(os.environ.get('CF_ACCESS_AUD'))}; "
+    f"raw_require={os.environ.get('CF_ACCESS_REQUIRE')!r}",
+    file=sys.stderr,
+    flush=True,
 )
 
 # Import utilities

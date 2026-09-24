@@ -19,6 +19,7 @@ from config.constants import (
     CF_ACCESS_AUD,
     CF_ACCESS_COOKIE,
     CF_ACCESS_JWT_HEADER,
+    CF_ACCESS_JWT_LEEWAY_S,
     CF_ACCESS_JWKS_CACHE_TTL_S,
     CF_ACCESS_TEAM_DOMAIN,
 )
@@ -83,6 +84,11 @@ def verify_cf_jwt(token: str) -> Optional[str]:
             algorithms=["RS256"],
             audience=CF_ACCESS_AUD,
             issuer=f"https://{CF_ACCESS_TEAM_DOMAIN}",
+            # Tolerate a small origin<->Cloudflare clock skew: without it a
+            # freshly issued token (nbf/iat in the "near future" relative to a
+            # lagging origin clock) is rejected, and the request silently falls
+            # back to an anonymous session.
+            leeway=CF_ACCESS_JWT_LEEWAY_S,
             options={"require": ["exp", "iss", "aud"]},
         )
     except Exception as exc:  # noqa: BLE001 - any verification failure is a reject
@@ -90,7 +96,13 @@ def verify_cf_jwt(token: str) -> Optional[str]:
         return None
 
     email = str(claims.get("email") or "").strip().lower()
-    return email or None
+    if not email:
+        logger.warning(
+            "Cloudflare Access JWT verified but has no `email` claim (claims: %s)",
+            sorted(claims.keys()),
+        )
+        return None
+    return email
 
 
 def extract_email(request) -> Optional[str]:
@@ -99,6 +111,21 @@ def extract_email(request) -> Optional[str]:
     The header is only trustworthy when the origin is reachable *solely* through
     Cloudflare (Tunnel / Authenticated Origin Pulls). The JWT signature check
     still protects against forged headers if the origin is ever exposed.
+
+    Both sources are tried: a stale/invalid ``Cf-Access-Jwt-Assertion`` header
+    must not mask a valid ``CF_Authorization`` cookie (and vice versa). This is
+    the difference between resolving the real user and silently degrading to an
+    anonymous session when a browser returns from a new network/IP with only one
+    of the two credentials refreshed.
     """
-    token = request.headers.get(CF_ACCESS_JWT_HEADER) or request.cookies.get(CF_ACCESS_COOKIE)
-    return verify_cf_jwt(token) if token else None
+    for source, token in (
+        ("header", request.headers.get(CF_ACCESS_JWT_HEADER)),
+        ("cookie", request.cookies.get(CF_ACCESS_COOKIE)),
+    ):
+        if not token:
+            continue
+        email = verify_cf_jwt(token)
+        if email:
+            return email
+        logger.info("Cloudflare Access %s token present but not verifiable", source)
+    return None
