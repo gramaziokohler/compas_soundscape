@@ -6,6 +6,14 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from dotenv import load_dotenv, find_dotenv
 
+# Force UTF-8 stdout/stderr before anything is written. On production hosts whose
+# default encoding is a legacy code page (Windows cp1252 "charmap"), printing the
+# LLM's non-ASCII streamed output raises UnicodeEncodeError and fails the job
+# (e.g. speech agent → no TTS cards). See utils/console.py.
+from utils.console import configure_utf8_stdio
+
+configure_utf8_stdio()
+
 # --- Load environment variables FIRST ---
 # .env.local takes precedence over .env. This MUST run before importing
 # config/services so module-level constants (e.g. CF_ACCESS_*, REDIS_URL) read

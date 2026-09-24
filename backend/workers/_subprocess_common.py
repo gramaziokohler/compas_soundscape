@@ -32,6 +32,12 @@ def run_subprocess_job(
     # The temp janitor prunes emptied dirs, and worker processes may run without
     # the API ever having created them — never assume temp/simulations exists.
     os.makedirs(os.path.dirname(progress_file), exist_ok=True)
+    # Children inherit our environment. Force Python UTF-8 mode so their
+    # stdout/stderr AND default open() encoding are UTF-8; on production hosts
+    # with a legacy code page (Windows cp1252 "charmap") non-ASCII progress /
+    # result text otherwise raises UnicodeEncodeError and kills the child.
+    os.environ["PYTHONUTF8"] = "1"
+    os.environ["PYTHONIOENCODING"] = "utf-8"
     process = multiprocessing.Process(target=target_fn, kwargs=kwargs, daemon=True)
     process.start()
 

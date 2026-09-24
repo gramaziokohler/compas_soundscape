@@ -26,6 +26,11 @@ from dotenv import load_dotenv, find_dotenv
 
 from services.job_store import WorkerJobStore
 from config.constants import WORKER_HEARTBEAT_INTERVAL_S, JOB_CANCEL_CHANNEL
+from utils.console import configure_utf8_stdio
+
+# Workers also print non-ASCII job/status text (e.g. GPU prompt progress) — a
+# legacy-code-page stdout would raise UnicodeEncodeError and kill the job.
+configure_utf8_stdio()
 
 
 def _load_env_files() -> None:
