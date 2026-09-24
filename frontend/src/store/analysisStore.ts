@@ -31,6 +31,7 @@ import {
   API_BASE_URL,
   DEFAULT_DBFS,
   DBFS_MIN,
+  LLM_JOB_STATUS_MISS_TOLERANCE,
   LLM_SUGGESTED_INTERVAL_SECONDS,
   SED_MIN_CONFIDENCE,
   SED_TOP_N_CLASSES,
@@ -144,8 +145,24 @@ async function pollLlmJob(
   const { job_id } = await apiService.enqueueLlmJob(path, body);
   recordInflightJob(job_id, 'llm', { configIndex, kind });
   _llmJobIds.add(job_id);
+  // A momentary status miss (getJobStatus resolves with the
+  // "Job not found or expired" sentinel on ANY fetch error) must not abort the
+  // poll — the in-process job is still running server-side. Tolerate a run of
+  // consecutive misses before letting the poll fail; any real status resets it.
+  let consecutiveMisses = 0;
   const controller = startPolling({
-    fetchStatus: () => apiService.getJobStatus('llm', job_id),
+    fetchStatus: async () => {
+      const s = await apiService.getJobStatus('llm', job_id);
+      if (s.error === 'Job not found or expired') {
+        consecutiveMisses += 1;
+        if (consecutiveMisses < LLM_JOB_STATUS_MISS_TOLERANCE) {
+          return { ...s, error: null, status: s.status || 'unknown' };
+        }
+      } else {
+        consecutiveMisses = 0;
+      }
+      return s;
+    },
     onStatus: (s) => {
       useAnalysisStore.setState({
         analysisStatus: s.status || '',
@@ -908,7 +925,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
               return;
             } else if (config.type === 'scenario') {
               const sc = config as ScenarioConfig;
-              if (sc.foleyResult && sc.speechResult) {
+              if (sc.foleyResult && (sc.speechResult?.speeches?.length ?? 0) > 0) {
                 // Foley + speech done → (re-)send the incomplete cards to generation
                 get().handleSendToSoundGeneration(undefined, index);
                 return;
@@ -2147,7 +2164,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           // If speech already done and foley is missing, only run foley.
           // If both done, skip to step 2 (orchestrate).
           const hasFoley = !!config.foleyResult;
-          const hasSpeech = !!config.speechResult;
+          const hasSpeech = (config.speechResult?.speeches?.length ?? 0) > 0;
 
           if (!hasFoley || !hasSpeech) {
             const foleyBody = {
@@ -2217,6 +2234,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                   'speech',
                   (partial) => {
                     const items = Array.isArray(partial.items) ? partial.items : [];
+                    if (items.length === 0) return;
                     handleUpdateConfig(index, {
                       speechResult: { speeches: items as SpeechResult['speeches'], speechId: '' },
                     } as Partial<ScenarioConfig>);

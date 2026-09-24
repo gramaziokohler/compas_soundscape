@@ -613,6 +613,12 @@ export const LLM_MODEL_TO_PROVIDER: Record<string, string> = {
   [LLM_MODEL_ANTHROPIC]:      LLM_PROVIDER_ANTHROPIC,
 };
 
+// A transient status miss (e.g. a momentary 404 from the unified job endpoint)
+// must not abort a running LLM job's poll — the in-process job keeps running
+// server-side. The client tolerates this many consecutive "not found" polls
+// before treating the job as gone. See pollLlmJob in store/analysisStore.ts.
+export const LLM_JOB_STATUS_MISS_TOLERANCE = 5;
+
 export const DEFAULT_SOUND_CONFIG = {
   prompt: "",
   duration: DEFAULT_DURATION_SECONDS,
