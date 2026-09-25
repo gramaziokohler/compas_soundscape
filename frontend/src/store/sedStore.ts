@@ -11,7 +11,7 @@ import { temporal } from 'zundo';
 import { devtools } from 'zustand/middleware';
 import type { SEDAudioInfo, DetectedSound, SEDAnalysisOptions } from '@/types';
 import { loadAudioFileWithBuffer } from '@/lib/audio/utils/audio-info';
-import { API_BASE_URL, DEFAULT_DBFS, DEFAULT_DIFFUSION_STEPS, LLM_SUGGESTED_INTERVAL_SECONDS, DEFAULT_DURATION_SECONDS } from '@/utils/constants';
+import { API_BASE_URL, DEFAULT_DBFS, LLM_SUGGESTED_INTERVAL_SECONDS, DEFAULT_DURATION_SECONDS } from '@/utils/constants';
 import { apiService } from '@/services/api';
 import { startPolling, createPollRegistry } from '@/lib/poll-until-done';
 
@@ -46,7 +46,7 @@ export interface SEDStoreState {
   setSedAnalysisOptions: (opts: Partial<SEDAnalysisOptions>) => void;
   toggleSEDOption: (option: keyof SEDAnalysisOptions, value: boolean) => void;
   clearSEDResults: () => void;
-  formatForSoundGeneration: () => any[];
+  formatForSoundGeneration: (steps: number) => any[];
   resetSED: () => void;
 }
 
@@ -154,7 +154,7 @@ export const useSEDStore = create<SEDStoreState>()(
             'sed/setOptions',
           ),
 
-        formatForSoundGeneration: () => {
+        formatForSoundGeneration: (steps) => {
           const { sedDetectedSounds } = get();
           return sedDetectedSounds.map((sound) => ({
             prompt: sound.name,
@@ -162,7 +162,7 @@ export const useSEDStore = create<SEDStoreState>()(
             guidance_scale: 3.5,
             negative_prompt: '',
             seed_copies: 1,
-            steps: DEFAULT_DIFFUSION_STEPS,
+            steps,
             type: 'text-to-audio',
             dbfs: DEFAULT_DBFS,
             interval_seconds: LLM_SUGGESTED_INTERVAL_SECONDS,

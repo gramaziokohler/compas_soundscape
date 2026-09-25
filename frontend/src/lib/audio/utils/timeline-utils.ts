@@ -174,6 +174,23 @@ export function generateLoopTimestamps({
 }
 
 /**
+ * Parse an authored timestamp to seconds.
+ *
+ * Authoring uses `"MM:SS"` strings, but after save/restore the serializer writes
+ * store timestamps as plain numeric seconds. Treating a numeric `114.04` as
+ * `MM:SS` produced `114*60 = 6842 s` — the "far away clip" bug. Accept both:
+ * numbers pass through, `MM:SS` is parsed, any other string falls back to Number.
+ */
+export function parseAuthoredSeconds(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  const s = String(value).trim();
+  const m = s.match(/^(\d+):(\d+(?:\.\d+)?)$/);
+  if (m) return parseInt(m[1], 10) * 60 + parseFloat(m[2]);
+  const n = parseFloat(s);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/**
  * Get color based on sound generation method
  * @param metadata - Sound metadata containing soundEvent
  * @returns Color hex string
@@ -223,6 +240,8 @@ export function extractTimelineSoundsFromData(
   soundTimestamps?: Record<string, number[]>,
   soundIterationDurations?: Record<string, number[]>,
   iterationLinks?: Record<string, IterationLink>,
+  excludedIterations?: Record<string, number[]>,
+  exclusionReasons?: Record<string, string>,
 ): TimelineSound[] {
   const timelineSounds: TimelineSound[] = [];
 
@@ -288,24 +307,41 @@ export function extractTimelineSoundsFromData(
     console.log(`[DEBUG-TIMELINE] soundId=${soundId} cat="${(eventOverride as any)?.category ?? (metadata.soundEvent as any).category ?? 'MISSING'}" promptIdx=${eventOverride?.prompt_index ?? metadata.soundEvent.prompt_index}`);
 
     // ── Resolve the track's source schedule (seconds) ────────────────────────
-    // Explicit store entries win. When a track has NO entry it is "auto": use
-    // authored MM:SS timestamps if present, else derive a default loop from the
-    // event's interval_seconds (0 = back-to-back pack) with no variability.
+    // Background tracks ALWAYS tile independently from 0 to fill the timeline —
+    // they are not parametrically placed and must never be reduced to a single
+    // authored timestamp. Other tracks: explicit store entries win; with no entry
+    // they are "auto" (authored timestamps if present, else a loop from
+    // interval_seconds, 0 = back-to-back pack).
+    const rawEvent = metadata.soundEvent as any;
+    const rawCategory = eventOverride?.category ?? (metadata.soundEvent as any).category;
+    const isBackground = (() => {
+      const cat = (rawCategory ?? '').toLowerCase().replace(/[\s-]+/g, '_');
+      return cat === 'background' || cat === 'background_sound';
+    })();
+    const rawDurs = soundIterationDurations?.[soundId];
+    const authored = rawEvent.timestamps?.length
+      ? (rawEvent.timestamps as unknown[]).map(parseAuthoredSeconds)
+      : null;
+    const fallbackDurationSec = soundDurationMs / 1000;
+
     const explicitSec = soundTimestamps?.[soundId];
     let sourceSec: number[];
-    if (explicitSec !== undefined) {
+    if (isBackground) {
+      sourceSec = generateLoopTimestamps({
+        soundId,
+        durationSecPerIteration: rawDurs,
+        fallbackDurationSec,
+        intervalSec: 0,
+        jitterSec: 0,
+        timelineSec: timelineDuration / 1000,
+      });
+    } else if (explicitSec !== undefined) {
       sourceSec = explicitSec;
     } else {
-      const rawEvent = metadata.soundEvent as any;
-      const authored = rawEvent.timestamps?.length
-        ? (rawEvent.timestamps as string[]).map((t) => {
-            const [mm, ss] = String(t).split(':').map(Number);
-            return (mm ?? 0) * 60 + (ss ?? 0);
-          })
-        : null;
       sourceSec = authored ?? generateLoopTimestamps({
         soundId,
-        fallbackDurationSec: soundDurationMs / 1000,
+        durationSecPerIteration: rawDurs,
+        fallbackDurationSec,
         intervalSec: rawEvent.current_interval_seconds ?? rawEvent.interval_seconds ?? 30,
         jitterSec: 0,
         timelineSec: timelineDuration / 1000,
@@ -319,12 +355,15 @@ export function extractTimelineSoundsFromData(
     const rawMs = sourceSec.map((s) => s * 1000);
     console.log('[timeline:extract] soundId:', soundId, 'timelineDurMs:', timelineDuration,
       'rawTsMs:', rawMs.map(m => Math.round(m)));
-    const rawDurs = soundIterationDurations?.[soundId];
+    // Solver-excluded iterations are NEVER part of scheduledIterations (so they
+    // are never scheduled/played/exported) — they only surface as ghost clips.
+    const excludedIdxs = excludedIterations?.[soundId] ?? [];
     const iterations: number[] = [];
     const iterationOriginalIndices: number[] = [];
     const iterationDurationsMs: number[] = [];
     const iterationAudioUrls: string[] = [];
     for (let idx = 0; idx < rawMs.length && iterations.length < AUDIO_TIMELINE.MAX_ITERATIONS_TO_DISPLAY; idx++) {
+      if (excludedIdxs.includes(idx)) continue;
       const ms = rawMs[idx];
       if (ms >= 0 && ms < timelineDuration) {
         iterations.push(ms);
@@ -346,11 +385,36 @@ export function extractTimelineSoundsFromData(
       }
     }
 
+    // ── Excluded iterations → display-only ghost clips at their authored time.
+    // They are NOT in scheduledIterations (so never scheduled/played); the DAW
+    // renders them hatched so the user sees what could not be placed strictly.
+    const excludedClips = excludedIdxs
+      .map((origIdx) => {
+        const authoredSec = authored?.[origIdx];
+        if (authoredSec == null) return null;
+        const storeDur = rawDurs?.[origIdx];
+        const durationMs = storeDur && storeDur > 0 ? storeDur : soundDurationMs;
+        return {
+          originalIndex: origIdx,
+          startMs: authoredSec * 1000,
+          durationMs,
+          reason: exclusionReasons?.[`${soundId}-${origIdx}`],
+        };
+      })
+      .filter((c): c is NonNullable<typeof c> => c !== null)
+      // Hide a ghost once a real scheduled clip of this track covers its slot —
+      // the user dragged/copied an iteration into the place the ghost marked.
+      .filter((ghost) => {
+        return !iterations.some((startMs, i) => {
+          const durMs = iterationDurationsMs[i] ?? soundDurationMs;
+          return startMs < ghost.startMs + ghost.durationMs && ghost.startMs < startMs + durMs;
+        });
+      });
+
     // Primary copy URL — used as fallback when iterationAudioUrls is absent
     const audioUrl = metadata.soundEvent.url;
 
     // Map category → soundGroup for DAW grouping
-    const rawCategory = eventOverride?.category ?? (metadata.soundEvent as any).category;
     let soundGroup: 'background' | 'sound_event' | 'speech' | undefined;
     if (rawCategory) {
       const cat = rawCategory.toLowerCase().replace(/[\s-]+/g, '_');
@@ -382,6 +446,8 @@ export function extractTimelineSoundsFromData(
       soundGroup,
       promptIndex: rawPromptIndex,
       cardIndex,
+      ...(excludedIdxs.length > 0 ? { excludedIterations: excludedIdxs } : {}),
+      ...(excludedClips.length > 0 ? { excludedClips } : {}),
     });
     console.log('[timeline:extract] ADDED soundId:', soundId,
       'displayName:', displayName,

@@ -24,6 +24,31 @@ import type { GridListenerData } from '@/types/receiver';
 import type { ImpulseResponseMetadata, SourceReceiverIRMapping, ResonanceAudioConfig } from '@/types/audio';
 import type { AnalysisConfig, AnalysisResult, TextPromptResult } from '@/types/analysis';
 import { API_BASE_URL, AUDIO_PLAYBACK } from '@/utils/constants';
+import { parseAuthoredSeconds } from '@/lib/audio/utils/timeline-utils';
+
+/**
+ * Coerce a persisted schedule to numbers. The backend `SoundscapeSoundEvent`
+ * schema requires `list[float]`, but a stale localStorage / legacy payload can
+ * carry `MM:SS` strings or numeric strings that would otherwise fail save
+ * validation ("Input should be a valid number"). `MM:SS` is parsed, numbers and
+ * numeric strings pass through; anything unparseable is dropped with a debug log.
+ */
+function toNumericTimestamps(ts: unknown, soundId?: string): number[] | undefined {
+  if (!Array.isArray(ts) || ts.length === 0) return undefined;
+  const out: number[] = [];
+  let coerced = false;
+  for (const v of ts) {
+    const n = parseAuthoredSeconds(v);
+    if (typeof v !== 'number') coerced = true;
+    if (!Number.isFinite(n)) {
+      console.warn('[dbg:save-ts] dropping unparseable timestamp', { soundId, value: v });
+      continue;
+    }
+    out.push(n);
+  }
+  if (coerced) console.warn('[dbg:save-ts] coerced non-numeric timestamps', { soundId, from: ts, to: out });
+  return out.length > 0 ? out : undefined;
+}
 
 /**
  * Extract the filename from a sound URL path.
@@ -101,6 +126,10 @@ export function buildSoundscapeSavePayload(
   mutedSounds?: string[],
   /** Sound ID currently soloed in the DAW timeline (from audioControls) */
   soloedSound?: string | null,
+  /** Solver-excluded iteration indices per sound ID (from audioControls) */
+  excludedIterations?: Record<string, number[]>,
+  /** Reason per excluded iteration, keyed `${soundId}-${iterationIndex}` (from audioControls) */
+  exclusionReasons?: Record<string, string>,
 ): SoundscapeSavePayload {
   // Map runtime configs to serializable configs
   console.log('[DEBUG-SERIALIZE-SAVE] configs count:', soundConfigs.length);
@@ -182,7 +211,8 @@ export function buildSoundscapeSavePayload(
 
       // Stored per-track explicit schedule (only tracks that have been baked/edited
       // have an entry — untouched tracks re-derive their auto loop on load).
-      const trackTimestamps = soundTimestamps?.[event.id];
+      // Always normalize to numbers: the backend schema requires list[float].
+      const trackTimestamps = toNumericTimestamps(soundTimestamps?.[event.id], event.id);
 
       console.log('[serializer:save] event:', event.id, 'promptIdx:', event.prompt_index,
         'ts:', trackTimestamps?.length ?? 0);
@@ -461,6 +491,8 @@ export function buildSoundscapeSavePayload(
     iteration_links: iterationLinks && Object.keys(iterationLinks).length > 0 ? iterationLinks : undefined,
     muted_sounds: mutedSounds && mutedSounds.length > 0 ? mutedSounds : undefined,
     soloed_sound: soloedSound ?? undefined,
+    excluded_iterations: excludedIterations && Object.keys(excludedIterations).length > 0 ? excludedIterations : undefined,
+    exclusion_reasons: exclusionReasons && Object.keys(exclusionReasons).length > 0 ? exclusionReasons : undefined,
   };
 
   return {
@@ -503,6 +535,8 @@ export function restoreSoundscapeState(
   resonanceAudioConfig: ResonanceAudioConfig | null;
   mutedSounds: string[];
   soloedSound: string | null;
+  excludedIterations: Record<string, number[]>;
+  exclusionReasons: Record<string, string>;
 } {
   console.log('[DEBUG-DESERIALIZE] === restore begin ===');
   console.log('[DEBUG-DESERIALIZE] loadedData.muted_sounds:', JSON.stringify(loadedData.muted_sounds));
@@ -590,10 +624,11 @@ export function restoreSoundscapeState(
     if (saved.current_volume_dbfs != null) {
       soundVolumes[saved.id] = saved.current_volume_dbfs;
     }
-    if (saved.timestamps?.length) {
-      soundTimestamps[saved.id] = saved.timestamps;
+    const restoredTs = toNumericTimestamps(saved.timestamps, saved.id);
+    if (restoredTs) {
+      soundTimestamps[saved.id] = restoredTs;
       console.log('[serializer:load] restored ts for', saved.id, 'promptIdx:', saved.prompt_index,
-        'ts:', saved.timestamps);
+        'ts:', restoredTs);
     } else {
       console.log('[serializer:load] no ts for', saved.id, 'promptIdx:', saved.prompt_index);
     }
@@ -909,6 +944,8 @@ export function restoreSoundscapeState(
     resonanceAudioConfig,
     mutedSounds: loadedData.muted_sounds ?? [],
     soloedSound: loadedData.soloed_sound ?? null,
+    excludedIterations: loadedData.excluded_iterations ?? {},
+    exclusionReasons: loadedData.exclusion_reasons ?? {},
   };
 }
 

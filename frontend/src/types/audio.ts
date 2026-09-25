@@ -108,6 +108,21 @@ export interface TimelineSound {
    * renders the correct waveform inside each block.
    */
   iterationAudioUrls?: string[];
+  /**
+   * Original iteration indices the orchestrate solver EXCLUDED for this sound
+   * (its timing link could not be satisfied strictly). Not scheduled or played.
+   */
+  excludedIterations?: number[];
+  /**
+   * Display-only ghost clips for excluded iterations, positioned at their
+   * authored time so the DAW can highlight them. Never scheduled/played.
+   */
+  excludedClips?: {
+    originalIndex: number;
+    startMs: number;
+    durationMs: number;
+    reason?: string;
+  }[];
 }
 
 export interface TimelinePlaybackState {

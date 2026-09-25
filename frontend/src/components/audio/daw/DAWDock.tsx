@@ -10,7 +10,7 @@ import { IntervalSettingsPanel } from './IntervalSettingsPanel';
 import { useDawView } from './useDawView';
 import { useClipSelection } from './useClipSelection';
 import { useClipGesture, ensureTrackMaterialized, type ClipDescriptor, type TriggerDep } from './useClipGesture';
-import { parseTriggerRef } from '@/lib/audio/utils/trigger-ref';
+import { parseTriggerExpression } from '@/lib/audio/utils/trigger-ref';
 import { useAudioControlsStore } from '@/store/audioControlsStore';
 import { useSoundscapeStore } from '@/store/soundscapeStore';
 import { useSpeckleStore } from '@/store/speckleStore';
@@ -200,17 +200,19 @@ export function DAWDock({
       const thisSoundId = timelineSound.id;
       meta.trigger.expression.forEach((expr, i) => {
         if (!expr) return;
-        const parsed = parseTriggerRef(expr, knownEntryIds);
+        const parsed = parseTriggerExpression(expr, knownEntryIds);
         if (!parsed) return;
-        const refIterIdx = parsed.iterIdx;
-        const ref = entryIdMap.get(parsed.entryId);
-        if (!ref) return;
         const fromKey = `${thisSoundId}-${i}`;
-        if (!forward.has(fromKey)) forward.set(fromKey, []);
-        forward.get(fromKey)!.push({ soundId: ref.soundId, iterationIndex: refIterIdx });
-        const toKey = `${ref.soundId}-${refIterIdx}`;
-        if (!reverse.has(toKey)) reverse.set(toKey, []);
-        reverse.get(toKey)!.push({ soundId: thisSoundId, iterationIndex: i });
+        for (const ref of parsed.refs) {
+          const target = entryIdMap.get(ref.entryId);
+          if (!target) continue;
+          const refIterIdx = ref.iterIdx;
+          if (!forward.has(fromKey)) forward.set(fromKey, []);
+          forward.get(fromKey)!.push({ soundId: target.soundId, iterationIndex: refIterIdx });
+          const toKey = `${target.soundId}-${refIterIdx}`;
+          if (!reverse.has(toKey)) reverse.set(toKey, []);
+          reverse.get(toKey)!.push({ soundId: thisSoundId, iterationIndex: i });
+        }
       });
     });
     return { forward, reverse };
@@ -224,7 +226,7 @@ export function DAWDock({
       const cardTitle = configIdx !== undefined ? soundConfigs[configIdx]?.display_name : undefined;
       const displayName = cardTitle && cardTitle !== sound.displayName ? cardTitle : sound.displayName;
 
-      const clips: DAWLaneClip[] = sound.scheduledIterations.map((startMs, i) => {
+      const scheduledClips: DAWLaneClip[] = sound.scheduledIterations.map((startMs, i) => {
         const originalIdx = sound.scheduledIterationOriginalIndices?.[i] ?? i;
         const durationMs = sound.iterationDurationsMs?.[i] ?? sound.soundDurationMs;
         const audioUrl = sound.iterationAudioUrls?.[i] ?? sound.audioUrl;
@@ -232,6 +234,19 @@ export function DAWDock({
         registry.set(clipKey, { clipKey, soundId: sound.id, iterationIndex: originalIdx, startMs, durationMs });
         return { clipKey, iterationIndex: originalIdx, startMs, durationMs, audioUrl, label: displayName, iterationLink: iterationLinks[clipKey] };
       });
+
+      // Excluded iterations: display-only ghost clips (never draggable/played).
+      const ghostClips: DAWLaneClip[] = (sound.excludedClips ?? []).map((ex) => ({
+        clipKey: `${sound.id}-${ex.originalIndex}-excluded`,
+        iterationIndex: ex.originalIndex,
+        startMs: ex.startMs,
+        durationMs: ex.durationMs,
+        label: displayName,
+        excluded: true,
+        reason: ex.reason,
+      }));
+
+      const clips: DAWLaneClip[] = [...scheduledClips, ...ghostClips];
 
       return { sound, displayName, configIdx, clips };
     });
@@ -723,7 +738,8 @@ export function DAWDock({
                   sound={sound}
                   displayName={displayName}
                   groupLabel={GROUP_LABELS[sound.soundGroup ?? 'sounds'] ?? 'Sounds'}
-                  clipCount={clips.length}
+                  clipCount={clips.filter((c) => !c.excluded).length}
+                  excludedCount={sound.excludedIterations?.length ?? 0}
                   trackHeight={trackHeight}
                   isMuted={mutedSounds.has(sound.id)}
                   isSoloed={soloedSound === sound.id}

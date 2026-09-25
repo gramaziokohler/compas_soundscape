@@ -32,7 +32,7 @@ import { RangeSlider } from '@/components/ui/RangeSlider';
 import { ToggleField } from '@/components/ui/ToggleField';
 import { apiService } from '@/services/api';
 import { CARD_TYPE_LABELS } from '@/types/card';
-import { useSpeckleStore, useAcousticsSimulationStore, useReceiversStore, useGridListenersStore, useAudioControlsStore, useSoundscapeStore, useAcousticLayerStore, notifyError, resolveSimulationLayerName, resolveSimulationGeometryObjectIds, toBackendGeometryIds } from '@/store';
+import { useSpeckleStore, useAcousticsSimulationStore, useReceiversStore, useGridListenersStore, useAudioControlsStore, useSoundscapeStore, useAcousticLayerStore, useRightSidebarStore, notifyError, resolveSimulationLayerName, resolveSimulationGeometryObjectIds, toBackendGeometryIds } from '@/store';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { useUIStore } from '@/store/uiStore';
 
@@ -1297,13 +1297,31 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   // Expand / Active Simulation Sync
   // ==========================================================================
 
-  // Local expanded state (controlled mode for CardSection)
-  const [expandedCardIndex, setExpandedCardIndex] = useState<number | null>(
-    simulationConfigs.length > 0 ? 0 : null
-  );
+  // Local expanded state (controlled mode for CardSection). Always starts
+  // collapsed — opening a model / refreshing a page never restores an expanded
+  // simulation card.
+  const [expandedCardIndex, setExpandedCardIndex] = useState<number | null>(null);
+
+  // Baselines for the auto-expand effects below.
+  const prevSimCount = useRef(simulationConfigs.length);
+  const prevStatesRef = useRef<string[]>(simulationConfigs.map(c => c.state));
+
+  // A restored payload must arrive fully collapsed — no auto-expand, no
+  // auto-activate. `restoreSimulationState` bumps `restoreNonce`; consume it
+  // here (declared BEFORE the auto-expand effects so their baselines are synced
+  // first) and drop any expanded card.
+  const lastRestoreNonceRef = useRef(useAcousticsSimulationStore.getState().restoreNonce);
+  useEffect(() => {
+    const { restoreNonce } = useAcousticsSimulationStore.getState();
+    if (restoreNonce === lastRestoreNonceRef.current) return;
+    lastRestoreNonceRef.current = restoreNonce;
+    prevSimCount.current = simulationConfigs.length;
+    prevStatesRef.current = simulationConfigs.map(c => c.state);
+    setExpandedCardIndex(null);
+    useUIStore.getState().setExpandedSimulationTabIndex(null);
+  }, [simulationConfigs]);
 
   // Auto-expand newly added cards, deactivate audio, and switch to Acoustic mode
-  const prevSimCount = useRef(simulationConfigs.length);
   useEffect(() => {
     if (simulationConfigs.length > prevSimCount.current) {
       const newIndex = simulationConfigs.length - 1;
@@ -1336,7 +1354,6 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   }, [activeSimulationIndex]);
 
   // Auto-activate a card when it transitions to completed state
-  const prevStatesRef = useRef<string[]>(simulationConfigs.map(c => c.state));
   useEffect(() => {
     const prevStates = prevStatesRef.current;
     simulationConfigs.forEach((config, index) => {
@@ -1417,17 +1434,21 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     }
   }, [activeSimulationIndex, onSetActiveSimulation, simulationConfigs, viewMode, setViewMode, expandedCardIndex]);
 
-  // Restore expanded card from uiStore on mount (refresh survival)
-  const expandedRestoredRef = useRef(false);
+  // Transient reminder: when "Play all" starts while the right sidebar is
+  // collapsed and a completed (generated) acoustic card is expanded, flash a
+  // hint on the sidebar's expand handle that convolution is active. The card is
+  // active whenever it is expanded, so this reassures a non-expert that the dry
+  // sounds they hear are being convolved through the room.
+  const playAllNonce = useAudioControlsStore((s) => s.playAllNonce);
+  const lastPlayAllNonceRef = useRef(0);
   useEffect(() => {
-    if (expandedRestoredRef.current) return;
-    if (simulationConfigs.length === 0) return;
-    const saved = useUIStore.getState().expandedSimulationTabIndex;
-    if (saved !== null && saved >= 0 && saved < simulationConfigs.length) {
-      setExpandedCardIndex(saved);
-    }
-    expandedRestoredRef.current = true;
-  }, [simulationConfigs.length]);
+    if (playAllNonce === lastPlayAllNonceRef.current) return;
+    lastPlayAllNonceRef.current = playAllNonce;
+    if (useRightSidebarStore.getState().isExpanded) return;
+    if (expandedCardIndex === null) return;
+    if (simulationConfigs[expandedCardIndex]?.state !== 'completed') return;
+    useRightSidebarStore.getState().requestConvolutionHint();
+  }, [playAllNonce, expandedCardIndex, simulationConfigs]);
 
   // ==========================================================================
   // Render Helpers

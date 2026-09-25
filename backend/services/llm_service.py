@@ -89,6 +89,141 @@ def _last_status_sentence(text: str, max_chars: int = LLM_STATUS_TEXT_MAX_CHARS)
     return snippet
 
 
+_BACKGROUND_CATEGORIES = {"background", "background_sound"}
+_ORCHESTRATE_OP_RE = re.compile(
+    r"^(afterAll|overlapAll|beforeAll|after|alignEnd|overlap)\((.+)\)$"
+)
+_ORCHESTRATE_ABS_RE = re.compile(r"^\d+:\d+(?:\.\d+)?$")
+
+
+def _normalized_category(category) -> str:
+    return re.sub(r"[\s_-]+", "_", str(category or "").strip().lower())
+
+
+def _is_background_entry(entry: dict) -> bool:
+    """True for continuous background beds (never scheduled, never referenced)."""
+    return _normalized_category(entry.get("category")) in _BACKGROUND_CATEGORIES
+
+
+def _reference_base_id(arg: str) -> str:
+    """`entry_1#2` -> `entry_1`; also strips a legacy trailing `_<n>` iteration."""
+    base = arg.strip().split("#")[0].strip()
+    return re.sub(r"_\d+$", "", base)
+
+
+def _forced_background_trigger(base: dict) -> dict:
+    """Backgrounds are fixed beds anchored at 00:00 for every authored timestamp."""
+    n = max(1, len(base.get("timestamps") or []))
+    return {"type": "absolute", "expression": ["00:00"] * n, "delay": [0.0] * n}
+
+
+def _is_valid_trigger_expression(expr) -> bool:
+    """True for a parseable `MM:SS`/seconds value or a well-formed op(...) formula."""
+    if not isinstance(expr, str):
+        return False
+    s = expr.strip()
+    if not s:
+        return False
+    if _ORCHESTRATE_ABS_RE.match(s):
+        return True
+    try:
+        float(s)
+        return True
+    except ValueError:
+        pass
+    return bool(_ORCHESTRATE_OP_RE.match(s))
+
+
+def _normalize_trigger_expressions(trigger: dict, fallback_timestamps: list) -> dict:
+    """Replace malformed expression slots (e.g. the literal ``"absolute"`` the LLM
+    sometimes emits instead of a timestamp) with the entry's authored timestamp.
+
+    A malformed slot must never reach the client: the frontend treats a non-empty
+    unknown string as neither an absolute time nor a formula, so it would either be
+    silently dropped or resolved from a stale manual timestamp — producing
+    unpredictable placement with no broken-link warning.
+    """
+    if not isinstance(trigger, dict):
+        return trigger
+    exprs = trigger.get("expression")
+    if not isinstance(exprs, list):
+        return trigger
+    delays = trigger.get("delay") if isinstance(trigger.get("delay"), list) else []
+    new_exprs: list = []
+    new_delays: list = []
+    changed = False
+    for i, expr in enumerate(exprs):
+        delay = delays[i] if i < len(delays) else 0.0
+        if _is_valid_trigger_expression(expr):
+            new_exprs.append(expr)
+            new_delays.append(delay)
+            continue
+        ts = fallback_timestamps[i] if i < len(fallback_timestamps) else None
+        replacement = str(ts) if ts else "00:00"
+        print(f"[orchestrate] normalizing malformed expression {expr!r} -> {replacement!r}")
+        new_exprs.append(replacement)
+        new_delays.append(0.0)
+        changed = True
+    if not changed:
+        return trigger
+    return {
+        "type": trigger.get("type", "param"),
+        "expression": new_exprs,
+        "delay": new_delays,
+    }
+
+
+def _sanitize_trigger_refs(trigger: dict, background_ids: set[str], fallback_timestamps: list) -> dict:
+    """Remove any reference to a background bed from a trigger expression.
+
+    The orchestrate LLM must never schedule or anchor against a background bed.
+    If stripping leaves a formula with no references, the slot falls back to its
+    authored timestamp so the entry still has a usable anchor.
+    """
+    if not isinstance(trigger, dict):
+        return trigger
+    exprs = trigger.get("expression")
+    if not isinstance(exprs, list):
+        return trigger
+    delays = trigger.get("delay") if isinstance(trigger.get("delay"), list) else []
+    new_exprs: list = []
+    new_delays: list = []
+    changed = False
+    for i, expr in enumerate(exprs):
+        delay = delays[i] if i < len(delays) else 0.0
+        if not isinstance(expr, str) or not expr:
+            new_exprs.append(expr)
+            new_delays.append(delay)
+            continue
+        m = _ORCHESTRATE_OP_RE.match(expr)
+        if not m:
+            new_exprs.append(expr)
+            new_delays.append(delay)
+            continue
+        op, args = m.group(1), m.group(2)
+        raw_args = [a.strip() for a in args.split(",") if a.strip()]
+        kept = [a for a in raw_args if _reference_base_id(a) not in background_ids]
+        if len(kept) == len(raw_args):
+            new_exprs.append(expr)
+            new_delays.append(delay)
+            continue
+        changed = True
+        if kept:
+            new_exprs.append(f"{op}({', '.join(kept)})")
+            new_delays.append(delay)
+        else:
+            ts = fallback_timestamps[i] if i < len(fallback_timestamps) else None
+            new_exprs.append(str(ts) if ts else "00:00")
+            new_delays.append(0.0)
+    if not changed:
+        return trigger
+    return {
+        "type": trigger.get("type", "param"),
+        "expression": new_exprs,
+        "delay": new_delays,
+    }
+
+
 def _iter_response_parts(chunk) -> list[tuple[bool, str]]:
     """Return ``[(is_thought, text), ...]`` for a generate_content(_stream) chunk.
 
@@ -2283,6 +2418,8 @@ For the duration estimation (in seconds with 0.1 precision):
             scenarios_json: str,
             foley_json: str,
             speech_json: str,
+            mode: str = "initial",
+            backgrounds_json: str = "{\"backgrounds\": []}",
         ) -> tuple[str, str]:
             """Build system and user prompts for the orchestrate agent.
 
@@ -2303,75 +2440,109 @@ For the duration estimation (in seconds with 0.1 precision):
                 "sound is anchored in time and how many variants it needs to sound realistic.\n"
                 "  - spl: estimate coherent and realistic sound levels for all the sounds present in the "
                 "scene, balanced relative to one another.\n"
+                "Background beds (continuous HVAC/ambience) are FIXED and listed SEPARATELY: never schedule "
+                "them, never anchor anything to them, and never reference them from any trigger — for each you "
+                "may only provide an 'spl' level so the scene's balance is realistic. Their timing is forced by "
+                "code.\n"
                 "You must globally reflect on the soundtrack to ensure a cohesive audio experience."
             )
+            reorchestrate_block = ""
+            if mode == "reorchestrate":
+                reorchestrate_block = (
+                    "\nRE-ORCHESTRATION (re-run on a user-edited scene)\n"
+                    "This is a RE-RUN. Each input entry may carry 'currentTrigger', 'currentTimestamps' and "
+                    "'currentVariants' describing the schedule currently in place. The user's current edits are "
+                    "AUTHORITATIVE:\n"
+                    "- Only schedule the entries present in the input. Deleted sounds are gone: never re-emit them "
+                    "and never reference them.\n"
+                    "- Respect each entry's current iteration count (speech line count / copy count). Never add or "
+                    "drop iterations.\n"
+                    "- Keep the existing anchors and structure where they are valid; change them only to fix a rule "
+                    "violation (background reference, self-overlap, acyclic order) or to reflect removed/edited "
+                    "sounds. Do not re-time the whole scene unnecessarily.\n"
+                    "- When an edit removed a sound another entry previously referenced, re-anchor that entry to a "
+                    "sensible remaining sound instead of leaving a dangling reference.\n\n"
+                )
             user_prompt = (
-                "Each foley 'sound' and speech 'speech' input entry already carries a base 'id' and its "
-                "'timestamps'. For every input entry, output exactly one object keyed by that same 'id'. "
-                "Do NOT invent, drop, split or rename ids.\n"
-                "Use the timestamps to locate each sound in the timeline and correlate them with the "
-                "scenario script to understand sound dependencies.\n\n"
+                "Each foley 'sound' and speech 'speech' input entry carries a base 'id', its 'timestamps', and "
+                "the MEASURED DURATIONS of its generated copies.\n"
+                "- 'copyDurations': exact length in seconds of each generated audio copy (index 0 = first copy).\n"
+                "- speech 'lines': the spoken text and its measured duration per copy.\n"
+                "For every input entry, output exactly one object keyed by that same 'id'. Do NOT invent, drop, "
+                "split or rename ids. Use the real durations and the scenario script to order the sounds — the "
+                "authored 'timestamps' are only a narrative hint, NOT the schedule.\n\n"
                 "TRIGGER (timeline dynamics)\n"
-                "1. Every entry must map cleanly to structural relationships using parametric trigger "
-                "formulas. DO NOT use absolute timestamps (e.g., '00:15') for individual events unless "
-                "initializing an environment background loop or a primary scene arrival.\n"
-                "2. Formulate triggers using these strict string expressions. 'expression' is ALWAYS an "
-                "array, with exactly one string per timestamp in that entry's timestamps input. 'delay' is "
-                "ALWAYS an array of floats, with exactly one float per timestamp, index-aligned with "
-                "'expression':\n"
-                '   - For absolute starting blocks: {"type": "absolute", "expression": ["00:15"], "delay": [0.0]} '
-                "— every 'expression' element is the literal MM:SS timestamp for that occurrence. Never an "
-                "empty string, and never a param formula.\n"
-                '   - For sequential blocks: {"type": "param", "expression": ["after(id_of_previous_sound)", '
-                '"after(id_of_another_sound)"], "delay": [0.2, 0.0]} — every \'expression\' element is a param '
-                "formula string (after/alignEnd). Never a raw MM:SS timestamp.\n"
-                '   - For leading pre-actions: {"type": "param", "expression": ["alignEnd(id_of_following_sound)"], '
-                '"delay": [0.0]}\n'
-                '   - For blocks where some occurrences anchor to a fixed point on the timeline and others anchor '
-                "to another sound: \"type\": \"mixed\", where 'expression' freely combines, element by element, "
-                "either a literal MM:SS timestamp OR a param formula string (after/alignEnd) — never both roles "
-                'inside the same string. Example: {"type": "mixed", "expression": ["00:15", "after(sound_05_1)", '
-                '"alignEnd(sound_05_2)"], "delay": [0.0, 0.4, 0.0]} \n'
-                "3. SINGLE INSTANCES ONLY WITH ITERATION ARRAYS: Do NOT split an asset into separate IDs per "
+                "1. Anchor every entry to another sound. Only the scene opener and continuous background beds may "
+                "use absolute MM:SS timestamps.\n"
+                "2. 'expression' is ALWAYS an array with exactly one string per timestamp in that entry's "
+                "'timestamps' input. 'delay' is ALWAYS an array of floats, index-aligned with 'expression'. "
+                "Allowed formula strings (references use the entry's exact id, optionally with a 1-based "
+                "'#<iterationIndex>'):\n"
+                "   - after(id [, id2, ...])   → starts after the reference's END:  start = max(ref.end) + delay. "
+                "Use for sequential events.\n"
+                "   - alignEnd(id)             → ends `delay` seconds BEFORE the reference starts: "
+                "end = ref.start − delay. Use for a pre-action leading into another sound.\n"
+                "   - overlap(id [, id2, ...]) → starts at the reference's START + delay (start-to-start). Use "
+                "for PARALLEL / concurrent activity (e.g. one person typing while another takes notes) and for "
+                "continuous activity that spans an interval.\n"
+                "   - afterAll(...) and overlapAll(...) are the explicit multi-reference (join) forms; a "
+                "comma-separated reference list behaves identically.\n"
+                "3. DELAY SEMANTICS: 'delay' is the end-to-start gap (or start-to-start offset for overlap) in "
+                "SECONDS that YOU choose from the measured durations. NEVER encode the authored MM:SS spacing "
+                "into 'delay'. Consecutive dialogue turns should use 0 (or a very small value); use larger "
+                "values only when the scenario clearly implies a pause.\n"
+                "4. SINGLE INSTANCES ONLY WITH ITERATION ARRAYS: Do NOT split an asset into separate IDs per "
                 "occurrence (NO sound_01_01, sound_01_02). Keep a single base entry (e.g., sound_01).\n"
-                "4. Reference another entry inside a param formula using its EXACT 'id' string exactly as it "
-                "appears in the input above — those ids already end in '_<number>' (e.g. 'Marcus_1', "
-                "'footsteps_concrete_1'). NEVER drop or alter that suffix. To target a specific occurrence of an "
-                "entry that has multiple timestamps, append '#<iterationIndex>' (1-based): e.g. "
-                "'after(Marcus_1)', 'after(Anna_1#2)', 'alignEnd(Lucas_1)', 'after(footsteps_concrete_1#2)'. "
-                "The 'after(...)' / 'alignEnd(...)' form is the ONLY place these references may appear — never "
-                "inside an absolute MM:SS timestamp string.\n"
-                "5. ACYCLIC DEPENDENCIES: The graph formed by after()/alignEnd() references MUST be acyclic. If "
-                "A is scheduled after B, B must not be (directly or transitively) scheduled after A. Order a "
-                "conversation linearly (each line after the previous) instead of referencing both directions.\n"
-                "6. Strict Array Alignment: 'trigger.expression', 'trigger.delay' and 'variants' MUST ALWAYS be "
-                "arrays whose length exactly equals the number of timestamps for that entry (never a bare string, "
-                "never a bare float, never a mismatched length).\n\n"
+                "5. References use the EXACT input id (including its trailing '_<number>'), optionally followed "
+                "by '#<iterationIndex>' (1-based) for multi-occurrence entries. Examples: 'after(Marcus_1)', "
+                "'after(Anna_1#2)', 'alignEnd(Lucas_1)', 'overlap(scene_1)'. A reference never appears inside an "
+                "absolute MM:SS string.\n"
+                "6. ACYCLIC DEPENDENCIES: the graph formed by the triggers MUST be acyclic. If A is after B, B "
+                "must not be (directly or transitively) after A. Order a conversation linearly (each line after "
+                "the previous).\n"
+                "7. STRICT SEQUENCING: 'after' means start at the reference's exact end + delay; 'overlap' means "
+                "start at the reference's start + delay. Use 'overlap' whenever the scenario has two DIFFERENT "
+                "sounds happening at the same time.\n"
+                "8. NEVER OVERLAP AN ENTRY WITH ITSELF: two iterations of the SAME entry must never overlap. A "
+                "sound cannot play twice simultaneously. Chain consecutive iterations of one entry linearly: "
+                "iteration #k+1 must be `after(<sameEntry>#k)` with a non-negative delay (or anchored to a "
+                "different entry that itself starts after #k). Example — a 3-line speaker: "
+                "[\\\"00:00\\\", \\\"after(Speaker_1#1)\\\", \\\"after(Speaker_1#2)\\\"]. Do NOT anchor several "
+                "iterations of one entry to the same reference. Do NOT reference an entry's later iteration before "
+                "an earlier one.\n"
+                "9. BACKGROUND BEDS ARE NOT SCHEDULED OR REFERENCEABLE: the fixed beds are listed separately under "
+                "'Backgrounds'. Never reference them from any trigger (no `overlap(bed_1)`, no `after(bed_1)`) and "
+                "never anchor any sound to them. For each bed you MAY emit one entry whose ONLY meaningful field "
+                "is 'spl' (its trigger is forced to 00:00 by code — you can also set type \"absolute\", "
+                "expression [\"00:00\"], delay [0.0] and variants [1]).\n"
+                "10. Strict Array Alignment: 'trigger.expression', 'trigger.delay' and 'variants' MUST ALWAYS be "
+                "arrays whose length exactly equals the number of timestamps for that entry.\n\n"
                 "VARIANTS\n"
-                "7. For each foley entry, estimate how many variants should be provided in the variants array "
-                "to create a realistic effect depending on repetitions, and order them in a list (e.g [1,2,1]). "
-                "For speech, create an arithmetic series of variants corresponding to the length of timestamps "
-                "[1,2,3,4,...]. "
-                "IMPORTANT: the number of audio copies for each entry is USER-AUTHORITATIVE. If an input foley or "
-                "speech entry carries a \"copyCount\" (or its script is split into N semicolon-separated lines), "
-                "the maximum value in its 'variants' array MUST equal that copy count (or N for speech) — do not "
-                "exceed it, and do not under-provision it below the entry's occurrence count.\n\n"
+                "11. For each foley entry, estimate how many variants to provide based on repetitions, ordered in "
+                "a list (e.g. [1,2,1]). For speech, use an arithmetic series [1,2,3,4,...]. IMPORTANT: the number "
+                "of audio copies is USER-AUTHORITATIVE — if an entry carries a \"copyCount\", the maximum value in "
+                "its 'variants' array MUST equal that copy count (or the line count for speech); never exceed it "
+                "and never under-provision below the entry's occurrence count.\n\n"
                 "SPL (loudness levels)\n"
-                "8. Estimate a realistic 'spl' (target loudness in dBFS) for every entry, expressed as a "
-                "float string with units (e.g. \"-18 dBFS\"). dBFS is relative to digital full scale, so "
-                "use NEGATIVE values between -60 and 0 (0 = clipping). Reason globally: levels must be "
-                "coherent and balanced relative to one another for the whole scene (e.g. background beds "
-                "quieter than speech or impacts), and realistic for the kind of source and the mix.\n\n"
+                "12. Estimate a realistic 'spl' (target loudness in dBFS) for every entry, expressed as a float "
+                "string with units (e.g. \"-18 dBFS\"). dBFS is relative to digital full scale: NEGATIVE values "
+                "between -60 and 0 (0 = clipping). Levels must be coherent and balanced for the whole scene. Aim "
+                "for these bands and stay inside them unless the script clearly demands otherwise:\n"
+                "   - speech / dialogue: -22 to -16 dBFS. Speech is a foreground element but MUST NOT be the "
+                "loudest thing in the scene: keep it at most a couple of dB above the loudest discrete event and "
+                "never in the -10..0 range. Quiet or distant lines belong nearer -22.\n"
+                "   - close discrete impacts (door, chair, dropped object): -18 to -12 dBFS.\n"
+                "   - subtle events (typing, paper, cup, cloth): -26 to -18 dBFS.\n"
+                "   - background beds (if they were present): -34 to -26 dBFS.\n"
+                "Re-read the whole set before responding and pull any outlier back toward the scene's average.\n\n"
                 "Output Format — respond ONLY with a JSON array (timeline dynamics + levels only):\n"
-                "9. For trigger.delay , estimate realistic relative pauses between the two related sounds. "
-                "Speech sounds should have no delays or low delays for the conversation to feel natural. "                
                 "[\n"
                 "  {\n"
                 '    "id": "input base id (e.g., sound_01, speech_01)",\n'
                 '    "trigger": { "type": "\\"absolute\\" | \\"param\\" | \\"mixed\\"", "expression": ["array of '
-                "strings, one per input timestamp — MM:SS timestamps for 'absolute', param formulas for 'param', "
-                'a free per-element mix of both for \'mixed\'"], "delay": ["array of floats, one per input '
-                'timestamp, same length as expression"] },\n'
+                "strings, one per input timestamp — MM:SS timestamps for 'absolute', after/alignEnd/overlap "
+                'formulas for \'param\', a free per-element mix of both for \'mixed\'"], "delay": ["array of '
+                'floats, one per input timestamp, same length as expression"] },\n'
                 '    "variants": [1,2,1],\n'
                 '    "spl": "float as string, e.g. \\"-18 dBFS\\""\n'
                 "  }\n"
@@ -2379,22 +2550,24 @@ For the duration estimation (in seconds with 0.1 precision):
                 f"Scenarios:\n{scenarios_json}\n\n"
                 f"Foley sounds:\n{foley_json}\n\n"
                 f"Speech:\n{speech_json}\n\n"
-                "Before outputting the final JSON, verify silently against this checklist and fix"
-                "any violation you find — only then output the JSON:\n\n"
-                "- [ ] Every input id appears as exactly one object in the array, and no extra ids are invented.\n"
+                f"Backgrounds (fixed beds — provide an 'spl' only, never a trigger reference):\n{backgrounds_json}\n\n"
+                f"{reorchestrate_block}"
+                "Before outputting the final JSON, verify silently against this checklist and fix any violation "
+                "you find — only then output the JSON:\n\n"
+                "- [ ] Every input id appears as exactly one object, and no extra ids are invented.\n"
                 "- [ ] trigger.expression is always an array (never a bare string).\n"
                 "- [ ] trigger.delay is always an array of floats (never a bare float).\n"
-                "- [ ] len(trigger.expression) == len(trigger.delay) == len(variants) == number of timestamps for "
-                "that id.\n"
-                "- [ ] type \"absolute\" entries contain ONLY MM:SS timestamp strings in expression — no after( or "
-                "alignEnd(.\n"
-                "- [ ] type \"param\" entries contain ONLY after( / alignEnd( formula strings in expression — no "
-                "raw MM:SS timestamps.\n"
-                "- [ ] type \"mixed\" entries deliberately combine MM:SS timestamps and after( / alignEnd( "
-                "formulas, with each element matching the correct occurrence by index.\n"
-                "- [ ] every after()/alignEnd() reference uses the EXACT input id (including its trailing "
-                "'_<number>'), optionally followed by '#<iterationIndex>'.\n"
-                "- [ ] the after()/alignEnd() dependency graph is acyclic (no entry transitively depends on itself).\n"
+                "- [ ] len(trigger.expression) == len(trigger.delay) == len(variants) == number of timestamps.\n"
+                "- [ ] type \"absolute\" entries contain ONLY MM:SS timestamp strings — no after(/alignEnd(/overlap(.\n"
+                "- [ ] any parametric entry contains ONLY after( / alignEnd( / overlap( formulas — no raw MM:SS.\n"
+                "- [ ] every reference uses the EXACT input id (including its trailing '_<number>'), optionally "
+                "followed by '#<iterationIndex>'.\n"
+                "- [ ] no reference points to a background bed; beds get an 'spl' but no schedule.\n"
+                "- [ ] no two iterations of the SAME entry overlap; same-entry chains go #1 -> #2 -> #3 linearly.\n"
+                "- [ ] overlap() is used ONLY to run DIFFERENT sounds concurrently, never an entry with itself.\n"
+                "- [ ] the dependency graph is acyclic (no entry transitively depends on itself).\n"
+                "- [ ] delays are end-to-start gaps derived from the MEASURED durations, not the authored MM:SS.\n"
+                "- [ ] speech sits within -22..-16 dBFS and is not the loudest element of the scene.\n"
                 "- [ ] spl values are present, realistic, and balanced relative to one another across the scene.\n"
                 "If any item fails, fix it and re-check before responding."
             )
@@ -2456,16 +2629,12 @@ For the duration estimation (in seconds with 0.1 precision):
         Returns a dict matching OrchestrateOutput ("playlist": list of full entries).
         """
         passthrough = self._build_orchestrate_passthrough(foley_result, speech_result)
+        background_ids = {sid for sid, base in passthrough.items() if _is_background_entry(base)}
         playlist: list[dict] = []
-        for entry in (llm_result or {}).get("playlist", []):
-            if not isinstance(entry, dict):
-                continue
-            entry_id = entry.get("id")
-            base = passthrough.get(entry_id)
-            if base is None:
-                print(f"[orchestrate] skipping unknown id from LLM (no matching foley/speech input): {entry_id!r}")
-                continue
-            trigger = entry.get("trigger") or {"type": "absolute", "expression": [], "delay": [0.0]}
+        seen_ids: set[str] = set()
+
+        def _append(entry_id: str, base: dict, trigger: dict, variants: list, spl: str) -> None:
+            seen_ids.add(entry_id)
             playlist.append({
                 "id": entry_id,
                 "soundName": base["soundName"],
@@ -2477,9 +2646,41 @@ For the duration estimation (in seconds with 0.1 precision):
                 "character": base["character"],
                 "objectsInvolved": base["objectsInvolved"],
                 "position": base["position"],
-                "variants": entry.get("variants", []) or [],
-                "spl": entry.get("spl", ""),
+                "variants": variants,
+                "spl": spl,
             })
+
+        for entry in (llm_result or {}).get("playlist", []):
+            if not isinstance(entry, dict):
+                continue
+            entry_id = entry.get("id")
+            base = passthrough.get(entry_id)
+            if base is None:
+                print(f"[orchestrate] skipping unknown id from LLM (no matching foley/speech input): {entry_id!r}")
+                continue
+            # Backgrounds are fixed beds — force an absolute 00:00 trigger no matter
+            # what the LLM produced, and keep one entry per authored timestamp.
+            if entry_id in background_ids:
+                _append(
+                    entry_id, base, _forced_background_trigger(base),
+                    [1] * max(1, len(base["timestamps"])), entry.get("spl", ""),
+                )
+                continue
+            trigger = entry.get("trigger") or {"type": "absolute", "expression": [], "delay": [0.0]}
+            trigger = _normalize_trigger_expressions(trigger, base["timestamps"])
+            trigger = _sanitize_trigger_refs(trigger, background_ids, base["timestamps"])
+            _append(
+                entry_id, base, trigger,
+                entry.get("variants", []) or [], entry.get("spl", ""),
+            )
+
+        # Backgrounds must always be present in the final playlist even though the
+        # LLM never sees or emits them (they are excluded from its input).
+        for sid, base in passthrough.items():
+            if sid in seen_ids or sid not in background_ids:
+                continue
+            _append(sid, base, _forced_background_trigger(base), [1] * max(1, len(base["timestamps"])), "")
+
         return {"playlist": playlist}
 
     async def async_orchestrate_agent(
@@ -2490,6 +2691,7 @@ For the duration estimation (in seconds with 0.1 precision):
         llm_model: str = DEFAULT_LLM_MODEL,
         temperature: float = 0.1,
         on_progress=None,
+        mode: str = "initial",
     ) -> dict:
         """Compile the final parametric audio playlist from foley + speech + scenario.
 
@@ -2521,11 +2723,29 @@ For the duration estimation (in seconds with 0.1 precision):
             return _OrchestrateOutput(playlist=[]).model_dump()
 
         scenarios_json = json.dumps({"scenarios": all_scenarios}, indent=2)
-        foley_json = json.dumps(foley_result, indent=2)
+        # Background beds are fixed: the LLM may estimate an SPL for balance but
+        # must never schedule, anchor, or reference them. They are separated so
+        # they cannot be picked as a trigger target, and their trigger is forced
+        # to an absolute 00:00 by code after the merge.
+        all_foley = [s for s in (foley_result or {}).get("sounds", []) if isinstance(s, dict)]
+        prompt_foley = {"sounds": [s for s in all_foley if not _is_background_entry(s)]}
+        prompt_backgrounds = {
+            "backgrounds": [
+                {
+                    "id": s.get("id"),
+                    "soundName": s.get("soundName", ""),
+                    "description": s.get("description", ""),
+                    "category": s.get("category", "background sound"),
+                }
+                for s in all_foley if _is_background_entry(s)
+            ]
+        }
+        foley_json = json.dumps(prompt_foley, indent=2)
+        backgrounds_json = json.dumps(prompt_backgrounds, indent=2)
         speech_json = json.dumps(speech_result, indent=2)
 
         system_prompt, user_prompt = self._build_orchestrate_prompts(
-            scenarios_json, foley_json, speech_json
+            scenarios_json, foley_json, speech_json, mode=mode, backgrounds_json=backgrounds_json
         )
 
         llm_result = await self._call_llm(
@@ -2551,6 +2771,7 @@ For the duration estimation (in seconds with 0.1 precision):
         llm_model: str = DEFAULT_LLM_MODEL,
         temperature: float = 0.1,
         on_progress=None,
+        mode: str = "initial",
     ):
         """Async generator yielding orchestrated playlist entries one by one.
 
@@ -2567,6 +2788,7 @@ For the duration estimation (in seconds with 0.1 precision):
                 llm_model=llm_model,
                 temperature=temperature,
                 on_progress=on_progress,
+                mode=mode,
             )
         except LLMCancelled:
             raise

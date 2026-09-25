@@ -65,6 +65,13 @@ export interface AcousticsSimulationStoreState {
   expandedTabIndex: number | null;
   simulationCounter: number;
   roomScale: { x: number; y: number; z: number };
+  /**
+   * Bumped by `restoreSimulationState`. Consumers (AcousticsSection) watch it to
+   * know a bulk payload restore just happened and must NOT auto-expand or
+   * auto-activate a card — opening a model / refreshing starts fully reduced.
+   * Never persisted.
+   */
+  restoreNonce: number;
 
   handleAddConfig: (mode: AcousticSimulationMode) => void;
   handleRemoveConfig: (index: number) => void;
@@ -93,6 +100,7 @@ export const useAcousticsSimulationStore = create<AcousticsSimulationStoreState>
         expandedTabIndex: null,
         simulationCounter: 1,
         roomScale: { x: 1, y: 1, z: 1 },
+        restoreNonce: 0,
 
         setRoomScale: (scale) =>
           set({ roomScale: scale }, false, 'acousticsSim/setRoomScale'),
@@ -355,13 +363,19 @@ export const useAcousticsSimulationStore = create<AcousticsSimulationStoreState>
             'acousticsSim/toggleExpand',
           ),
 
-        restoreSimulationState: (savedConfigs, savedActiveIndex) =>
+        restoreSimulationState: (savedConfigs, _savedActiveIndex) =>
           set(
             (s) => ({
               simulationConfigs: savedConfigs,
-              activeSimulationIndex: savedActiveIndex,
-              expandedTabIndex: savedActiveIndex,
+              // Restored cards start fully reduced: collapsed AND inactive, so no
+              // IR convolution is applied on load. AcousticsSection sees the null
+              // active index and switches playback back to anechoic (dry) — the
+              // exact effect of manually collapsing an acoustic card. The user
+              // re-activates via the card's power button.
+              activeSimulationIndex: null,
+              expandedTabIndex: null,
               simulationCounter: Math.max(s.simulationCounter, savedConfigs.length + 1),
+              restoreNonce: s.restoreNonce + 1,
             }),
             false,
             'acousticsSim/restore',

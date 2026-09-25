@@ -12,6 +12,10 @@ export interface DAWLaneClip {
   audioUrl?: string;
   label: string;
   iterationLink?: IterationLink;
+  /** True for a solver-excluded, display-only ghost clip. */
+  excluded?: boolean;
+  /** Why the iteration was excluded. */
+  reason?: string;
 }
 
 interface DAWLaneProps {
@@ -101,18 +105,20 @@ function DAWLaneImpl({
           color={color}
           name={clip.label}
           isMuted={isMuted}
-          isDraggable={isDraggable}
-          isSelected={selectedClipKeys.has(clip.clipKey)}
+          isDraggable={isDraggable && !clip.excluded}
+          isSelected={!clip.excluded && selectedClipKeys.has(clip.clipKey)}
           isOverlapping={overlapFlags.get(clip.clipKey) ?? false}
           isDragging={isDragging && dragPreview?.[clip.clipKey] !== undefined}
           isDuplicating={isDuplicating}
           previewOffsetMs={dragPreview?.[clip.clipKey] ?? 0}
           timelineDurationMs={timelineDurationMs}
           iterationLink={clip.iterationLink}
-          onPointerDownClip={(e) => onClipPointerDown(e, clip)}
+          isExcluded={clip.excluded}
+          excludedReason={clip.reason}
+          onPointerDownClip={clip.excluded ? () => {} : (e) => onClipPointerDown(e, clip)}
           onDelete={() => onDeleteClip(clip.iterationIndex)}
-          onDoubleClick={onClipDoubleClick}
-          onContextMenu={(x, y) => onClipContextMenu(clip.iterationIndex, x, y)}
+          onDoubleClick={clip.excluded ? undefined : onClipDoubleClick}
+          onContextMenu={clip.excluded ? () => {} : (x, y) => onClipContextMenu(clip.iterationIndex, x, y)}
           onHover={() => onClipHover?.(clip.iterationIndex)}
           onHoverEnd={onClipHoverEnd}
         />

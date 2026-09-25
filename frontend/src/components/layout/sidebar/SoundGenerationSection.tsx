@@ -1278,6 +1278,13 @@ export function SoundGenerationSection({
     () => orchestrateInputsSignature(soundConfigs),
     [soundConfigs],
   );
+  // Re-orchestrate only the scenario currently shown in the Sounds step.
+  const activeScenarioId = useMemo(
+    () => filteredCardItems.find((item) => item.originalConfig.scenarioSource)
+      ?.originalConfig.scenarioSource?.scenarioId,
+    [filteredCardItems],
+  );
+
   const showReorchestrate = !isSoundGenerating
     && pendingCardCount === 0
     && hasReorchestratableCards
@@ -1285,10 +1292,10 @@ export function SoundGenerationSection({
     && currentOrchestrateSignature !== orchestrateBaselineSignature;
 
   const handleReorchestrate = useCallback(() => {
-    void reorchestrateTimeline();
-  }, [reorchestrateTimeline]);
+    void reorchestrateTimeline(activeScenarioId);
+  }, [reorchestrateTimeline, activeScenarioId]);
 
-  const footer = (isSoundGenerating || showGenerateAll || hasPendingScenarioCards || showReorchestrate) ? (
+  const footer = (isSoundGenerating || isReorchestrating || showGenerateAll || hasPendingScenarioCards || showReorchestrate) ? (
     <div className="flex flex-col gap-2 pt-2">
       {isSoundGenerating ? (
         /* Progress replaces the generate button while running */
@@ -1297,6 +1304,13 @@ export function SoundGenerationSection({
           progress={soundGenProgressValue}
           statusText={displayProgress}
           onStop={onStopGeneration}
+        />
+      ) : isReorchestrating ? (
+        /* Re-orchestrate shows the same live agent status line (no stop). */
+        <GenerateButton
+          status="generating"
+          progress={soundGenProgressValue || 100}
+          statusText={soundGenProgress || 'Re-orchestrating…'}
         />
       ) : (showGenerateAll || showReorchestrate) ? (
         <div className="flex items-stretch gap-2">

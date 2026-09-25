@@ -1,58 +1,91 @@
 /**
  * Strict constraint resolver for orchestrate parametric schedules.
  *
- * Each (entryId, iteration) slot is a node with at most ONE parent dependency:
- * an absolute `MM:SS` anchor, an `after(ref)` edge, an `alignEnd(ref)` edge, or
- * nothing. Resolution is:
+ * Each (entry, iteration) slot is a node. Its timing relation is one of:
+ *   - absolute `MM:SS`
+ *   - `after(ref[, ref…])`   → start = max(ref.end) + delay
+ *   - `alignEnd(ref[, …])`   → end   = min(ref.start) − delay
+ *   - `overlap(ref[, …])`    → start = max(ref.start) + delay   (parallel)
+ *   - unanchored (empty expression) → keeps a manual timestamp, else excluded.
  *
- *   1. Parse every reference with `parseTriggerRef` (lookup-first — see its doc).
- *   2. Detect dependency cycles (DFS colouring) and deterministically cut one
- *      edge per cycle, anchoring the cut node at its authored timestamp (or the
- *      current timeline frontier when none exists).
- *   3. Topologically resolve the remaining DAG in a single pass:
- *        after(ref)      → refStart + refDuration + delay
- *        alignEnd(ref)   → refStart − thisDuration − delay   (ends `delay` before ref)
- *   4. Validate every parametric slot equals its formula and report deviations.
+ * The resolver is exact and single-pass over the (acyclic) graph. It NEVER
+ * silently falls back to authored MM:SS times. Instead, anything that cannot be
+ * satisfied strictly is EXCLUDED (per iteration) and reported:
+ *   - unknown / out-of-range reference
+ *   - dependency cycle (the iteration closing the cycle is dropped)
+ *   - dependency on an excluded/unresolved iteration
+ *   - missing measured duration (once durations are known)
+ *   - no timing anchor at all
  *
- * This replaces the previous 30-pass fixed-point + speculative safety-net, which
- * silently fell back to authored MM:SS times (that overlap once real audio
- * durations are known) whenever a link failed to resolve.
+ * Entries are scoped by `orchestrateId` so duplicate `entryId`s across scenario
+ * sets cannot collide.
  */
 
-import { parseTriggerRef, isParamExpression } from './utils/trigger-ref';
+import { parseTriggerExpression, isParamExpression, type TriggerOp } from './utils/trigger-ref';
 
 export interface SolverEntryInput {
+  /** Scenario/orchestrate run id — references resolve within the same scope. */
+  orchestrateId?: string;
   entryId: string;
   expressions: string[];
   delays: number[];
   /** 1-based variant copy index per iteration (parallel to `expressions`). */
   variants: number[];
-  /** Duration per 0-based variant copy index; `null` = not yet known. */
+  /** Duration per 0-based variant copy index; `null` = not available. */
   variantDurations: (number | null)[];
-  /** Authored MM:SS (or numeric seconds) hint per iteration — cycle/anchor fallback. */
-  authoredTimestamps?: (string | null | undefined)[];
+  /** False while durations are still theoretical (pre-generation) → defer. */
+  durationsKnown?: boolean;
+  /** Existing manual timestamps (seconds) — kept for unanchored iterations. */
+  manualTimestamps?: (number | null | undefined)[];
 }
 
 export interface SolverEntryResult {
-  /** Resolved start time (seconds) per iteration; `null` = unresolved (caller falls back). */
+  /** Resolved start time (seconds) per iteration; `null` = excluded/unresolved. */
   timestamps: (number | null)[];
-  /** Iteration indices whose parent edge was cut to break a cycle. */
-  cutIndices: number[];
+  /** Iteration indices dropped because a constraint could not be satisfied. */
+  excludedIndices: number[];
+}
+
+export interface SolverExclusion {
+  orchestrateId: string;
+  entryId: string;
+  iterationIndex: number;
+  reason: string;
+}
+
+export interface SolverFallback {
+  orchestrateId: string;
+  entryId: string;
+  iterationIndex: number;
+  reason: string;
+  timestamp: number;
 }
 
 export interface SolverResult {
+  /** Keyed by `scheduleEntryKey(orchestrateId, entryId)`. */
   byEntry: Record<string, SolverEntryResult>;
-  /** Human-readable list of links that could not be honoured. */
+  /** Human-readable list of unresolvable links (informational). */
   brokenLinks: string[];
-  /** Human-readable list of detected cycles (node → parent). */
+  /** Detected dependency cycles (node → parent). */
   cycles: string[];
+  /** Iterations excluded from the schedule, with reasons. */
+  exclusions: SolverExclusion[];
+  /**
+   * Iterations that could not be satisfied strictly but were placed from the
+   * authored / user-edited fallback timestamp. These ARE scheduled (not
+   * ghosted) — the caller surfaces a warning so the deviation is visible.
+   */
+  fallbacks: SolverFallback[];
+  /** True when a real duration is still missing — the caller must not write. */
+  deferred: boolean;
+  deferReason: string | null;
 }
 
 const ABS = /^(\d+):(\d+(?:\.\d+)?)$/;
-const EPS = 0.01;
+const UNRESOLVED_SENTINEL = 999999;
 
-function nodeKey(entryId: string, i: number): string {
-  return `${entryId}::${i}`;
+export function scheduleEntryKey(orchestrateId: string | undefined, entryId: string): string {
+  return `${orchestrateId ?? ''}::${entryId}`;
 }
 
 function parseAbsolute(expr: string): number | null {
@@ -62,200 +95,315 @@ function parseAbsolute(expr: string): number | null {
   return Number.isNaN(n) ? null : n;
 }
 
-function parseAuthored(s: string | null | undefined): number | null {
-  if (s === null || s === undefined || s === '') return null;
-  return parseAbsolute(s);
-}
-
-/** Duration of the variant that plays at `iterIdx` of `entry` (null = unknown). */
 function durationAt(entry: SolverEntryInput, iterIdx: number): number | null {
   const variantIdx = (entry.variants[iterIdx] ?? 1) - 1;
   const d = entry.variantDurations[variantIdx] ?? entry.variantDurations[0];
   return d === null || d === undefined ? null : d;
 }
 
-export function solveOrchestrateSchedule(entries: SolverEntryInput[]): SolverResult {
-  const entryMap = new Map<string, SolverEntryInput>();
-  for (const e of entries) entryMap.set(e.entryId, e);
-  const knownIds = new Set(entryMap.keys());
+interface ParentEdge {
+  key: string; // parent node key
+  op: TriggerOp;
+}
 
+interface Node {
+  entry: SolverEntryInput;
+  iterIdx: number;
+  key: string;
+  absValue: number | null;
+  parents: ParentEdge[];
+  /** True when the expression is a malformed/unknown param formula. */
+  badRef: string | null;
+}
+
+export function solveOrchestrateSchedule(entries: SolverEntryInput[]): SolverResult {
+  const byEntry: Record<string, SolverEntryResult> = {};
   const brokenLinks: string[] = [];
   const cycles: string[] = [];
+  const exclusions: SolverExclusion[] = [];
+  const fallbacks: SolverFallback[] = [];
+  let deferred = false;
+  let deferReason: string | null = null;
 
-  // ── Slot classification ─────────────────────────────────────────────────────
-  interface RefEdge { entryId: string; iterIdx: number; op: 'after' | 'alignEnd' }
-  const absValue = new Map<string, number>();
-  const refEdge = new Map<string, RefEdge>();
-  const parentOf = new Map<string, string | null>();
-  const allKeys: string[] = [];
+  // Group entries by orchestrate scope.
+  const groups = new Map<string, SolverEntryInput[]>();
+  for (const e of entries) {
+    const scope = e.orchestrateId ?? '';
+    const list = groups.get(scope) ?? [];
+    list.push(e);
+    groups.set(scope, list);
+  }
 
-  for (const entry of entries) {
-    entry.expressions.forEach((expr, i) => {
-      const key = nodeKey(entry.entryId, i);
-      allKeys.push(key);
-      const delay = entry.delays[i] ?? 0;
+  for (const [scope, group] of groups) {
+    const entryMap = new Map<string, SolverEntryInput>();
+    for (const e of group) entryMap.set(e.entryId, e);
+    const knownIds = new Set(entryMap.keys());
 
-      const abs = parseAbsolute(expr);
-      if (abs !== null) {
-        absValue.set(key, abs + delay);
-        parentOf.set(key, null);
-        return;
-      }
+    const nodeKey = (entryId: string, i: number): string => `${entryId}::${i}`;
+    const nodes = new Map<string, Node>();
 
-      const ref = parseTriggerRef(expr, knownIds);
-      if (ref) {
-        const refEntry = entryMap.get(ref.entryId)!;
-        if (ref.iterIdx < 0 || ref.iterIdx >= refEntry.expressions.length) {
-          brokenLinks.push(
-            `${entry.entryId}[${i}] ${expr} → iteration ${ref.iterIdx + 1} out of range ` +
-            `(${refEntry.expressions.length} timestamp${refEntry.expressions.length === 1 ? '' : 's'})`,
-          );
-          parentOf.set(key, null);
+    // ── Classify every slot ───────────────────────────────────────────────────
+    for (const entry of group) {
+      entry.expressions.forEach((expr, i) => {
+        const key = nodeKey(entry.entryId, i);
+        const node: Node = { entry, iterIdx: i, key, absValue: null, parents: [], badRef: null };
+        const delay = entry.delays[i] ?? 0;
+
+        const abs = parseAbsolute(expr);
+        if (abs !== null) {
+          node.absValue = abs + delay;
+          nodes.set(key, node);
           return;
         }
-        const parent = nodeKey(ref.entryId, ref.iterIdx);
-        refEdge.set(key, { entryId: ref.entryId, iterIdx: ref.iterIdx, op: ref.op });
-        parentOf.set(key, parent);
+
+        const parsed = parseTriggerExpression(expr, knownIds);
+        if (parsed) {
+          for (const ref of parsed.refs) {
+            const refEntry = entryMap.get(ref.entryId);
+            if (!refEntry || ref.iterIdx < 0 || ref.iterIdx >= refEntry.expressions.length) {
+              node.badRef = `${expr} → unknown/out-of-range reference`;
+              continue;
+            }
+            node.parents.push({ key: nodeKey(ref.entryId, ref.iterIdx), op: parsed.op });
+          }
+          nodes.set(key, node);
+          return;
+        }
+
+        // Any non-empty expression that is neither a parseable absolute time nor a
+        // valid op(...) formula is a malformed link (e.g. the literal "absolute"
+        // the LLM sometimes emits). Report it so it is excluded + surfaced instead
+        // of silently falling through to "no timing anchor". An EMPTY expression is
+        // not malformed — it means the user cleared the trigger (manual schedule).
+        if (expr.trim()) {
+          node.badRef = isParamExpression(expr)
+            ? `${expr} → could not be parsed`
+            : `${expr} → malformed expression`;
+        }
+        nodes.set(key, node);
+      });
+    }
+
+    const excluded = new Map<string, string>(); // nodeKey → reason
+    // Resolved start time per node, declared before cycle detection because
+    // fallback placement can resolve a node mid-traversal.
+    const resolved = new Map<string, number>();
+
+    /** Authored / user-edited timestamp available as a fallback for a slot. */
+    const fallbackTimestamp = (node: Node): number | null => {
+      const m = node.entry.manualTimestamps?.[node.iterIdx];
+      if (m != null && m < UNRESOLVED_SENTINEL && m >= 0) return m;
+      return null;
+    };
+
+    const exclude = (key: string, reason: string): void => {
+      if (excluded.has(key)) return;
+      excluded.set(key, reason);
+      const node = nodes.get(key);
+      exclusions.push({
+        orchestrateId: scope,
+        entryId: node?.entry.entryId ?? key.split('::')[0],
+        iterationIndex: node?.iterIdx ?? parseInt(key.split('::')[1], 10),
+        reason,
+      });
+    };
+
+    /**
+     * A slot that cannot be satisfied strictly is placed from its authored /
+     * user-edited fallback timestamp when one exists (recorded as a fallback —
+     * still scheduled, but surfaced as a warning). Only slots with no fallback
+     * at all are truly excluded (dropped + ghosted).
+     */
+    const placeOrExclude = (key: string, reason: string): void => {
+      if (excluded.has(key) || resolved.has(key)) return;
+      const node = nodes.get(key);
+      const fb = node ? fallbackTimestamp(node) : null;
+      if (node && fb !== null) {
+        resolved.set(key, fb);
+        fallbacks.push({
+          orchestrateId: scope,
+          entryId: node.entry.entryId,
+          iterationIndex: node.iterIdx,
+          reason,
+          timestamp: fb,
+        });
         return;
       }
+      exclude(key, reason);
+    };
 
-      if (isParamExpression(expr)) {
-        brokenLinks.push(`${entry.entryId}[${i}] ${expr} → unknown entry`);
-      }
-      parentOf.set(key, null);
-    });
-  }
-
-  // ── Cycle detection (DFS colouring over parent edges) ───────────────────────
-  const colour = new Map<string, 0 | 1 | 2>();
-  const cutEdges = new Set<string>();
-
-  const dfs = (key: string): void => {
-    colour.set(key, 1);
-    const parent = parentOf.get(key) ?? null;
-    if (parent) {
-      const c = colour.get(parent) ?? 0;
-      if (c === 1) {
-        cutEdges.add(key);
-        cycles.push(`${key} → ${parent}`);
-      } else if (c === 0) {
-        dfs(parent);
+    // Bad references → exclude immediately (or fall back to the authored time).
+    for (const [key, node] of nodes) {
+      if (node.badRef) {
+        placeOrExclude(key, node.badRef);
+        brokenLinks.push(`${node.entry.entryId}[${node.iterIdx}] ${node.badRef}`);
       }
     }
-    colour.set(key, 2);
-  };
-  for (const key of allKeys) {
-    if ((colour.get(key) ?? 0) === 0) dfs(key);
-  }
 
-  // ── Topological resolution (Kahn over the DAG with cut edges removed) ────────
-  const children = new Map<string, string[]>();
-  const indegree = new Map<string, number>();
-  for (const key of allKeys) {
-    const parent = parentOf.get(key) ?? null;
-    const hasLiveParent = parent !== null && !cutEdges.has(key);
-    indegree.set(key, hasLiveParent ? 1 : 0);
-    if (parent !== null) {
-      const list = children.get(parent) ?? [];
-      list.push(key);
-      children.set(parent, list);
-    }
-  }
-
-  const resolved = new Map<string, number>();
-  let frontier = 0; // furthest end reached by any resolved slot (seconds)
-
-  const endOf = (key: string): number => {
-    const ts = resolved.get(key);
-    if (ts === undefined) return 0;
-    const entry = entryMap.get(key.split('::')[0])!;
-    const i = parseInt(key.split('::')[1], 10);
-    const d = durationAt(entry, i) ?? 0;
-    return ts + d;
-  };
-
-  const startFor = (key: string): number | null => {
-    if (absValue.has(key)) return absValue.get(key)!;
-    if (cutEdges.has(key)) {
-      const entry = entryMap.get(key.split('::')[0])!;
-      const i = parseInt(key.split('::')[1], 10);
-      return parseAuthored(entry.authoredTimestamps?.[i]) ?? frontier ?? 0;
-    }
-    const edge = refEdge.get(key);
-    if (!edge) return null; // no dependency and no absolute anchor → unresolved
-    const refStart = resolved.get(nodeKey(edge.entryId, edge.iterIdx));
-    if (refStart === undefined) return null;
-    const refEntry = entryMap.get(edge.entryId)!;
-    const entry = entryMap.get(key.split('::')[0])!;
-    const i = parseInt(key.split('::')[1], 10);
-    const delay = entry.delays[i] ?? 0;
-    if (edge.op === 'after') {
-      const refDur = durationAt(refEntry, edge.iterIdx);
-      if (refDur === null) return null;
-      return refStart + refDur + delay;
-    }
-    const thisDur = durationAt(entry, i);
-    if (thisDur === null) return null;
-    return Math.max(0, refStart - thisDur - delay);
-  };
-
-  const queue: string[] = allKeys.filter((k) => (indegree.get(k) ?? 0) === 0);
-  let guard = 0;
-  while (queue.length > 0 && guard++ < allKeys.length * 4) {
-    const key = queue.shift()!;
-    const start = startFor(key);
-    if (start !== null) {
-      resolved.set(key, start);
-      frontier = Math.max(frontier, endOf(key));
-    }
-    for (const child of children.get(key) ?? []) {
-      const next = (indegree.get(child) ?? 0) - 1;
-      indegree.set(child, next);
-      if (next <= 0) queue.push(child);
-    }
-  }
-
-  // ── Validation: every formula-resolved slot must equal its expected value ────
-  for (const entry of entries) {
-    entry.expressions.forEach((expr, i) => {
-      const key = nodeKey(entry.entryId, i);
-      const actual = resolved.get(key);
-      if (actual === undefined) return;
-      const edge = refEdge.get(key);
-      if (!edge) return;
-      if (cutEdges.has(key)) {
-        brokenLinks.push(
-          `${entry.entryId}[${i}] ${expr} → cycle broken; anchored at ${actual.toFixed(2)}s`,
-        );
-        return;
+    // ── Cycle detection (DFS colouring over parent edges) ─────────────────────
+    // A back-edge child closes a cycle → exclude that child iteration.
+    {
+      const colour = new Map<string, 0 | 1 | 2>();
+      const dfs = (key: string): void => {
+        if (excluded.has(key)) return;
+        colour.set(key, 1);
+        const node = nodes.get(key);
+        if (node) {
+          for (const parent of node.parents) {
+            if (excluded.has(parent.key)) continue;
+            const c = colour.get(parent.key) ?? 0;
+            if (c === 1) {
+              cycles.push(`${key} → ${parent.key}`);
+              // Both endpoints of the cycle are unsatisfiable. Placing BOTH at
+              // their authored times keeps the authored order intact (falling
+              // back only the child would let the ancestor resolve strictly from
+              // an unrelated parent and invert/overlap the authored sequence).
+              placeOrExclude(key, `cycle broken (${key} → ${parent.key})`);
+              placeOrExclude(parent.key, `cycle broken (${key} → ${parent.key})`);
+            } else if (c === 0) {
+              dfs(parent.key);
+            }
+          }
+        }
+        colour.set(key, 2);
+      };
+      for (const key of nodes.keys()) {
+        if ((colour.get(key) ?? 0) === 0) dfs(key);
       }
-      const refEntry = entryMap.get(edge.entryId)!;
-      const refStart = resolved.get(nodeKey(edge.entryId, edge.iterIdx));
-      if (refStart === undefined) return;
-      const delay = entry.delays[i] ?? 0;
-      const expected = edge.op === 'after'
-        ? refStart + (durationAt(refEntry, edge.iterIdx) ?? 0) + delay
-        : Math.max(0, refStart - (durationAt(entry, i) ?? 0) - delay);
-      if (Math.abs(actual - expected) > EPS) {
-        brokenLinks.push(
-          `${entry.entryId}[${i}] ${expr} → actual=${actual.toFixed(2)}s expected=${expected.toFixed(2)}s`,
-        );
+    }
+
+    // ── Propagate exclusions: a node depending on an excluded node is excluded ─
+    {
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const [key, node] of nodes) {
+          if (excluded.has(key) || resolved.has(key)) continue;
+          const badParent = node.parents.find((p) => excluded.has(p.key));
+          if (badParent) {
+            placeOrExclude(key, `dependency excluded (${badParent.key})`);
+            changed = true;
+          }
+        }
       }
-    });
+    }
+
+    // ── Resolve the remaining DAG (multi-parent, single pass fixpoint) ────────
+    const endOf = (key: string): number => {
+      const start = resolved.get(key);
+      const node = nodes.get(key);
+      if (start === undefined || !node) return 0;
+      return start + (durationAt(node.entry, node.iterIdx) ?? 0);
+    };
+
+    const resolveNode = (node: Node): number | 'wait' | 'exclude' | 'defer' => {
+      if (node.absValue !== null) return node.absValue;
+
+      if (node.parents.length === 0) {
+        const manual = node.entry.manualTimestamps?.[node.iterIdx];
+        if (manual != null && manual < UNRESOLVED_SENTINEL && manual >= 0) return manual;
+        // No anchor at all — cannot place this iteration.
+        return 'exclude';
+      }
+
+      const delay = node.entry.delays[node.iterIdx] ?? 0;
+      const op = node.parents[0].op;
+
+      const starts: number[] = [];
+      const ends: number[] = [];
+      for (const parent of node.parents) {
+        const ps = resolved.get(parent.key);
+        if (ps === undefined) return 'wait';
+        starts.push(ps);
+        ends.push(endOf(parent.key));
+      }
+
+      if (op === 'overlap') return Math.max(...starts) + delay;
+
+      if (op === 'after') {
+        for (const parent of node.parents) {
+          const parentNode = nodes.get(parent.key);
+          if (!parentNode) return 'wait';
+          if (parentNode.entry.durationsKnown === false) return 'defer';
+          if (durationAt(parentNode.entry, parentNode.iterIdx) === null) return 'exclude';
+        }
+        return Math.max(...ends) + delay;
+      }
+
+      // alignEnd: this iteration ends `delay` before the earliest referenced start.
+      if (node.entry.durationsKnown === false) return 'defer';
+      const thisDur = durationAt(node.entry, node.iterIdx);
+      if (thisDur === null) return 'exclude';
+      return Math.max(0, Math.min(...starts) - thisDur - delay);
+    };
+
+    let changed = true;
+    let guard = 0;
+    while (changed && guard++ < nodes.size * 4) {
+      changed = false;
+      for (const [key, node] of nodes) {
+        if (excluded.has(key) || resolved.has(key)) continue;
+        const result = resolveNode(node);
+        if (result === 'wait') continue;
+        if (result === 'defer') {
+          // A real duration is still missing, but if the slot has an authored /
+          // user-edited time, place it there (scheduled + warning) instead of
+          // deferring the whole bake.
+          const fb = fallbackTimestamp(node);
+          if (fb !== null) {
+            resolved.set(key, fb);
+            fallbacks.push({
+              orchestrateId: scope,
+              entryId: node.entry.entryId,
+              iterationIndex: node.iterIdx,
+              reason: 'missing measured duration — authored time used',
+              timestamp: fb,
+            });
+            changed = true;
+            continue;
+          }
+          deferred = true;
+          deferReason = deferReason ?? `missing measured duration for ${node.entry.entryId}[${node.iterIdx}]`;
+          continue;
+        }
+        if (result === 'exclude') {
+          const hasRealParents = node.parents.length > 0;
+          const reason = hasRealParents
+            ? 'missing measured duration'
+            : 'no timing anchor';
+          placeOrExclude(key, reason);
+          changed = true;
+          continue;
+        }
+        resolved.set(key, result);
+        changed = true;
+      }
+    }
+
+    if (deferred) {
+      // Do not persist a partial schedule; the caller re-bakes once durations exist.
+      break;
+    }
+
+    // Leftovers that neither resolved nor were excluded: place from the authored
+    // fallback if available, otherwise exclude.
+    for (const [key, node] of nodes) {
+      if (resolved.has(key) || excluded.has(key)) continue;
+      placeOrExclude(key, node.parents.length > 0 ? 'unresolved dependency' : 'no timing anchor');
+    }
+
+    // ── Project per-entry results ─────────────────────────────────────────────
+    for (const entry of group) {
+      const timestamps: (number | null)[] = entry.expressions.map(
+        (_, i) => resolved.get(nodeKey(entry.entryId, i)) ?? null,
+      );
+      const excludedIndices: number[] = [];
+      entry.expressions.forEach((_, i) => {
+        if (excluded.has(nodeKey(entry.entryId, i))) excludedIndices.push(i);
+      });
+      byEntry[scheduleEntryKey(scope, entry.entryId)] = { timestamps, excludedIndices };
+    }
   }
 
-  // ── Project per-entry results ───────────────────────────────────────────────
-  const byEntry: Record<string, SolverEntryResult> = {};
-  for (const entry of entries) {
-    const timestamps: (number | null)[] = entry.expressions.map(
-      (_, i) => resolved.get(nodeKey(entry.entryId, i)) ?? null,
-    );
-    const cutIndices: number[] = [];
-    entry.expressions.forEach((_, i) => {
-      if (cutEdges.has(nodeKey(entry.entryId, i))) cutIndices.push(i);
-    });
-    byEntry[entry.entryId] = { timestamps, cutIndices };
-  }
-
-  return { byEntry, brokenLinks, cycles };
+  return { byEntry, brokenLinks, cycles, exclusions, fallbacks, deferred, deferReason };
 }

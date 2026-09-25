@@ -20,11 +20,17 @@ export interface RightSidebarStoreState {
    * (simulation) section; the Listeners section fills the remainder.
    */
   simulationAreaRatio: number;
+  /**
+   * Monotonic nonce bumped to flash a transient hint on the collapsed expand
+   * handle (e.g. "sounds are being convolved"). Transient — never persisted.
+   */
+  convolutionHintNonce: number;
   requestExpand: () => void;
   requestCollapse: () => void;
   setRightClickActive: (active: boolean) => void;
   setSimulationAreaRatio: (ratio: number) => void;
   setSidebarWidth: (width: number) => void;
+  requestConvolutionHint: () => void;
 }
 
 export const useRightSidebarStore = create<RightSidebarStoreState>()(
@@ -35,8 +41,15 @@ export const useRightSidebarStore = create<RightSidebarStoreState>()(
         width: UI_SIDEBAR_RESIZE.RIGHT_DEFAULT_WIDTH,
         rightClickActive: false,
         simulationAreaRatio: UI_SIDEBAR_RESIZE.RIGHT_SPLIT_DEFAULT_RATIO,
+        convolutionHintNonce: 0,
         requestExpand: () => set({ isExpanded: true }, false, 'rightSidebar/expand'),
         requestCollapse: () => set({ isExpanded: false }, false, 'rightSidebar/collapse'),
+        requestConvolutionHint: () =>
+          set(
+            (state) => ({ convolutionHintNonce: state.convolutionHintNonce + 1 }),
+            false,
+            'rightSidebar/requestConvolutionHint',
+          ),
         setRightClickActive: (active) =>
           set({ rightClickActive: active }, false, 'rightSidebar/setRightClickActive'),
         setSimulationAreaRatio: (ratio) =>

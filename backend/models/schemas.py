@@ -19,6 +19,7 @@ from config.constants import PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE
 from config.constants import PYROOMACOUSTICS_RAY_TRACING_N_RAYS
 from pydantic import BaseModel
 from pydantic import Field
+from pydantic import field_validator
 
 
 class PromptRequest(BaseModel):
@@ -340,6 +341,39 @@ class SoundscapeSoundEvent(BaseModel):
     # pinned at the origin — the sphere manager otherwise relocates [0,0,0]).
     pinned: bool = False
 
+    @field_validator("timestamps", mode="before")
+    @classmethod
+    def _coerce_timestamps(cls, v):
+        """Tolerate legacy/`MM:SS` timestamp strings so an old payload cannot 422.
+
+        The client normalizes to numbers, but an older browser's persisted state
+        or a legacy saved file may still carry `"00:05"`-style values.
+        """
+        if v is None or not isinstance(v, list):
+            return v
+        out: list[float] = []
+        for item in v:
+            if isinstance(item, bool):
+                continue
+            if isinstance(item, (int, float)):
+                out.append(float(item))
+                continue
+            s = str(item).strip()
+            if not s:
+                continue
+            if ":" in s:
+                mm, _, ss = s.partition(":")
+                try:
+                    out.append(float(mm) * 60 + float(ss or 0))
+                except ValueError:
+                    continue
+            else:
+                try:
+                    out.append(float(s))
+                except ValueError:
+                    continue
+        return out
+
 
 class SoundscapeReceiver(BaseModel):
     """Serializable receiver position"""
@@ -448,6 +482,10 @@ class SoundscapeData(BaseModel):
     muted_sounds: Optional[list[str]] = None
     # Sound ID currently soloed in the DAW timeline (None = none)
     soloed_sound: Optional[str] = None
+    # Solver-excluded iteration indices per sound ID (timing link unsatisfiable)
+    excluded_iterations: Optional[dict] = None
+    # Reason per excluded iteration, keyed f"{sound_id}-{iteration_index}"
+    exclusion_reasons: Optional[dict] = None
 
 
 class SoundscapeSaveRequest(BaseModel):

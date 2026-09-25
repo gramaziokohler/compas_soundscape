@@ -10,6 +10,8 @@ interface DAWTrackHeadProps {
   displayName: string;
   groupLabel: string;
   clipCount: number;
+  /** Number of iterations excluded by the orchestrate solver for this track. */
+  excludedCount?: number;
   trackHeight: number;
   isMuted: boolean;
   isSoloed: boolean;
@@ -36,6 +38,7 @@ function DAWTrackHeadImpl({
   displayName,
   groupLabel,
   clipCount,
+  excludedCount,
   trackHeight,
   isMuted,
   isSoloed,
@@ -139,6 +142,18 @@ function DAWTrackHeadImpl({
         >
           {displayName}
         </span>
+        {(excludedCount ?? 0) > 0 && (
+          <span
+            title={`${excludedCount} iteration(s) excluded — timing link could not be satisfied`}
+            style={{
+              fontSize: '8px', fontWeight: 700, lineHeight: 1, color: 'var(--color-error)',
+              border: '1px solid var(--color-error)', borderRadius: '3px', padding: '1px 3px',
+              flexShrink: 0,
+            }}
+          >
+            {excludedCount}!
+          </span>
+        )}
         <button
           ref={kebabRef}
           onClick={openMenu}

@@ -25,7 +25,9 @@ import type { SoundState, SoundGenerationConfig } from '@/types';
 import type { IterationLink } from '@/types/audio';
 import { parseSoundCopyIndex } from '@/lib/audio/utils/variant-sound-id';
 import { isParamExpression } from '@/lib/audio/utils/trigger-ref';
-import { solveOrchestrateSchedule } from '@/lib/audio/orchestrate-schedule';
+import { solveOrchestrateSchedule, scheduleEntryKey } from '@/lib/audio/orchestrate-schedule';
+import { serializeTrackOverlaps } from '@/lib/audio/utils/serialize-track-overlaps';
+import { parseAuthoredSeconds } from '@/lib/audio/utils/timeline-utils';
 import { pausePreviewInstance, pauseAllPreviewInstances } from '@/lib/audio/previewRegistry';
 import { AUDIO_PLAYBACK, AUDIO_TIMELINE, AUDIO_OUTPUT, DEFAULT_DBFS, DEFAULT_MAXIMUM_FOLEY_SOUNDS, TTS_DEFAULT_LANGUAGE } from '@/utils/constants';
 import { apiService } from '@/services/api';
@@ -113,6 +115,14 @@ export interface AudioControlsStoreState {
    * Used so that DAW blocks show the correct visual width when variants have different lengths.
    */
   soundIterationDurations: Record<string, number[]>;
+  /**
+   * Per-sound iteration indices the orchestrate solver EXCLUDED because a link
+   * could not be satisfied strictly (cycle, bad ref, missing duration, no
+   * anchor). Keyed by soundId; persisted so the DAW can mark them across refresh.
+   */
+  excludedIterations: Record<string, number[]>;
+  /** Reason per excluded iteration. Key = `${soundId}-${iterationIndex}`. */
+  exclusionReasons: Record<string, string>;
   /** True while bakeOrchestrateSchedule is asynchronously computing; used to show a loading UI. */
   isBakingSchedule: boolean;
   /** True when bake ran before all variant buffers were loaded; DFS is deferred.
@@ -121,6 +131,12 @@ export interface AudioControlsStoreState {
   /** Internal: set to true by playAll() so PlaybackSchedulerService applies stagger.
    *  Consumed and cleared on the first updateSoundPlayback call. */
   _pendingPlayAllStagger: boolean;
+  /**
+   * Monotonic nonce bumped on every playAll(). Lets UI (e.g. the right sidebar
+   * handle) react to a "Play all" press without subscribing to play state.
+   * Transient — never persisted.
+   */
+  playAllNonce: number;
   /** Internal: true while sounds are actively being generated (suppress bake mid-gen). */
   _generationInProgress: boolean;
   /**
@@ -210,8 +226,23 @@ export interface AudioControlsStoreState {
   restoreVolumes: (volumes: Record<string, number>) => void;
   /** Restore the stored per-track timestamps after a soundscape load. Tracks without an entry stay "auto". */
   restoreSoundTimestamps: (timestamps: Record<string, number[]>) => void;
+  /** Restore persisted per-iteration exclusions after a soundscape load. */
+  restoreExclusions: (excluded: Record<string, number[]>, reasons: Record<string, string>) => void;
+  /**
+   * Remove one iteration from the exclusion set (and its reason). Used when the
+   * user manually places/duplicates a clip onto an excluded slot — the hatched
+   * ghost disappears because the user has taken over that iteration.
+   */
+  clearIterationExclusion: (soundId: string, iterationIndex: number) => void;
   /** Remove a track's stored schedule entirely — it returns to its auto default loop. */
   clearSoundTimestampsEntry: (soundId: string) => void;
+  /**
+   * Drop every stored per-sound schedule/state for the given ids. Used right
+   * after a fresh generation so a reused sound id (config indices are recycled
+   * across scenarios/models) cannot inherit a stale manual timestamp from a
+   * previous soundscape via the persisted `soundTimestamps`.
+   */
+  clearSoundTimestampsFor: (soundIds: string[]) => void;
   restoreIterationLinks: (links: Record<string, IterationLink>) => void;
   restoreMuteSolo: (mutedSoundIds: string[], soloedSoundId: string | null) => void;
   /**
@@ -250,6 +281,8 @@ export const audioControlsPartialize = (state: AudioControlsStoreState) => ({
   maximumFoleySounds: state.maximumFoleySounds,
   soundTimestamps: { ...state.soundTimestamps },
   soundLoopable: { ...state.soundLoopable },
+  excludedIterations: { ...state.excludedIterations },
+  exclusionReasons: { ...state.exclusionReasons },
 });
 
 // Module-level counter used to cancel superseded bake calls (set inside setTimeout).
@@ -261,15 +294,10 @@ let _pendingBakeOnDone: (() => void) | null = null;
 // Signature of the last broken-link set surfaced to the user, so a persistent
 // failure (e.g. a cycle) does not fire a toast on every re-bake.
 let _lastReportedBrokenLinks = '';
-
-/** Parse an `MM:SS` (or plain seconds) trigger hint; `null` when absent/invalid. */
-function parseMMSSTime(s: string | null | undefined): number | null {
-  if (s === null || s === undefined || s === '') return null;
-  const m = s.match(/^(\d+):(\d+(?:\.\d+)?)$/);
-  if (m) return parseInt(m[1], 10) * 60 + parseFloat(m[2]);
-  const n = parseFloat(s);
-  return Number.isNaN(n) ? null : n;
-}
+// Signature of the last same-track overlap serialization, so it does not re-toast.
+let _lastReportedSelfOverlap = '';
+// Signature of the last authored-fallback set, so the warning does not re-toast.
+let _lastReportedFallbacks = '';
 
 export const useAudioControlsStore = create<AudioControlsStoreState>()(
   persist(
@@ -296,9 +324,12 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
         soundLoopable: {},
         loopAnalysisInProgress: {},
         soundIterationDurations: {},
+        excludedIterations: {},
+        exclusionReasons: {},
         isBakingSchedule: false,
         isDeferredCycleBakePending: false,
         _pendingPlayAllStagger: false,
+        playAllNonce: 0,
         _generationInProgress: false,
         iterationLinks: {},
         orchestrateResult: null,
@@ -861,7 +892,13 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
           const { _soundConfigs, _generatedSounds, soundTrims, soundTimestamps, soundBufferDurations, soundIterationDurations } = get();
 
           if (!_soundConfigs.some(c => c.orchestrateMeta)) {
-            if (bakeId === _pendingBakeId) set({ isBakingSchedule: false }, false, 'audio/bakeOrchestrateSchedule/noop');
+            if (bakeId === _pendingBakeId) {
+              set(
+                { isBakingSchedule: false, excludedIterations: {}, exclusionReasons: {} },
+                false,
+                'audio/bakeOrchestrateSchedule/noop',
+              );
+            }
             const cb = _pendingBakeOnDone; _pendingBakeOnDone = null; cb?.();
             return;
           }
@@ -885,8 +922,22 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             variantDurations: (number | null)[];
             /** Resolved start time per expression/iteration slot. null = not yet resolved. */
             timestamps: (number | null)[];
+            /** Iteration indices the solver excluded (unsatisfiable constraint). */
+            excludedIndices: number[];
+            /** False while durations are still theoretical (pre-generation). */
+            durationsKnown: boolean;
+            /** Existing manual schedule for this sound (seconds), per iteration. */
+            manualTimestamps: (number | null | undefined)[];
+            /** Solver expressions (backgrounds are pinned to a constant anchor). */
+            expressions: string[];
+            /** Solver delays, parallel to `expressions`. */
+            delays: number[];
+            /** True for background tracks — anchor-only, never schedule-written. */
+            isBackground: boolean;
           };
 
+          // Keyed by `orchestrateId::entryId` so duplicate entry ids across
+          // scenario sets can never collide.
           const entryMap = new Map<string, EntryInfo>();
 
           _soundConfigs.forEach((config, configIndex) => {
@@ -896,7 +947,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             // auto/back-to-back schedule and are never overwritten by the bake.
             // Normalize category to handle variations like "background sound" / "background_sound".
             const normCat = (config.category ?? '').toLowerCase().replace(/[\s_-]+/g, '_');
-            if (normCat === 'background' || normCat === 'background_sound') return;
+            const isBackground = normCat === 'background' || normCat === 'background_sound';
 
             const soundId = promptPrimary.get(configIndex)?.id ?? null;
             const generatedForConfig = _generatedSounds.filter((s: any) => s.prompt_index === configIndex);
@@ -911,12 +962,15 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
               const rawDur = soundBufferDurations[s.id] ?? s.duration ?? 0;
               if (rawDur <= 0) return;
               const copyIdx = parseSoundCopyIndex(s.id, s.copy_index);
-              // Trim is keyed by the primary timeline sound id (sound card level)
+              // Trim is keyed by the primary timeline sound id (sound card level).
+              // Trim values are FRACTIONS (0-1) of the buffer, so the effective
+              // duration is `rawDur * (end - start)` — matching timeline-utils.
               const trim = soundId ? soundTrims[soundId] : undefined;
               let effectiveDur = rawDur;
               if (trim) {
-                const trimEnd = trim.end > 0 ? trim.end : rawDur;
-                effectiveDur = Math.max(0, trimEnd - (trim.start ?? 0));
+                const startFrac = Math.max(0, Math.min(1, trim.start ?? 0));
+                const endFrac = trim.end > 0 ? Math.min(1, trim.end) : 1;
+                effectiveDur = Math.max(0, rawDur * (endFrac - startFrac));
               }
               if (copyIdx >= 0 && copyIdx < variantDurations.length) {
                 variantDurations[copyIdx] = effectiveDur;
@@ -924,153 +978,229 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
               if (variantDurations[0] === null) variantDurations[0] = effectiveDur;
             });
 
-            // Theoretical fallback: when no real durations are available yet
-            // (pre-generation bake), use the config's duration estimate so
-            // parametric after()/alignEnd() links can still resolve.
-            if (variantDurations[0] === null) {
-              const theoretical = (config as any).duration ?? 5;
-              for (let ci = 0; ci < variantDurations.length; ci++) {
-                variantDurations[ci] = theoretical;
-              }
-            }
+            // Durations are only "known" once EVERY generated copy has a decoded
+            // buffer — otherwise the solver defers instead of guessing from the
+            // backend's requested length.
+            const durationsKnown =
+              generatedForConfig.length > 0 &&
+              generatedForConfig.every((s: any) => soundBufferDurations[s.id] != null);
 
-            const numIterations = meta.trigger.expression.length;
-            entryMap.set(meta.entryId, {
+            // Backgrounds are pinned to a constant anchor at t=0 so other sounds
+            // may reference them (e.g. `overlap(hvac_hum_1)`). They are never
+            // schedule-written — their timeline loop is generated downstream.
+            const expressions = isBackground ? ['0'] : meta.trigger.expression;
+            const delays = isBackground ? [0] : (meta.trigger.delay ?? []);
+            // Fallback for slots the parametric graph cannot satisfy strictly:
+            // the user's DAW edits win, otherwise the entry's authored times
+            // (MM:SS or seconds) keep the track sequenced instead of dropping it.
+            const editedTimestamps = soundId ? soundTimestamps[soundId] : undefined;
+            const authoredTimestamps = (meta.timestamps ?? []).map((t) => parseAuthoredSeconds(t));
+            entryMap.set(scheduleEntryKey(meta.orchestrateId, meta.entryId), {
               configIndex,
               soundId,
               meta,
               variantDurations,
-              timestamps: new Array(numIterations).fill(null),
+              timestamps: new Array(expressions.length).fill(null),
+              excludedIndices: [],
+              durationsKnown: isBackground ? true : durationsKnown,
+              manualTimestamps: editedTimestamps && editedTimestamps.length > 0
+                ? editedTimestamps
+                : authoredTimestamps,
+              expressions,
+              delays,
+              isBackground,
             });
           });
 
-          // Only check durations for variant copies actually referenced by
-          // meta.variants, and only for entries that have generated sounds.
-          // Unreferenced copies and configs without sounds don't block the DFS.
-          const blockingEntries: string[] = [];
-          const allDurationsKnown = !Array.from(entryMap.entries())
-            .filter(([, entry]) => entry.soundId !== null)
-            .some(([eid, entry]) =>
-              entry.meta.variants.some((variantOneBased, vIdx) => {
-                const vi = variantOneBased - 1;
-                const dur = vi >= 0 && vi < entry.variantDurations.length
-                  ? entry.variantDurations[vi]
-                  : entry.variantDurations[0];
-                const blocked = dur === null;
-                if (blocked) blockingEntries.push(`${eid}[iter${vIdx}→variant${variantOneBased}]`);
-                return blocked;
-              })
-            );
-
-          // ── Strict constraint resolution (lib/audio/orchestrate-schedule) ──────
-          // Every slot is resolved by its exact formula. Cycles are detected and
-          // broken deterministically; any broken link is reported — never silently
-          // replaced with the authored MM:SS times (which overlap once real audio
-          // durations exceed the nominal ones).
-          const solver = solveOrchestrateSchedule(
-            Array.from(entryMap.entries()).map(([eid, entry]) => ({
-              entryId: eid,
-              expressions: entry.meta.trigger.expression,
-              delays: entry.meta.trigger.delay ?? [],
-              variants: entry.meta.variants ?? [],
-              variantDurations: entry.variantDurations,
-              authoredTimestamps: entry.meta.timestamps ?? [],
-            })),
-          );
-
-          entryMap.forEach((entry, eid) => {
-            const resolved = solver.byEntry[eid];
-            if (resolved) entry.timestamps = resolved.timestamps;
-          });
-
-          // Fallback for slots the solver could not resolve (unknown duration,
-          // missing dependency, or a dead parametric edge). Priority:
-          //   0. a manually-dragged timestamp preserved in soundTimestamps
-          //   1. the authored MM:SS timestamp for that iteration
-          //   2. place after the last resolved content.
-          let fallbackT = 0;
-          entryMap.forEach(({ timestamps: ts }) => {
-            ts.forEach(t => { if (t !== null) fallbackT = Math.max(fallbackT, t); });
-          });
-          entryMap.forEach((entry) => {
-            entry.timestamps.forEach((t, i) => {
-              if (t !== null) return;
-              if (entry.soundId && soundTimestamps[entry.soundId]?.[i] != null) {
-                const existing = soundTimestamps[entry.soundId][i];
-                if (existing < 99999 && existing >= 0) {
-                  entry.timestamps[i] = existing;
-                  fallbackT = Math.max(fallbackT, existing);
-                  return;
-                }
-              }
-              const fromTs = parseMMSSTime(entry.meta.timestamps?.[i]);
-              if (fromTs !== null) {
-                entry.timestamps[i] = fromTs;
-                fallbackT = Math.max(fallbackT, fromTs);
-                return;
-              }
-              fallbackT += 5;
-              entry.timestamps[i] = fallbackT;
-            });
-          });
-
-          // Surface broken links once per distinct set, and only on an
-          // authoritative bake (all real durations known) to avoid toast spam.
-          if (solver.brokenLinks.length > 0 || solver.cycles.length > 0) {
-            console.warn(
-              `[bakeOrchestrateSchedule] ${solver.brokenLinks.length} broken parametric link(s)` +
-              (solver.cycles.length ? ` / ${solver.cycles.length} cycle(s):\n  ${solver.cycles.join('\n  ')}` : '') +
-              `\n  ${solver.brokenLinks.join('\n  ')}`,
-            );
-            const signature = [...solver.brokenLinks, ...solver.cycles].join('|');
-            if (allDurationsKnown && signature !== _lastReportedBrokenLinks) {
-              _lastReportedBrokenLinks = signature;
-              void import('@/store/errorsStore').then(({ notifyError }) => {
-                notifyError(
-                  `Orchestrate: ${solver.brokenLinks.length + solver.cycles.length} timing link(s) could not be strictly honoured (cycle or missing dependency).`,
-                  'warning',
-                );
+          // ── Strict constraint resolution + same-track serialization ───────────
+          // Every slot is resolved by its exact formula (after / alignEnd /
+          // overlap). Anything unsatisfiable is EXCLUDED per iteration and
+          // reported. Then one sound track can never have two iterations playing
+          // at once, so overlapping iterations are serialized. A serialized param
+          // slot deviates from its formula, so it is pinned as an absolute anchor
+          // and the whole graph is RE-SOLVED — otherwise dependents keep the
+          // pre-nudge end and can overlap the iteration that was pushed forward.
+          const buildSolverInputs = (overrides: Map<string, number>) =>
+            Array.from(entryMap.values()).map((entry) => {
+              const entryKey = scheduleEntryKey(entry.meta.orchestrateId, entry.meta.entryId);
+              const expressions = entry.expressions.map((e, i) => {
+                const ov = overrides.get(`${entryKey}::${i}`);
+                return ov === undefined ? e : ov.toFixed(3);
               });
+              const delays = entry.delays.map((d, i) =>
+                overrides.has(`${entryKey}::${i}`) ? 0 : d,
+              );
+              return {
+                orchestrateId: entry.meta.orchestrateId,
+                entryId: entry.meta.entryId,
+                expressions,
+                delays,
+                variants: entry.meta.variants ?? [],
+                variantDurations: entry.variantDurations,
+                durationsKnown: entry.durationsKnown,
+                manualTimestamps: entry.manualTimestamps,
+              };
+            });
+
+          const projectEntries = (result: ReturnType<typeof solveOrchestrateSchedule>) => {
+            entryMap.forEach((entry) => {
+              const resolved = result.byEntry[scheduleEntryKey(entry.meta.orchestrateId, entry.meta.entryId)];
+              if (resolved) {
+                entry.timestamps = resolved.timestamps;
+                entry.excludedIndices = resolved.excludedIndices;
+              }
+            });
+          };
+
+          const serializeEntries = (): number => {
+            let paramNudges = 0;
+            entryMap.forEach((entry) => {
+              if (entry.isBackground) return;
+              const exprs = entry.meta.trigger.expression;
+              const durations = entry.timestamps.map((_, i) => {
+                const variantIdx = (entry.meta.variants[i] ?? 1) - 1;
+                return (entry.variantDurations[variantIdx] ?? entry.variantDurations[0] ?? 0) as number;
+              });
+              const paramFlags = entry.timestamps.map((_, i) => isParamExpression(exprs[i]));
+              const result = serializeTrackOverlaps(entry.timestamps, durations, paramFlags);
+              entry.timestamps = result.starts;
+              paramNudges += result.paramNudges;
+            });
+            return paramNudges;
+          };
+
+          const overrides = new Map<string, number>();
+          const MAX_SERIALIZE_PASSES = 6;
+          let serializedParamCount = 0;
+          let solver = solveOrchestrateSchedule(buildSolverInputs(overrides));
+
+          for (let pass = 0; pass < MAX_SERIALIZE_PASSES && !solver.deferred; pass++) {
+            projectEntries(solver);
+            serializedParamCount = Math.max(serializedParamCount, serializeEntries());
+
+            // Feed any serialized slot back as a fixed anchor so dependents move
+            // with it, then re-solve. Stop once nothing new was nudged.
+            let changed = false;
+            entryMap.forEach((entry) => {
+              const entryKey = scheduleEntryKey(entry.meta.orchestrateId, entry.meta.entryId);
+              const resolved = solver.byEntry[entryKey];
+              if (!resolved) return;
+              entry.timestamps.forEach((t, i) => {
+                const s = resolved.timestamps[i];
+                if (t !== null && s !== null && Math.abs(t - s) > 0.001) {
+                  const nk = `${entryKey}::${i}`;
+                  if (!overrides.has(nk)) {
+                    overrides.set(nk, t);
+                    changed = true;
+                  }
+                }
+              });
+            });
+            if (!changed) break;
+            solver = solveOrchestrateSchedule(buildSolverInputs(overrides));
+          }
+
+          // Normalize to the final solver result (the loop may have exited right
+          // after a re-solve).
+          if (!solver.deferred) {
+            projectEntries(solver);
+            serializedParamCount = Math.max(serializedParamCount, serializeEntries());
+          }
+
+          if (solver.deferred) {
+            // A real measured duration is still missing — never persist a guessed
+            // schedule. A later buffer-load bake will run authoritatively.
+            if (bakeId === _pendingBakeId) {
+              set(
+                { isBakingSchedule: false, isDeferredCycleBakePending: true },
+                false,
+                'audio/bakeOrchestrateSchedule/deferred',
+              );
+            }
+            const cb = _pendingBakeOnDone; _pendingBakeOnDone = null; cb?.();
+            return;
+          }
+
+          // Map the solver's per-iteration exclusions onto generated sound ids so
+          // the DAW can mark them and the schedule can skip them.
+          const newExcludedIterations: Record<string, number[]> = {};
+          const newExclusionReasons: Record<string, string> = {};
+          solver.exclusions.forEach((ex) => {
+            const entry = entryMap.get(scheduleEntryKey(ex.orchestrateId, ex.entryId));
+            if (!entry?.soundId) return;
+            const list = newExcludedIterations[entry.soundId] ?? [];
+            if (!list.includes(ex.iterationIndex)) list.push(ex.iterationIndex);
+            newExcludedIterations[entry.soundId] = list;
+            newExclusionReasons[`${entry.soundId}-${ex.iterationIndex}`] = ex.reason;
+          });
+
+          // Only exclusions that map to a real generated sound are user-visible —
+          // the raw solver count also includes configs whose audio was never made.
+          const mappedExclusionCount = Object.values(newExcludedIterations)
+            .reduce((n, list) => n + list.length, 0);
+
+          // Surface excluded iterations once per distinct set, and only on an
+          // authoritative bake (all real durations known) to avoid toast spam.
+          if (mappedExclusionCount > 0 || solver.cycles.length > 0) {
+            const detail = solver.exclusions
+              .map((ex) => `${ex.entryId}[${ex.iterationIndex}] ${ex.reason}`)
+              .join('\n  ');
+            console.warn(
+              `[bakeOrchestrateSchedule] ${mappedExclusionCount} excluded iteration(s)` +
+              ` (solver reported ${solver.exclusions.length})` +
+              (solver.cycles.length ? ` / ${solver.cycles.length} cycle(s):\n  ${solver.cycles.join('\n  ')}` : '') +
+              `\n  ${detail}`,
+            );
+            const signature = [...solver.cycles, ...solver.exclusions.map((e) => `${e.entryId}-${e.iterationIndex}-${e.reason}`)].join('|');
+            if (signature !== _lastReportedBrokenLinks) {
+              _lastReportedBrokenLinks = signature;
+              if (mappedExclusionCount > 0) {
+                void import('@/store/errorsStore').then(({ notifyError }) => {
+                  notifyError(
+                    `Orchestrate: ${mappedExclusionCount} iteration(s) excluded (timing link could not be satisfied). Marked in the timeline.`,
+                    'warning',
+                  );
+                });
+              }
             }
           } else {
             _lastReportedBrokenLinks = '';
           }
 
-          // Conservative per-track monotonic guard: only nudge iterations that
-          // carry NO parametric dependency, so it can never violate an
-          // after()/alignEnd() link.
-          {
-            let overlapPass = 0;
-            let overlapsFixed = true;
-            while (overlapsFixed && overlapPass++ < 100) {
-              overlapsFixed = false;
-              entryMap.forEach((entry) => {
-                const exprs = entry.meta.trigger.expression;
-                const items = entry.timestamps
-                  .map((t, i) => ({
-                    idx: i,
-                    start: t,
-                    dur: (() => {
-                      const variantIdx = (entry.meta.variants[i] ?? 1) - 1;
-                      return (entry.variantDurations[variantIdx] ?? entry.variantDurations[0] ?? 0) as number;
-                    })(),
-                    param: isParamExpression(exprs[i]),
-                  }))
-                  .filter(it => it.start !== null && it.dur > 0)
-                  .sort((a, b) => a.start! - b.start!);
-
-                for (let i = 1; i < items.length; i++) {
-                  const prev = items[i - 1];
-                  const curr = items[i];
-                  if (prev.param || curr.param) continue;
-                  const prevEnd = prev.start! + prev.dur;
-                  if (prevEnd > curr.start! + 0.001) {
-                    entry.timestamps[curr.idx] = parseFloat(prevEnd.toFixed(3));
-                    overlapsFixed = true;
-                  }
-                }
+          // Slots the parametric graph could not satisfy strictly but which were
+          // placed from the authored / edited time. These ARE scheduled — surface
+          // a gentle, deduped warning so the deviation is visible.
+          if (solver.fallbacks.length > 0) {
+            const signature = `fallback:${solver.fallbacks
+              .map((f) => `${f.entryId}-${f.iterationIndex}`)
+              .join(',')}`;
+            if (signature !== _lastReportedFallbacks) {
+              _lastReportedFallbacks = signature;
+              console.warn('[bakeOrchestrateSchedule] authored-fallback placement:', solver.fallbacks);
+              void import('@/store/errorsStore').then(({ notifyError }) => {
+                notifyError(
+                  `Orchestrate: ${solver.fallbacks.length} timing link(s) could not be satisfied strictly — authored times used.`,
+                  'warning',
+                );
               });
             }
+          } else {
+            _lastReportedFallbacks = '';
+          }
+
+          if (serializedParamCount > 0) {
+            const signature = `self-overlap:${serializedParamCount}`;
+            if (signature !== _lastReportedSelfOverlap) {
+              _lastReportedSelfOverlap = signature;
+              void import('@/store/errorsStore').then(({ notifyError }) => {
+                notifyError(
+                  `Orchestrate: ${serializedParamCount} same-track iteration(s) overlapped and were serialized.`,
+                  'warning',
+                );
+              });
+            }
+          } else {
+            _lastReportedSelfOverlap = '';
           }
 
           // Apply resolved timestamps — use actual generated sound ID as key.
@@ -1079,8 +1209,9 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
           let anyChange = false;
           let maxResolvedSec = 0; // track furthest resolved timestamp for auto-extending
 
-          entryMap.forEach(({ soundId, timestamps, meta, variantDurations }) => {
-            if (!soundId) return;
+          entryMap.forEach(({ soundId, timestamps, meta, variantDurations, excludedIndices, isBackground }) => {
+            // Backgrounds own their loop downstream — never write their schedule.
+            if (!soundId || isBackground) return;
 
             // Interval-type triggers with nothing resolved yet stay "auto" (no
             // stored timestamps) — writing UNRESOLVED sentinels would empty them.
@@ -1088,10 +1219,13 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             if (isIntervalType && !timestamps.some(t => t !== null)) return;
 
             // Build final timestamps: use resolved parametric values for non-empty
-            // expressions; for empty expressions (cleared by manual drag), preserve
-            // the existing concrete timestamp so dragged positions survive save/load.
+            // expressions; excluded iterations are cleared to UNRESOLVED (never
+            // preserve a stale value — that produced far-away ghost-slot clips);
+            // for empty expressions (cleared by manual drag), preserve the existing
+            // concrete timestamp so dragged positions survive save/load.
             const finalTs = timestamps.map((t, i) => {
               if (t !== null) return parseFloat(t.toFixed(3));
+              if (excludedIndices.includes(i)) return UNRESOLVED;
               const existingT = soundTimestamps[soundId]?.[i];
               if (existingT != null && existingT < UNRESOLVED) return existingT;
               return UNRESOLVED;
@@ -1135,8 +1269,8 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
           // Compute per-iteration durations (ms) so each DAW block shows its
           // actual variant length rather than the primary copy's length.
           const newIterDurations = { ...soundIterationDurations };
-          entryMap.forEach(({ soundId, timestamps, meta, variantDurations }) => {
-            if (!soundId) return;
+          entryMap.forEach(({ soundId, timestamps, meta, variantDurations, isBackground }) => {
+            if (!soundId || isBackground) return;
             const UNRESOLVED_CHECK = 999999;
             const iterDursMs = timestamps.map((t, i) => {
               if (t === null || t >= UNRESOLVED_CHECK) return 0;
@@ -1163,14 +1297,22 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             set({
               soundTimestamps: newTimestamps,
               soundIterationDurations: newIterDurations,
+              excludedIterations: newExcludedIterations,
+              exclusionReasons: newExclusionReasons,
               timelineDurationMs: newDurationMs,
               isBakingSchedule: false,
-              isDeferredCycleBakePending: !allDurationsKnown,
+              isDeferredCycleBakePending: false,
             }, false, 'audio/bakeOrchestrateSchedule');
           } else {
             // Timestamps unchanged but still clear the loading flag.
             // Always write newIterDurations so UI picks up correct variant widths.
-            set({ isBakingSchedule: false, soundIterationDurations: newIterDurations, isDeferredCycleBakePending: !allDurationsKnown }, false, 'audio/bakeOrchestrateSchedule/done');
+            set({
+              isBakingSchedule: false,
+              soundIterationDurations: newIterDurations,
+              excludedIterations: newExcludedIterations,
+              exclusionReasons: newExclusionReasons,
+              isDeferredCycleBakePending: false,
+            }, false, 'audio/bakeOrchestrateSchedule/done');
           }
           const cb = _pendingBakeOnDone; _pendingBakeOnDone = null; cb?.();
           }, 0); // end of setTimeout
@@ -1252,7 +1394,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
                 const sel = [...sounds].sort((a, b) => copyIndexOf(a.id) - copyIndexOf(b.id))[0];
                 if (sel) newStates[sel.id] = 'playing';
               });
-              return { individualSoundStates: newStates };
+              return { individualSoundStates: newStates, playAllNonce: state.playAllNonce + 1 };
             },
             false,
             'audio/playAll',
@@ -1322,6 +1464,53 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             'audio/clearSoundTimestampsEntry',
           ),
 
+        clearSoundTimestampsFor: (soundIds) =>
+          set(
+            (state) => {
+              if (soundIds.length === 0) return {};
+              const drop = new Set(soundIds);
+              const soundTimestamps = { ...state.soundTimestamps };
+              const soundIterationDurations = { ...state.soundIterationDurations };
+              const excludedIterations = { ...state.excludedIterations };
+              const exclusionReasons = { ...state.exclusionReasons };
+              drop.forEach((id) => {
+                delete soundTimestamps[id];
+                delete soundIterationDurations[id];
+                delete excludedIterations[id];
+                Object.keys(exclusionReasons).forEach((k) => {
+                  if (k.startsWith(`${id}-`)) delete exclusionReasons[k];
+                });
+              });
+              return { soundTimestamps, soundIterationDurations, excludedIterations, exclusionReasons };
+            },
+            false,
+            'audio/clearSoundTimestampsFor',
+          ),
+
+        restoreExclusions: (excluded, reasons) =>
+          set(
+            { excludedIterations: excluded, exclusionReasons: reasons },
+            false,
+            'audio/restoreExclusions',
+          ),
+
+        clearIterationExclusion: (soundId, iterationIndex) =>
+          set(
+            (state) => {
+              const current = state.excludedIterations[soundId];
+              if (!current || !current.includes(iterationIndex)) return {};
+              const nextList = current.filter((i) => i !== iterationIndex);
+              const nextExcluded = { ...state.excludedIterations };
+              if (nextList.length === 0) delete nextExcluded[soundId];
+              else nextExcluded[soundId] = nextList;
+              const nextReasons = { ...state.exclusionReasons };
+              delete nextReasons[`${soundId}-${iterationIndex}`];
+              return { excludedIterations: nextExcluded, exclusionReasons: nextReasons };
+            },
+            false,
+            'audio/clearIterationExclusion',
+          ),
+
         restoreIterationLinks: (links) =>
           set(
             { iterationLinks: links },
@@ -1366,9 +1555,16 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
                     iterationLinks: keepLinks(state.orchestrateResult.iterationLinks),
                   }
                 : state.orchestrateResult;
+              const keepReasons = (obj: Record<string, string>): Record<string, string> => {
+                const next: Record<string, string> = {};
+                for (const [k, v] of Object.entries(obj)) if (!remove.has(stripIteration(k))) next[k] = v;
+                return next;
+              };
               return {
                 soundTimestamps: keep(state.soundTimestamps),
                 soundIterationDurations: keep(state.soundIterationDurations),
+                excludedIterations: keep(state.excludedIterations),
+                exclusionReasons: keepReasons(state.exclusionReasons),
                 soundVolumes: keep(state.soundVolumes),
                 soundTrims: keep(state.soundTrims),
                 soundLoopable: keep(state.soundLoopable),

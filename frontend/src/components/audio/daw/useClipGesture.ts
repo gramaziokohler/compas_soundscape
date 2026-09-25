@@ -239,6 +239,24 @@ export function useClipGesture({
           writeAt(dep.soundId, dep.iterationIndex, oldMs + actualDeltaMs);
         });
 
+        // Materialize any excluded iteration the user just dragged over: clear its
+        // ghost, blank its broken trigger, and pin it to its authored slot so the
+        // solver keeps it (a covered ghost is otherwise hidden at render time only).
+        gesture.dragged.forEach((d) => {
+          const sound = sounds.find((s) => s.id === d.soundId);
+          const ghosts = sound?.excludedClips ?? [];
+          if (ghosts.length === 0) return;
+          const newStartMs = Math.max(0, d.startMs + actualDeltaMs);
+          const cardIdx = sound?.cardIndex ?? sound?.promptIndex;
+          ghosts.forEach((g) => {
+            const overlaps = newStartMs < g.startMs + g.durationMs && g.startMs < newStartMs + d.durationMs;
+            if (!overlaps) return;
+            if (cardIdx !== undefined) clearOrchestrateTrigger(cardIdx, g.originalIndex);
+            store.clearIterationExclusion(d.soundId, g.originalIndex);
+            writeAt(d.soundId, g.originalIndex, g.startMs);
+          });
+        });
+
         store.handleTimestampsChangeBatch(batch);
       };
 

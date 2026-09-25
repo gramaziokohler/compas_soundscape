@@ -61,16 +61,15 @@ export function useSpeckleTimeline({
   // Calibration anchor — playback/export gain is target − globalBaseDbfs.
   const globalBaseDbfs = useAudioControlsStore((s) => s.globalBaseDbfs);
   const setShowTimeline = useUIStore((s) => s.setShowTimeline);
-  const userClosedTimelineRef = useRef(false);
+  // Always start "closed" so opening a model / refreshing a page never
+  // auto-expands the DAW timeline — not even when a restored soundscape
+  // populates timelineSounds. The user must explicitly expand it.
+  const userClosedTimelineRef = useRef(true);
 
-  // Sync userClosedTimelineRef with persisted state after rehydration.
-  // If the timeline was hidden at persist time, treat it as user-closed to
-  // prevent the auto-open effect from firing on refresh.
+  // Keep the ref pinned to "closed" through the initial restore so a persisted
+  // `showTimeline: true` from a previous session cannot re-open the dock.
   useEffect(() => {
-    const persisted = useUIStore.getState().showTimeline;
-    if (!persisted) {
-      userClosedTimelineRef.current = true;
-    }
+    userClosedTimelineRef.current = true;
   }, []);
 
   const handleCloseTimeline = useCallback(() => {
@@ -94,6 +93,8 @@ export function useSpeckleTimeline({
   const iterationLinks          = useAudioControlsStore((s) => s.iterationLinks);
   const soundBufferDurations    = useAudioControlsStore((s) => s.soundBufferDurations);
   const soundLoopable           = useAudioControlsStore((s) => s.soundLoopable);
+  const excludedIterations      = useAudioControlsStore((s) => s.excludedIterations);
+  const exclusionReasons        = useAudioControlsStore((s) => s.exclusionReasons);
   const setIterationLink      = useAudioControlsStore((s) => s.setIterationLink);
   const soundConfigs          = useSoundscapeStore((s) => s.soundConfigs);
 
@@ -131,6 +132,8 @@ export function useSpeckleTimeline({
             soundTimestamps,
             soundIterationDurations,
             iterationLinks,
+            excludedIterations,
+            exclusionReasons,
           );
           console.log('[useSpeckleTimeline] extracted', sounds.length, 'sounds');
           setTimelineSounds(sounds);
@@ -146,7 +149,7 @@ export function useSpeckleTimeline({
     return () => clearTimeout(timeoutId);
     // soundMetadataReady is included so the effect re-runs when polling marks it ready.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [soundscapeData, selectedVariants, soundTrims, soundMetadataReady, timelineDurationMs, soundTimestamps, soundIterationDurations, isBakingSchedule, iterationLinks, soundBufferDurations]);
+  }, [soundscapeData, selectedVariants, soundTrims, soundMetadataReady, timelineDurationMs, soundTimestamps, soundIterationDurations, isBakingSchedule, iterationLinks, soundBufferDurations, excludedIterations, exclusionReasons]);
 
   // ============================================================================
   // Effect - Poll for Sound Metadata Readiness
@@ -242,11 +245,13 @@ export function useSpeckleTimeline({
         soundTimestamps,
         soundIterationDurations,
         iterationLinks,
+        excludedIterations,
+        exclusionReasons,
       );
       setTimelineSounds(sounds);
       console.log('[useSpeckleTimeline] 🔄 Timeline refreshed:', sounds.length, 'sounds');
     }
-  }, [soundTrims, soundscapeData, timelineDurationMs, soundTimestamps, soundIterationDurations, iterationLinks]);
+  }, [soundTrims, soundscapeData, timelineDurationMs, soundTimestamps, soundIterationDurations, iterationLinks, excludedIterations, exclusionReasons]);
 
   // ============================================================================
   // Callback - Download Soundscape as WAV

@@ -46,6 +46,7 @@ import { useModelVersionWatcher } from "@/hooks/useModelVersionWatcher";
 import { apiService } from "@/services/api";
 import { API_BASE_URL, DEFAULT_DBFS, DEFAULT_NUM_SOUNDS, RECEIVER_CONFIG, SPIRAL_PLACEMENT, DEFAULT_LISTENER_ORIENTATION, TTS_DEFAULT_LANGUAGE, DEFAULT_MAXIMUM_FOLEY_SOUNDS, SANDBOX_MODEL_ID, SANDBOX_SAMPLE_SPHERE_POSITION, DEFAULT_DURATION_SECONDS, DEFAULT_DIFFUSION_STEPS, MODEL_VERSION_WATCH } from "@/utils/constants";
 import { loadAudioFile } from "@/lib/audio/utils/audio-upload";
+import { parseAuthoredSeconds } from "@/lib/audio/utils/timeline-utils";
 import { getCameraFrontSpiralPosition } from "@/lib/three/spiral-placement";
 import type { LoadTab, SoundGenerationConfig, SoundEvent } from "@/types";
 import type { SoundscapeData } from "@/types/soundscape";
@@ -94,6 +95,20 @@ let _fitCameraToBoundingBoxOnLoad = false;
 const SANDBOX_CONTEXT_NAME = 'Placeholder context';
 const SANDBOX_USAGE_NAME = 'Placeholder usage';
 
+/**
+ * Collapse every floating panel — Settings, Object Explorer, and the DAW
+ * timeline. Applied on every model open and every page load/refresh so the
+ * stage always starts reduced, overriding any persisted open state.
+ */
+function collapseFloatingPanels() {
+  const ui = useUIStore.getState();
+  ui.setShowAdvancedSettings(false);
+  ui.setShowObjectExplorer(false);
+  ui.setShowTimeline(false);
+  // Collapse every simulation card in the right sidebar too.
+  ui.setExpandedSimulationTabIndex(null);
+}
+
 function applyRestoredSoundscapePayload(
   data: SoundscapeData,
   audioBaseUrl: string,
@@ -106,6 +121,8 @@ function applyRestoredSoundscapePayload(
     suppressOrchestrateBakeRef.current = true;
   }
   soundGen.restoreSoundscape(restored.soundConfigs, restored.soundEvents, {
+    duration: restored.globalSettings.duration,
+    steps: restored.globalSettings.steps,
     negativePrompt: restored.globalSettings.negativePrompt,
     audioModel: restored.globalSettings.audioModel,
     ttsModel: restored.globalSettings.ttsModel,
@@ -129,6 +146,7 @@ function applyRestoredSoundscapePayload(
 
   useAudioControlsStore.getState().restoreIterationLinks(restored.iterationLinks);
   useAudioControlsStore.getState().restoreMuteSolo(restored.mutedSounds, restored.soloedSound);
+  useAudioControlsStore.getState().restoreExclusions(restored.excludedIterations, restored.exclusionReasons);
 
   if (restored.receivers.length > 0) {
     useReceiversStore.getState().restoreReceivers(restored.receivers, restored.selectedReceiverId);
@@ -233,9 +251,7 @@ function HomeContent() {
   // is disabled on Home so the sandbox is always rebuilt deterministically.
   const resetHomeLayout = () => {
     const ui = useUIStore.getState();
-    ui.setShowAdvancedSettings(false);
-    ui.setShowObjectExplorer(false);
-    ui.setShowTimeline(false);
+    collapseFloatingPanels();
     // Home is always conceptually in the Sounds step so the pending Sample
     // sphere (and any restored sounds) render.
     ui.setIsInSoundsStep(true);
@@ -384,6 +400,8 @@ function HomeContent() {
     const gsd = useUIStore.getState().globalSpeckleData;
     if (gsd !== null) return; // model already loaded via normal flow
     bootstrappedRef.current = true;
+    // Opening a model / refreshing a model page always starts reduced.
+    collapseFloatingPanels();
     // Show a loading state (not the Home model browser) while the model loads.
     setIsBootstrappingModel(true);
 
@@ -573,10 +591,7 @@ function HomeContent() {
     soundGen.generatedSounds.forEach((sound: any) => {
       if (!sound.timestamps?.length) return;
       if (audioStore.soundTimestamps[sound.id] !== undefined) return;
-      const timestampsSec = (sound.timestamps as string[]).map((t) => {
-        const [mm, ss] = t.split(':').map(Number);
-        return (mm ?? 0) * 60 + (ss ?? 0);
-      });
+      const timestampsSec = (sound.timestamps as unknown[]).map(parseAuthoredSeconds);
       console.log('[page:autoInit] materializing authored ts for', sound.id, ':', timestampsSec);
       audioStore.handleTimestampsChange(sound.id, timestampsSec);
     });
@@ -1853,7 +1868,7 @@ function HomeContent() {
           guidance_scale: 4.5,
           negative_prompt: '',
           seed_copies: variantCount,
-          steps: 25,
+          steps: useSoundscapeStore.getState().globalSteps,
           dbfs: p.metadata?.dbfs ?? DEFAULT_DBFS,
           interval_seconds: isBackground ? 0 : (p.metadata?.interval_seconds ?? 5),
           display_name: p.displayName || (p.text.length > 50 ? p.text.substring(0, 47) + '...' : p.text),
@@ -1937,7 +1952,7 @@ function HomeContent() {
   // Handler: Load detected sounds to sound generation tab
   const handleLoadSoundsFromSED = useCallback(() => {
     // Format SED results as sound configs
-    const newConfigs = sed.formatForSoundGeneration();
+    const newConfigs = sed.formatForSoundGeneration(soundGen.globalSteps);
 
     // Add the sound configs (appends to existing configs)
     soundGen.setSoundConfigsFromPrompts(newConfigs);
@@ -2031,6 +2046,7 @@ function HomeContent() {
     audio.restoreVolumes({});
     audio.restoreSoundTimestamps({});
     audio.restoreIterationLinks({});
+    audio.restoreExclusions({}, {});
     audio.restoreMuteSolo([], null);
     useAcousticLayerStore.getState().clearAcousticLayer();
   };
@@ -2125,6 +2141,8 @@ function HomeContent() {
     // Opening a model from the Home page frames its bounding box on load -
     // do NOT restore a camera POV saved for a previously-loaded model.
     _fitCameraToBoundingBoxOnLoad = true;
+    // Opening a model always starts with the floating panels reduced.
+    collapseFloatingPanels();
     setGlobalSpeckleData(speckleData);
     setSpeckleModelUrl(speckleData.url);
     // A Speckle model is now the active project.
@@ -2186,6 +2204,8 @@ function HomeContent() {
           restored.soundConfigs,
           restored.soundEvents,
           {
+            duration: restored.globalSettings.duration,
+            steps: restored.globalSettings.steps,
             negativePrompt: restored.globalSettings.negativePrompt,
             audioModel: restored.globalSettings.audioModel,
             ttsModel: restored.globalSettings.ttsModel,
@@ -2236,6 +2256,12 @@ function HomeContent() {
         useAudioControlsStore.getState().restoreMuteSolo(
           restored.mutedSounds,
           restored.soloedSound,
+        );
+
+        // Restore persisted solver exclusions (marks in the DAW timeline).
+        useAudioControlsStore.getState().restoreExclusions(
+          restored.excludedIterations,
+          restored.exclusionReasons,
         );
 
         console.log('[DEBUG-LOAD] after restoreIterationLinks + restoreMuteSolo:');
@@ -2540,6 +2566,8 @@ function HomeContent() {
         useAudioControlsStore.getState().iterationLinks,
         [...useAudioControlsStore.getState().mutedSounds],
         useAudioControlsStore.getState().soloedSound,
+        useAudioControlsStore.getState().excludedIterations,
+        useAudioControlsStore.getState().exclusionReasons,
       );
 
       // Embed analysis state in the soundscape data
@@ -3957,6 +3985,11 @@ export default function Home() {
     (useAudioControlsStore as any).persist?.rehydrate?.();
     (useRightSidebarStore as any).persist?.rehydrate?.();
     (useAcousticLayerStore as any).persist?.rehydrate?.();
+    // Rehydration restores the persisted open/closed state of the floating
+    // panels. Collapse them again AFTER rehydrate so a page load or refresh
+    // always starts with Settings, Object Explorer, and the DAW timeline
+    // reduced — regardless of what was persisted.
+    collapseFloatingPanels();
   }, []);
 
   return (

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useLayoutEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import { UI_RIGHT_SIDEBAR, UI_SIDEBAR_RESIZE, UI_SIDEBAR_TOGGLE } from '@/utils/constants';
 import { readCssPx, clampToViewportWidth } from '@/utils/scale';
 import { buildSidebarEdgeNotchClipPath } from '@/utils/sidebarEdgeNotch';
@@ -156,9 +156,23 @@ export function RightSidebar({
   collapseListenerCardTrigger,
   listenerOrientation,
 }: RightSidebarProps) {
-  const { isExpanded, requestExpand, requestCollapse, simulationAreaRatio, setSimulationAreaRatio } = useRightSidebarStore();
+  const { isExpanded, requestExpand, requestCollapse, simulationAreaRatio, setSimulationAreaRatio, convolutionHintNonce } = useRightSidebarStore();
   const [isHandleHovered, setIsHandleHovered] = useState(false);
   const [isSplitHandleHovered, setIsSplitHandleHovered] = useState(false);
+
+  // Transient hint flashed on the collapsed expand handle when "Play all" starts
+  // while a completed acoustic card is applied (see AcousticsSection). Auto-hides
+  // after HINT_DURATION, and immediately when the sidebar is expanded.
+  const [showConvolutionHint, setShowConvolutionHint] = useState(false);
+  useEffect(() => {
+    if (convolutionHintNonce === 0) return;
+    setShowConvolutionHint(true);
+    const timer = setTimeout(() => setShowConvolutionHint(false), UI_SIDEBAR_TOGGLE.HINT_DURATION);
+    return () => clearTimeout(timer);
+  }, [convolutionHintNonce]);
+  useEffect(() => {
+    if (isExpanded) setShowConvolutionHint(false);
+  }, [isExpanded]);
 
   const handleWidthChange = useCallback((w: number) => {
     onWidthChange?.(w);
@@ -260,9 +274,9 @@ export function RightSidebar({
         {!isExpanded && (
           <span
             style={{ right: `calc(100% + ${UI_SIDEBAR_TOGGLE.LABEL_OFFSET}px)`, top: '50%', transform: 'translateY(-50%)' }}
-            className="sidebar-toggle-label backdrop-blur-lg backdrop-saturate-150 absolute opacity-0 group-hover:opacity-100 transition-opacity select-none pointer-events-none"
+            className={`sidebar-toggle-label backdrop-blur-lg backdrop-saturate-150 absolute transition-opacity select-none pointer-events-none ${showConvolutionHint ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
           >
-            Acoustics
+            {showConvolutionHint ? UI_SIDEBAR_TOGGLE.CONVOLUTION_HINT : 'Acoustics'}
           </span>
         )}
       </div>

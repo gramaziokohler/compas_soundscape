@@ -33,7 +33,7 @@ import {
   TTS_DEFAULT_VOICE,
 } from '@/utils/constants';
 import { loadAudioFile, revokeAudioUrl } from '@/lib/audio/utils/audio-upload';
-import { parseTriggerRef } from '@/lib/audio/utils/trigger-ref';
+import { parseTriggerExpression } from '@/lib/audio/utils/trigger-ref';
 import { calculateSoundPosition, type GeometryBounds } from '@/utils/positioning';
 import { createSoundEventFromUpload } from '@/utils/event-factory';
 import { generateSoundEffect } from '@/services/elevenlabs';
@@ -204,23 +204,134 @@ function playlistToDynamics(playlist: unknown[]): Map<string, OrchestrateDynamic
  * (user-edited) scenario-source cards. Single source of truth for both running
  * the agent and detecting whether its inputs changed.
  */
+/** Measured per-copy clip lengths (seconds) for one orchestrate entry. */
+export interface EntryTimings {
+  /** Length in seconds per generated copy (0-based copy_index). */
+  copyDurations: number[];
+  /** Speech only: the spoken line + its measured duration, per copy. */
+  lines?: { text: string; durationSec: number }[];
+}
+
+/**
+ * Scenario-scoped map key. Entry ids are NOT globally unique — the same
+ * `entryId` (e.g. `footsteps_concrete_1`) exists in several scenarios, so every
+ * orchestrate map must be keyed by `scenarioId::entryId` to prevent one
+ * scenario's dynamics from overwriting another's.
+ */
+function scopedEntryKey(scenarioId: string | undefined, entryId: string): string {
+  return `${scenarioId ?? ''}::${entryId}`;
+}
+
+/**
+ * Build `scenarioId::entryId → measured durations` from the generated sounds +
+ * decoded buffers. Must be keyed by the full `soundConfigs` array index
+ * (generated sounds carry `prompt_index` = config index).
+ */
+/** Trim (fractions 0-1) applied to a copy's measured duration. Matches the bake. */
+function effectiveCopyDuration(
+  rawDur: number,
+  trim: { start: number; end: number } | undefined,
+): number {
+  if (!trim || rawDur <= 0) return rawDur;
+  return Math.max(0, rawDur * ((trim.end ?? 1) - (trim.start ?? 0)));
+}
+
+export function buildEntryTimings(
+  configs: SoundGenerationConfig[],
+  generatedSounds: any[],
+  bufferDurations: Record<string, number>,
+  soundTrims?: Record<string, { start: number; end: number }>,
+): Map<string, EntryTimings> {
+  const map = new Map<string, EntryTimings>();
+  configs.forEach((config, index) => {
+    const src = config.scenarioSource;
+    if (!src) return;
+    const gen = generatedSounds
+      .filter((s) => s.prompt_index === index)
+      .sort((a, b) => (a.copy_index ?? 0) - (b.copy_index ?? 0));
+    // Trim is keyed by the primary (lowest copy) sound id, like the bake.
+    const trim = gen[0]?.id ? soundTrims?.[gen[0].id] : undefined;
+    const copyDurations = gen.map((s) =>
+      effectiveCopyDuration(bufferDurations[s.id] ?? s.duration ?? 0, trim),
+    );
+    const lines = src.isSpeech
+      ? (config.orchestrateMeta?.speechLines ?? src.speechLines ?? [src.script]).map((text, i) => ({
+          text,
+          durationSec: copyDurations[i] ?? 0,
+        }))
+      : undefined;
+    map.set(scopedEntryKey(src.scenarioId, src.entryId), { copyDurations, lines });
+  });
+  return map;
+}
+
+/** Poll until every given sound has a decoded buffer duration (or timeout). */
+async function waitForSoundBuffers(soundIds: string[], timeoutMs: number): Promise<boolean> {
+  if (soundIds.length === 0) return true;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const durations = useAudioControlsStore.getState().soundBufferDurations;
+    if (soundIds.every((id) => durations[id] != null)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  return false;
+}
+
+/** Pad/truncate an authored timestamp hint to the entry's current iteration count. */
+function alignTimestampHint(ts: string[] | undefined, count: number): string[] {
+  const out = (ts ?? []).slice(0, count);
+  while (out.length < count) out.push('00:00');
+  return out;
+}
+
+/** Current iteration count for an entry — reflects edits to the sound section. */
+function currentIterationCount(config: SoundGenerationConfig): number {
+  const src = config.scenarioSource!;
+  if (src.isSpeech) {
+    const lines = config.orchestrateMeta?.speechLines ?? src.speechLines ?? [];
+    return Math.max(1, lines.length || (src.script ? 1 : 0) || src.timestamps.length || 1);
+  }
+  return Math.max(
+    1,
+    config.orchestrateMeta?.trigger?.expression?.length
+      ?? src.timestamps.length
+      ?? config.seed_copies
+      ?? 1,
+  );
+}
+
 function buildOrchestrateInputs(
   configs: SoundGenerationConfig[],
+  timings?: Map<string, EntryTimings>,
 ): { foleySounds: any[]; speeches: any[] } {
   const foleySounds: any[] = [];
   const speeches: any[] = [];
   configs.forEach((config) => {
     const src = config.scenarioSource;
     if (!src) return;
+    const timing = timings?.get(scopedEntryKey(src.scenarioId, src.entryId));
+    const meta = config.orchestrateMeta;
+    const count = currentIterationCount(config);
+    const timestamps = alignTimestampHint(meta?.timestamps ?? src.timestamps, count);
+    // Re-orchestration context: the schedule currently in place for this entry.
+    const currentSchedule = {
+      currentTrigger: meta?.trigger,
+      currentTimestamps: meta?.timestamps,
+      currentVariants: meta?.variants,
+    };
     if (src.isSpeech) {
-      const lines = src.speechLines?.length ? src.speechLines : [src.script];
+      // Current speech lines are authoritative (add/delete/edit in the sound section).
+      const lines = (meta?.speechLines ?? src.speechLines ?? (src.script ? [src.script] : [])).slice(0, count);
       speeches.push({
         id: src.entryId,
-        timestamps: src.timestamps,
+        timestamps,
         character: src.character,
         script: lines.join('; '),
         position: src.position,
-        copyCount: src.speechLines?.length || 1,
+        copyCount: Math.max(1, lines.length),
+        copyDurations: timing?.copyDurations,
+        lines: timing?.lines,
+        ...currentSchedule,
       });
     } else {
       foleySounds.push({
@@ -229,10 +340,12 @@ function buildOrchestrateInputs(
         description: src.description,
         category: src.category,
         duration: src.duration,
-        timestamps: src.timestamps,
+        timestamps,
         objectsInvolved: src.objectsInvolved,
         position: src.position,
-        copyCount: src.copyCount,
+        copyCount: Math.max(1, config.seed_copies ?? src.copyCount ?? 1),
+        copyDurations: timing?.copyDurations,
+        ...currentSchedule,
       });
     }
   });
@@ -266,12 +379,14 @@ async function runOrchestrationForSources(
   scenarioGroups: Map<string, SoundGenerationConfig[]>,
   signal: AbortSignal,
   onProgress?: (status: string) => void,
+  timings?: Map<string, EntryTimings>,
+  mode: 'initial' | 'reorchestrate' = 'initial',
 ): Promise<{ entryById: Map<string, OrchestrateDynamics>; orchestrateIdByScenario: Map<string, string> }> {
   const entryById = new Map<string, OrchestrateDynamics>();
   const orchestrateIdByScenario = new Map<string, string>();
 
   for (const [scenarioId, configs] of scenarioGroups) {
-    const { foleySounds, speeches } = buildOrchestrateInputs(configs);
+    const { foleySounds, speeches } = buildOrchestrateInputs(configs, timings);
 
     try {
       if (signal.aborted) {
@@ -283,6 +398,7 @@ async function runOrchestrationForSources(
         foley_data: { sounds: foleySounds },
         speech_data: { speeches },
         llm_model: DEFAULT_LLM_MODEL,
+        mode,
       });
       recordInflightJob(job_id, 'llm', { kind: 'orchestrate', scenarioId });
       _activeOrchestrateJobIds.add(job_id);
@@ -290,6 +406,9 @@ async function runOrchestrationForSources(
       const controller = startPolling({
         fetchStatus: () => apiService.getJobStatus('llm', job_id),
         onStatus: (s) => {
+          // `s.status` is the backend's already-condensed last sentence
+          // (`_last_status_sentence(thought)`), exactly what every other agent
+          // card shows. Replacing it each poll keeps the line from accumulating.
           const items = Array.isArray(s.partial?.items) ? s.partial.items : [];
           if (items.length > 0) {
             onProgress?.(
@@ -311,7 +430,7 @@ async function runOrchestrationForSources(
         const result = await controller.done;
         const playlist = Array.isArray(result?.playlist) ? result.playlist : [];
         for (const [id, dyn] of playlistToDynamics(playlist)) {
-          entryById.set(id, dyn);
+          entryById.set(scopedEntryKey(scenarioId, id), dyn);
         }
         orchestrateIdByScenario.set(scenarioId, (result?.orchestrate_id as string) ?? '');
       } finally {
@@ -334,7 +453,9 @@ async function runOrchestrationForSources(
 export function applyRecoveredOrchestrateResult(result: unknown, scenarioId?: string): void {
   const payload = result as { playlist?: unknown[]; orchestrate_id?: string } | null;
   const playlist = Array.isArray(payload?.playlist) ? payload.playlist : [];
-  const entryById = playlistToDynamics(playlist);
+  const rawEntryById = playlistToDynamics(playlist);
+  const entryById = new Map<string, OrchestrateDynamics>();
+  for (const [id, dyn] of rawEntryById) entryById.set(scopedEntryKey(scenarioId, id), dyn);
   const orchestrateIdByScenario = new Map<string, string>();
   if (scenarioId && payload?.orchestrate_id) {
     orchestrateIdByScenario.set(scenarioId, payload.orchestrate_id);
@@ -380,7 +501,7 @@ function applyOrchestrateDynamics(
   const nextConfigs = state.soundConfigs.map((c, index) => {
     const src = c.scenarioSource;
     if (!src) return c;
-    const dynamics = entryById.get(src.entryId);
+    const dynamics = entryById.get(scopedEntryKey(src.scenarioId, src.entryId));
     if (!dynamics) return c;
     const splMatch = dynamics.spl?.match(/(-?\d+(?:\.\d+)?)/);
     // Clamp to the valid dBFS range — the orchestrator is asked for negative dBFS
@@ -390,6 +511,11 @@ function applyOrchestrateDynamics(
       ? Math.max(DBFS_MIN, Math.min(DBFS_MAX, parseFloat(splMatch[1])))
       : undefined;
     if (dbfsVal !== undefined) splByIndex.set(index, dbfsVal);
+    // Preserve the user's CURRENT edits on re-orchestration — never fall back to
+    // the frozen scenarioSource snapshot for fields the sound section can edit.
+    const prevMeta = c.orchestrateMeta;
+    const currentSpeechLines = prevMeta?.speechLines ?? src.speechLines;
+    const currentTimestamps = prevMeta?.timestamps ?? src.timestamps;
     return {
       ...c,
       ...(dbfsVal !== undefined ? { dbfs: dbfsVal } : {}),
@@ -398,11 +524,11 @@ function applyOrchestrateDynamics(
         entryId: src.entryId,
         trigger: dynamics.trigger,
         variants: dynamics.variants,
-        allObjectIds: src.objectsInvolved,
+        allObjectIds: prevMeta?.allObjectIds?.length ? prevMeta.allObjectIds : src.objectsInvolved,
         isSpeech: src.isSpeech,
         voiceName: src.voiceName,
-        speechLines: src.isSpeech ? src.speechLines : undefined,
-        timestamps: src.timestamps,
+        speechLines: src.isSpeech ? currentSpeechLines : undefined,
+        timestamps: currentTimestamps,
       },
     };
   });
@@ -532,7 +658,7 @@ export interface SoundscapeStoreState {
    * triggers/variants/SPL and re-bake the timeline. Used by the "Re-orchestrate
    * timeline" button. Falls back to a pure re-bake when no scenario sources exist.
    */
-  reorchestrateTimeline: () => Promise<void>;
+  reorchestrateTimeline: (scenarioId?: string) => Promise<void>;
   /** Ctrl+drag duplicate — deep-clones the config at `from` (and soundscape data) and inserts at `toInsertion`. */
   duplicateConfigAt: (from: number, toInsertion: number) => void;
   handleDetachSoundFromEntity: (index: number) => void;
@@ -542,7 +668,7 @@ export interface SoundscapeStoreState {
   restoreSoundscape: (
     configs: SoundGenerationConfig[],
     events: any[],
-    settings?: { negativePrompt?: string; audioModel?: string; llmModel?: string; ttsModel?: string; orchestrateSoundsEnabled?: boolean },
+    settings?: { duration?: number; steps?: number; negativePrompt?: string; audioModel?: string; llmModel?: string; ttsModel?: string; orchestrateSoundsEnabled?: boolean },
   ) => void;
   injectExtractedSEDSounds: (sounds: Array<{
     name: string;
@@ -671,8 +797,8 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             if (!meta || removedEntryIds.size === 0) return c;
             let changed = false;
             const expression = meta.trigger.expression.map((expr) => {
-              const ref = parseTriggerRef(expr, knownEntryIds);
-              if (ref && removedEntryIds.has(ref.entryId)) {
+              const parsed = parseTriggerExpression(expr, knownEntryIds);
+              if (parsed && parsed.refs.some((r) => removedEntryIds.has(r.entryId))) {
                 changed = true;
                 return '';
               }
@@ -1018,14 +1144,15 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           beginSoundGeneration();
           trackGenerationTargets(targetIndices);
 
-          // ── Orchestrate (launched in PARALLEL with generation) ─────────────
-          // The orchestrate agent's inputs (scenario + user-edited foley/speech) are
-          // independent of the generated audio, so it runs concurrently with the ML /
-          // TTS / ElevenLabs paths and is joined at the sync point below.
+          // ── Orchestrate runs AFTER generation (see finalize below) so the agent
+          // receives the measured clip durations rather than authored estimates. ──
           const orchestrateEnabled = get().orchestrateSoundsEnabled;
           const scenarioGroups = new Map<string, SoundGenerationConfig[]>();
           if (orchestrateEnabled) {
-            soundConfigs.forEach((config) => {
+            // Only the configs being generated now. Re-orchestrating every
+            // scenario present in the soundscape would let identical entry ids
+            // (`footsteps_concrete_1`, …) bleed dynamics across scenarios.
+            withIndices.forEach(({ config }) => {
               const src = config.scenarioSource;
               if (!src) return;
               const arr = scenarioGroups.get(src.scenarioId) ?? [];
@@ -1033,20 +1160,8 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               scenarioGroups.set(src.scenarioId, arr);
             });
           }
-          // Only launch orchestration when this invocation actually generates
-          // scenario-derived sounds (targeted), but feed it the FULL edited set
-          // so the compiled timeline still references every scenario sound.
           const hasTargetedScenario = withIndices.some(({ config }) => config.scenarioSource);
           _orchestrateProgressStatus = null;
-          const orchestratePromise =
-            orchestrateEnabled && hasTargetedScenario && scenarioGroups.size > 0
-              ? runOrchestrationForSources(scenarioGroups, controller.signal, (status) => {
-                  // Kept off the visible generation status — the "Orchestrating
-                  // timeline…" message is shown once, at the very end, after every
-                  // sound has been generated (see the finalize block below).
-                  _orchestrateProgressStatus = status;
-                })
-              : null;
 
           try {
             let generatedEvents: any[] = [];
@@ -1368,6 +1483,14 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                   || originalConfig?.prompt
                   || `TTS ${actualIndex + 1}`;
 
+                // Authored dialogue timestamps (MM:SS) for the whole character
+                // block. Attached like foley `configTimestamps` so speech has a
+                // narrative-order fallback whenever the parametric orchestrate
+                // bake cannot place it (e.g. a cyclic/unknown-duration graph).
+                const authoredSpeechTimestamps: string[] | undefined =
+                  (originalConfig as any)?.orchestrateMeta?.timestamps
+                  ?? (originalConfig as any)?.scenarioSource?.timestamps;
+
                 const mapped = {
                   ...sound,
                   id: remappedId,
@@ -1381,6 +1504,9 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                   volume_dbfs: originalConfig?.dbfs ?? globalBaseDbfs,
                   category: originalConfig?.category || 'speech',
                   display_name: ttsDisplayName,
+                  ...(authoredSpeechTimestamps?.length
+                    ? { timestamps: authoredSpeechTimestamps }
+                    : {}),
                 };
                 return mapped;
               };
@@ -1499,22 +1625,71 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             );
             applyTrimRegions(allEvents);
 
+            // Fresh audio must not inherit a stale schedule: sound ids encode the
+            // (recycled) config index, so a persisted manual timestamp from a
+            // previous scenario/model would otherwise be adopted as this sound's
+            // manual schedule and silently misplace it.
+            {
+              const targetedIdxSet = new Set(
+                targetIndices === undefined
+                  ? soundConfigs.map((_, i) => i)
+                  : targetIndices,
+              );
+              const generatedIds = allEvents
+                .filter((e: any) => targetedIdxSet.has(e.prompt_index))
+                .map((e: any) => e.id)
+                .filter(Boolean);
+              useAudioControlsStore.getState().clearSoundTimestampsFor(generatedIds);
+            }
+
             samplesDone = totalSamples;
             reportSamples('finalizing…');
 
-            // ── Orchestrate sync point: join the parallel orchestrate agent and
-            // apply its dynamics (trigger/variants/SPL) before the final bake. ──
-            if (orchestratePromise) {
-              // Show the orchestrating phase once, at the very end, after every
-              // sound has been generated and its duration is known.
+            // ── Orchestrate (AFTER generation, with measured durations) ──────────
+            // The agent runs once the scenario clips are decoded so it can order
+            // strictly and estimate end-to-start delays against real lengths.
+            if (orchestrateEnabled && hasTargetedScenario && scenarioGroups.size > 0) {
               set(
                 { soundGenProgress: 'Orchestrating timeline…', soundGenProgressValue: 100 },
                 false,
                 'soundscape/orchestrateStart',
               );
-              const { entryById, orchestrateIdByScenario } = await orchestratePromise;
-              if (entryById.size > 0) {
-                applyOrchestrateDynamics(entryById, orchestrateIdByScenario);
+              const currentConfigs = get().soundConfigs;
+              const targetedIndices = new Set(
+                withIndices
+                  .filter(({ config }) => !!config.scenarioSource)
+                  .map(({ originalIndex }) => originalIndex),
+              );
+              const scenarioSoundIds: string[] = [];
+              currentConfigs.forEach((c, i) => {
+                if (!c.scenarioSource || !targetedIndices.has(i)) return;
+                get().generatedSounds.forEach((s: any) => {
+                  if (s.prompt_index === i) scenarioSoundIds.push(s.id);
+                });
+              });
+              await waitForSoundBuffers(scenarioSoundIds, 30000);
+              const timings = buildEntryTimings(
+                currentConfigs,
+                get().generatedSounds,
+                useAudioControlsStore.getState().soundBufferDurations,
+                useAudioControlsStore.getState().soundTrims,
+              );
+              try {
+                const { entryById, orchestrateIdByScenario } = await runOrchestrationForSources(
+                  scenarioGroups,
+                  controller.signal,
+                  // Reactive — the status line reads `soundGenProgress` from the store.
+                  (status) => {
+                    _orchestrateProgressStatus = status;
+                    set({ soundGenProgress: status }, false, 'soundscape/orchestrateProgress');
+                  },
+                  timings,
+                );
+                if (entryById.size > 0) {
+                  applyOrchestrateDynamics(entryById, orchestrateIdByScenario);
+                }
+              } finally {
+                _orchestrateProgressStatus = null;
               }
             }
 
@@ -1811,7 +1986,12 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           set({ activeSoundConfigTab: tab }, false, 'soundscape/setTab'),
 
         setSoundConfigsFromPrompts: (prompts) => {
-          const { soundConfigs } = get();
+          const { soundConfigs, globalSteps } = get();
+          // The Advanced Settings "Diffusion Steps" value is the single source of
+          // truth for inference steps. Configs arriving from LLM analysis / SED
+          // carry a placeholder `steps` value, so stamp the current global value
+          // here (the live-edit path is handleGlobalStepsChange).
+          const stamped = prompts.map((p) => ({ ...p, steps: globalSteps }));
           const isSingleEmpty =
             soundConfigs.length === 1 &&
             !soundConfigs[0].prompt &&
@@ -1819,7 +1999,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             !soundConfigs[0].selectedLibrarySound;
 
           if (isSingleEmpty) {
-            set({ soundConfigs: prompts }, false, 'soundscape/setConfigsFromPrompts');
+            set({ soundConfigs: stamped }, false, 'soundscape/setConfigsFromPrompts');
             return;
           }
 
@@ -1827,7 +2007,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           let updated = [...soundConfigs];
           const toAppend: any[] = [];
           let didUpdate = false;
-          for (const newConfig of prompts) {
+          for (const newConfig of stamped) {
             const existingIdx = updated.findIndex((existing) => {
               const samePrompt =
                 existing.prompt.trim().toLowerCase() ===
@@ -1900,14 +2080,17 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
         setOrchestrateSoundsEnabled: (val) =>
           set({ orchestrateSoundsEnabled: val }, false, 'soundscape/setOrchestrateSoundsEnabled'),
 
-        reorchestrateTimeline: async () => {
+        reorchestrateTimeline: async (scenarioId) => {
           const { soundConfigs } = get();
 
           // Group the current (edited) scenario-source cards by scenario id.
+          // When a scenario is given, re-run only that scenario (the active
+          // Sounds step) and leave the others untouched.
           const scenarioGroups = new Map<string, SoundGenerationConfig[]>();
           soundConfigs.forEach((config) => {
             const src = config.scenarioSource;
             if (!src) return;
+            if (scenarioId && src.scenarioId !== scenarioId) return;
             const arr = scenarioGroups.get(src.scenarioId) ?? [];
             arr.push(config);
             scenarioGroups.set(src.scenarioId, arr);
@@ -1947,9 +2130,22 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           );
           const controller = new AbortController();
           try {
+            const timings = buildEntryTimings(
+              get().soundConfigs,
+              get().generatedSounds,
+              useAudioControlsStore.getState().soundBufferDurations,
+              useAudioControlsStore.getState().soundTrims,
+            );
             const { entryById, orchestrateIdByScenario } = await runOrchestrationForSources(
               scenarioGroups,
               controller.signal,
+              // Same live status line as generation.
+              (status) => {
+                _orchestrateProgressStatus = status;
+                set({ soundGenProgress: status }, false, 'soundscape/reorchestrateProgress');
+              },
+              timings,
+              'reorchestrate',
             );
             if (entryById.size > 0) {
               applyOrchestrateDynamics(entryById, orchestrateIdByScenario);
@@ -2195,7 +2391,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
 
         handleResetToDefaults: () =>
           set(
-            {
+            (s) => ({
               globalDuration: DEFAULT_DURATION_SECONDS,
               globalSteps: DEFAULT_DIFFUSION_STEPS,
               globalNegativePrompt: 'distorted, reverb, echo, background noise, hall, spaciousness',
@@ -2205,7 +2401,14 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               audioModel: DEFAULT_AUDIO_MODEL,
               llmModel: DEFAULT_LLM_MODEL,
               ttsModel: DEFAULT_TTS_MODEL,
-            },
+              // Keep live configs in sync with the global sliders, matching
+              // handleGlobalStepsChange / handleGlobalDurationChange.
+              soundConfigs: s.soundConfigs.map((c) => ({
+                ...c,
+                duration: DEFAULT_DURATION_SECONDS,
+                steps: DEFAULT_DIFFUSION_STEPS,
+              })),
+            }),
             false,
             'soundscape/resetDefaults',
           ),
@@ -2580,6 +2783,8 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               soundscapeData: events.length > 0 ? events : null,
               generatedSounds: events,
               activeSoundConfigTab: 0,
+              ...(settings?.duration !== undefined && { globalDuration: settings.duration }),
+              ...(settings?.steps !== undefined && { globalSteps: settings.steps }),
               ...(settings?.negativePrompt !== undefined && {
                 globalNegativePrompt: settings.negativePrompt,
               }),

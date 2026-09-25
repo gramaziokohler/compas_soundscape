@@ -383,6 +383,10 @@ export const UI_SIDEBAR_TOGGLE = {
   LABEL_OFFSET: 10,          // px — gap between the button and its hover label
   NOTCH_HEIGHT: 100,         // px — total vertical span of the expanded-state edge notch
   NOTCH_DEPTH: 12,           // px — how far inward the sidebar edge dips at the notch
+  // Transient reminder flashed on the collapsed expand handle when "Play all"
+  // starts while an applied (completed) acoustic card is expanded.
+  CONVOLUTION_HINT: 'An acoustic card is currently applied',
+  HINT_DURATION: 3000,       // ms — how long the transient hint stays visible
 } as const;
 
 // ============================================================================
@@ -559,7 +563,6 @@ export const TTS_CHARACTER_VOICES: Record<string, string> = {
   Oliver: "Algieba",
   Thomas: "Alnilam",
   Mia: "Aoede",
-  Anna: "Autonoe",
   Elena: "Callirrhoe",
   Clara: "Despina",
   Gabriel: "Encelade",

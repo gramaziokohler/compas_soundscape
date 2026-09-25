@@ -246,6 +246,10 @@ export interface SoundscapeData {
   muted_sounds?: string[];
   /** Sound ID currently soloed in the DAW timeline (null = none). */
   soloed_sound?: string | null;
+  /** Solver-excluded iteration indices per sound ID (from audioControls). */
+  excluded_iterations?: Record<string, number[]>;
+  /** Reason per excluded iteration, keyed `${soundId}-${iterationIndex}`. */
+  exclusion_reasons?: Record<string, string>;
 }
 
 /** Request payload for POST /api/speckle/soundscape/save */

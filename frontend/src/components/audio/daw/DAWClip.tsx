@@ -89,6 +89,9 @@ export interface DAWClipProps {
   previewOffsetMs: number;
   timelineDurationMs: number;
   iterationLink?: IterationLink;
+  /** Solver-excluded ghost clip: shown hatched, never played. */
+  isExcluded?: boolean;
+  excludedReason?: string;
   onPointerDownClip: (e: React.PointerEvent<HTMLDivElement>) => void;
   onDelete: () => void;
   onDoubleClick?: () => void;
@@ -114,6 +117,8 @@ function DAWClipImpl({
   previewOffsetMs,
   timelineDurationMs,
   iterationLink,
+  isExcluded,
+  excludedReason,
   onPointerDownClip,
   onDelete,
   onDoubleClick,
@@ -184,7 +189,7 @@ function DAWClipImpl({
       onContextMenu={handleContextMenuEvt}
       onMouseEnter={() => { setIsHovered(true); onHover?.(); }}
       onMouseLeave={() => { setIsHovered(false); onHoverEnd?.(); }}
-      title={name}
+      title={isExcluded ? `${name} — excluded: ${excludedReason ?? 'timing link could not be satisfied'}` : name}
       style={{
         position: 'absolute',
         left: `${leftPx}px`,
@@ -210,6 +215,19 @@ function DAWClipImpl({
         zIndex: isDragging ? 30 : isSelected ? 12 : 10,
         userSelect: 'none',
         outline: isDragging && isDuplicating ? `2px dashed ${color}` : 'none',
+        ...(isExcluded
+          ? {
+              backgroundColor: 'color-mix(in srgb, var(--color-error) 20%, transparent)',
+              backgroundImage:
+                'repeating-linear-gradient(45deg, var(--color-error) 0, var(--color-error) 1px, transparent 1px, transparent 6px)',
+              borderTop: '1px dashed var(--color-error)',
+              borderBottom: '1px dashed var(--color-error)',
+              borderLeft: '1px dashed var(--color-error)',
+              borderRight: '1px dashed var(--color-error)',
+              cursor: 'not-allowed',
+              opacity: 0.9,
+            }
+          : {}),
       }}
       data-clip-key={clipKey}
     >
@@ -217,7 +235,7 @@ function DAWClipImpl({
         {peaks && <PeaksCanvas key={themeVersion} peaks={peaks} color={waveformColor(isMuted)} />}
       </div>
 
-      {isLoadingWaveform && (
+      {isLoadingWaveform && !isExcluded && (
         <div
           style={{
             position: 'absolute', inset: 0, display: 'flex', alignItems: 'center',
@@ -226,6 +244,24 @@ function DAWClipImpl({
         >
           <span style={{ display: 'flex', color: 'rgba(255,255,255,0.85)' }}>
             <Spinner size={12} />
+          </span>
+        </div>
+      )}
+
+      {isExcluded && (
+        <div
+          style={{
+            position: 'absolute', inset: 0, display: 'flex', alignItems: 'center',
+            justifyContent: 'center', pointerEvents: 'none', zIndex: 20,
+          }}
+        >
+          <span
+            style={{
+              fontSize: '8px', fontWeight: 700, lineHeight: 1, color: 'var(--color-error)',
+              backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: '2px', padding: '1px 3px',
+            }}
+          >
+            !
           </span>
         </div>
       )}
@@ -262,7 +298,7 @@ function DAWClipImpl({
           </span>
         )}
 
-        {isHovered && (
+        {isHovered && !isExcluded && (
           <button
             onClick={(e) => { e.stopPropagation(); onDelete(); }}
             onPointerDown={(e) => e.stopPropagation()}

@@ -620,6 +620,9 @@ class OrchestrateRequest(BaseModel):
     foley_data: dict | None = None
     speech_data: dict | None = None
     llm_model: str = DEFAULT_LLM_MODEL
+    # "initial" for the first orchestration of a scenario, "reorchestrate" for a
+    # re-run on the user's edited scene (adds re-orchestration prompt guidance).
+    mode: str = "initial"
 
 
 @router.post("/api/orchestrate", response_model=JobEnqueueResponse)
@@ -652,6 +655,7 @@ async def orchestrate(request: OrchestrateRequest, req: Request):
                 speech_result=speech_data,
                 llm_model=llm_model,
                 on_progress=on_progress,
+                mode=request.mode,
             )
             async for event in stream:
                 if await job_store.is_cancel_requested(job_id):

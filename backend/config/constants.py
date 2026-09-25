@@ -237,7 +237,6 @@ TTS_VOICE_CHARACTERS = {
     "Oliver": "Algieba",
     "Thomas": "Alnilam",
     "Mia": "Aoede",
-    "Anna": "Autonoe",
     "Elena": "Callirrhoe",
     "Clara": "Despina",
     "Gabriel": "Encelade",
