@@ -111,8 +111,16 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   // Mute registry - persists mute state across mode switches
   private muteRegistry: Map<string, boolean> = new Map();
 
-  // Pending volumes - caches volume values for sources not yet created (async loading)
+  // Pending volumes - persists per-source volume across mode switches (and caches
+  // values for sources not yet created while their buffer loads asynchronously).
+  // New mode instances always build their chains at unity gain, so this registry is
+  // what lets `reCreateSourcesInCurrentMode` restore the user's fader values.
   private pendingVolumes: Map<string, number> = new Map();
+
+  // Persisted master volume. Each mode owns its own masterGain (built at 1.0), so
+  // this must be re-applied to the target mode on every switch, exactly like the
+  // per-source volume registry above.
+  private pendingMasterVolume: number = 1.0;
 
   // IR cache - prevents double downloads of same IR (keyed by IR metadata id)
   private irCache: Map<string, AudioBuffer> = new Map();
@@ -499,6 +507,10 @@ export class AudioOrchestrator implements IAudioOrchestrator {
       // Update receiver mode constraint
       this.updateReceiverConstraint();
 
+      // Restore the user's master volume — the freshly activated mode instance owns
+      // a brand-new masterGain built at 1.0, so without this it would jump to unity.
+      this.currentModeInstance.setMasterVolume(this.pendingMasterVolume);
+
       // Re-create all registered sources in the new mode AND apply their per-source
       // simulation IRs before notifying playback. Re-dispatching a voice onto a
       // chain whose convolver has no buffer yet would play silence.
@@ -511,8 +523,10 @@ export class AudioOrchestrator implements IAudioOrchestrator {
         this.notifyGraphChanged();
       }
 
-      // Overlapping crossfade: no silent gap between the old and new mode.
-      await crossfadeModes(oldMode, newModeInstance, this.audioContext);
+      // Overlapping crossfade: no silent gap between the old and new mode. The new
+      // mode's output node IS its masterGain, so ramp to the persisted master volume
+      // (not unity) or the crossfade would override the user's fader.
+      await crossfadeModes(oldMode, newModeInstance, this.audioContext, undefined, this.pendingMasterVolume);
 
       // Free the outgoing mode's voices/nodes now that it is fully faded out.
       // The instance itself stays cached for a later switch back.
@@ -1115,11 +1129,14 @@ export class AudioOrchestrator implements IAudioOrchestrator {
       }
 
       // Swap the active instance, rebuild its sources, and let playback re-dispatch
-      // onto it while the crossfade ramps it up (same handover as setMode).
+      // onto it while the crossfade ramps it up (same handover as setMode). The new
+      // instance owns a fresh masterGain, so restore the persisted master volume and
+      // ramp the crossfade to it (ramping to unity would override the fader).
       this.currentModeInstance = this.anechoicMode;
+      this.currentModeInstance.setMasterVolume(this.pendingMasterVolume);
       await this.reCreateSourcesInCurrentMode();
       this.notifyGraphChanged();
-      await crossfadeModes(oldMode, this.anechoicMode, this.audioContext!);
+      await crossfadeModes(oldMode, this.anechoicMode, this.audioContext!, undefined, this.pendingMasterVolume);
 
       // Cleanup old mode
       oldMode.dispose();
@@ -1377,6 +1394,13 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     for (const [sourceId, { buffer, position }] of this.sourceRegistry) {
       try {
         this.currentModeInstance.createSource(sourceId, buffer, position);
+
+        // Reapply persisted volume — new mode chains always start at unity gain, so
+        // without this the user's per-source fader is silently reset on every switch.
+        const volume = this.pendingVolumes.get(sourceId);
+        if (volume !== undefined) {
+          this.currentModeInstance.setSourceVolume(sourceId, volume);
+        }
 
         // Reapply persisted mute state — new mode instances start unmuted by default
         const isMuted = this.muteRegistry.get(sourceId);
@@ -1668,6 +1692,9 @@ export class AudioOrchestrator implements IAudioOrchestrator {
    * Routes to current mode implementation
    */
   setMasterVolume(volume: number): void {
+    // Persist before the mode guard so the value survives a later mode switch.
+    this.pendingMasterVolume = volume;
+
     if (!this.currentModeInstance) {
       return;
     }

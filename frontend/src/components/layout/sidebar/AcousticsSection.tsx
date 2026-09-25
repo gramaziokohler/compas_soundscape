@@ -1524,6 +1524,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             worldTree={localWorldTree}
             availableMaterials={currentMaterials}
             filteringEnabled={filteringEnabled}
+            isActive={isExpanded}
             onMaterialAssignmentsChange={(assignments, layerName, geometryObjectIds, scatteringAssignments) =>
               handleSpeckleMaterialAssignments(index, assignments, layerName, geometryObjectIds, scatteringAssignments)
             }
@@ -1917,6 +1918,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
                 cardType="pyroomacoustics"
                 filteringEnabled={filteringEnabled}
                 isReadOnly={false}
+                isActive={isExpanded}
                 onMaterialAssignmentsChange={(assignments, layerName, geometryObjectIds, scatteringAssignments) => {
                   handleUpdateConfig(index, {
                     speckleMaterialAssignments: assignments,

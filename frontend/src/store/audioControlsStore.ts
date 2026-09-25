@@ -212,8 +212,13 @@ export interface AudioControlsStoreState {
    * Safe to call repeatedly — only updates when values change.
    * Call after: initial config load, each sound generation, or trim changes.
    * @param onDone Optional callback fired after the (async) bake applies its result.
+   * @param opts Optional. `notify: true` marks this as an authoritative bake that
+   *   may surface orchestrate warnings (exclusions / authored-fallback placement /
+   *   self-overlap) as toasts. Only the orchestrator-agent job (initial finalize +
+   *   re-orchestrate) sets it — passive re-bakes (buffer loads, timeline edits,
+   *   project restore) must stay silent to avoid toast spam.
    */
-  bakeOrchestrateSchedule: (onDone?: () => void) => void;
+  bakeOrchestrateSchedule: (onDone?: () => void, opts?: { notify?: boolean }) => void;
   handlePreviewPlayPause: (soundId: string) => void;
   handlePreviewStop: (soundId: string) => void;
   stopSoundcardPreview: () => void;
@@ -291,6 +296,11 @@ let _pendingBakeId = 0;
 // replaced by a newer bake (e.g. a late buffer load), the newer bake invokes it
 // instead — so the final applied schedule is the one captured.
 let _pendingBakeOnDone: (() => void) | null = null;
+// Carried across superseded bakes (like `_pendingBakeOnDone`): true when an
+// authoritative orchestrator-job bake requested user-facing reporting. The next
+// bake that actually completes reports (a deferred authoritative bake carries
+// the flag to the later, duration-complete bake).
+let _pendingBakeNotify = false;
 // Signature of the last broken-link set surfaced to the user, so a persistent
 // failure (e.g. a cycle) does not fire a toast on every re-bake.
 let _lastReportedBrokenLinks = '';
@@ -879,8 +889,12 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
           );
         },
 
-        bakeOrchestrateSchedule: (onDone) => {
+        bakeOrchestrateSchedule: (onDone, opts) => {
           if (onDone) _pendingBakeOnDone = onDone;
+          // An authoritative (orchestrator-job) bake arms reporting; it survives
+          // supersession so a deferred bake's eventual duration-complete re-bake
+          // still reports.
+          if (opts?.notify) _pendingBakeNotify = true;
           // Show loading indicator immediately, then do computation in the next tick
           // so React can render the skeleton before the synchronous work blocks the thread.
           const bakeId = ++_pendingBakeId;
@@ -892,6 +906,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
           const { _soundConfigs, _generatedSounds, soundTrims, soundTimestamps, soundBufferDurations, soundIterationDurations } = get();
 
           if (!_soundConfigs.some(c => c.orchestrateMeta)) {
+            _pendingBakeNotify = false;
             if (bakeId === _pendingBakeId) {
               set(
                 { isBakingSchedule: false, excludedIterations: {}, exclusionReasons: {} },
@@ -902,6 +917,11 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             const cb = _pendingBakeOnDone; _pendingBakeOnDone = null; cb?.();
             return;
           }
+
+          // User-facing orchestrate warnings are only surfaced from an
+          // authoritative orchestrator-job bake — never from the passive re-bakes
+          // that project restore triggers as each audio buffer loads.
+          const notify = _pendingBakeNotify;
 
           // Build configIndex → primary generated sound ID
           // (mirrors extractTimelineSoundsFromData: lowest copy_index per prompt_index)
@@ -1139,9 +1159,10 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
           const mappedExclusionCount = Object.values(newExcludedIterations)
             .reduce((n, list) => n + list.length, 0);
 
-          // Surface excluded iterations once per distinct set, and only on an
-          // authoritative bake (all real durations known) to avoid toast spam.
-          if (mappedExclusionCount > 0 || solver.cycles.length > 0) {
+          // Surface excluded iterations once per distinct set. Only an
+          // authoritative orchestrator-job bake (`notify`) may toast — passive
+          // re-bakes during project restore stay silent.
+          if (notify && (mappedExclusionCount > 0 || solver.cycles.length > 0)) {
             const detail = solver.exclusions
               .map((ex) => `${ex.entryId}[${ex.iterationIndex}] ${ex.reason}`)
               .join('\n  ');
@@ -1163,14 +1184,14 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
                 });
               }
             }
-          } else {
+          } else if (notify) {
             _lastReportedBrokenLinks = '';
           }
 
           // Slots the parametric graph could not satisfy strictly but which were
           // placed from the authored / edited time. These ARE scheduled — surface
           // a gentle, deduped warning so the deviation is visible.
-          if (solver.fallbacks.length > 0) {
+          if (notify && solver.fallbacks.length > 0) {
             const signature = `fallback:${solver.fallbacks
               .map((f) => `${f.entryId}-${f.iterationIndex}`)
               .join(',')}`;
@@ -1184,11 +1205,11 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
                 );
               });
             }
-          } else {
+          } else if (notify) {
             _lastReportedFallbacks = '';
           }
 
-          if (serializedParamCount > 0) {
+          if (notify && serializedParamCount > 0) {
             const signature = `self-overlap:${serializedParamCount}`;
             if (signature !== _lastReportedSelfOverlap) {
               _lastReportedSelfOverlap = signature;
@@ -1199,9 +1220,13 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
                 );
               });
             }
-          } else {
+          } else if (notify) {
             _lastReportedSelfOverlap = '';
           }
+
+          // Reporting is one-shot per authoritative orchestrate bake — clear the
+          // carried flag now that this duration-complete bake has consumed it.
+          _pendingBakeNotify = false;
 
           // Apply resolved timestamps — use actual generated sound ID as key.
           const UNRESOLVED = 999999; // >> any real timeline duration (seconds)

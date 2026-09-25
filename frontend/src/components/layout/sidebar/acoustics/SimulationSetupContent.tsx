@@ -31,6 +31,8 @@ interface SimulationSetupContentProps {
   filteringEnabled?: boolean;
   /** When true, UI controls are disabled (read-only mode for completed simulations) */
   isReadOnly?: boolean;
+  /** True when this card is the expanded/active one that owns the shared material store. */
+  isActive?: boolean;
   onMaterialAssignmentsChange: (assignments: Record<string, string>, layerName: string | null, geometryObjectIds: string[], scatteringAssignments: Record<string, number>) => void;
   onUpdateConfig: (updates: Partial<SimulationConfig>) => void;
   onIsolationChange?: (ids: string[] | null) => void;
@@ -47,6 +49,7 @@ export function SimulationSetupContent({
   availableMaterials,
   filteringEnabled = true,
   isReadOnly = false,
+  isActive = true,
   onMaterialAssignmentsChange,
   onUpdateConfig,
   onIsolationChange,
@@ -68,6 +71,7 @@ export function SimulationSetupContent({
         cardType={config.type === 'pyroomacoustics' ? 'pyroomacoustics' : 'choras'}
         filteringEnabled={filteringEnabled}
         isReadOnly={isReadOnly}
+        isActive={isActive}
         onMaterialAssignmentsChange={onMaterialAssignmentsChange}
         initialAssignments={initialAssignments}
         initialLayerName={initialLayerName}

@@ -107,6 +107,14 @@ interface SpeckleSurfaceMaterialsSectionProps {
   filteringEnabled?: boolean;
   /** When true, UI controls are disabled (read-only mode for completed simulations) */
   isReadOnly?: boolean;
+  /**
+   * True when this card currently owns the shared acoustic material store
+   * (i.e. it is the expanded/active simulation). Only the owning section may
+   * load assignments into the store, register viewer colors, or write back to
+   * its config — otherwise a second mounted card clobbers the first with its
+   * own (last) assignment.
+   */
+  isActive?: boolean;
   onMaterialAssignmentsChange: (assignments: Record<string, string>, layerName: string | null, geometryObjectIds: string[], scatteringAssignments: Record<string, number>) => void;
   className?: string;
   // Persisted state for restoring on remount
@@ -123,6 +131,7 @@ export function SpeckleSurfaceMaterialsSection({
   availableMaterials,
   cardType,
   filteringEnabled = true,
+  isActive = true,
   initialAssignments,
   initialLayerName,
   initialScatteringAssignments,
@@ -178,18 +187,26 @@ export function SpeckleSurfaceMaterialsSection({
   }, [worldTree]);
 
   // ── Activate the store (whole-tree workflow) ──
+  // Only the active (expanded) card may activate the shared store. An inactive
+  // card must not call deactivateViewer() either — that would wipe the active
+  // card's state while it is still mounted.
   useEffect(() => {
     if (!filteringEnabled) {
       deactivateViewer();
       return;
     }
+    if (!isActive) return;
     activate({ availableMaterials, cardType });
-  }, [filteringEnabled, availableMaterials, cardType, activate, deactivateViewer]);
+  }, [filteringEnabled, isActive, availableMaterials, cardType, activate, deactivateViewer]);
 
   // Clear store on unmount. Reset initializedRef so a re-mount re-loads assignments.
+  // Only the owner may clear the shared store — an inactive card unmounting must
+  // leave the active card's assignments untouched.
+  const isActiveRef = useRef(isActive);
+  isActiveRef.current = isActive;
   useEffect(() => {
     return () => {
-      deactivate();
+      if (isActiveRef.current) deactivate();
       initializedRef.current = false;
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -200,6 +217,7 @@ export function SpeckleSurfaceMaterialsSection({
   const initializedRef = useRef(false);
   const skipNextNotifyRef = useRef(true);
   useEffect(() => {
+    if (!isActive) return;
     if (initializedRef.current) return;
     initializedRef.current = true;
     skipNextNotifyRef.current = true;
@@ -209,7 +227,7 @@ export function SpeckleSurfaceMaterialsSection({
     loadAssignments(initMaterial, initScattering);
     useAcousticMaterialStore.temporal.getState().clear();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [isActive]);
 
   // ── Late hydration ──
   // The project soundscape (and thus `initialAssignments`) can load AFTER this
@@ -218,6 +236,7 @@ export function SpeckleSurfaceMaterialsSection({
   // is still empty, load them so the Object Explorer shows the materials instead
   // of "Select...". Guarded on an empty store to avoid clobbering user edits.
   useEffect(() => {
+    if (!isActive) return;
     if (!initialAssignments || Object.keys(initialAssignments).length === 0) return;
     if (useAcousticMaterialStore.getState().materialAssignments.size > 0) return;
 
@@ -227,7 +246,7 @@ export function SpeckleSurfaceMaterialsSection({
     skipNextNotifyRef.current = true;
     loadAssignments(initMaterial, initScattering);
     useAcousticMaterialStore.temporal.getState().clear();
-  }, [initialAssignments, initialScatteringAssignments, geometryIdToAppId, appIdToGeometryIds, loadAssignments]);
+  }, [isActive, initialAssignments, initialScatteringAssignments, geometryIdToAppId, appIdToGeometryIds, loadAssignments]);
   // ── Re-expand once the whole-model id maps become available ──
   // On mount the worldTree (and thus `appIdToGeometryIds`) may still be empty, so the
   // effects above kept the persisted applicationId keys verbatim. When the maps
@@ -236,6 +255,7 @@ export function SpeckleSurfaceMaterialsSection({
   // the same material the viewer already colors.
   const hasRemappedRef = useRef(false);
   useEffect(() => {
+    if (!isActive) return;
     if (hasRemappedRef.current) return;
     if (appIdToGeometryIds.size === 0) return;
     if (materialAssignments.size === 0) return;
@@ -267,10 +287,44 @@ export function SpeckleSurfaceMaterialsSection({
     skipNextNotifyRef.current = true;
     loadAssignments(expandedMaterial, expandedScattering);
     useAcousticMaterialStore.temporal.getState().clear();
-  }, [appIdToGeometryIds, geometryIdToAppId, materialAssignments, scatteringAssignments, loadAssignments]);
+  }, [isActive, appIdToGeometryIds, geometryIdToAppId, materialAssignments, scatteringAssignments, loadAssignments]);
 
   // Track previous layer to detect changes
   const previousLayerIdRef = useRef<string | null>(null);
+
+  // ── Reload the shared store when this card becomes the active one, or when
+  // its persisted assignments change while it is already active ──
+  // The mount / late-hydration effects only run once. If this section instance is
+  // reused for a different simulation card (index-based reconciliation on insert
+  // / reorder) or the active card switches without a remount, the store would
+  // otherwise keep showing the previous card's (last) assignments.
+  const prevIsActiveRef = useRef(false);
+  const prevInitialAssignmentsForStoreRef = useRef(initialAssignments);
+  useEffect(() => {
+    const becameActive = isActive && !prevIsActiveRef.current;
+    const initialChanged = initialAssignments !== prevInitialAssignmentsForStoreRef.current;
+    prevIsActiveRef.current = isActive;
+    prevInitialAssignmentsForStoreRef.current = initialAssignments;
+
+    if (!isActive) return;
+    if (!becameActive && !initialChanged) return;
+    if (!initialAssignments || Object.keys(initialAssignments).length === 0) return;
+
+    const nextMaterial = expandSavedAssignments(initialAssignments, geometryIdToAppId, appIdToGeometryIds);
+    const nextScattering = expandSavedAssignments(initialScatteringAssignments, geometryIdToAppId, appIdToGeometryIds);
+
+    // Skip the parent echoing our own notify back as a new-but-equal object.
+    const current = useAcousticMaterialStore.getState();
+    const sameMaterial = nextMaterial.size === current.materialAssignments.size
+      && Array.from(nextMaterial).every(([k, v]) => current.materialAssignments.get(k) === v);
+    const sameScattering = nextScattering.size === current.scatteringAssignments.size
+      && Array.from(nextScattering).every(([k, v]) => current.scatteringAssignments.get(k) === v);
+    if (sameMaterial && sameScattering) return;
+
+    skipNextNotifyRef.current = true;
+    loadAssignments(nextMaterial, nextScattering);
+    useAcousticMaterialStore.temporal.getState().clear();
+  }, [isActive, initialAssignments, initialScatteringAssignments, geometryIdToAppId, appIdToGeometryIds, loadAssignments]);
 
   /**
    * Color visualization: update when material assignments change or filteringEnabled toggles.
@@ -284,6 +338,10 @@ export function SpeckleSurfaceMaterialsSection({
       if (wasEnabled) clearMaterialColors();
       return;
     }
+
+    // Only the active card paints the viewer. An inactive section that stays
+    // mounted must not overwrite the active card's colors.
+    if (!isActive) return;
 
     if (materialAssignments.size === 0) {
       clearMaterialColors();
@@ -299,7 +357,7 @@ export function SpeckleSurfaceMaterialsSection({
     const colorGroups: ObjectColorGroup[] = [];
     colorMap.forEach((objectIds, color) => colorGroups.push({ objectIds, color }));
     registerMaterialColors(colorGroups);
-  }, [filteringEnabled, materialAssignments, getMaterialColor, registerMaterialColors, clearMaterialColors, availableMaterials]);
+  }, [filteringEnabled, isActive, materialAssignments, getMaterialColor, registerMaterialColors, clearMaterialColors, availableMaterials]);
 
   /**
    * Notify parent when assignments or selected layer change.
@@ -310,6 +368,10 @@ export function SpeckleSurfaceMaterialsSection({
   useEffect(() => { onMaterialAssignmentsChangeRef.current = onMaterialAssignmentsChange; }, [onMaterialAssignmentsChange]);
 
   useEffect(() => {
+    // Only the active card writes back to its own config. This prevents an
+    // inactive mounted section from clobbering its card with the active card's
+    // (last) assignments.
+    if (!isActive) return;
     if (skipNextNotifyRef.current) {
       skipNextNotifyRef.current = false;
       return;
@@ -334,13 +396,13 @@ export function SpeckleSurfaceMaterialsSection({
     const geometryObjectIds = Array.from(materialAssignments.keys());
 
     onMaterialAssignmentsChangeRef.current(assignmentsObject, layerName, geometryObjectIds, scatteringObject);
-  }, [materialAssignments, scatteringAssignments, selectedLayerId, layerOptions, geometryIdToAppId]);
+  }, [isActive, materialAssignments, scatteringAssignments, selectedLayerId, layerOptions, geometryIdToAppId]);
 
   /**
-   * Clear material colors when component unmounts.
+   * Clear material colors when the owning component unmounts.
    */
   useEffect(() => {
-    return () => { clearMaterialColors(); };
+    return () => { if (isActiveRef.current) clearMaterialColors(); };
   }, [clearMaterialColors]);
 
   // Headless — material/scattering assignment UI lives in the Object Explorer.

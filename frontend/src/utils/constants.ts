@@ -259,6 +259,16 @@ export const UI_OVERLAY = {
   VERTICAL_STACK_OFFSET: 230, // Offset when stacking Entity UI above Sound UI (EntityBox ~110px + GAP 20px + clearance ~130px)
 } as const;
 
+// Sidebar breadcrumb right-click menu — lists the sibling cards at a parent
+// section level and re-scopes the current child section without changing step.
+// Sizing/placement tokens for `components/ui/ContextMenu.tsx`.
+export const SIDEBAR_BREADCRUMB_MENU = {
+  WIDTH: 200,                 // px — fixed menu width
+  ESTIMATED_ITEM_HEIGHT: 30,  // px — used to clamp before the real height is measured
+  VIEWPORT_MARGIN: 8,         // px — minimum distance from viewport edges after clamping
+  Z_INDEX: 9999,              // matches the card context menu — both are body-portaled popups
+} as const;
+
 // Card info ("i") popover — click-to-open explanation panel on every card
 // (bottom-right corner). Sizing/placement tokens for `components/ui/InfoPopover.tsx`.
 export const CARD_INFO_POPOVER = {

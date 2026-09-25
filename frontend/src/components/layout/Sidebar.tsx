@@ -1,9 +1,12 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import type { MouseEvent as ReactMouseEvent } from "react";
 import { ContextSection } from "./sidebar/ContextSection";
 import { UsageSection } from "./sidebar/UsageSection";
 import { SoundGenerationSection } from "./sidebar/SoundGenerationSection";
+import { ContextMenu } from "@/components/ui/ContextMenu";
+import type { ContextMenuItem } from "@/components/ui/ContextMenu";
 import { UI_SIDEBAR_RESIZE, UI_SIDEBAR_TOGGLE } from "@/utils/constants";
 import { readCssPx, clampToViewportWidth } from "@/utils/scale";
 import { buildSidebarEdgeNotchClipPath } from "@/utils/sidebarEdgeNotch";
@@ -46,6 +49,7 @@ export function Sidebar(props: SidebarProps) {
   const [bypassedUsage, setBypassedUsage] = useState(false);
   const [activeContextOriginalIndex, setActiveContextOriginalIndex] = useState<number | null>(null);
   const [activeUsageOriginalIndex, setActiveUsageOriginalIndex] = useState<number | null>(null);
+  const [breadcrumbMenu, setBreadcrumbMenu] = useState<{ level: 'context' | 'usage'; x: number; y: number } | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(true);
   const [shortcutsHovered, setShortcutsHovered] = useState(false);
   const isMac = useIsMac();
@@ -705,6 +709,114 @@ export function Sidebar(props: SidebarProps) {
     props.onUpdateAnalysisConfig,
   ]);
 
+  // ─── Breadcrumb right-click section switcher ───────────────────────────────
+  // Right-clicking a PARENT breadcrumb while in a child section opens a menu of
+  // the sibling cards at that level. Picking one re-scopes the current child
+  // section's content WITHOUT changing the wizard step.
+  const reScopeToContext = useCallback((ctxIdx: number) => {
+    hasInteractedRef.current = true;
+    setActiveContextOriginalIndex(ctxIdx);
+    setContextExpandedOriginalIndex(null);
+    setBypassedUsage(false);
+    useUIStore.getState().setActiveSoundParentIndex(null);
+
+    if (currentStep === 1) {
+      // Re-scope the Usage list to the chosen context's first child.
+      const firstUsage = getFirstUsageChildIndex(ctxIdx);
+      setActiveUsageOriginalIndex(firstUsage);
+      setUsageExpandedOriginalIndex(firstUsage);
+      useUIStore.getState().setIsInSoundsStep(false);
+    } else if (currentStep === 2) {
+      // Re-scope Sounds to the chosen context. Audio contexts resolve to their
+      // placeholder usage card (created on extraction) via ensureUsageCardForContext.
+      const ctxCfg = props.analysisConfigs[ctxIdx];
+      const usageIdx =
+        ctxCfg?.type === 'audio'
+          ? useAnalysisStore
+              .getState()
+              .ensureUsageCardForContext(ctxIdx, getConfigLabel(ctxCfg, CARD_TYPE_LABELS['audio']))
+          : getFirstUsageChildIndex(ctxIdx);
+      setActiveUsageOriginalIndex(usageIdx);
+      setUsageExpandedOriginalIndex(usageIdx);
+      if (usageIdx !== null) {
+        useUIStore.getState().setActiveSoundParentIndex(usageIdx);
+      } else {
+        useUIStore.getState().setIsInSoundsStep(true);
+      }
+    }
+  }, [currentStep, props.analysisConfigs]);
+
+  const reScopeToUsage = useCallback((usageIdx: number) => {
+    hasInteractedRef.current = true;
+    setActiveUsageOriginalIndex(usageIdx);
+    setUsageExpandedOriginalIndex(usageIdx);
+    useUIStore.getState().setActiveSoundParentIndex(usageIdx);
+    const parentCtx = (props.analysisConfigs[usageIdx] as any)?.parentContextOriginalIndex;
+    if (
+      typeof parentCtx === 'number' &&
+      parentCtx >= 0 &&
+      parentCtx < props.analysisConfigs.length
+    ) {
+      setActiveContextOriginalIndex(parentCtx);
+    }
+  }, [props.analysisConfigs]);
+
+  const openBreadcrumbMenu = useCallback(
+    (level: 'context' | 'usage') => (e: ReactMouseEvent) => {
+      // Only parent breadcrumbs get the menu, and only while in a child section.
+      if (level === 'context' && currentStep === 0) return;
+      if (level === 'usage' && currentStep !== 2) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setBreadcrumbMenu({ level, x: e.clientX, y: e.clientY });
+    },
+    [currentStep],
+  );
+
+  const contextMenuItems = useMemo<ContextMenuItem[]>(() => {
+    return props.analysisConfigs
+      .map((c, idx) => ({ c, idx }))
+      .filter(({ c }) =>
+        SIDEBAR_CONTEXT_TYPES.includes(c.type as CardType) &&
+        !(c.type === 'freeform' && (c as any).parentContextOriginalIndex !== undefined)
+      )
+      .map(({ c, idx }) => ({
+        key: `context-${idx}`,
+        label: cardLabelHelper(c, `Context ${idx + 1}`),
+        isActive: activeContextOriginalIndex === idx,
+        pending:
+          c.type === 'freeform'
+            ? false
+            : c.type === 'model-analysis'
+            ? ((c as any).analysisResult?.architecturalObjects?.length ?? 0) === 0
+            : !props.analysisResult.some((r: any) => r.configIndex === idx),
+        onClick: () => reScopeToContext(idx),
+      }));
+  }, [props.analysisConfigs, props.analysisResult, activeContextOriginalIndex, reScopeToContext]);
+
+  const usageMenuItems = useMemo<ContextMenuItem[]>(() => {
+    if (activeContextOriginalIndex === null || activeContextOriginalIndex === undefined) return [];
+    return props.analysisConfigs
+      .map((c, idx) => ({ c, idx }))
+      .filter(({ c }) =>
+        SIDEBAR_USAGE_TYPES.includes(c.type as CardType) &&
+        !(c.type === 'freeform' && (c as any).parentContextOriginalIndex === undefined) &&
+        (c as any).parentContextOriginalIndex === activeContextOriginalIndex
+      )
+      .map(({ c, idx }) => ({
+        key: `usage-${idx}`,
+        label: cardLabelHelper(c, `Usage ${idx + 1}`),
+        isActive: activeUsageOriginalIndex === idx,
+        pending:
+          c.type === 'freeform'
+            ? false
+            : c.type === 'scenario'
+            ? !(c as any).foleyResult
+            : !props.analysisResult.some((r: any) => r.configIndex === idx),
+        onClick: () => reScopeToUsage(idx),
+      }));
+  }, [props.analysisConfigs, props.analysisResult, activeContextOriginalIndex, activeUsageOriginalIndex, reScopeToUsage]);
+
   // ─── Breadcrumb "has cards" state ───────────────────────────────────────────
   // A breadcrumb is greyed (but still clickable) when its section contains no
   // cards, evaluated relative to the currently expanded/active parent card.
@@ -940,6 +1052,7 @@ export function Sidebar(props: SidebarProps) {
                 setCurrentStep(0);
                 setIsExpanded(true);
               }}
+              onContextMenu={openBreadcrumbMenu('context')}
               aria-current={currentStep === 0 ? 'step' : undefined}
               title={contextTooltip}
             >
@@ -961,6 +1074,7 @@ export function Sidebar(props: SidebarProps) {
                     : 'text-adaptive opacity-80 hover:bg-secondary-light cursor-pointer'
                 }`}
                 onClick={handleUsageBreadcrumbClick}
+                onContextMenu={openBreadcrumbMenu('usage')}
                 aria-current={currentStep === 1 ? 'step' : undefined}
                 title={usageTooltip}
               >
@@ -1148,6 +1262,22 @@ export function Sidebar(props: SidebarProps) {
         </div>
         </div>
       </aside>
+
+      {/* Breadcrumb right-click switcher — lists sibling cards at the parent level */}
+      {breadcrumbMenu && (
+        <ContextMenu
+          x={breadcrumbMenu.x}
+          y={breadcrumbMenu.y}
+          title={breadcrumbMenu.level === 'context' ? 'Switch context' : 'Switch usage'}
+          items={breadcrumbMenu.level === 'context' ? contextMenuItems : usageMenuItems}
+          emptyMessage={
+            breadcrumbMenu.level === 'context'
+              ? 'No contexts available'
+              : 'No usages for this context'
+          }
+          onClose={() => setBreadcrumbMenu(null)}
+        />
+      )}
     </>
   );
 }

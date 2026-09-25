@@ -1707,9 +1707,12 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 audioStore.syncGeneratedSounds(get().generatedSounds);
                 audioStore.setOrchestrateIterationLinks(finalConfigs);
                 // Capture the orchestrator result for "Reset track" once the bake applies.
+                // `notify: true` — this is the authoritative orchestrator-job bake, the
+                // only place orchestrate warnings (exclusions / authored fallbacks /
+                // self-overlap) may surface as toasts.
                 audioStore.bakeOrchestrateSchedule(() => {
                   useAudioControlsStore.getState().saveOrchestrateResult();
-                });
+                }, { notify: true });
               }
               // Baseline for the "Re-orchestrate timeline" button: the agent inputs
               // as they are right now (post-generation, pre-user-edit).
@@ -2104,9 +2107,10 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             audioStore.syncGeneratedSounds(get().generatedSounds);
             audioStore.setOrchestrateIterationLinks(finalConfigs);
             // Capture the orchestrator result for "Reset track" once the bake applies.
+            // `notify: true` — re-orchestrate is an authoritative orchestrator-job bake.
             audioStore.bakeOrchestrateSchedule(() => {
               useAudioControlsStore.getState().saveOrchestrateResult();
-            });
+            }, { notify: true });
             if (advanceBaseline) {
               set(
                 { orchestrateBaselineSignature: orchestrateInputsSignature(finalConfigs) },

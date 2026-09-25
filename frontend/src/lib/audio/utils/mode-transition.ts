@@ -27,33 +27,40 @@ export const DEFAULT_CROSSFADE_DURATION = 0.08; // 80ms
  * @param newMode - Mode to bring in
  * @param audioContext - Web Audio context
  * @param durationSec - Crossfade window in seconds
+ * @param targetGain - Gain the new mode should settle at. Each mode's output node
+ *   is its `masterGain`, so this MUST be the user's persisted master volume —
+ *   ramping to 1.0 here would silently override the volume fader on every switch.
  */
 export async function crossfadeModes(
   oldMode: IAudioMode | null,
   newMode: IAudioMode,
   audioContext: AudioContext,
-  durationSec: number = DEFAULT_CROSSFADE_DURATION
+  durationSec: number = DEFAULT_CROSSFADE_DURATION,
+  targetGain: number = 1
 ): Promise<void> {
   // Enable the new mode first so its enabled-flag bookkeeping is correct.
+  // NOTE: `enable()` resets the mode's masterGain to 1.0, so every branch below
+  // MUST finish by settling the output at `targetGain` (the user's master volume).
   newMode.enable();
 
-  // First activation (no outgoing mode) — make sure the output is audible.
-  if (!oldMode) {
-    rampOutputGain(newMode, audioContext, 1, 1, durationSec);
+  // Same instance (e.g. an IR swap within IR mode) — nothing to crossfade, but
+  // `enable()` above just reset masterGain, so restore the target volume.
+  if (oldMode === newMode) {
+    rampOutputGain(newMode, audioContext, targetGain, targetGain, durationSec);
     return;
   }
 
-  // Same instance (e.g. an IR swap within IR mode) — nothing to crossfade and the
-  // instance was never faded out, so leave its gain untouched.
-  if (oldMode === newMode) {
+  // First activation (no outgoing mode) — settle directly at the target gain.
+  if (!oldMode) {
+    rampOutputGain(newMode, audioContext, targetGain, targetGain, durationSec);
     return;
   }
 
   const now = audioContext.currentTime;
   const end = now + durationSec;
 
-  // Ramp new in from silence while ramping the old one out, over the same window.
-  rampOutputGain(newMode, audioContext, 0, 1, durationSec);
+  // Ramp new in from silence up to the target gain while ramping the old one out.
+  rampOutputGain(newMode, audioContext, 0, targetGain, durationSec);
   const oldNode = safeGetOutputNode(oldMode);
   if (oldNode && 'gain' in oldNode && oldNode.gain instanceof AudioParam) {
     const gainNode = oldNode as GainNode;
