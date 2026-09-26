@@ -79,7 +79,7 @@ def _workspace_or_404(workspace_id: str) -> dict:
 def _require_role(workspace_id: str, user_hash: str, allowed: tuple[str, ...]) -> str:
     role = metadata_store.get_member_role(workspace_id, user_hash)
     if role not in allowed:
-        raise HTTPException(status_code=403, detail="Insufficient permission for this workspace")
+        raise HTTPException(status_code=403, detail="Insufficient permission for this workspace. Data will not save.")
     return role
 
 
