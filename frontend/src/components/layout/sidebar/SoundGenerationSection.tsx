@@ -132,6 +132,8 @@ export function SoundGenerationSection({
   const serviceVersions = useServiceVersions();
 
   // ── UI store for sidebar→scene communication ──
+  // null = Home/sandbox (no Speckle model) — used to skip scene auto-selection.
+  const globalSpeckleData            = useUIStore(s => s.globalSpeckleData);
   const setExpandedSoundCardIndex = useUIStore(s => s.setExpandedSoundCardIndex);
   const triggerZoomToSoundCard    = useUIStore(s => s.triggerZoomToSoundCard);
   const showSpectrograms          = useUIStore(s => s.showSpectrograms);
@@ -400,14 +402,21 @@ export function SoundGenerationSection({
   // The sidebar auto-expands the first visible card locally, but the store value
   // is not persisted. Publish that first card once cards exist so the scene gizmo
   // targets the same card the user sees expanded (instead of nothing / a stale one).
+  //
+  // Only mirror this for a real Speckle model. On the Home/sandbox stage no model
+  // is loaded (`globalSpeckleData === null`), and publishing an index there
+  // auto-attaches the drag gizmo to the seeded Sample sphere: it reads as
+  // "already selected", and the gizmo's centre handle then swallows the click
+  // that is supposed to expand the sidebar.
   const initialExpandPublishedRef = useRef(false);
   useEffect(() => {
     if (initialExpandPublishedRef.current || filteredCardItems.length === 0) return;
+    if (globalSpeckleData === null) return;
     initialExpandPublishedRef.current = true;
     if (useUIStore.getState().expandedSoundCardIndex === null) {
       setExpandedSoundCardIndex(filteredCardItems[0].originalIndex);
     }
-  }, [filteredCardItems]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [filteredCardItems, globalSpeckleData]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Keep a ref to soundConfigs.length so the selection effect below can bounds-check
   // without listing soundConfigs.length as a dependency (which would cause the effect

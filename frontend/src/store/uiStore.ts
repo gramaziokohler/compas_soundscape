@@ -448,13 +448,16 @@ export const useUIStore = create<UIStoreState>()(
     name: 'compas-ui-state',
     storage: createJSONStorage(() => localStorage),
     skipHydration: true,
-    // v0 persisted the legacy grid defaults `#888888` (old grey default) or
-    // `''` (intermediate "follow --color-primary" value). Normalize both to the
-    // primary blue hex so existing profiles stop rendering the grid/title grey.
-    version: 1,
+    // Legacy grid defaults: `#888888` (original grey default) and `''` (follow
+    // `--color-primary`). v1 only normalized profiles written at v0, so a v1
+    // profile that still held the grey default (e.g. written by HMR after the
+    // default changed) kept rendering grey. v2 re-normalizes every pre-v2
+    // profile so the grid/title is primary blue unless the user explicitly
+    // picked another colour.
+    version: 2,
     migrate: (persistedState: unknown, version: number) => {
       const s = (persistedState ?? {}) as Partial<UIStoreState>;
-      if (version >= 1) return s as UIStoreState;
+      if (version >= 2) return s as UIStoreState;
       if (s.groundGridColor === undefined || s.groundGridColor === '' || s.groundGridColor === '#888888') {
         return { ...s, groundGridColor: '#002aff' } as UIStoreState;
       }
