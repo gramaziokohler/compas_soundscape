@@ -1,31 +1,27 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useCallback, useEffect } from 'react';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
+import { useAudioControlsStore } from '@/store';
 
 /**
  * Audio Normalization Hook
  *
- * Manages normalization state for audio processing.
- * Following the modular architecture pattern:
- * - Single Responsibility: Only manages normalization toggle state
- * - Small and focused: ~50 lines
- * - Integrates with AudioOrchestrator for actual audio processing
- *
- * Normalization applies gain adjustment to prevent clipping when
- * convolving with impulse responses.
+ * Reads/writes the global IR-normalization flag from `audioControlsStore` so it
+ * survives refresh and syncs to the user's preferences, and mirrors it onto the
+ * AudioOrchestrator for the actual convolution gain.
  *
  * @param audioOrchestrator - The audio orchestrator instance
  * @returns Normalization state and toggle function
  */
 export function useAudioNormalization(audioOrchestrator: AudioOrchestrator | null) {
-  const [normalize, setNormalize] = useState<boolean>(false);
+  const normalize = useAudioControlsStore((s) => s.normalizeImpulseResponses);
+  const setNormalize = useAudioControlsStore((s) => s.setNormalizeImpulseResponses);
 
   /**
    * Toggle normalization on/off
    */
   const toggleNormalize = useCallback((enabled: boolean) => {
-    console.log('[useAudioNormalization] toggleNormalize called:', enabled);
     setNormalize(enabled);
-  }, []);
+  }, [setNormalize]);
 
   /**
    * Sync normalization setting with AudioOrchestrator
@@ -33,8 +29,6 @@ export function useAudioNormalization(audioOrchestrator: AudioOrchestrator | nul
    */
   useEffect(() => {
     if (!audioOrchestrator) return;
-
-    console.log('[useAudioNormalization] Updating orchestrator normalize setting:', normalize);
     audioOrchestrator.setNormalize(normalize);
   }, [audioOrchestrator, normalize]);
 
@@ -43,7 +37,7 @@ export function useAudioNormalization(audioOrchestrator: AudioOrchestrator | nul
    */
   const reset = useCallback(() => {
     setNormalize(false);
-  }, []);
+  }, [setNormalize]);
 
   return {
     normalize,

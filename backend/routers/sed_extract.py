@@ -17,7 +17,7 @@ from fastapi import APIRouter, File, UploadFile, HTTPException, Form, Request
 from fastapi.concurrency import run_in_threadpool
 from typing import Optional
 from utils.audio_processing import ensure_mono
-from services.paths import GENERATED_SOUNDS_PARENT, user_audio_dir
+from services.paths import GENERATED_SOUNDS_PARENT, find_session_audio, user_sounds_dir
 
 router = APIRouter()
 
@@ -32,6 +32,7 @@ def init_sed_extract_router(audio_service):
 
 @router.post("/api/extract-sed-segments")
 async def extract_sed_segments(
+    req: Request,
     file: UploadFile = File(...),
     segments_json: str = Form(...),
     apply_noise_reduction: bool = Form(False),
@@ -67,13 +68,20 @@ async def extract_sed_segments(
           ]
         }
     """
-    from config.constants import TEMP_UPLOADS_DIR, GENERATED_SOUNDS_DIR, GENERATED_SOUND_URL_PREFIX
+    from config.constants import TEMP_UPLOADS_DIR, GENERATED_SOUND_URL_PREFIX
 
     if _audio_service is None:
         raise HTTPException(status_code=503, detail="Audio service not initialized")
 
+    workspace_id = getattr(getattr(req, "state", None), "session_id", None)
+    if not workspace_id:
+        raise HTTPException(status_code=400, detail="No session cookie")
+
     os.makedirs(TEMP_UPLOADS_DIR, exist_ok=True)
-    os.makedirs(GENERATED_SOUNDS_DIR, exist_ok=True)
+    # SED segments are written into the caller's workspace generated dir (not a
+    # global pool) so they can never collide with or be served to another user.
+    seg_out_dir = user_sounds_dir(workspace_id)
+    os.makedirs(seg_out_dir, exist_ok=True)
 
     # Parse segments JSON
     try:
@@ -82,8 +90,9 @@ async def extract_sed_segments(
         raise HTTPException(status_code=400, detail=f"Invalid segments_json: {e}")
 
     # Save uploaded file
-    session_id = uuid.uuid4().hex[:8]
-    source_path = os.path.join(TEMP_UPLOADS_DIR, f"sed_source_{session_id}_{file.filename}")
+    run_token = uuid.uuid4().hex[:8]
+    source_name = os.path.basename(file.filename or "audio")
+    source_path = os.path.join(TEMP_UPLOADS_DIR, f"sed_source_{run_token}_{source_name}")
     try:
         content = await file.read()
         with open(source_path, "wb") as f_out:
@@ -123,13 +132,13 @@ async def extract_sed_segments(
                 safe_name = "".join(c for c in name if c.isalnum() or c in "_- ")[:30].strip().replace(" ", "_")
                 temp_seg_path = os.path.join(
                     TEMP_UPLOADS_DIR,
-                    f"sed_seg_{session_id}_{safe_name}_{seg_idx}.wav"
+                    f"sed_seg_{run_token}_{safe_name}_{seg_idx}.wav"
                 )
                 sf.write(temp_seg_path, segment_audio, sample_rate)
 
                 # Calibrate (normalize RMS + optional denoise + dBFS calibration)
-                out_filename = f"sed_{safe_name}_{seg_idx}_{session_id}.wav"
-                out_path = os.path.join(GENERATED_SOUNDS_DIR, out_filename)
+                out_filename = f"sed_{safe_name}_{seg_idx}_{run_token}.wav"
+                out_path = os.path.join(str(seg_out_dir), out_filename)
                 try:
                     await run_in_threadpool(
                         _audio_service.calibrate_audio_file,
@@ -140,7 +149,7 @@ async def extract_sed_segments(
                     )
                     duration = float(end_sec - start_sec)
                     variants.append({
-                        "url": f"{GENERATED_SOUND_URL_PREFIX}/{out_filename}",
+                        "url": f"{GENERATED_SOUND_URL_PREFIX}/{workspace_id}/{out_filename}",
                         "duration": round(duration, 3),
                     })
                 except Exception as e:
@@ -196,9 +205,15 @@ async def delete_sed_segment(filename: str, request: Request):
 
     session_id = getattr(getattr(request, "state", None), "session_id", None)
 
-    candidates: list[Path] = [Path(GENERATED_SOUNDS_PARENT) / filename]
+    candidates: list[Path] = []
     if session_id:
-        candidates.append(user_audio_dir(session_id) / filename)
+        # Live workspace generated dir + persisted model-scoped audio copies.
+        candidates.append(Path(GENERATED_SOUNDS_PARENT) / session_id / filename)
+        found = find_session_audio(session_id, filename)
+        if found:
+            candidates.append(found)
+    # Legacy global root (pre-workspace-scoping extractions).
+    candidates.append(Path(GENERATED_SOUNDS_PARENT) / filename)
 
     removed: list[str] = []
     for candidate in candidates:

@@ -141,6 +141,15 @@ CREATE TABLE IF NOT EXISTS blob_refs (
     PRIMARY KEY (hash, workspace_id, model_id, ref_key)
 );
 
+-- Durable per-user UI/acoustic preferences (Advanced Settings panel). Keyed by
+-- user_hash so a user's settings follow their identity across browsers and
+-- workspaces. Stored as one JSON blob to keep the schema additive.
+CREATE TABLE IF NOT EXISTS user_preferences (
+    user_hash     TEXT PRIMARY KEY,
+    data          TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_hash);
 CREATE INDEX IF NOT EXISTS idx_members_user ON workspace_members(user_hash);
 CREATE INDEX IF NOT EXISTS idx_model_workspace ON model_workspace(workspace_id);
@@ -212,6 +221,37 @@ class MetadataStore:
 
     def set_display_name(self, user_hash: str, display_name: str) -> None:
         self._execute("UPDATE users SET display_name = ? WHERE user_hash = ?", (display_name, user_hash))
+
+    # ── user preferences ─────────────────────────────────────────────────
+    def get_preferences(self, user_hash: str) -> dict:
+        """Return the user's stored preferences blob (empty dict when unset)."""
+        if not user_hash:
+            return {}
+        import json
+
+        rows = self._query("SELECT data FROM user_preferences WHERE user_hash = ?", (user_hash,))
+        if not rows:
+            return {}
+        try:
+            parsed = json.loads(rows[0]["data"])
+            return parsed if isinstance(parsed, dict) else {}
+        except (ValueError, TypeError):
+            logger.warning("Corrupt preferences JSON for user %s", user_hash)
+            return {}
+
+    def set_preferences(self, user_hash: str, data: dict) -> dict:
+        """Upsert the user's preferences blob and return the stored value."""
+        import json
+
+        if not user_hash:
+            return data
+        payload = json.dumps(data)
+        self._execute(
+            "INSERT INTO user_preferences (user_hash, data, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(user_hash) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at",
+            (user_hash, payload, _now()),
+        )
+        return data
 
     # ── workspaces ───────────────────────────────────────────────────────
     def create_workspace(self, owner_hash: str, name: str, workspace_id: Optional[str] = None) -> dict:

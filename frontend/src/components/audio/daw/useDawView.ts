@@ -19,7 +19,7 @@ export function useDawView() {
   const dockAutoFit = timelineDock.autoFit !== false;
 
   const [pxPerSecond, setPxPerSecondRaw] = useState<number>(10);
-  const [snapMode, setSnapMode] = useState<SnapMode>('smart');
+  const [snapMode, setSnapMode] = useState<SnapMode>('on');
   const [trackHeight, setTrackHeightRaw] = useState<number>(DAW.TRACK_HEIGHT);
 
   const setPxPerSecond = useCallback((value: number | ((prev: number) => number)) => {

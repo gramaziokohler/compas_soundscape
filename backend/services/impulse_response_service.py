@@ -32,6 +32,23 @@ class ImpulseResponseService:
         self._peak_cache: dict[str, tuple[float, float]] = {}
 
     @staticmethod
+    def _library_dir(workspace_id: Optional[str]) -> Path:
+        """Workspace-scoped IR library directory.
+
+        With a workspace id the IRs live under ``impulse_responses/<workspace_id>/``
+        (served at ``/static/impulse_responses/<workspace_id>/<file>``); without
+        one they fall back to the shared root (legacy / no-session calls).
+        """
+        root = Path(IMPULSE_RESPONSE_DIR)
+        return root / workspace_id if workspace_id else root
+
+    @staticmethod
+    def _library_url(workspace_id: Optional[str], filename: str) -> str:
+        if workspace_id:
+            return f"{IMPULSE_RESPONSE_URL_PREFIX}/{workspace_id}/{filename}"
+        return f"{IMPULSE_RESPONSE_URL_PREFIX}/{filename}"
+
+    @staticmethod
     def _compute_peak(audio_data: np.ndarray) -> float:
         """Peak absolute sample (max across channels) in the float [-1, 1] domain."""
         if audio_data.size == 0:
@@ -108,15 +125,19 @@ class ImpulseResponseService:
     def process_ir_file(
         self, 
         file_path: str, 
-        name: str
+        name: str,
+        workspace_id: Optional[str] = None,
     ) -> Tuple[ImpulseResponseMetadata, str]:
         """
         Process uploaded IR file and save in appropriate format
-        
+
         Args:
             file_path: Path to uploaded temporary file
             name: User-provided name for the IR
-            
+            workspace_id: Owning workspace — the IR is stored under
+                ``impulse_responses/<workspace_id>/`` so one workspace never
+                sees or shares another's uploaded IRs.
+
         Returns:
             Tuple of (metadata, output_file_path)
         """
@@ -169,7 +190,9 @@ class ImpulseResponseService:
         safe_name = "".join(c for c in name if c.isalnum() or c in (' ', '-', '_')).strip()
         safe_name = safe_name.replace(' ', '_')
         filename = f"{safe_name}_{ir_format}_{unique_id}.wav"
-        output_path = os.path.join(IMPULSE_RESPONSE_DIR, filename)
+        dest_dir = self._library_dir(workspace_id)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        output_path = os.path.join(str(dest_dir), filename)
         
         # Save processed IR
         # Transpose back to (samples, channels) for soundfile
@@ -201,7 +224,7 @@ class ImpulseResponseService:
         # Create metadata
         metadata = ImpulseResponseMetadata(
             id=unique_id,
-            url=f"{IMPULSE_RESPONSE_URL_PREFIX}/{filename}",
+            url=self._library_url(workspace_id, filename),
             name=name,
             format=IRFormat(ir_format),
             channels=target_channels,
@@ -215,25 +238,28 @@ class ImpulseResponseService:
         
         return metadata, output_path
     
-    def list_impulse_responses(self) -> list[ImpulseResponseMetadata]:
+    def list_impulse_responses(self, workspace_id: Optional[str] = None) -> list[ImpulseResponseMetadata]:
         """
-        List all available impulse responses
-        
+        List impulse responses available to a workspace.
+
+        Scoped to ``impulse_responses/<workspace_id>/`` so a user only ever sees
+        the IRs their own workspace uploaded. Without a workspace id, falls back
+        to the shared root (legacy / no-session calls).
+
         Returns:
             List of IR metadata objects
         """
-        # TODO: Implement persistent storage (database or JSON file)
-        # For now, scan directory
         irs = []
-        
-        if not os.path.exists(IMPULSE_RESPONSE_DIR):
+        library_dir = self._library_dir(workspace_id)
+
+        if not library_dir.exists():
             return irs
-        
-        for filename in os.listdir(IMPULSE_RESPONSE_DIR):
+
+        for filename in os.listdir(str(library_dir)):
             if not filename.endswith('.wav'):
                 continue
-            
-            filepath = os.path.join(IMPULSE_RESPONSE_DIR, filename)
+
+            filepath = os.path.join(str(library_dir), filename)
             
             try:
                 # Read file metadata
@@ -267,7 +293,7 @@ class ImpulseResponseService:
                 
                 metadata = ImpulseResponseMetadata(
                     id=file_hash,
-                    url=f"{IMPULSE_RESPONSE_URL_PREFIX}/{filename}",
+                    url=self._library_url(workspace_id, filename),
                     name=name,
                     format=IRFormat(ir_format),
                     channels=channels,
@@ -286,41 +312,43 @@ class ImpulseResponseService:
         
         return irs
     
-    def delete_impulse_response(self, ir_id: str) -> bool:
+    def delete_impulse_response(self, ir_id: str, workspace_id: Optional[str] = None) -> bool:
         """
-        Delete an impulse response by ID
-        
+        Delete an impulse response by ID within a workspace.
+
         Args:
             ir_id: Hash ID of the IR to delete
-            
+            workspace_id: Owning workspace (scopes the search)
+
         Returns:
             True if deleted, False if not found
-            
+
         Raises:
             ValueError: If deletion fails
         """
-        if not os.path.exists(IMPULSE_RESPONSE_DIR):
+        library_dir = self._library_dir(workspace_id)
+        if not library_dir.exists():
             return False
-        
+
         # Find file with matching hash ID
-        for filename in os.listdir(IMPULSE_RESPONSE_DIR):
+        for filename in os.listdir(str(library_dir)):
             if not filename.endswith('.wav'):
                 continue
-            
+
             # Extract hash from filename: {name}_{format}_{hash}.wav
             parts = filename[:-4].split('_')
             if len(parts) >= 3:
                 file_hash = parts[-1]
             else:
                 file_hash = filename[:8]
-            
+
             if file_hash == ir_id:
-                filepath = os.path.join(IMPULSE_RESPONSE_DIR, filename)
+                filepath = os.path.join(str(library_dir), filename)
                 try:
                     os.unlink(filepath)
                     print(f"Deleted IR: {filename}")
                     return True
                 except Exception as e:
                     raise ValueError(f"Failed to delete IR file: {str(e)}")
-        
+
         return False

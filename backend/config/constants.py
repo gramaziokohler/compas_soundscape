@@ -21,13 +21,14 @@ LLM_TASK_CLEANUP_DELAY_SECONDS = 300
 SED_TASK_CLEANUP_DELAY_SECONDS = 300
 
 # Model Configuration
-LLM_MODEL_GEMINI_FLASH = "gemini-2.5-flash"
-LLM_MODEL_GEMINI_PRO = "gemini-2.5-pro"
-LLM_MODEL_GEMINI_3_FLASH = "gemini-3-flash-preview"
-LLM_MODEL_GEMINI_3_PRO = "gemini-3.1-pro-preview"
+# Gemini LLM models — only the latest Flash (3.8) and the current Pro (3.1) are
+# offered. All Gemini 2.5 and older models have been removed.
+LLM_MODEL_GEMINI_FLASH = "gemini-3.8-flash"
+LLM_MODEL_GEMINI_PRO = "gemini-3.1-pro-preview"
 LLM_MODEL_OPENAI = "openai"
 LLM_MODEL_ANTHROPIC = "anthropic"
 
+# Latest Flash model is the default.
 DEFAULT_LLM_MODEL = LLM_MODEL_GEMINI_FLASH
 
 # Provider keys — used in /api/versions response and availability checks
@@ -39,18 +40,14 @@ LLM_PROVIDER_ANTHROPIC = "anthropic"
 LLM_MODEL_TO_PROVIDER = {
     LLM_MODEL_GEMINI_FLASH:   LLM_PROVIDER_GOOGLE,
     LLM_MODEL_GEMINI_PRO:     LLM_PROVIDER_GOOGLE,
-    LLM_MODEL_GEMINI_3_FLASH: LLM_PROVIDER_GOOGLE,
-    LLM_MODEL_GEMINI_3_PRO:   LLM_PROVIDER_GOOGLE,
     LLM_MODEL_OPENAI:         LLM_PROVIDER_OPENAI,
     LLM_MODEL_ANTHROPIC:      LLM_PROVIDER_ANTHROPIC,
 }
 
 # Specific model versions mapped to each provider
 LLM_MODEL_VERSIONS = {
-    LLM_MODEL_GEMINI_FLASH: "gemini-2.5-flash",
-    LLM_MODEL_GEMINI_PRO: "gemini-2.5-pro",
-    LLM_MODEL_GEMINI_3_FLASH: "gemini-3-flash-preview",
-    LLM_MODEL_GEMINI_3_PRO: "gemini-3.1-pro-preview",
+    LLM_MODEL_GEMINI_FLASH: "gemini-3.8-flash",
+    LLM_MODEL_GEMINI_PRO: "gemini-3.1-pro-preview",
     LLM_MODEL_OPENAI: "gpt-4o",
     LLM_MODEL_ANTHROPIC: "claude-3-5-sonnet-20241022",
 }
@@ -170,21 +167,19 @@ AUDIOLDM2_INFERENCE_STEPS = 200  # Default number of inference steps for AudioLD
 AUDIOLDM2_NUM_WAVEFORMS = 1  # Number of waveforms to generate per prompt
 AUDIOLDM2_SAMPLE_RATE = 16000  # AudioLDM2 output sample rate
 
-# Gemini TTS Configuration
-TTS_MODEL_GEMINI_FLASH = "gemini-2.5-flash-preview-tts"
-TTS_MODEL_GEMINI_PRO = "gemini-2.5-pro-preview-tts"
-TTS_MODEL_GEMINI_3_FLASH = "gemini-3.1-flash-tts-preview"
+# Gemini TTS Configuration — Gemini 3.8 TTS only (2.5 and 3.1-preview removed).
+# Both models share the same schema (Interactions API, WAV unary output).
+TTS_MODEL_GEMINI_FLASH = "gemini-3.8-flash-tts"
+TTS_MODEL_GEMINI_FLASH_LITE = "gemini-3.8-flash-lite-tts"
 TTS_AVAILABLE_MODELS = (
-    TTS_MODEL_GEMINI_3_FLASH,
     TTS_MODEL_GEMINI_FLASH,
-    TTS_MODEL_GEMINI_PRO,
+    TTS_MODEL_GEMINI_FLASH_LITE,
 )
-DEFAULT_TTS_MODEL = TTS_MODEL_GEMINI_3_FLASH
+DEFAULT_TTS_MODEL = TTS_MODEL_GEMINI_FLASH
 TTS_MODEL_NAME = DEFAULT_TTS_MODEL  # alias used by TTSService / version info
 TTS_MODEL_NAMES = {
-    TTS_MODEL_GEMINI_3_FLASH: "Gemini 3.1 Flash TTS",
-    TTS_MODEL_GEMINI_FLASH: "Gemini 2.5 Flash TTS",
-    TTS_MODEL_GEMINI_PRO: "Gemini 2.5 Pro TTS",
+    TTS_MODEL_GEMINI_FLASH: "Gemini 3.8 Flash TTS",
+    TTS_MODEL_GEMINI_FLASH_LITE: "Gemini 3.8 Flash-Lite TTS",
 }
 TTS_SAMPLE_RATE = 24000
 TTS_DEFAULT_VOICE = "Kore"

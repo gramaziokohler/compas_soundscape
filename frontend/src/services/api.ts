@@ -1,5 +1,5 @@
 import { API_BASE_URL, SPECKLE_INGESTION } from '@/utils/constants';
-import type { CompasGeometry, SoundEvent, SoundGenerationConfig, FileUploadResponse, JobType } from '@/types';
+import type { CompasGeometry, SoundEvent, SoundGenerationConfig, FileUploadResponse, JobType, UserPreferences } from '@/types';
 import type { ImpulseResponseMetadata } from '@/types/audio';
 import type { ModalAnalysisRequest, ModalAnalysisResult } from '@/types/modal';
 import type { SpeckleProjectModelsResponse, SpeckleModelLatestVersion } from '@/types/speckle-models';
@@ -269,6 +269,65 @@ export interface WorkspaceInvite {
   used_count: number;
 }
 
+// ─── Preferences wire mapping (camelCase domain ↔ snake_case API) ──────────
+// Single source of truth for the key mapping; keep in sync with
+// `UserPreferences` in backend/models/schemas.py.
+const PREF_WIRE_KEYS: Record<keyof UserPreferences, string> = {
+  colorTheme: 'color_theme',
+  showAxesHelper: 'show_axes_helper',
+  showLabelSprites: 'show_label_sprites',
+  showHoveringHighlight: 'show_hovering_highlight',
+  showSoundSpheres: 'show_sound_spheres',
+  showPlayingHighlight: 'show_playing_highlight',
+  showSceneListeners: 'show_scene_listeners',
+  showGroundGrid: 'show_ground_grid',
+  showGroundGridLabels: 'show_ground_grid_labels',
+  groundGridSpacing: 'ground_grid_spacing',
+  groundGridColor: 'ground_grid_color',
+  globalSoundSpeed: 'global_sound_speed',
+  globalMeshLc: 'global_mesh_lc',
+  llmModel: 'llm_model',
+  ttsModel: 'tts_model',
+  ttsLanguage: 'tts_language',
+  audioModel: 'audio_model',
+  diffusionSteps: 'diffusion_steps',
+  negativePrompt: 'negative_prompt',
+  applyDenoising: 'apply_denoising',
+  trimSilence: 'trim_silence',
+  applyNoiseReduction: 'apply_noise_reduction',
+  normalizeImpulseResponses: 'normalize_impulse_responses',
+  listenerOrientation: 'listener_orientation',
+  outputDeviceId: 'output_device_id',
+  globalBaseDbfs: 'global_base_dbfs',
+  maximumFoleySounds: 'maximum_foley_sounds',
+  showSpectrograms: 'show_spectrograms',
+  enableAutoSave: 'enable_auto_save',
+};
+
+function prefsToWire(prefs: Partial<UserPreferences>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  (Object.keys(prefs) as (keyof UserPreferences)[]).forEach((key) => {
+    const value = prefs[key];
+    if (value === undefined) return;
+    out[PREF_WIRE_KEYS[key]] = value;
+  });
+  return out;
+}
+
+function prefsFromWire(raw: Record<string, unknown>): UserPreferences {
+  const reverse: Partial<Record<string, keyof UserPreferences>> = {};
+  (Object.keys(PREF_WIRE_KEYS) as (keyof UserPreferences)[]).forEach((camel) => {
+    reverse[PREF_WIRE_KEYS[camel]] = camel;
+  });
+  const out: Record<string, unknown> = {};
+  for (const [snake, value] of Object.entries(raw)) {
+    const camel = reverse[snake];
+    if (!camel || value === null || value === undefined) continue;
+    out[camel] = value;
+  }
+  return out as UserPreferences;
+}
+
 // API Service Layer
 export const apiService = {
   // ─── Identity ─────────────────────────────────────────────────────────────
@@ -311,6 +370,35 @@ export const apiService = {
     if (!response.ok) return [];
     const data = await response.json();
     return data.workspaces ?? [];
+  },
+
+  // ─── Per-user preferences (Advanced Settings) ───────────────────────────
+  /** Fetch the current user's stored Advanced Settings (empty object when unset). */
+  async getUserPreferences(): Promise<UserPreferences> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/me/preferences`,
+      undefined,
+      'Get preferences'
+    );
+    if (!response.ok) return {};
+    const data = await response.json().catch(() => ({}));
+    return prefsFromWire(data ?? {});
+  },
+
+  /** Shallow-merge a partial preferences patch for the current user. */
+  async updateUserPreferences(prefs: Partial<UserPreferences>): Promise<UserPreferences> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/me/preferences`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(prefsToWire(prefs)),
+      },
+      'Save preferences'
+    );
+    if (!response.ok) throw new Error('Failed to save preferences');
+    const data = await response.json().catch(() => ({}));
+    return prefsFromWire(data ?? {});
   },
 
   // ─── Workspaces / collaboration ─────────────────────────────────────────
@@ -1737,6 +1825,49 @@ export const apiService = {
       return toLegacyJobStatus(job);
     } catch {
       return { completed: false, cancelled: false, error: 'Job not found or expired', progress: 0, status: 'unknown' };
+    }
+  },
+
+  /**
+   * List every job for the caller's workspace (scoped by session cookie).
+   * Used on page load to reattach to work started before the window closed,
+   * even when local storage has been cleared or the app is opened elsewhere.
+   */
+  async getActiveJobs(): Promise<Array<{ jobId: string; jobType: JobType; status: string; result: any }>> {
+    // Backend job type names differ from the frontend JobType union for pyroom.
+    const mapBackendType = (type: string): JobType | null => {
+      switch (type) {
+        case 'sound':
+        case 'tts':
+        case 'sed':
+        case 'choras':
+        case 'llm':
+        case 'loop':
+          return type;
+        case 'pyroomacoustics':
+          return 'pyroom';
+        default:
+          return null;
+      }
+    };
+    try {
+      const response = await fetchWithErrorHandling(
+        `${API_BASE_URL}/api/jobs`,
+        undefined,
+        'Active jobs'
+      );
+      if (!response.ok) return [];
+      const jobs = await response.json();
+      if (!Array.isArray(jobs)) return [];
+      const out: Array<{ jobId: string; jobType: JobType; status: string; result: any }> = [];
+      for (const j of jobs) {
+        const jobType = mapBackendType(j.type);
+        if (!jobType) continue;
+        out.push({ jobId: j.job_id, jobType, status: j.status, result: j.result ?? null });
+      }
+      return out;
+    } catch {
+      return [];
     }
   },
 };

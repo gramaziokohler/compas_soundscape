@@ -24,6 +24,8 @@ import {
   DEFAULT_AUDIO_MODEL,
   DEFAULT_LLM_MODEL,
   DEFAULT_TTS_MODEL,
+  normalizeLlmModel,
+  normalizeTtsModel,
   AUDIO_MODEL_ELEVENLABS,
   LIBRARY_MAX_SEARCH_RESULTS,
   DUPLICATE_POSITION_OFFSET,
@@ -31,16 +33,23 @@ import {
   DBFS_MIN,
   DBFS_MAX,
   TTS_DEFAULT_VOICE,
+  DEFAULT_PROMPT_INFLUENCE,
+  DEFAULT_SOUND_LOOP,
+  normalizeSoundCategory,
+  SOUND_GEN_CONCURRENCY,
 } from '@/utils/constants';
+import { mapWithConcurrency } from '@/utils/concurrency';
 import { loadAudioFile, revokeAudioUrl } from '@/lib/audio/utils/audio-upload';
 import { parseTriggerExpression } from '@/lib/audio/utils/trigger-ref';
 import { calculateSoundPosition, type GeometryBounds } from '@/utils/positioning';
 import { createSoundEventFromUpload } from '@/utils/event-factory';
+import { newConfigId } from '@/utils/config-id';
 import { generateSoundEffect } from '@/services/elevenlabs';
 import { apiService } from '@/services/api';
 import { notifySectionError } from './errorsStore';
 import { useFileUploadStore } from './fileUploadStore';
 import { useAudioControlsStore } from './audioControlsStore';
+import { useCardFlowStore } from './cardFlowStore';
 import { recordInflightJob, removeInflightJob } from '@/lib/job-tracker';
 import { startPolling, createPollRegistry } from '@/lib/poll-until-done';
 
@@ -154,6 +163,21 @@ function reindexSoundsMulti(sounds: any[], removedIndices: number[]): any[] {
       const shift = removedIndices.filter((r) => r < s.prompt_index).length;
       return shift > 0 ? { ...s, prompt_index: s.prompt_index - shift } : s;
     });
+}
+
+/**
+ * Does a sound event belong to a card? Entity linkage, position and selection
+ * are card-level (all variants share them), and a sound's `prompt_index` is
+ * either the config index or an encoded `cardIndex * 10000 + lineIdx` (speech).
+ * Never compare prompt_index for equality — always go through this.
+ */
+export function promptMatchesCard(
+  promptIndex: number | undefined | null,
+  cardIndex: number,
+): boolean {
+  if (promptIndex === undefined || promptIndex === null) return false;
+  if (promptIndex === cardIndex) return true;
+  return promptIndex >= 10000 && Math.floor(promptIndex / 10000) === cardIndex;
 }
 
 // Apply backend-detected noise trim regions ([start, end] fractions) to the
@@ -589,6 +613,16 @@ export interface SoundscapeStoreState {
    *  (e.g. "Generating sound 1/8 (prompt): step 15/25…"). Shown on the active
    *  card in place of the global sample-count message. */
   soundGenStatusText: string;
+  /** Approximate per-card generation progress (card index → 0-100). Derived from
+   *  each card's completed/expected samples across all concurrent generation lanes. */
+  soundGenCardProgress: Record<number, number>;
+  /** Card indices with a generation currently in flight (across all lanes). Drives
+   *  the per-card "running" state; cards leave the set as their samples land. */
+  activeGenerationCardIndices: number[];
+  /** Per-card status label (card index → text). Initialized to "Pending…" for
+   *  every targeted card, then updated by the owning lane as it starts/finishes
+   *  each item — so concurrent cards each show their own status, not a shared one. */
+  soundGenCardStatus: Record<number, string>;
   generatedSounds: any[];
   soundscapeData: any[] | null;
   globalDuration: number;
@@ -616,6 +650,12 @@ export interface SoundscapeStoreState {
   /** Remove multiple sound configs at once (cascade delete from a parent card). */
   handleRemoveConfigs: (indices: number[]) => void;
   handleUpdateConfig: (index: number, field: keyof SoundGenerationConfig, value: any) => void;
+  /**
+   * Re-parent a sound card to a different usage card (sound section), keeping all
+   * generated variants/events (keyed by prompt_index) intact and repointing the
+   * cardFlow usage→sound linkage.
+   */
+  reassignSoundParent: (soundConfigIndex: number, targetParentUsageIndex: number) => void;
   handleTypeChange: (index: number, type: CardType) => Promise<void>;
   handleGlobalDurationChange: (duration: number) => void;
   handleGlobalStepsChange: (steps: number) => void;
@@ -691,6 +731,9 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
         soundGenProgress: '',
         soundGenProgressValue: 0,
         soundGenStatusText: '',
+        soundGenCardProgress: {},
+        activeGenerationCardIndices: [],
+        soundGenCardStatus: {},
         generatedSounds: [],
         soundscapeData: null,
         globalDuration: DEFAULT_DURATION_SECONDS,
@@ -712,6 +755,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
         handleAddConfig: (type = 'text-to-audio') => {
           const { globalDuration, globalSteps, soundConfigs } = get();
           const newConfig: SoundGenerationConfig = {
+            config_id: newConfigId(),
             prompt: '',
             duration: globalDuration,
             guidance_scale: DEFAULT_GUIDANCE_SCALE,
@@ -740,6 +784,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           const { soundConfigs, globalDuration, globalSteps } = get();
           const startIndex = soundConfigs.length;
           const newConfigs = Array.from({ length: count }, () => ({
+            config_id: newConfigId(),
             prompt: '',
             duration: globalDuration,
             guidance_scale: DEFAULT_GUIDANCE_SCALE,
@@ -884,6 +929,45 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           } else {
             set({ soundConfigs: updated }, false, 'soundscape/updateConfig');
           }
+        },
+
+        reassignSoundParent: (soundConfigIndex, targetParentUsageIndex) => {
+          const { soundConfigs } = get();
+          const config = soundConfigs[soundConfigIndex];
+          if (!config) return;
+          if (config.parentUsageOriginalIndex === targetParentUsageIndex) return;
+
+          // 1. Repoint the config's section membership. Generated events (variants,
+          //    positions, entity/timeline links) are keyed by prompt_index and move
+          //    with the config untouched. Recorded via `set` inside the temporal
+          //    store so the move is undoable.
+          const updated = soundConfigs.map((c, i) =>
+            i === soundConfigIndex
+              ? { ...c, parentUsageOriginalIndex: targetParentUsageIndex }
+              : c,
+          );
+          set({ soundConfigs: updated }, false, 'soundscape/reassignParent');
+
+          // 2. Keep the cardFlow usage→sound linkage in sync (used for ctrl+drag
+          //    copy + persisted card_flow state; the serializer also rebuilds it
+          //    from parentUsageOriginalIndex on load, so this is consistency only).
+          const flow = useCardFlowStore.getState();
+          const newMap = new Map<number, number[]>();
+          flow.usageToSoundMap.forEach((indices, usageIdx) => {
+            const next = indices.filter((i) => i !== soundConfigIndex);
+            if (next.length > 0) newMap.set(usageIdx, next);
+          });
+          const targetList = newMap.get(targetParentUsageIndex) ?? [];
+          newMap.set(
+            targetParentUsageIndex,
+            targetList.includes(soundConfigIndex)
+              ? targetList
+              : [...targetList, soundConfigIndex],
+          );
+          useCardFlowStore.setState({
+            usageToSoundMap: newMap,
+            usageAdvanced: new Set([...flow.usageAdvanced, targetParentUsageIndex]),
+          });
         },
 
         handleTypeChange: async (index, type) => {
@@ -1063,35 +1147,101 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             elevenLabsConfigs.length +
             ttsConfigs.length;
 
-          // ── Unified sample count across ALL sound kinds (bug: separate TTA/TTS
-          // denominators showed "1/9" then "1/8" instead of "1/17"). The
-          // denominator is the number of generated AUDIO SAMPLES (variants/clips),
-          // and the numerator advances monotonically across the sequential stages.
-          const mlClipCount = generationConfigs.reduce(
-            (n, { config }) => n + Math.max(1, config.seed_copies ?? 1),
-            0,
+          // ── Per-card sample accounting across ALL sound kinds ────────────────
+          // The denominator is the number of generated AUDIO SAMPLES (variants /
+          // speech lines / 1 for single-clip cards). Generation lanes run
+          // concurrently, so progress is derived from per-card `done`/`expected`
+          // counters rather than a single sequential cursor.
+          const expectedSamples: Record<number, number> = {};
+          const doneSamples: Record<number, number> = {};
+          const registerExpected = (index: number, count: number) => {
+            expectedSamples[index] = (expectedSamples[index] ?? 0) + Math.max(1, count);
+          };
+          generationConfigs.forEach(({ config, originalIndex }) =>
+            registerExpected(originalIndex, config.seed_copies ?? 1),
           );
-          const ttsClipCount = ttsConfigs.reduce((n, { config }) => {
+          ttsConfigs.forEach(({ config, originalIndex }) => {
             const lines = (config.orchestrateMeta?.speechLines
               ?? config.scenarioSource?.speechLines) as string[] | undefined;
-            return n + (lines && lines.length > 0 ? lines.length : Math.max(1, config.seed_copies ?? 1));
-          }, 0);
-          const otherClipCount =
-            uploadedConfigs.length + libraryConfigs.length + catalogConfigs.length + elevenLabsConfigs.length;
-          const totalSamples = mlClipCount + ttsClipCount + otherClipCount;
-          let samplesDone = 0;
-          const reportSamples = (label: string, statusText = '') => {
-            const clamped = Math.min(samplesDone, totalSamples);
+            registerExpected(
+              originalIndex,
+              lines && lines.length > 0 ? lines.length : (config.seed_copies ?? 1),
+            );
+          });
+          [...uploadedConfigs, ...libraryConfigs, ...catalogConfigs, ...elevenLabsConfigs]
+            .forEach(({ originalIndex }) => registerExpected(originalIndex, 1));
+
+          const totalSamples = Object.values(expectedSamples).reduce((a, b) => a + b, 0);
+          const doneTotal = () =>
+            Object.values(doneSamples).reduce((a, b) => a + b, 0);
+          const computeProgressValue = () =>
+            totalSamples > 0
+              ? Math.min(100, Math.round((Math.min(doneTotal(), totalSamples) / totalSamples) * 100))
+              : 0;
+
+          /** Advance a card's completed samples; republish aggregate + per-card progress. */
+          const bumpSamples = (index: number, n: number, statusText = '') => {
+            const cap = expectedSamples[index];
+            if (n <= 0 || cap === undefined) return;
+            doneSamples[index] = Math.min(cap, (doneSamples[index] ?? 0) + n);
+            const cardPct = Math.round((doneSamples[index] / cap) * 100);
+            const complete = doneSamples[index] >= cap;
+            set(
+              (s) => ({
+                soundGenProgressValue: computeProgressValue(),
+                soundGenStatusText: statusText,
+                soundGenCardProgress: { ...s.soundGenCardProgress, [index]: cardPct },
+                ...(complete
+                  ? { activeGenerationCardIndices: s.activeGenerationCardIndices.filter((i) => i !== index) }
+                  : {}),
+              }),
+              false,
+              'soundscape/generateProgress',
+            );
+          };
+
+          /** Set a single card's status label (no-op when unchanged). */
+          const setCardStatus = (index: number, status: string) => {
+            if (get().soundGenCardStatus[index] === status) return;
+            set(
+              (s) => ({ soundGenCardStatus: { ...s.soundGenCardStatus, [index]: status } }),
+              false,
+              'soundscape/generateProgress',
+            );
+          };
+
+          /** Update the aggregate progress line (numerator/denominator + stage label). */
+          const setProgressLabel = (label: string, statusText = '') => {
+            const clamped = Math.min(doneTotal(), totalSamples);
             set(
               {
                 soundGenProgress: `${clamped}/${totalSamples} ${label}`,
-                soundGenProgressValue:
-                  totalSamples > 0 ? Math.round((clamped / totalSamples) * 100) : 0,
+                soundGenProgressValue: computeProgressValue(),
                 soundGenStatusText: statusText,
               },
               false,
               'soundscape/generateProgress',
             );
+          };
+
+          /** Merge freshly-completed events into the live list (synchronous read-modify-write). */
+          const mergePartialEvents = (events: any[]) => {
+            if (events.length === 0) return;
+            const { generatedSounds: current } = get();
+            const newIds = new Set(events.map((e: any) => e.id));
+            const merged = [
+              ...(current || []).filter((e: any) => !newIds.has(e.id)),
+              ...events,
+            ];
+            set({ generatedSounds: merged }, false, 'soundscape/partialSound');
+            applyTrimRegions(events);
+          };
+
+          const laneErrors: string[] = [];
+          const recordLaneError = (lane: string, err: unknown) => {
+            if (err instanceof Error && (err.name === 'AbortError' || err.message === 'AbortError')) return;
+            const message = err instanceof Error ? err.message : String(err);
+            laneErrors.push(`${lane}: ${message}`);
           };
 
           if (total === 0) {
@@ -1105,6 +1255,9 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             set(
               (s) => ({
                 soundGenError: null,
+                activeGenerationCardIndices: [],
+                soundGenCardProgress: {},
+                soundGenCardStatus: {},
                 soundConfigs: s.soundConfigs.map((c, i) =>
                   invalidIndices.has(i) ? { ...c, error: configValidationError(c) } : c,
                 ),
@@ -1132,6 +1285,13 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               soundGenProgress: '',
               soundGenProgressValue: 0,
               soundGenStatusText: '',
+              soundGenCardProgress: Object.fromEntries(
+                [...generatedTargets].map((i) => [i, 0]),
+              ),
+              activeGenerationCardIndices: [...generatedTargets],
+              soundGenCardStatus: Object.fromEntries(
+                [...generatedTargets].map((i) => [i, 'Pending…']),
+              ),
               soundConfigs: s.soundConfigs.map((c, i) =>
                 generatedTargets.has(i) ? { ...c, error: null } : c,
               ),
@@ -1165,426 +1325,536 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
 
           try {
             let generatedEvents: any[] = [];
+            let uploadedEvents: any[] = [];
+            let libraryEvents: any[] = [];
+            let catalogEvents: any[] = [];
+            let ttsEvents: any[] = [];
+            let elevenLabsEvents: any[] = [];
 
-            // ── Backend ML generation (async submit + poll) ───────────────────
-            if (generationConfigs.length > 0) {
-              const hasEntities = generationConfigs.some(({ config }) => config.entities?.length);
-              const configsWithNeg = generationConfigs.map(({ config }) => ({
-                ...config,
-                negative_prompt: globalNegativePrompt,
-              }));
-
-              // Submit and get generation_id
-              const { generation_id } = await apiService.generateSounds({
-                sounds: configsWithNeg,
-                bounding_box: hasEntities ? null : geometryBounds,
-                apply_denoising: applyNoiseReduction,
-                trim_silence: trimSilence,
-                audio_model: audioModel,
-                base_dbfs: useAudioControlsStore.getState().globalBaseDbfs,
-              });
-              _activeSoundJobIds.add(generation_id);
-              recordInflightJob(generation_id, 'sound');
-
-              // Map a raw backend sound object to a SoundEvent, resolving the
-              // actual prompt_index and entity position from generationConfigs.
-              const mapBackendSound = (sound: any) => {
-                const backendIndex = sound.prompt_index;
-                const actualIndex =
-                  generationConfigs[backendIndex]?.originalIndex ?? backendIndex;
-                const originalConfig = generationConfigs[backendIndex]?.config;
-
-                // Re-key the ID so it encodes the *config* index, not the batch index.
-                // Backend assigns batch-relative IDs ("generated_0_x" for the first
-                // sound in the batch).  When only a subset of configs is generated
-                // (e.g. only config 1), the batch index is 0 but the config index is 1.
-                // Without remapping, the new ID collides with a previously generated
-                // sound at config 0, causing the merge to silently delete it.
-                const copyIdx = parseInt(sound.id?.split('_').pop() ?? '0', 10);
-                const remappedId = `generated_${actualIndex}_${isNaN(copyIdx) ? 0 : copyIdx}`;
-                let entityIndex = sound.entity_index;
-                if (entityIndex === undefined) {
-                  if (originalConfig?.entities?.[0]?.index !== undefined) {
-                    entityIndex = originalConfig.entities[0].index;
-                  } else if (originalConfig?.entities?.[0]?.nodeId || originalConfig?.entities?.[0]?.id) {
-                    // Entity has a Speckle ID but no numeric index — use actualIndex as a
-                    // sentinel so SoundSphereManager treats this as entity-linked (no sphere).
-                    entityIndex = actualIndex;
-                  }
-                }
-
-                let position: number[] = [0, 0, 0];
-                if (originalConfig?.entities?.[0]?.bounds?.center) {
-                  position = originalConfig.entities[0].bounds.center as number[];
-                } else if (originalConfig?.entities?.[0]?.position) {
-                  position = originalConfig.entities[0].position as number[];
-                } else if (originalConfig?.position) {
-                  position = originalConfig.position as number[];
-                }
-
-                // Carry foley timestamps from the original config to the SoundEvent —
-                // except backgrounds, which auto-pack via interval_seconds (0 = back-to-back).
-                const configTimestamps = originalConfig?.timestamps;
-                const configCategory = originalConfig?.category;
-                const normalizedCategory = (configCategory || '').toLowerCase().replace(/[\s-]+/g, '_');
-                const isBg = normalizedCategory === 'background' || normalizedCategory === 'background_sound';
-
-                const event = {
-                  ...sound,
-                  id: remappedId,
-                  prompt_index: actualIndex,
-                  position,
-                  geometry: sound.geometry || { vertices: [], faces: [] },
-                  ...(entityIndex !== undefined && { entity_index: entityIndex }),
-                  ...(!isBg && configTimestamps?.length ? { timestamps: configTimestamps } : {}),
-                  // Carry foley category for DAW grouping
-                  ...(originalConfig?.category ? { category: originalConfig.category } : {}),
-                };
-                return event;
-              };
-
-              // Poll until done, streaming each completed sound into the UI immediately.
-              // The poll controller is scoped to this invocation and registered so
-              // handleStopGeneration can cancel it — a concurrent invocation can no
-              // longer clear this loop from its own finally.
-              let lastPartialCount = 0;
-              const mlPoll = soundPollRegistry.track(
-                startPolling({
-                  fetchStatus: () => apiService.getSoundGenerationStatus(generation_id),
-                  onStatus: (s) => {
-                    samplesDone = Math.max(samplesDone, s.partial_sounds?.length ?? 0);
-                    reportSamples('generating sounds…', s.status);
-
-                    // Stream newly-completed sounds into the UI
-                    if (s.partial_sounds && s.partial_sounds.length > lastPartialCount) {
-                      const newPartials = s.partial_sounds.slice(lastPartialCount).map(mapBackendSound);
-                      lastPartialCount = s.partial_sounds.length;
-                      const { generatedSounds: current } = get();
-                      const newIds = new Set(newPartials.map((e: any) => e.id));
-                      const merged = [
-                        ...(current || []).filter((e: any) => !newIds.has(e.id)),
-                        ...newPartials,
-                      ];
-                      set({ generatedSounds: merged }, false, 'soundscape/partialSound');
-                      applyTrimRegions(newPartials);
-                    }
-                  },
-                }),
-              );
-              let mlResult: any[] = [];
-              try {
-                mlResult = await mlPoll.done;
-              } finally {
-                soundPollRegistry.release(mlPoll);
-                _activeSoundJobIds.delete(generation_id);
-                removeInflightJob(generation_id);
-              }
-
-              generatedEvents = mlResult.map(mapBackendSound);
-            }
-
-            // ── Uploaded / sample audio ───────────────────────────────────────
             const globalBaseDbfs = useAudioControlsStore.getState().globalBaseDbfs;
-            const uploadedEvents: any[] = [];
-            for (const { config, originalIndex } of uploadedConfigs) {
-              const audioFileUrl = config.uploadedAudioUrl;
-              if (!audioFileUrl) continue;
-              const resolvedDbfs = config.dbfs ?? globalBaseDbfs;
-              // Files are calibrated to the GLOBAL base anchor; the per-sound
-              // target level (resolvedDbfs / orchestrator SPL) is applied at
-              // playback relative to that anchor. This keeps every source on one
-              // calibration reference so orchestrator mix levels are audible.
-              const { url: audioUrl, noise_trim } = await calibrateBlobUrl(
-                audioFileUrl,
-                globalBaseDbfs,
-                applyDenoising,
-                trimSilence,
-              );
-              const uploadedEvent = createSoundEventFromUpload(
-                { ...config, dbfs: resolvedDbfs },
-                audioUrl,
-                originalIndex,
-                total,
-                geometryBounds as GeometryBounds | undefined,
-                'uploaded',
-              );
-              uploadedEvents.push(uploadedEvent);
-              if (noise_trim) {
-                useAudioControlsStore.getState().setSoundTrim(uploadedEvent.id, { start: noise_trim[0], end: noise_trim[1] });
-              }
+
+            // All independent generation lanes are submitted up-front and run
+            // concurrently. Each lane owns its events and never throws out to the
+            // orchestrator — one failing lane/item cannot abort the others.
+            const lanePromises: Promise<void>[] = [];
+
+            // ── Backend ML generation (TangoFlux/AudioLDM2 — ONE GPU job) ──────
+            if (generationConfigs.length > 0) {
+              lanePromises.push((async () => {
+                const hasEntities = generationConfigs.some(({ config }) => config.entities?.length);
+                const configsWithNeg = generationConfigs.map(({ config }) => ({
+                  ...config,
+                  negative_prompt: globalNegativePrompt,
+                }));
+
+                const { generation_id } = await apiService.generateSounds({
+                  sounds: configsWithNeg,
+                  bounding_box: hasEntities ? null : geometryBounds,
+                  apply_denoising: applyNoiseReduction,
+                  trim_silence: trimSilence,
+                  audio_model: audioModel,
+                  base_dbfs: globalBaseDbfs,
+                });
+                _activeSoundJobIds.add(generation_id);
+                recordInflightJob(generation_id, 'sound');
+
+                // Map a raw backend sound object to a SoundEvent, resolving the
+                // actual prompt_index and entity position from generationConfigs.
+                const mapBackendSound = (sound: any) => {
+                  const backendIndex = sound.prompt_index;
+                  const actualIndex =
+                    generationConfigs[backendIndex]?.originalIndex ?? backendIndex;
+                  const originalConfig = generationConfigs[backendIndex]?.config;
+
+                  // Re-key the ID so it encodes the *config* index, not the batch index.
+                  // Backend assigns batch-relative IDs ("generated_0_x" for the first
+                  // sound in the batch).  When only a subset of configs is generated
+                  // (e.g. only config 1), the batch index is 0 but the config index is 1.
+                  // Without remapping, the new ID collides with a previously generated
+                  // sound at config 0, causing the merge to silently delete it.
+                  const copyIdx = parseInt(sound.id?.split('_').pop() ?? '0', 10);
+                  const remappedId = `generated_${actualIndex}_${isNaN(copyIdx) ? 0 : copyIdx}`;
+                  let entityIndex = sound.entity_index;
+                  if (entityIndex === undefined) {
+                    if (originalConfig?.entities?.[0]?.index !== undefined) {
+                      entityIndex = originalConfig.entities[0].index;
+                    } else if (originalConfig?.entities?.[0]?.nodeId || originalConfig?.entities?.[0]?.id) {
+                      // Entity has a Speckle ID but no numeric index — use actualIndex as a
+                      // sentinel so SoundSphereManager treats this as entity-linked (no sphere).
+                      entityIndex = actualIndex;
+                    }
+                  }
+                  // Card-level link: every variant carries the full entity index list.
+                  const entityIndices = originalConfig?.entities?.length
+                    ? originalConfig.entities
+                        .map((e: any) => e.index)
+                        .filter((i: any) => i !== undefined)
+                    : undefined;
+
+                  let position: number[] = [0, 0, 0];
+                  if (originalConfig?.entities?.[0]?.bounds?.center) {
+                    position = originalConfig.entities[0].bounds.center as number[];
+                  } else if (originalConfig?.entities?.[0]?.position) {
+                    position = originalConfig.entities[0].position as number[];
+                  } else if (originalConfig?.position) {
+                    position = originalConfig.position as number[];
+                  }
+
+                  // Carry foley timestamps from the original config to the SoundEvent —
+                  // except backgrounds, which auto-pack via interval_seconds (0 = back-to-back).
+                  const configTimestamps = originalConfig?.timestamps;
+                  const configCategory = originalConfig?.category;
+                  const normalizedCategory = (configCategory || '').toLowerCase().replace(/[\s-]+/g, '_');
+                  const isBg = normalizedCategory === 'background' || normalizedCategory === 'background_sound';
+
+                  const event = {
+                    ...sound,
+                    id: remappedId,
+                    prompt_index: actualIndex,
+                    config_id: originalConfig?.config_id,
+                    position,
+                    geometry: sound.geometry || { vertices: [], faces: [] },
+                    ...(entityIndex !== undefined && { entity_index: entityIndex }),
+                    ...(entityIndices?.length ? { entity_indices: entityIndices } : {}),
+                    ...(!isBg && configTimestamps?.length ? { timestamps: configTimestamps } : {}),
+                    // Carry foley category for DAW grouping
+                    ...(originalConfig?.category ? { category: originalConfig.category } : {}),
+                  };
+                  return event;
+                };
+
+                // Poll until done, streaming each completed sound into the UI immediately.
+                // The poll controller is scoped to this invocation and registered so
+                // handleStopGeneration can cancel it — a concurrent invocation can no
+                // longer clear this loop from its own finally.
+                let lastPartialCount = 0;
+                const mlPoll = soundPollRegistry.track(
+                  startPolling({
+                    fetchStatus: () => apiService.getSoundGenerationStatus(generation_id),
+                    onStatus: (s) => {
+                      setProgressLabel('generating sounds…', s.status);
+
+                      // The GPU job processes clips in order — the first card with
+                      // unfinished samples is the one currently generating.
+                      const currentIdx = generationConfigs.find(
+                        ({ originalIndex }) =>
+                          (doneSamples[originalIndex] ?? 0) < (expectedSamples[originalIndex] ?? 1),
+                      )?.originalIndex;
+                      if (currentIdx !== undefined) setCardStatus(currentIdx, s.status || 'Generating…');
+
+                      // Stream newly-completed sounds into the UI
+                      if (s.partial_sounds && s.partial_sounds.length > lastPartialCount) {
+                        const newPartials = s.partial_sounds.slice(lastPartialCount).map(mapBackendSound);
+                        lastPartialCount = s.partial_sounds.length;
+                        mergePartialEvents(newPartials);
+                        newPartials.forEach((e: any) => bumpSamples(e.prompt_index, 1));
+                      }
+                    },
+                  }),
+                );
+                let mlResult: any[] = [];
+                try {
+                  mlResult = await mlPoll.done;
+                } finally {
+                  soundPollRegistry.release(mlPoll);
+                  _activeSoundJobIds.delete(generation_id);
+                  removeInflightJob(generation_id);
+                }
+
+                generatedEvents = mlResult.map(mapBackendSound);
+              })().catch((err) => recordLaneError('generating sounds', err)));
             }
-            samplesDone = Math.max(samplesDone, mlClipCount + uploadedEvents.length);
-            reportSamples('processing uploaded audio…');
+
+            // ── Uploaded / sample audio (calibration pool) ─────────────────────
+            if (uploadedConfigs.length > 0) {
+              lanePromises.push((async () => {
+                const { results, errors } = await mapWithConcurrency(
+                  uploadedConfigs,
+                  async ({ config, originalIndex }) => {
+                    setCardStatus(originalIndex, 'Generating…');
+                    const audioFileUrl = config.uploadedAudioUrl;
+                    if (!audioFileUrl) {
+                      bumpSamples(originalIndex, 1);
+                      return null;
+                    }
+                    const resolvedDbfs = config.dbfs ?? globalBaseDbfs;
+                    // Files are calibrated to the GLOBAL base anchor; the per-sound
+                    // target level (resolvedDbfs / orchestrator SPL) is applied at
+                    // playback relative to that anchor. This keeps every source on one
+                    // calibration reference so orchestrator mix levels are audible.
+                    const { url: audioUrl, noise_trim } = await calibrateBlobUrl(
+                      audioFileUrl,
+                      globalBaseDbfs,
+                      applyDenoising,
+                      trimSilence,
+                    );
+                    const uploadedEvent = createSoundEventFromUpload(
+                      { ...config, dbfs: resolvedDbfs },
+                      audioUrl,
+                      originalIndex,
+                      total,
+                      geometryBounds as GeometryBounds | undefined,
+                      'uploaded',
+                    );
+                    if (noise_trim) {
+                      useAudioControlsStore.getState().setSoundTrim(uploadedEvent.id, { start: noise_trim[0], end: noise_trim[1] });
+                    }
+                    mergePartialEvents([uploadedEvent]);
+                    bumpSamples(originalIndex, 1);
+                    return uploadedEvent;
+                  },
+                  SOUND_GEN_CONCURRENCY.CALIBRATE,
+                  controller.signal,
+                );
+                uploadedEvents = results.filter(Boolean) as any[];
+                errors.forEach(({ error }) => console.error('[soundscapeStore] Upload calibration error:', error));
+              })().catch((err) => recordLaneError('uploaded audio', err)));
+            }
 
             // ── Library ───────────────────────────────────────────────────────
-            const libraryEvents: any[] = [];
-            for (const { config, originalIndex } of libraryConfigs) {
-              if (!config.selectedLibrarySound) continue;
-              try {
-                const dlRes = await fetch(`${API_BASE_URL}/api/library/download`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    location: config.selectedLibrarySound.location,
-                    description: config.selectedLibrarySound.description,
-                  }),
-                  signal: controller.signal,
-                });
-                if (!dlRes.ok) throw new Error('Failed to download sound');
-                const resolvedDbfs = config.dbfs ?? globalBaseDbfs;
-                const { url: audioUrl, noise_trim } = await calibrateBlobUrl(
-                  await dlRes.blob(),
-                  globalBaseDbfs,
-                  applyDenoising,
-                  trimSilence,
+            if (libraryConfigs.length > 0) {
+              lanePromises.push((async () => {
+                const { results, errors } = await mapWithConcurrency(
+                  libraryConfigs,
+                  async ({ config, originalIndex }) => {
+                    setCardStatus(originalIndex, 'Generating…');
+                    if (!config.selectedLibrarySound) {
+                      bumpSamples(originalIndex, 1);
+                      return null;
+                    }
+                    const dlRes = await fetch(`${API_BASE_URL}/api/library/download`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        location: config.selectedLibrarySound.location,
+                        description: config.selectedLibrarySound.description,
+                      }),
+                      signal: controller.signal,
+                    });
+                    if (!dlRes.ok) throw new Error('Failed to download sound');
+                    const resolvedDbfs = config.dbfs ?? globalBaseDbfs;
+                    const { url: audioUrl, noise_trim } = await calibrateBlobUrl(
+                      await dlRes.blob(),
+                      globalBaseDbfs,
+                      applyDenoising,
+                      trimSilence,
+                    );
+                    const libraryEvent = createSoundEventFromUpload(
+                      { ...config, dbfs: resolvedDbfs },
+                      audioUrl,
+                      originalIndex,
+                      total,
+                      geometryBounds as GeometryBounds | undefined,
+                      'library',
+                    );
+                    if (noise_trim) {
+                      useAudioControlsStore.getState().setSoundTrim(libraryEvent.id, { start: noise_trim[0], end: noise_trim[1] });
+                    }
+                    mergePartialEvents([libraryEvent]);
+                    bumpSamples(originalIndex, 1);
+                    return libraryEvent;
+                  },
+                  SOUND_GEN_CONCURRENCY.LIBRARY,
+                  controller.signal,
                 );
-                const libraryEvent = createSoundEventFromUpload(
-                  { ...config, dbfs: resolvedDbfs },
-                  audioUrl,
-                  originalIndex,
-                  total,
-                  geometryBounds as GeometryBounds | undefined,
-                  'library',
-                );
-                libraryEvents.push(libraryEvent);
-                if (noise_trim) {
-                  useAudioControlsStore.getState().setSoundTrim(libraryEvent.id, { start: noise_trim[0], end: noise_trim[1] });
-                }
-              } catch (error) {
-                console.error('[soundscapeStore] Library download error:', error);
-              }
+                libraryEvents = results.filter(Boolean) as any[];
+                errors.forEach(({ error }) => console.error('[soundscapeStore] Library download error:', error));
+              })().catch((err) => recordLaneError('library sounds', err)));
             }
-            samplesDone = Math.max(samplesDone, mlClipCount + uploadedEvents.length + libraryEvents.length);
-            reportSamples('processing library sounds…');
 
             // ── Catalog ───────────────────────────────────────────────────────
-            const catalogEvents: any[] = [];
-            for (const { config, originalIndex } of catalogConfigs) {
-              if (!config.selectedCatalogSound) continue;
-              try {
-                const dlRes = await fetch(config.selectedCatalogSound.url, {
-                  signal: controller.signal,
-                });
-                if (!dlRes.ok) throw new Error('Failed to download catalog sound');
-                const resolvedDbfs = config.dbfs ?? globalBaseDbfs;
-                const { url: audioUrl, noise_trim } = await calibrateBlobUrl(
-                  await dlRes.blob(),
-                  globalBaseDbfs,
-                  applyDenoising,
-                  trimSilence,
-                );
-                const catalogEvent = createSoundEventFromUpload(
-                  { ...config, dbfs: resolvedDbfs },
-                  audioUrl,
-                  originalIndex,
-                  total,
-                  geometryBounds as GeometryBounds | undefined,
-                  'catalog',
-                );
-                catalogEvents.push(catalogEvent);
-                if (noise_trim) {
-                  useAudioControlsStore.getState().setSoundTrim(catalogEvent.id, { start: noise_trim[0], end: noise_trim[1] });
-                }
-              } catch (error) {
-                const errorMsg = error instanceof Error ? error.message : 'Failed to download catalog sound';
-                console.error('[soundscapeStore] Catalog download error:', error);
-                // Set per-card error
-                get().handleUpdateConfig(originalIndex, 'error', errorMsg);
-              }
-            }
-            samplesDone = Math.max(samplesDone, mlClipCount + uploadedEvents.length + libraryEvents.length + catalogEvents.length);
-            reportSamples('processing catalog sounds…');
-
-            // ── TTS (Gemini Text-to-Speech) ────────────────────────────────────
-            let ttsEvents: any[] = [];
-            if (ttsConfigs.length > 0) {
-              console.log('[handleGenerateInternal] TTS block starting, ttsConfigs:',
-                ttsConfigs.map(c => ({ origIndex: c.originalIndex, type: c.config.type, promptLen: c.config.prompt?.length, speechLines: (c.config as any).orchestrateMeta?.speechLines?.length })));
-              const ttsTexts: any[] = [];
-              ttsConfigs.forEach(({ config, originalIndex }) => {
-                // Speech lines come from either an orchestrate-compiled entry
-                // (orchestrateMeta.speechLines) or a scenario-derived "incomplete"
-                // card (scenarioSource.speechLines, pre-orchestrate).
-                const speechLines = ((config as any).orchestrateMeta?.speechLines
-                  ?? config.scenarioSource?.speechLines) as string[] | undefined;
-                if (speechLines && speechLines.length > 0) {
-                  // Each speech line is an independent dialogue sample — generate all
-                  // of them as variants of the same card (same prompt_index, different
-                  // copy_index).  This makes them appear as one DAW track with variant
-                  // selector letters A/B/C, matching how non-TTS seed_copies work.
-                  speechLines.forEach((lineText, lineIdx) => {
-                    ttsTexts.push({
-                      text: lineText,
-                      voice_name: config.voice_name,
-                      display_name: config.display_name || lineText,
-                      position: config.position,
-                      // Calibrate the WAV to the global anchor; the per-sound level
-                      // (config.dbfs / orchestrator SPL) is applied at playback.
-                      dbfs: globalBaseDbfs,
-                      prompt_index: originalIndex,
-                      copy_index: lineIdx,
-                      total_copies: speechLines.length,
-                      speech_card_index: originalIndex,
-                    });
-                  });
-                } else {
-                  // No speech lines: generate seed_copies variants of the same prompt.
-                  const copies = Math.max(1, config.seed_copies ?? 1);
-                  for (let copyIdx = 0; copyIdx < copies; copyIdx++) {
-                    ttsTexts.push({
-                      text: config.prompt,
-                      voice_name: config.voice_name,
-                      display_name: config.display_name || config.prompt,
-                      position: config.position,
-                      dbfs: globalBaseDbfs,
-                      // Carry the card's config index + variant index so the backend can
-                      // echo them back. Mirrors the text-to-audio flow (sounds_worker),
-                      // making variant grouping robust to backend re-indexing/filtering.
-                      prompt_index: originalIndex,
-                      copy_index: copyIdx,
-                      total_copies: copies,
-                    });
-                  }
-                }
-              });
-
-              const { generation_id } = await apiService.generateTTS({
-                texts: ttsTexts,
-                language: useAudioControlsStore.getState().ttsLanguage,
-                tts_model: get().ttsModel,
-              });
-              _activeTtsJobIds.add(generation_id);
-              recordInflightJob(generation_id, 'tts');
-
-              const mapTtsSound = (sound: any) => {
-                // prompt_index is the card index (same for all speech lines).
-                // copy_index distinguishes speech lines (0, 1, 2, …) as variants.
-                const actualIndex = sound.prompt_index ?? 0;
-                const copyIdx = sound.copy_index ?? 0;
-                const cardIdx = sound.speech_card_index ?? actualIndex;
-                const originalConfig = ttsConfigs.find(
-                  ({ originalIndex }) => originalIndex === cardIdx,
-                )?.config;
-
-                let position: number[] = [0, 0, 0];
-                if (originalConfig?.entities?.[0]?.bounds?.center) {
-                  position = originalConfig.entities[0].bounds.center as number[];
-                } else if (originalConfig?.entities?.[0]?.position) {
-                  position = originalConfig.entities[0].position as number[];
-                } else if (originalConfig?.position) {
-                  position = originalConfig.position as number[];
-                }
-
-                const voice = sound.voice_name || originalConfig?.voice_name || 'TTS';
-                const remappedId = `tts_${actualIndex}_${copyIdx}_${voice}`;
-
-                const ttsDisplayName = sound.display_name
-                  || originalConfig?.display_name
-                  || originalConfig?.prompt
-                  || `TTS ${actualIndex + 1}`;
-
-                // Authored dialogue timestamps (MM:SS) for the whole character
-                // block. Attached like foley `configTimestamps` so speech has a
-                // narrative-order fallback whenever the parametric orchestrate
-                // bake cannot place it (e.g. a cyclic/unknown-duration graph).
-                const authoredSpeechTimestamps: string[] | undefined =
-                  (originalConfig as any)?.orchestrateMeta?.timestamps
-                  ?? (originalConfig as any)?.scenarioSource?.timestamps;
-
-                const mapped = {
-                  ...sound,
-                  id: remappedId,
-                  prompt_index: actualIndex,
-                  copy_index: copyIdx,
-                  position,
-                  geometry: sound.geometry || { vertices: [], faces: [] },
-                  isUploaded: true,
-                  // Backend echoes the calibration dbfs (global anchor) — the
-                  // playback TARGET is the card's own level / orchestrator SPL.
-                  volume_dbfs: originalConfig?.dbfs ?? globalBaseDbfs,
-                  category: originalConfig?.category || 'speech',
-                  display_name: ttsDisplayName,
-                  ...(authoredSpeechTimestamps?.length
-                    ? { timestamps: authoredSpeechTimestamps }
-                    : {}),
-                };
-                return mapped;
-              };
-
-              let ttsLastPartialCount = 0;
-              const ttsPoll = soundPollRegistry.track(
-                startPolling({
-                  fetchStatus: () => apiService.getTTSGenerationStatus(generation_id),
-                  onStatus: (s) => {
-                    samplesDone = Math.max(
-                      samplesDone,
-                      mlClipCount + otherClipCount - elevenLabsConfigs.length + (s.partial_sounds?.length ?? 0),
-                    );
-                    reportSamples('generating speech…', s.status);
-
-                    if (s.partial_sounds && s.partial_sounds.length > ttsLastPartialCount) {
-                      const newPartials = s.partial_sounds.slice(ttsLastPartialCount).map(mapTtsSound);
-                      ttsLastPartialCount = s.partial_sounds.length;
-                      const { generatedSounds: current } = get();
-                      const newIds = new Set(newPartials.map((e: any) => e.id));
-                      const merged = [
-                        ...(current || []).filter((e: any) => !newIds.has(e.id)),
-                        ...newPartials,
-                      ];
-                      set({ generatedSounds: merged }, false, 'soundscape/ttsPartial');
+            if (catalogConfigs.length > 0) {
+              lanePromises.push((async () => {
+                const { results, errors } = await mapWithConcurrency(
+                  catalogConfigs,
+                  async ({ config, originalIndex }) => {
+                    setCardStatus(originalIndex, 'Generating…');
+                    if (!config.selectedCatalogSound) {
+                      bumpSamples(originalIndex, 1);
+                      return null;
                     }
+                    const dlRes = await fetch(config.selectedCatalogSound.url, {
+                      signal: controller.signal,
+                    });
+                    if (!dlRes.ok) throw new Error('Failed to download catalog sound');
+                    const resolvedDbfs = config.dbfs ?? globalBaseDbfs;
+                    const { url: audioUrl, noise_trim } = await calibrateBlobUrl(
+                      await dlRes.blob(),
+                      globalBaseDbfs,
+                      applyDenoising,
+                      trimSilence,
+                    );
+                    const catalogEvent = createSoundEventFromUpload(
+                      { ...config, dbfs: resolvedDbfs },
+                      audioUrl,
+                      originalIndex,
+                      total,
+                      geometryBounds as GeometryBounds | undefined,
+                      'catalog',
+                    );
+                    if (noise_trim) {
+                      useAudioControlsStore.getState().setSoundTrim(catalogEvent.id, { start: noise_trim[0], end: noise_trim[1] });
+                    }
+                    mergePartialEvents([catalogEvent]);
+                    bumpSamples(originalIndex, 1);
+                    return catalogEvent;
                   },
-                }),
-              );
-              let ttsResult: any[] = [];
-              try {
-                ttsResult = await ttsPoll.done;
-              } finally {
-                soundPollRegistry.release(ttsPoll);
-                _activeTtsJobIds.delete(generation_id);
-                removeInflightJob(generation_id);
-              }
-
-              console.log('[handleGenerateInternal] TTS polling completed, ttsResult.length:', ttsResult.length,
-                'samples:', ttsResult.slice(0, 3).map((s: any) => ({ id: s.id, pi: s.prompt_index, sci: s.speech_card_index })));
-              ttsEvents = ttsResult.map(mapTtsSound);
+                  SOUND_GEN_CONCURRENCY.CATALOG,
+                  controller.signal,
+                );
+                catalogEvents = results.filter(Boolean) as any[];
+                errors.forEach(({ item, error }) => {
+                  const errorMsg = error instanceof Error ? error.message : 'Failed to download catalog sound';
+                  console.error('[soundscapeStore] Catalog download error:', error);
+                  // Set per-card error
+                  get().handleUpdateConfig(item.originalIndex, 'error', errorMsg);
+                });
+              })().catch((err) => recordLaneError('catalog sounds', err)));
             }
 
-            // ── ElevenLabs ────────────────────────────────────────────────────
-            const elevenLabsEvents: any[] = [];
-            for (const { config, originalIndex } of elevenLabsConfigs) {
-              const duration = config.duration ?? DEFAULT_DURATION_SECONDS;
-              const rawUrl = await generateSoundEffect({
-                text: config.prompt,
-                durationSeconds:
-                  duration >= 0.5 && duration <= 22 ? duration : undefined,
-              });
-              const resolvedDbfs = config.dbfs ?? globalBaseDbfs;
-                const { url: audioUrl, noise_trim } = await calibrateBlobUrl(
-                  rawUrl,
-                  globalBaseDbfs,
-                  applyDenoising,
-                  trimSilence,
+            // ── TTS (Gemini Text-to-Speech — ONE in-process job) ───────────────
+            if (ttsConfigs.length > 0) {
+              lanePromises.push((async () => {
+                const ttsTexts: any[] = [];
+                ttsConfigs.forEach(({ config, originalIndex }) => {
+                  // Speech lines come from either an orchestrate-compiled entry
+                  // (orchestrateMeta.speechLines) or a scenario-derived "incomplete"
+                  // card (scenarioSource.speechLines, pre-orchestrate).
+                  const speechLines = ((config as any).orchestrateMeta?.speechLines
+                    ?? config.scenarioSource?.speechLines) as string[] | undefined;
+                  if (speechLines && speechLines.length > 0) {
+                    // Each speech line is an independent dialogue sample — generate all
+                    // of them as variants of the same card (same prompt_index, different
+                    // copy_index).  This makes them appear as one DAW track with variant
+                    // selector letters A/B/C, matching how non-TTS seed_copies work.
+                    speechLines.forEach((lineText, lineIdx) => {
+                      ttsTexts.push({
+                        text: lineText,
+                        voice_name: config.voice_name,
+                        display_name: config.display_name || lineText,
+                        position: config.position,
+                        // Calibrate the WAV to the global anchor; the per-sound level
+                        // (config.dbfs / orchestrator SPL) is applied at playback.
+                        dbfs: globalBaseDbfs,
+                        prompt_index: originalIndex,
+                        copy_index: lineIdx,
+                        total_copies: speechLines.length,
+                        speech_card_index: originalIndex,
+                      });
+                    });
+                  } else {
+                    // No speech lines: generate seed_copies variants of the same prompt.
+                    const copies = Math.max(1, config.seed_copies ?? 1);
+                    for (let copyIdx = 0; copyIdx < copies; copyIdx++) {
+                      ttsTexts.push({
+                        text: config.prompt,
+                        voice_name: config.voice_name,
+                        display_name: config.display_name || config.prompt,
+                        position: config.position,
+                        dbfs: globalBaseDbfs,
+                        // Carry the card's config index + variant index so the backend can
+                        // echo them back. Mirrors the text-to-audio flow (sounds_worker),
+                        // making variant grouping robust to backend re-indexing/filtering.
+                        prompt_index: originalIndex,
+                        copy_index: copyIdx,
+                        total_copies: copies,
+                      });
+                    }
+                  }
+                });
+
+                const { generation_id } = await apiService.generateTTS({
+                  texts: ttsTexts,
+                  language: useAudioControlsStore.getState().ttsLanguage,
+                  tts_model: get().ttsModel,
+                });
+                _activeTtsJobIds.add(generation_id);
+                recordInflightJob(generation_id, 'tts');
+
+                const mapTtsSound = (sound: any) => {
+                  // prompt_index is the card index (same for all speech lines).
+                  // copy_index distinguishes speech lines (0, 1, 2, …) as variants.
+                  const actualIndex = sound.prompt_index ?? 0;
+                  const copyIdx = sound.copy_index ?? 0;
+                  const cardIdx = sound.speech_card_index ?? actualIndex;
+                  const originalConfig = ttsConfigs.find(
+                    ({ originalIndex }) => originalIndex === cardIdx,
+                  )?.config;
+
+                  let position: number[] = [0, 0, 0];
+                  if (originalConfig?.entities?.[0]?.bounds?.center) {
+                    position = originalConfig.entities[0].bounds.center as number[];
+                  } else if (originalConfig?.entities?.[0]?.position) {
+                    position = originalConfig.entities[0].position as number[];
+                  } else if (originalConfig?.position) {
+                    position = originalConfig.position as number[];
+                  }
+
+                  const voice = sound.voice_name || originalConfig?.voice_name || 'TTS';
+                  const remappedId = `tts_${actualIndex}_${copyIdx}_${voice}`;
+
+                  const ttsDisplayName = sound.display_name
+                    || originalConfig?.display_name
+                    || originalConfig?.prompt
+                    || `TTS ${actualIndex + 1}`;
+
+                  // Authored dialogue timestamps (MM:SS) for the whole character
+                  // block. Attached like foley `configTimestamps` so speech has a
+                  // narrative-order fallback whenever the parametric orchestrate
+                  // bake cannot place it (e.g. a cyclic/unknown-duration graph).
+                  const authoredSpeechTimestamps: string[] | undefined =
+                    (originalConfig as any)?.orchestrateMeta?.timestamps
+                    ?? (originalConfig as any)?.scenarioSource?.timestamps;
+
+                  // Card-level entity link: speech lines must stay attached to the
+                  // same object as the card, otherwise they render as free spheres.
+                  let ttsEntityIndex: number | undefined;
+                  if (originalConfig?.entities?.[0]?.index !== undefined) {
+                    ttsEntityIndex = originalConfig.entities[0].index;
+                  } else if (originalConfig?.entities?.[0]?.nodeId || originalConfig?.entities?.[0]?.id) {
+                    ttsEntityIndex = cardIdx;
+                  }
+                  const ttsEntityIndices = originalConfig?.entities?.length
+                    ? originalConfig.entities
+                        .map((e: any) => e.index)
+                        .filter((i: any) => i !== undefined)
+                    : undefined;
+
+                  const mapped = {
+                    ...sound,
+                    id: remappedId,
+                    prompt_index: actualIndex,
+                    config_id: originalConfig?.config_id,
+                    copy_index: copyIdx,
+                    position,
+                    geometry: sound.geometry || { vertices: [], faces: [] },
+                    isUploaded: true,
+                    // Backend echoes the calibration dbfs (global anchor) — the
+                    // playback TARGET is the card's own level / orchestrator SPL.
+                    volume_dbfs: originalConfig?.dbfs ?? globalBaseDbfs,
+                    category: originalConfig?.category || 'speech',
+                    display_name: ttsDisplayName,
+                    ...(ttsEntityIndex !== undefined && { entity_index: ttsEntityIndex }),
+                    ...(ttsEntityIndices?.length ? { entity_indices: ttsEntityIndices } : {}),
+                    ...(authoredSpeechTimestamps?.length
+                      ? { timestamps: authoredSpeechTimestamps }
+                      : {}),
+                  };
+                  return mapped;
+                };
+
+                let ttsLastPartialCount = 0;
+                const ttsPoll = soundPollRegistry.track(
+                  startPolling({
+                    fetchStatus: () => apiService.getTTSGenerationStatus(generation_id),
+                    onStatus: (s) => {
+                      setProgressLabel('generating speech…', s.status);
+
+                      // The TTS job processes items in order — the first card with
+                      // unfinished samples is the one currently generating.
+                      const currentIdx = ttsConfigs.find(
+                        ({ originalIndex }) =>
+                          (doneSamples[originalIndex] ?? 0) < (expectedSamples[originalIndex] ?? 1),
+                      )?.originalIndex;
+                      if (currentIdx !== undefined) setCardStatus(currentIdx, s.status || 'Generating…');
+
+                      if (s.partial_sounds && s.partial_sounds.length > ttsLastPartialCount) {
+                        const newPartials = s.partial_sounds.slice(ttsLastPartialCount).map(mapTtsSound);
+                        ttsLastPartialCount = s.partial_sounds.length;
+                        mergePartialEvents(newPartials);
+                        newPartials.forEach((e: any) => bumpSamples(e.prompt_index, 1));
+                      }
+                    },
+                  }),
                 );
-              const elevenLabsEvent = createSoundEventFromUpload(
-                { ...config, dbfs: resolvedDbfs },
-                audioUrl,
-                originalIndex,
-                total,
-                geometryBounds as GeometryBounds | undefined,
-                'elevenlabs',
+                let ttsResult: any[] = [];
+                try {
+                  ttsResult = await ttsPoll.done;
+                } finally {
+                  soundPollRegistry.release(ttsPoll);
+                  _activeTtsJobIds.delete(generation_id);
+                  removeInflightJob(generation_id);
+                }
+
+                ttsEvents = ttsResult.map(mapTtsSound);
+              })().catch((err) => recordLaneError('generating speech', err)));
+            }
+
+            // ── ElevenLabs (browser pool) ───────────────────────────────────────
+            // ElevenLabs takes a different request shape from TangoFlux:
+            //  - duration is omitted (None) so the model guesses it from the prompt;
+            //  - background beds request a seamless loop (opt-in per config);
+            //  - prompt_influence replaces the diffusion guidance scale;
+            //  - noise reduction is never applied (only optional silence trimming).
+            if (elevenLabsConfigs.length > 0) {
+              lanePromises.push((async () => {
+                const { results, errors } = await mapWithConcurrency(
+                  elevenLabsConfigs,
+                  async ({ config, originalIndex }) => {
+                    setCardStatus(originalIndex, 'Generating…');
+                    const isBackground = normalizeSoundCategory(config.category) === 'background';
+                    const loop = config.loop ?? (isBackground || DEFAULT_SOUND_LOOP);
+                    const rawUrl = await generateSoundEffect({
+                      text: config.prompt,
+                      loop,
+                      promptInfluence: config.prompt_influence ?? DEFAULT_PROMPT_INFLUENCE,
+                    });
+                    const resolvedDbfs = config.dbfs ?? globalBaseDbfs;
+                    const { url: audioUrl, noise_trim } = await calibrateBlobUrl(
+                      rawUrl,
+                      globalBaseDbfs,
+                      false, // noise reduction never applies to ElevenLabs
+                      trimSilence,
+                    );
+                    const elevenLabsEvent = createSoundEventFromUpload(
+                      { ...config, dbfs: resolvedDbfs, ...(loop ? { interval_seconds: 0 } : {}) },
+                      audioUrl,
+                      originalIndex,
+                      total,
+                      geometryBounds as GeometryBounds | undefined,
+                      'elevenlabs',
+                    );
+                    if (noise_trim) {
+                      useAudioControlsStore.getState().setSoundTrim(elevenLabsEvent.id, { start: noise_trim[0], end: noise_trim[1] });
+                    }
+                    mergePartialEvents([elevenLabsEvent]);
+                    bumpSamples(originalIndex, 1);
+                    return elevenLabsEvent;
+                  },
+                  SOUND_GEN_CONCURRENCY.ELEVENLABS,
+                  controller.signal,
+                );
+                elevenLabsEvents = results.filter(Boolean) as any[];
+                errors.forEach(({ error }) => console.error('[soundscapeStore] ElevenLabs error:', error));
+              })().catch((err) => recordLaneError('ElevenLabs', err)));
+            }
+
+            // ── Fan-in: every lane runs concurrently; wait for all of them ────
+            await Promise.allSettled(lanePromises);
+
+            // A user stop must short-circuit merge / orchestrate / bake.
+            if (controller.signal.aborted) {
+              const abortErr = new Error('AbortError');
+              abortErr.name = 'AbortError';
+              throw abortErr;
+            }
+
+            if (laneErrors.length > 0) {
+              notifySectionError(
+                `Some sounds failed — ${laneErrors.slice(0, 3).join('; ')}`,
+                'error',
               );
-              elevenLabsEvents.push(elevenLabsEvent);
-              if (noise_trim) {
-                useAudioControlsStore.getState().setSoundTrim(elevenLabsEvent.id, { start: noise_trim[0], end: noise_trim[1] });
-              }
             }
 
             // ── Merge ─────────────────────────────────────────────────────────
             // Read the FRESH state at merge time (not the start-of-invocation
             // snapshot) so a concurrently-streaming/merging generation's events
             // are preserved instead of being overwritten.
-            const existing = (get().soundscapeData || get().generatedSounds || []).slice();
+            // Prefer the live `generatedSounds` list (kept up to date by partial
+            // streaming from every lane); `soundscapeData` is only updated at the
+            // end of a run and can be stale while lanes are still merging.
+            const liveSounds = get().generatedSounds || [];
+            const existing = (liveSounds.length > 0 ? liveSounds : (get().soundscapeData || [])).slice();
             const newEvents = [
               ...generatedEvents,
               ...uploadedEvents,
@@ -1642,8 +1912,20 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               useAudioControlsStore.getState().clearSoundTimestampsFor(generatedIds);
             }
 
-            samplesDone = totalSamples;
-            reportSamples('finalizing…');
+            // All lanes have settled — force the aggregate to 100% and drop any
+            // remaining in-flight card markers (a failed item never bumps its
+            // counter, so this prevents a progress bar stuck below 100).
+            set(
+              {
+                soundGenProgress: `${totalSamples}/${totalSamples} finalizing…`,
+                soundGenProgressValue: 100,
+                soundGenStatusText: '',
+                activeGenerationCardIndices: [],
+                soundGenCardStatus: {},
+              },
+              false,
+              'soundscape/generateProgress',
+            );
 
             // ── Orchestrate (AFTER generation, with measured durations) ──────────
             // The agent runs once the scenario clips are decoded so it can order
@@ -1735,7 +2017,17 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           } finally {
             endSoundGeneration();
             untrackGenerationTargets(targetIndices);
-            set({ soundGenProgress: '', soundGenProgressValue: 0, soundGenStatusText: '' }, false, 'soundscape/generateEnd');
+            set(
+              {
+                soundGenProgress: '',
+                soundGenProgressValue: 0,
+                soundGenStatusText: '',
+                activeGenerationCardIndices: [],
+                soundGenCardStatus: {},
+              },
+              false,
+              'soundscape/generateEnd',
+            );
             _abortControllers.delete(controller);
             // Safety net — never leave the bake gate stuck on after the pipeline ends.
             useAudioControlsStore.getState().setGenerationInProgress(false);
@@ -1778,6 +2070,62 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           trackGenerationTargets([targetIndex]);
 
           try {
+            // ElevenLabs regenerates client-side — never through the TangoFlux
+            // backend. Mirrors the ElevenLabs branch of handleGenerateInternal
+            // (duration None, seamless loop for background beds, prompt influence).
+            if (audioModel === AUDIO_MODEL_ELEVENLABS) {
+              const globalBaseDbfs = useAudioControlsStore.getState().globalBaseDbfs;
+              const isBackground = normalizeSoundCategory(config.category) === 'background';
+              const loop = config.loop ?? (isBackground || DEFAULT_SOUND_LOOP);
+              const rawUrl = await generateSoundEffect({
+                text: config.prompt,
+                loop,
+                promptInfluence: config.prompt_influence ?? DEFAULT_PROMPT_INFLUENCE,
+              });
+              const resolvedDbfs = config.dbfs ?? globalBaseDbfs;
+              const { url: audioUrl, noise_trim } = await calibrateBlobUrl(
+                rawUrl,
+                globalBaseDbfs,
+                false, // noise reduction never applies to ElevenLabs
+                trimSilence,
+              );
+
+              const currentForCopy = get().soundscapeData || [];
+              const existingCopyIdx = currentForCopy
+                .filter((x: any) => x.prompt_index === targetIndex)
+                .map((x: any) => x.copy_index ?? parseInt(x.id?.match(/_(\d+)$/)?.[1] ?? '0', 10))
+                .filter((n: number) => !isNaN(n));
+              const newCopy = (existingCopyIdx.length > 0 ? Math.max(...existingCopyIdx) : -1) + 1;
+
+              const baseEvent = createSoundEventFromUpload(
+                { ...config, dbfs: resolvedDbfs, ...(loop ? { interval_seconds: 0 } : {}) },
+                audioUrl,
+                targetIndex,
+                1,
+                geometryBounds as GeometryBounds | undefined,
+                'elevenlabs',
+              );
+              const newEvent: any = {
+                ...baseEvent,
+                id: `elevenlabs_${targetIndex}_${newCopy}`,
+                copy_index: newCopy,
+              };
+              if (noise_trim) {
+                useAudioControlsStore.getState().setSoundTrim(newEvent.id, { start: noise_trim[0], end: noise_trim[1] });
+              }
+
+              // New variants share the prompt's source position (one acoustic source).
+              const anchor = currentForCopy.find(
+                (x: any) => x.prompt_index === targetIndex && x.position?.length === 3,
+              );
+              const alignedEvent = anchor ? { ...newEvent, position: anchor.position } : newEvent;
+              const merged = [...currentForCopy, alignedEvent];
+              set({ generatedSounds: merged, soundscapeData: merged }, false, 'soundscape/regenComplete');
+              applyTrimRegions([alignedEvent]);
+              // `finally` below clears the regenerating indicator / progress.
+              return;
+            }
+
             const configForGeneration = { ...config, seed_copies: 1, _regeneration_ts: Date.now() };
 
             const result = await apiService.generateSounds({
@@ -1844,15 +2192,24 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               } else if (config.entities?.[0]?.nodeId || config.entities?.[0]?.id) {
                 entityIndex = targetIndex;
               }
+              // A new variant of an already-linked card must inherit the SAME
+              // card-level entity link, otherwise it would render as a free sphere.
+              const entityIndices = config.entities?.length
+                ? config.entities
+                    .map((e: any) => e.index)
+                    .filter((i: any) => i !== undefined)
+                : undefined;
 
               return {
                 ...sound,
                 id: `generated_${targetIndex}_${copyIdx}`,
                 prompt_index: targetIndex,
+                config_id: config.config_id,
                 copy_index: copyIdx,
                 position,
                 geometry: sound.geometry || { vertices: [], faces: [] },
                 ...(entityIndex !== undefined && { entity_index: entityIndex }),
+                ...(entityIndices?.length ? { entity_indices: entityIndices } : {}),
               };
             });
 
@@ -1932,6 +2289,8 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               soundGenProgress: '',
               soundGenProgressValue: 0,
               soundGenStatusText: '',
+              activeGenerationCardIndices: [],
+              soundGenCardStatus: {},
               regeneratingIndices: [],
             },
             false,
@@ -1989,7 +2348,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           set({ activeSoundConfigTab: tab }, false, 'soundscape/setTab'),
 
         setSoundConfigsFromPrompts: (prompts) => {
-          const { soundConfigs, globalSteps } = get();
+          const { soundConfigs, globalSteps, generatedSounds } = get();
           // The Advanced Settings "Diffusion Steps" value is the single source of
           // truth for inference steps. Configs arriving from LLM analysis / SED
           // carry a placeholder `steps` value, so stamp the current global value
@@ -2002,13 +2361,28 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             !soundConfigs[0].selectedLibrarySound;
 
           if (isSingleEmpty) {
-            set({ soundConfigs: stamped }, false, 'soundscape/setConfigsFromPrompts');
+            set(
+              { soundConfigs: stamped.map((c) => ({ ...c, config_id: c.config_id || newConfigId() })) },
+              false,
+              'soundscape/setConfigsFromPrompts',
+            );
             return;
           }
 
+          // Is this card already generated? Identity first (config_id), index only
+          // as a legacy fallback (events written before config_id existed).
+          const hasEventsForConfig = (cfg: SoundGenerationConfig, idx: number): boolean =>
+            generatedSounds.some((e: any) => {
+              if (cfg.config_id && e.config_id) return e.config_id === cfg.config_id;
+              return e.prompt_index === idx;
+            });
+
           // Dedup + update: match by prompt text + display_name (display_name = soundName, deterministic)
-          let updated = [...soundConfigs];
+          const updated = [...soundConfigs];
           const toAppend: any[] = [];
+          // Old identities/indices whose events must be dropped when a card is reset.
+          const staleConfigIds = new Set<string>();
+          const staleIndexes = new Set<number>();
           let didUpdate = false;
           for (const newConfig of stamped) {
             const existingIdx = updated.findIndex((existing) => {
@@ -2020,9 +2394,19 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               return samePrompt && sameDisplayName;
             });
             if (existingIdx >= 0) {
-              // Update metadata fields, preserve generation settings and any user-dragged position
+              const prev = updated[existingIdx];
+              const isGenerated = hasEventsForConfig(soundConfigs[existingIdx], existingIdx);
+              if (isGenerated) {
+                // Sending an already-generated card to Sounds is a FRESH generation:
+                // give it a new identity so it renders pending, and drop its old
+                // events so the scene does not double up.
+                if (prev.config_id) staleConfigIds.add(prev.config_id);
+                staleIndexes.add(existingIdx);
+              }
               updated[existingIdx] = {
-                ...updated[existingIdx],
+                ...prev,
+                // Fresh identity only when the previous card was generated.
+                ...(isGenerated ? { config_id: newConfigId() } : {}),
                 dbfs: newConfig.dbfs,
                 interval_seconds: newConfig.interval_seconds,
                 timestamps: newConfig.timestamps,
@@ -2032,19 +2416,38 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                   ? { parentUsageOriginalIndex: newConfig.parentUsageOriginalIndex }
                   : {}),
                 // Only set position if this config doesn't already have one (first-load case)
-                ...(!updated[existingIdx].position && newConfig.position
+                ...(!prev.position && newConfig.position
                   ? { position: newConfig.position }
                   : {}),
               };
               didUpdate = true;
             } else {
-              toAppend.push(newConfig);
+              toAppend.push({ ...newConfig, config_id: newConfig.config_id || newConfigId() });
             }
           }
 
           if (toAppend.length > 0 || didUpdate) {
+            const dropStale = (e: any): boolean =>
+              (!!e.config_id && staleConfigIds.has(e.config_id)) ||
+              (!e.config_id && staleIndexes.has(e.prompt_index));
+            const removedIds: string[] = [];
+            const nextGenerated = generatedSounds.filter((e: any) => {
+              if (dropStale(e)) {
+                if (e.id) removedIds.push(e.id);
+                return false;
+              }
+              return true;
+            });
+            const nextSoundscape = (get().soundscapeData ?? []).filter((e: any) => !dropStale(e));
+            if (removedIds.length > 0) {
+              useAudioControlsStore.getState().pruneSounds(removedIds);
+            }
             set(
-              { soundConfigs: [...updated, ...toAppend] },
+              {
+                soundConfigs: [...updated, ...toAppend],
+                generatedSounds: nextGenerated,
+                soundscapeData: nextSoundscape.length > 0 ? nextSoundscape : null,
+              },
               false,
               'soundscape/appendFromPrompts',
             );
@@ -2075,10 +2478,10 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           set({ audioModel: model }, false, 'soundscape/setModel'),
 
         setLlmModel: (model) =>
-          set({ llmModel: model }, false, 'soundscape/setLlmModel'),
+          set({ llmModel: normalizeLlmModel(model) }, false, 'soundscape/setLlmModel'),
 
         setTtsModel: (model) =>
-          set({ ttsModel: model }, false, 'soundscape/setTtsModel'),
+          set({ ttsModel: normalizeTtsModel(model) }, false, 'soundscape/setTtsModel'),
 
         setOrchestrateSoundsEnabled: (val) =>
           set({ orchestrateSoundsEnabled: val }, false, 'soundscape/setOrchestrateSoundsEnabled'),
@@ -2458,6 +2861,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
 
           const newConfig: SoundGenerationConfig = {
             ...config,
+            config_id: newConfigId(),
             display_name: config.display_name ? `${config.display_name} (copy)` : undefined,
             entities: undefined,
           };
@@ -2473,6 +2877,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 ...event,
                 id: `duplicate-${newPromptIndex}-${vIdx}-${Date.now()}`,
                 prompt_index: newPromptIndex,
+                config_id: newConfig.config_id,
                 position: [
                   (event.position as [number, number, number])[0] + DUPLICATE_POSITION_OFFSET,
                   (event.position as [number, number, number])[1],
@@ -2588,6 +2993,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
 
           const newConfig: SoundGenerationConfig = {
             ...config,
+            config_id: newConfigId(),
             display_name: config.display_name ? `${config.display_name} (copy)` : undefined,
             entities: config.entities ? [...config.entities] : undefined,
           };
@@ -2624,6 +3030,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 ...event,
                 id: `duplicate-${insertAt}-${vIdx}-${Date.now()}`,
                 prompt_index: insertAt,
+                config_id: newConfig.config_id,
                 position: [
                   (event.position as [number, number, number])[0] + DUPLICATE_POSITION_OFFSET,
                   (event.position as [number, number, number])[1],
@@ -2652,14 +3059,14 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
         handleDetachSoundFromEntity: (index) => {
           const { soundConfigs, soundscapeData, generatedSounds } = get();
 
-          // Remove the Speckle highlight for every object linked to this prompt.
-          // objectSoundLinks maps objectId → prompt index, so this needs no appId
-          // mapping and covers all unlink entry points (entity overlay, card, …).
+          // Remove the Speckle highlight for every object linked to this card.
+          // objectSoundLinks maps objectId → card index, so match by card (covers
+          // encoded prompt indices too) — no appId mapping needed.
           import('./speckleStore')
             .then(({ useSpeckleStore }) => {
               const { objectSoundLinks, unlinkObjectFromSound } = useSpeckleStore.getState();
-              objectSoundLinks.forEach((promptIdx, objectId) => {
-                if (promptIdx === index) unlinkObjectFromSound(objectId);
+              objectSoundLinks.forEach((linkedCardIdx, objectId) => {
+                if (linkedCardIdx === index) unlinkObjectFromSound(objectId);
               });
             })
             .catch(() => { /* store not ready — non-critical */ });
@@ -2667,9 +3074,10 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           const newConfigs = soundConfigs.map((c, i) =>
             i === index ? { ...c, entities: undefined } : c,
           );
+          // Detach ALL variants of the card (not just exact prompt_index matches).
           const detach = (sounds: any[]) =>
             sounds.map((s) => {
-              if (s.prompt_index !== index) return s;
+              if (!promptMatchesCard(s.prompt_index, index)) return s;
               const { entity_index, entity_indices, ...rest } = s;
               return rest;
             });
@@ -2709,7 +3117,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
 
           const attach = (sounds: any[]) =>
             sounds.map((s) =>
-              s.prompt_index === index
+              promptMatchesCard(s.prompt_index, index)
                 ? { ...s, entity_index: primaryEntity.index, entity_indices: entityIndices, position: entityPosition }
                 : s,
             );
@@ -2760,12 +3168,17 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           const { soundscapeData, generatedSounds } = get();
           const existing = soundscapeData?.find((s) => s.id === soundId);
           const promptIndex = existing?.prompt_index;
+          // Entity link is card-level: update every variant of the card, including
+          // speech lines encoded as cardIndex * 10000 + lineIdx.
+          const cardIndex = promptIndex !== undefined && promptIndex >= 10000
+            ? Math.floor(promptIndex / 10000)
+            : promptIndex;
           const update = (sounds: any[]) =>
             sounds.map((s) => {
-              if (promptIndex !== undefined && s.prompt_index === promptIndex) {
+              if (cardIndex !== undefined && promptMatchesCard(s.prompt_index, cardIndex)) {
                 return { ...s, position, entity_index: entityIndex };
               }
-              if (promptIndex === undefined && s.id === soundId) {
+              if (cardIndex === undefined && s.id === soundId) {
                 return { ...s, position, entity_index: entityIndex };
               }
               return s;
@@ -2793,8 +3206,12 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 globalNegativePrompt: settings.negativePrompt,
               }),
               ...(settings?.audioModel !== undefined && { audioModel: settings.audioModel }),
-              ...(settings?.llmModel !== undefined && { llmModel: settings.llmModel }),
-              ...(settings?.ttsModel !== undefined && { ttsModel: settings.ttsModel }),
+              ...(settings?.llmModel !== undefined && {
+                llmModel: normalizeLlmModel(settings.llmModel),
+              }),
+              ...(settings?.ttsModel !== undefined && {
+                ttsModel: normalizeTtsModel(settings.ttsModel),
+              }),
               ...(settings?.orchestrateSoundsEnabled !== undefined && {
                 orchestrateSoundsEnabled: settings.orchestrateSoundsEnabled,
               }),
@@ -2847,7 +3264,9 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               });
             } else {
               const promptIndex = updatedConfigs.length + toAppendConfigs.length;
+              const sedConfigId = newConfigId();
               toAppendConfigs.push({
+                config_id: sedConfigId,
                 prompt: s.name,
                 duration: s.variants[0]?.duration ?? globalDuration,
                 guidance_scale: undefined,
@@ -2869,6 +3288,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                   display_name: s.variants.length > 1 ? `${s.name}_${vi + 1}` : s.name,
                   prompt: s.name,
                   prompt_index: promptIndex,
+                  config_id: sedConfigId,
                   total_copies: vi,
                   volume_dbfs: s.dbfs ?? DEFAULT_DBFS,
                   interval_seconds: s.interval_seconds ?? 30,

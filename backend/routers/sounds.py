@@ -59,11 +59,17 @@ def init_sounds_router(service: AudioService):
 
 def _build_clip_plan(sound_configs: list[dict], apply_denoising: bool, audio_model: str, base_dbfs: float | None) -> list[dict]:
     """Flatten sound_configs (one entry per prompt, seed_copies>=1) into one
-    descriptor per individual audio file ("clip") to generate. Filenames are
-    deterministic (same hashing scheme as the pre-refactor sounds_worker) so
-    re-running with identical parameters skips already-generated clips.
+    descriptor per individual audio file ("clip") to generate.
+
+    Filenames embed a per-request unique token, so a new generation NEVER
+    reuses a previous request's artifact — even for an identical prompt. This
+    is what makes "send to sounds / regenerate" produce genuinely fresh audio
+    instead of silently returning the old file (the deterministic hash alone
+    caused cross-run and cross-model reuse).
     """
     clips: list[dict] = []
+    # One token per plan → unique filenames for every clip in this request.
+    run_token = uuid.uuid4().hex[:8]
     for idx, cfg in enumerate(sound_configs):
         prompt = cfg.get("prompt", "")
         if not prompt:
@@ -112,7 +118,7 @@ def _build_clip_plan(sound_configs: list[dict], apply_denoising: bool, audio_mod
                 "entity_index": entity_index,
                 "interval_seconds": interval_seconds,
                 "negative_prompt": negative_prompt,
-                "filename": f"{short_prompt}_{param_hash}_copy{copy_idx}.wav",
+                "filename": f"{short_prompt}_{param_hash}_{run_token}_copy{copy_idx}.wav",
             })
     return clips
 

@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import logging
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -12,6 +13,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Request
 
 from services.paths import (
     GENERATED_SOUNDS_PARENT,
+    find_session_audio,
     user_audio_dir,
     user_data_dir,
     user_model_dir,
@@ -29,6 +31,7 @@ from config.constants import (
     SOUNDSCAPE_DATA_URL_PREFIX,
     IMPULSE_RESPONSE_DIR,
     PYROOMACOUSTICS_RIR_DIR,
+    CHORAS_RIR_DIR,
     TEMP_SIMULATIONS_DIR,
     TEMP_ANALYSIS_DIR,
     TEMP_STATIC_DIR,
@@ -106,46 +109,39 @@ def _resolve_audio_source(url: str, session_id: str) -> Path | None:
             if candidate.is_file():
                 return candidate
 
-    # 2. Basename fallback search (decode percent-encoding — TTS names can be encoded)
+    # 2. Session-scoped fallback search — NEVER cross the workspace boundary.
+    #    Earlier revisions searched every other session's generated dir and every
+    #    persisted audio dir by basename, which let one workspace's save silently
+    #    copy another workspace's file (and leak audio across users). Only the
+    #    caller's own session generated dir + its model-scoped audio dirs are valid.
     filename = unquote(os.path.basename(url_path))
     if not filename:
         return None
 
-    generated_parent = Path(GENERATED_SOUNDS_PARENT)
-
     candidates: list[Path] = [
         user_sounds_dir(session_id) / filename,
-        generated_parent / "tts" / filename,
     ]
-    if generated_parent.exists():
-        candidates.extend(
-            sub / filename
-            for sub in generated_parent.iterdir()
-            if sub.is_dir() and (sub / filename).is_file()
-        )
-    data_root = Path(SOUNDSCAPE_DATA_DIR)
-    if data_root.exists():
-        candidates.extend(
-            sub / "audio" / filename
-            for sub in data_root.iterdir()
-            if sub.is_dir() and (sub / "audio" / filename).is_file()
-        )
+    # SED segments and legacy TTS may still live in the shared generated parent.
+    generated_parent = Path(GENERATED_SOUNDS_PARENT)
+    candidates.append(generated_parent / "tts" / filename)
 
     for candidate in candidates:
         if candidate.is_file():
             return candidate
-    return None
+
+    # Persisted, model-scoped audio within this same workspace.
+    return find_session_audio(session_id, filename)
 
 
 def _copy_audio_files(session_id: str, model_id: str, audio_urls: list[str]) -> int:
-    """Copy audio files referenced by URLs into the session-level audio dir.
+    """Copy audio files referenced by URLs into the model-scoped audio dir.
 
-    Resolves each URL across all candidate locations (current session, other
-    sessions, tts, already-persisted data/soundscapes) so sounds calibrated or
-    generated under a different session cookie still land in the persistent
-    `data/soundscapes/<session_id>/audio/` folder and survive a temp/ wipe.
+    Resolves each URL within the caller's session only (current generated dir,
+    TTS dir, or this workspace's persisted model audio) so a sound generated
+    under this session still lands in `data/soundscapes/<session>/<model>/audio/`
+    and survives a temp/ wipe — without ever pulling another workspace's file.
     """
-    dest_dir = user_audio_dir(session_id)
+    dest_dir = user_audio_dir(session_id, model_id)
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     copied = 0
@@ -211,8 +207,8 @@ def _collect_referenced_audio(data: SoundscapeData) -> list[str]:
     return filenames
 
 
-def _recover_missing_audio(session_id: str, filenames: list[str]) -> list[str]:
-    """Best-effort restore of referenced audio into the session audio dir.
+def _recover_missing_audio(session_id: str, model_id: str, filenames: list[str]) -> list[str]:
+    """Best-effort restore of referenced audio into the model-scoped audio dir.
 
     On load some events reference audio that never made it into the persistent
     `audio/` folder (e.g. the file was generated after the last autosave, or the
@@ -224,7 +220,7 @@ def _recover_missing_audio(session_id: str, filenames: list[str]) -> list[str]:
     if not filenames:
         return []
 
-    dest_dir = user_audio_dir(session_id)
+    dest_dir = user_audio_dir(session_id, model_id)
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     missing: list[str] = []
@@ -286,35 +282,9 @@ def _drop_missing_audio_filenames(data: SoundscapeData, missing: list[str]) -> N
         _drop(data.analysis_state)
 
 
-def _model_referenced_audio(model_dir: Path) -> set[str]:
-    """Audio filenames referenced by a model's saved soundscape.json."""
-    json_path = model_dir / SOUNDSCAPE_JSON_FILENAME
-    if not json_path.exists():
-        return set()
-    try:
-        with open(json_path, "r", encoding="utf-8") as f:
-            data = SoundscapeData(**json.load(f))
-    except Exception as e:
-        logger.warning(f"Failed to read {json_path}: {e}")
-        return set()
-    return set(_collect_referenced_audio(data))
-
-
-def _workspace_audio_referenced_by_others(workspace_id: str, exclude_model_id: str) -> set[str]:
-    """Filenames referenced by every OTHER model in the workspace.
-
-    Used so deleting one model's history never removes a file another model in
-    the same (shared) workspace still needs.
-    """
-    root = user_data_dir(workspace_id)
-    refs: set[str] = set()
-    if not root.exists():
-        return refs
-    for child in root.iterdir():
-        if not child.is_dir() or child.name == "audio" or child.name == exclude_model_id:
-            continue
-        refs |= _model_referenced_audio(child)
-    return refs
+def _ir_library_dir(session_id: str) -> Path:
+    """Workspace-scoped IR library directory (temp/static/impulse_responses/<ws>)."""
+    return Path(IMPULSE_RESPONSE_DIR) / session_id
 
 
 def _collect_referenced_ir_filenames(data: SoundscapeData) -> set[str]:
@@ -346,26 +316,31 @@ def _model_referenced_irs(model_dir: Path) -> set[str]:
     return _collect_referenced_ir_filenames(data)
 
 
-def _workspace_irs_referenced_by_others(workspace_id: str, exclude_model_id: str) -> set[str]:
-    """IR filenames referenced by every OTHER model in the workspace.
+def _all_models_referenced_irs(exclude_model_dir: Path) -> set[str]:
+    """IR filenames referenced by every saved model across ALL workspaces.
 
-    The shared IR library (IMPULSE_RESPONSE_DIR) is global, so deleting one
-    model's history must not remove an IR another model in the workspace still
-    references.
+    The IR library is served from a shared, workspace-scoped tree, but a filename
+    could still be referenced by another workspace (e.g. a copied soundscape).
+    Deleting one model's history must never remove an IR any other saved model
+    still references — so the guard is global, not workspace-local.
     """
-    root = user_data_dir(workspace_id)
+    root = Path(SOUNDSCAPE_DATA_DIR)
     refs: set[str] = set()
     if not root.exists():
         return refs
-    for child in root.iterdir():
-        if not child.is_dir() or child.name == "audio" or child.name == exclude_model_id:
+    for ws_dir in root.iterdir():
+        if not ws_dir.is_dir():
             continue
-        refs |= _model_referenced_irs(child)
+        for model_dir in ws_dir.iterdir():
+            if not model_dir.is_dir() or model_dir.resolve() == exclude_model_dir.resolve():
+                continue
+            refs |= _model_referenced_irs(model_dir)
     return refs
 
 
 def _copy_ir_files(session_id: str, model_id: str, ir_urls: list[str]) -> int:
-    """Copy IR files from temp directories to model-linked ir_files dir."""
+    """Copy IR files from the workspace IR library / temp RIR dirs into the
+    model-linked ir_files dir."""
     dest_dir = user_model_dir(session_id, model_id) / "ir_files"
     dest_dir.mkdir(parents=True, exist_ok=True)
 
@@ -375,9 +350,15 @@ def _copy_ir_files(session_id: str, model_id: str, ir_urls: list[str]) -> int:
         if not filename:
             continue
 
-        source = Path(IMPULSE_RESPONSE_DIR) / filename
+        # Workspace IR library first, then the (legacy) shared root, then the
+        # simulated RIR dirs (pyroom / choras).
+        source = _ir_library_dir(session_id) / filename
+        if not source.exists():
+            source = Path(IMPULSE_RESPONSE_DIR) / filename
         if not source.exists():
             source = Path(PYROOMACOUSTICS_RIR_DIR) / filename
+        if not source.exists():
+            source = Path(CHORAS_RIR_DIR) / filename
         if not source.exists():
             logger.warning(f"IR source not found: {filename}")
             continue
@@ -608,22 +589,18 @@ async def load_soundscape(model_id: str, req: Request, workspace_id: str | None 
             elif owner_ws and owner_ws.get("sharing_mode") == "private":
                 requires_invite = True
 
-    audio_base_url = f"{SOUNDSCAPE_DATA_URL_PREFIX}/{session_id}/audio"
+    audio_base_url = f"{SOUNDSCAPE_DATA_URL_PREFIX}/{session_id}/{model_id}/audio"
     ir_base_url = f"{SOUNDSCAPE_DATA_URL_PREFIX}/{session_id}/{model_id}/ir_files"
     workspace = metadata_store.get_workspace(session_id)
     revision = int(workspace["revision"]) if workspace else 0
 
-    audio_dir = user_audio_dir(session_id)
-    if audio_dir.exists():
-        files = sorted(p.name for p in audio_dir.iterdir() if p.is_file())
-
     # Restore analysis files from persistent storage back to temp/analysis/
     _restore_analysis_files(session_id, model_id)
 
-    # Restore IR files from persistent storage back to temp library
+    # Restore IR files from persistent storage back to the workspace IR library
     ir_files_dir = user_model_dir(session_id, model_id) / "ir_files"
     if ir_files_dir.exists():
-        dest_dir = Path(IMPULSE_RESPONSE_DIR)
+        dest_dir = _ir_library_dir(session_id)
         dest_dir.mkdir(parents=True, exist_ok=True)
         restored_count = 0
         for ir_file in ir_files_dir.glob("*.wav"):
@@ -635,7 +612,7 @@ async def load_soundscape(model_id: str, req: Request, workspace_id: str | None 
                 except Exception as e:
                     logger.warning(f"Failed to restore IR file {ir_file.name}: {e}")
         if restored_count > 0:
-            logger.info(f"Restored {restored_count} IR files to temp library")
+            logger.info(f"Restored {restored_count} IR files to workspace library")
 
     # PRIMARY: Load from local session-keyed soundscape.json
     json_path = user_model_dir(session_id, model_id) / SOUNDSCAPE_JSON_FILENAME
@@ -653,7 +630,7 @@ async def load_soundscape(model_id: str, req: Request, workspace_id: str | None 
         if soundscape:
             logger.info(f"Loaded soundscape from session path: {json_path}")
             missing_audio = _recover_missing_audio(
-                session_id, _collect_referenced_audio(soundscape)
+                session_id, model_id, _collect_referenced_audio(soundscape)
             )
             if missing_audio:
                 logger.warning(
@@ -670,34 +647,6 @@ async def load_soundscape(model_id: str, req: Request, workspace_id: str | None 
                 workspace_id=session_id,
                 revision=revision,
                 requires_invite=requires_invite,
-            )
-
-    # FALLBACK: Try old flat path (pre-session-isolation saves)
-    legacy_json = Path(SOUNDSCAPE_DATA_DIR) / model_id / SOUNDSCAPE_JSON_FILENAME
-    if legacy_json.exists():
-        soundscape = _load_json(legacy_json)
-        if soundscape:
-            logger.info(f"Loaded soundscape from legacy path: {legacy_json}")
-            # Legacy audio lives next to the model dir, not under <session>/audio.
-            missing_audio = _recover_missing_audio(
-                session_id, _collect_referenced_audio(soundscape)
-            )
-            if missing_audio:
-                logger.warning(
-                    f"{len(missing_audio)} referenced audio file(s) missing for legacy "
-                    f"model {model_id}: {missing_audio}"
-                )
-                _drop_missing_audio_filenames(soundscape, missing_audio)
-            legacy_audio_base = f"{SOUNDSCAPE_DATA_URL_PREFIX}/{model_id}"
-            legacy_ir_base = f"{SOUNDSCAPE_DATA_URL_PREFIX}/{model_id}/ir_files"
-            return SoundscapeLoadResponse(
-                soundscape_data=soundscape,
-                audio_base_url=legacy_audio_base,
-                ir_base_url=legacy_ir_base,
-                found=True,
-                missing_audio_filenames=missing_audio,
-                workspace_id=session_id,
-                revision=revision,
             )
 
     return SoundscapeLoadResponse(
@@ -719,24 +668,25 @@ async def upload_soundscape_audio(
     audio: UploadFile = File(...),
 ):
     """
-    Upload an audio file (from a blob URL) to the session-level audio dir.
+    Upload an audio file (from a blob URL) to the model-scoped audio dir.
 
     Used for library and uploaded sounds whose audio only exists as a
     browser blob URL and cannot be copied from the generated sounds dir.
+    Each upload gets a unique suffix so two scenes never overwrite each other.
     """
     if not model_id:
         raise HTTPException(status_code=400, detail="model_id is required")
 
     session_id = _get_session_id(req)
     _require_role(req, session_id, (ROLE_OWNER, ROLE_EDITOR))
-    dest_dir = user_audio_dir(session_id)
+    dest_dir = user_audio_dir(session_id, model_id)
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     safe_id = "".join(
         c if c.isalnum() or c in ("-", "_") else "_" for c in sound_id
     )
     ext = os.path.splitext(audio.filename or "")[1] or ".wav"
-    filename = f"{safe_id}{ext}"
+    filename = f"{safe_id}_{uuid.uuid4().hex[:8]}{ext}"
 
     dest = dest_dir / filename
     try:
@@ -764,40 +714,33 @@ async def delete_soundscape(model_id: str, req: Request):
     _require_role(req, session_id, (ROLE_OWNER, ROLE_EDITOR))
 
     model_dir = user_model_dir(session_id, model_id)
-    audio_dir = user_audio_dir(session_id)
 
     deleted_model = False
     deleted_audio = 0
     deleted_irs = 0
 
     if model_dir.exists():
-        # Resolve this model's audio refs BEFORE removing its soundscape.json,
-        # then only delete files no other model in the workspace references.
-        model_refs = _model_referenced_audio(model_dir)
-        shared_refs = _workspace_audio_referenced_by_others(session_id, model_id)
-        for filename in model_refs - shared_refs:
-            candidate = audio_dir / filename
-            if candidate.is_file():
-                try:
-                    candidate.unlink()
-                    deleted_audio += 1
-                except OSError as e:
-                    logger.warning(f"Failed to delete audio {filename}: {e}")
+        # Audio is model-scoped (model_dir/audio) and removed with the directory.
+        audio_dir = model_dir / "audio"
+        if audio_dir.exists():
+            deleted_audio = sum(1 for f in audio_dir.rglob("*") if f.is_file())
 
-        # Resolve this model's IR refs before removing its soundscape.json, then
-        # delete the shared-library copies no other model still references. The
-        # per-model ir_files/ copies go away with the directory below.
+        # IR library cleanup: delete workspace-library copies no other saved model
+        # ANYWHERE still references. The guard is global (not workspace-local)
+        # because the IR library tree is shared across workspaces. Per-model
+        # ir_files/ copies go away with the directory below.
         model_ir_refs = _model_referenced_irs(model_dir)
-        shared_ir_refs = _workspace_irs_referenced_by_others(session_id, model_id)
-        ir_library_dir = Path(IMPULSE_RESPONSE_DIR)
+        shared_ir_refs = _all_models_referenced_irs(model_dir)
+        ir_library_dir = _ir_library_dir(session_id)
         for filename in model_ir_refs - shared_ir_refs:
-            candidate = ir_library_dir / filename
-            if candidate.is_file():
-                try:
-                    candidate.unlink()
-                    deleted_irs += 1
-                except OSError as e:
-                    logger.warning(f"Failed to delete IR {filename}: {e}")
+            for candidate in (ir_library_dir / filename, Path(IMPULSE_RESPONSE_DIR) / filename):
+                if candidate.is_file():
+                    try:
+                        candidate.unlink()
+                        deleted_irs += 1
+                    except OSError as e:
+                        logger.warning(f"Failed to delete IR {filename}: {e}")
+                    break
 
         shutil.rmtree(str(model_dir))
         deleted_model = True
@@ -839,6 +782,15 @@ async def delete_workspace(workspace_id: str, req: Request):
         shutil.rmtree(str(workspace_dir))
         deleted = True
         logger.info(f"Deleted workspace directory: {workspace_dir}")
+
+    # Remove this workspace's IR library copies too (temp/.../impulse_responses/<ws>).
+    ws_ir_dir = _ir_library_dir(workspace_id)
+    if ws_ir_dir.exists():
+        try:
+            shutil.rmtree(str(ws_ir_dir))
+            logger.info(f"Deleted workspace IR library: {ws_ir_dir}")
+        except OSError as e:
+            logger.warning(f"Failed to delete workspace IR library {ws_ir_dir}: {e}")
 
     # Remove the durable metadata too, and move every affected session to a
     # workspace its user still owns (otherwise they'd point at a ghost).
@@ -896,7 +848,7 @@ async def get_soundscape_stats(model_id: str, req: Request):
     """
     session_id = _get_session_id(req)
     model_dir = user_model_dir(session_id, model_id)
-    audio_dir = user_audio_dir(session_id)
+    audio_dir = user_audio_dir(session_id, model_id)
 
     stats: dict = {
         "model_id": model_id,
@@ -940,16 +892,14 @@ async def get_soundscape_stats(model_id: str, req: Request):
         except Exception:
             pass
 
-    # Count only the audio files THIS model references (the workspace audio dir
-    # is shared across models in a workspace).
-    referenced_audio = _model_referenced_audio(model_dir) if json_path.exists() else set()
+    # Audio is model-scoped (model_dir/audio) — every file belongs to this model.
     audio_count = 0
     audio_bytes = 0
-    for filename in referenced_audio:
-        candidate = audio_dir / filename
-        if candidate.is_file():
-            audio_count += 1
-            audio_bytes += candidate.stat().st_size
+    if audio_dir.exists():
+        for f in audio_dir.rglob("*"):
+            if f.is_file():
+                audio_count += 1
+                audio_bytes += f.stat().st_size
     audio_stats = {"count": audio_count, "total_bytes": audio_bytes}
     stats["audio_files"] = audio_count
     stats["audio_size_bytes"] = audio_bytes

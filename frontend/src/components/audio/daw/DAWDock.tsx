@@ -258,7 +258,7 @@ export function DAWDock({
   const pxPerSecondRef = useRef(pxPerSecond); pxPerSecondRef.current = pxPerSecond;
   const snapModeRef = useRef(snapMode); snapModeRef.current = snapMode;
   const tickStepSec = computeTickStep(pxPerSecond);
-  const smartStepSecRef = useRef(tickStepSec); smartStepSecRef.current = tickStepSec;
+  const gridStepSecRef = useRef(tickStepSec); gridStepSecRef.current = tickStepSec;
   const playheadMsRef = useRef(currentTime); playheadMsRef.current = currentTime;
   const timelineDurationMsRef = useRef(timelineDurationMs); timelineDurationMsRef.current = timelineDurationMs;
   const triggerReverseRef = useRef(triggerGraph.reverse); triggerReverseRef.current = triggerGraph.reverse;
@@ -269,7 +269,7 @@ export function DAWDock({
     soundsRef,
     pxPerSecondRef,
     snapModeRef,
-    smartStepSecRef,
+    gridStepSecRef,
     playheadMsRef,
     timelineDurationMsRef,
     triggerReverseRef,
@@ -459,7 +459,7 @@ export function DAWDock({
   }, []);
 
   /* ---- Keyboard shortcuts (dock-scoped, not window) ---- */
-  const snapStepSec = snapMode === 'off' ? 0.1 : snapMode === 'smart' ? tickStepSec : snapMode;
+  const snapStepSec = snapMode === 'off' ? 0.1 : tickStepSec;
 
   const commitDelta = useCallback((keys: string[], deltaMs: number) => {
     if (keys.length === 0 || deltaMs === 0) return;
@@ -956,8 +956,6 @@ export function DAWDock({
           triggerExpression={contextMenuData.triggerExpression}
           onPickVariant={(variantIndex) => {
             setIterationLink(contextMenuData.soundId, contextMenuData.iterationIndex, { variantIndex });
-            const revKey = `${contextMenuData.soundId}-${contextMenuData.iterationIndex}`;
-            triggerGraph.reverse.get(revKey)?.forEach((dep) => setIterationLink(dep.soundId, dep.iterationIndex, { variantIndex }));
             scheduleBakeOrchestrate();
           }}
           onPickEntity={(entityId, entityIndex) => {

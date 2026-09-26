@@ -281,6 +281,8 @@ class SoundscapeGlobalSettings(BaseModel):
 class SoundscapeSoundConfig(BaseModel):
     """Serializable sound configuration (one card)"""
     index: int
+    # Stable card identity — generated-state is matched by this, never by index.
+    config_id: Optional[str] = None
     prompt: str = ""
     type: Optional[str] = None  # CardType: "text-to-audio", "upload", "library"
     duration: float = 5.0
@@ -320,6 +322,8 @@ class SoundscapeSoundEvent(BaseModel):
     display_name: Optional[str] = None
     prompt: Optional[str] = None
     prompt_index: Optional[int] = None
+    # Stable identity of the owning config — must survive save/load.
+    config_id: Optional[str] = None
     volume_dbfs: Optional[float] = None
     current_volume_dbfs: Optional[float] = None
     interval_seconds: Optional[float] = None
@@ -739,7 +743,7 @@ class OrchestrateLLMOutput(BaseModel):
 
 class ScenaristStreamRequest(BaseModel):
     user_context: str | None = None
-    llm_model: str = "gemini-2.5-flash"
+    llm_model: str = DEFAULT_LLM_MODEL
     analysis_id: str | None = None
     people_count: int = 5
     likeliness: int = 9
@@ -749,7 +753,7 @@ class ScenaristStreamRequest(BaseModel):
 class FoleyArtistRequest(BaseModel):
     scenario_id: str
     analysis_id: str | None = None
-    llm_model: str = "gemini-2.5-flash"
+    llm_model: str = DEFAULT_LLM_MODEL
     maximum_sounds: int = 20
 
 
@@ -763,3 +767,57 @@ class TTSGenerationRequest(BaseModel):
     url_prefix: str = "/static/sounds/generated/tts"
     language: Optional[str] = None
     tts_model: Optional[str] = None
+
+
+# ============================================================================
+# Per-user Preferences (Advanced Settings)
+# ============================================================================
+
+class ListenerOrientation(BaseModel):
+    """FPS listener look-at offset direction from the receiver position."""
+    x: float = 0.0
+    y: float = 0.0
+    z: float = -1.0
+
+
+class UserPreferences(BaseModel):
+    """Durable per-user settings for the Advanced Settings panel.
+
+    Every field is optional so a PUT payload may be partial; the router
+    shallow-merges the provided fields into the stored blob. API tokens are
+    intentionally excluded (they remain deployment-global).
+    """
+    # Display
+    color_theme: Optional[str] = None
+    show_axes_helper: Optional[bool] = None
+    show_label_sprites: Optional[bool] = None
+    show_hovering_highlight: Optional[bool] = None
+    show_sound_spheres: Optional[bool] = None
+    show_playing_highlight: Optional[bool] = None
+    show_scene_listeners: Optional[bool] = None
+    show_ground_grid: Optional[bool] = None
+    show_ground_grid_labels: Optional[bool] = None
+    ground_grid_spacing: Optional[float] = None
+    ground_grid_color: Optional[str] = None
+    # Acoustic
+    global_sound_speed: Optional[float] = None
+    global_mesh_lc: Optional[float] = None
+    # Models
+    llm_model: Optional[str] = None
+    tts_model: Optional[str] = None
+    tts_language: Optional[str] = None
+    audio_model: Optional[str] = None
+    diffusion_steps: Optional[int] = None
+    negative_prompt: Optional[str] = None
+    apply_denoising: Optional[bool] = None
+    trim_silence: Optional[bool] = None
+    apply_noise_reduction: Optional[bool] = None
+    # Audio rendering
+    normalize_impulse_responses: Optional[bool] = None
+    listener_orientation: Optional[ListenerOrientation] = None
+    output_device_id: Optional[str] = None
+    global_base_dbfs: Optional[float] = None
+    maximum_foley_sounds: Optional[int] = None
+    show_spectrograms: Optional[bool] = None
+    # History
+    enable_auto_save: Optional[bool] = None

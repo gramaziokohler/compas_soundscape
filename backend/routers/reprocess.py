@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from services.audio_service import AudioService
-from services.paths import user_sounds_dir
+from services.paths import find_session_audio, user_sounds_dir
 from utils.audio_processing import compute_noise_trim_region_from_file
 from pydantic import BaseModel
 from config.constants import GENERATED_SOUNDS_DIR
@@ -42,6 +42,12 @@ async def reprocess_sounds(request: ReprocessRequest, req: Request):
         for url in request.sound_urls:
             filename = os.path.basename(url)
             file_path = os.path.join(sounds_dir, filename)
+
+            if not os.path.exists(file_path) and session_id:
+                # Persisted, model-scoped copy (post save/load).
+                persisted = find_session_audio(session_id, filename)
+                if persisted:
+                    file_path = str(persisted)
 
             if not os.path.exists(file_path):
                 print(f"Warning: File not found: {file_path}")

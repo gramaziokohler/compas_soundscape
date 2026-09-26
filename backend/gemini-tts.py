@@ -1,8 +1,13 @@
+"""Standalone Gemini 3.8 TTS smoke script.
+
+Run from backend/:  python gemini-tts.py
+Writes out.wav (24 kHz mono WAV) in the current directory.
+"""
 import os
+import base64
+
 from google import genai
-from google.genai import types
 from dotenv import load_dotenv, find_dotenv
-import wave
 
 _env_local = find_dotenv('.env.local', raise_error_if_not_found=False, usecwd=False)
 _env = find_dotenv('.env', raise_error_if_not_found=False, usecwd=False)
@@ -11,33 +16,19 @@ if _env_local:
 if _env:
     load_dotenv(_env)
 
-# Set up the wave file to save the output:
-def wave_file(filename, pcm, channels=1, rate=24000, sample_width=2):
-   with wave.open(filename, "wb") as wf:
-      wf.setnchannels(channels)
-      wf.setsampwidth(sample_width)
-      wf.setframerate(rate)
-      wf.writeframes(pcm)
-
 client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
 
-response = client.models.generate_content(
-#    model="gemini-3.1-flash-tts-preview",
-   model="gemini-2.5-flash-preview-tts",
-   contents="Say cheerfully: Have a wonderful day!",
-   config=types.GenerateContentConfig(
-      response_modalities=["AUDIO"],
-      speech_config=types.SpeechConfig(
-         voice_config=types.VoiceConfig(
-            prebuilt_voice_config=types.PrebuiltVoiceConfig(
-               voice_name='Kore',
-            )
-         )
-      ),
-   )
+# Gemini 3.8 TTS uses the Interactions API. Unary requests return a complete
+# WAV file, so the base64 payload is written directly (no manual WAV header).
+interaction = client.interactions.create(
+    model="gemini-3.8-flash-tts",
+    input=[{
+        "type": "user_input",
+        "content": [{"type": "text", "text": "Say cheerfully: Have a wonderful day!"}],
+    }],
+    response_format={"type": "audio", "mime_type": "audio/wav", "sample_rate": 24000},
+    generation_config={"speech_config": [{"voice": "Kore"}]},
 )
 
-data = response.candidates[0].content.parts[0].inline_data.data
-
-file_name='out.wav'
-wave_file(file_name, data) # Saves the file to current directory
+with open("out.wav", "wb") as f:
+    f.write(base64.b64decode(interaction.output_audio.data))

@@ -471,14 +471,26 @@ export const AUDIO_MODEL_ELEVENLABS = "elevenlabs";
 export const AUDIO_MODEL_TTS = "gemini-tts";
 export const DEFAULT_AUDIO_MODEL = AUDIO_MODEL_TANGOFLUX;
 
-// LLM Models
-export const LLM_MODEL_GEMINI_FLASH = "gemini-2.5-flash";
-export const LLM_MODEL_GEMINI_PRO = "gemini-2.5-pro";
-export const LLM_MODEL_GEMINI_3_FLASH = "gemini-3-flash-preview";
-export const LLM_MODEL_GEMINI_3_PRO = "gemini-3.1-pro-preview";
+// ElevenLabs Sound Effects
+// Duration is intentionally left to the model (duration_seconds = None): the
+// prompt decides the optimal length. Looping is opt-in and defaults to on for
+// background beds.
+export const DEFAULT_SOUND_LOOP = false;
+export const ELEVENLABS_DURATION_MIN = 0.5;
+export const ELEVENLABS_DURATION_MAX = 30;
+export const DEFAULT_PROMPT_INFLUENCE = 0.3;
+export const PROMPT_INFLUENCE_MIN = 0;
+export const PROMPT_INFLUENCE_MAX = 1;
+export const PROMPT_INFLUENCE_STEP = 0.05;
+
+// LLM Models — Gemini: only the latest Flash (3.8) and the current Pro (3.1).
+// All Gemini 2.5 and older models were removed.
+export const LLM_MODEL_GEMINI_FLASH = "gemini-3.8-flash";
+export const LLM_MODEL_GEMINI_PRO = "gemini-3.1-pro-preview";
 export const LLM_MODEL_OPENAI = "openai";
 export const LLM_MODEL_ANTHROPIC = "anthropic";
 
+// Latest Flash model is the default.
 export const DEFAULT_LLM_MODEL = LLM_MODEL_GEMINI_FLASH;
 
 // Frontend-only service version strings (for Card version display)
@@ -499,20 +511,18 @@ export const AUDIO_MODEL_DESCRIPTIONS: Record<string, string> = {
   [AUDIO_MODEL_ELEVENLABS]: "Cloud-based sound effects via ElevenLabs — requires NEXT_PUBLIC_ELEVENLABS_API_KEY",
 };
 
-// Gemini TTS models — keys must match backend TTS_MODEL_* constants
-export const TTS_MODEL_GEMINI_FLASH = "gemini-2.5-flash-preview-tts";
-export const TTS_MODEL_GEMINI_PRO = "gemini-2.5-pro-preview-tts";
-export const TTS_MODEL_GEMINI_3_FLASH = "gemini-3.1-flash-tts-preview";
+// Gemini TTS models — keys must match backend TTS_MODEL_* constants.
+// Gemini 3.8 TTS only (2.5 and 3.1-preview removed).
+export const TTS_MODEL_GEMINI_FLASH = "gemini-3.8-flash-tts";
+export const TTS_MODEL_GEMINI_FLASH_LITE = "gemini-3.8-flash-lite-tts";
 export const TTS_AVAILABLE_MODELS = [
-  TTS_MODEL_GEMINI_3_FLASH,
   TTS_MODEL_GEMINI_FLASH,
-  TTS_MODEL_GEMINI_PRO,
+  TTS_MODEL_GEMINI_FLASH_LITE,
 ] as const;
-export const DEFAULT_TTS_MODEL = TTS_MODEL_GEMINI_3_FLASH;
+export const DEFAULT_TTS_MODEL = TTS_MODEL_GEMINI_FLASH;
 export const TTS_MODEL_NAMES: Record<string, string> = {
-  [TTS_MODEL_GEMINI_3_FLASH]: "Gemini 3.1 Flash TTS",
-  [TTS_MODEL_GEMINI_FLASH]: "Gemini 2.5 Flash TTS",
-  [TTS_MODEL_GEMINI_PRO]: "Gemini 2.5 Pro TTS",
+  [TTS_MODEL_GEMINI_FLASH]: "Gemini 3.8 Flash TTS",
+  [TTS_MODEL_GEMINI_FLASH_LITE]: "Gemini 3.8 Flash-Lite TTS",
 };
 
 // TTS Voice options
@@ -611,10 +621,8 @@ export function resolveVoiceForCharacter(character: string | undefined | null): 
 }
 
 export const LLM_MODEL_NAMES: Record<string, string> = {
-  [LLM_MODEL_GEMINI_FLASH]: "Gemini 2.5 Flash",
-  [LLM_MODEL_GEMINI_PRO]: "Gemini 2.5 Pro",
-  [LLM_MODEL_GEMINI_3_FLASH]: "Gemini 3 Flash",
-  [LLM_MODEL_GEMINI_3_PRO]: "Gemini 3.1 Pro",
+  [LLM_MODEL_GEMINI_FLASH]: "Gemini 3.8 Flash",
+  [LLM_MODEL_GEMINI_PRO]: "Gemini 3.1 Pro",
   [LLM_MODEL_OPENAI]: "ChatGPT (GPT-4o)",
   [LLM_MODEL_ANTHROPIC]: "Claude 3.5 Sonnet",
 };
@@ -628,11 +636,29 @@ export const LLM_PROVIDER_ANTHROPIC = "anthropic";
 export const LLM_MODEL_TO_PROVIDER: Record<string, string> = {
   [LLM_MODEL_GEMINI_FLASH]:   LLM_PROVIDER_GOOGLE,
   [LLM_MODEL_GEMINI_PRO]:     LLM_PROVIDER_GOOGLE,
-  [LLM_MODEL_GEMINI_3_FLASH]: LLM_PROVIDER_GOOGLE,
-  [LLM_MODEL_GEMINI_3_PRO]:   LLM_PROVIDER_GOOGLE,
   [LLM_MODEL_OPENAI]:         LLM_PROVIDER_OPENAI,
   [LLM_MODEL_ANTHROPIC]:      LLM_PROVIDER_ANTHROPIC,
 };
+
+/**
+ * Coerce a (possibly stale, persisted) LLM model id to a currently supported
+ * one. Soundscapes saved before the Gemini 3.8 migration may hold removed ids
+ * (e.g. "gemini-2.5-flash") — fall back to the default instead of breaking.
+ */
+export function normalizeLlmModel(model: string | null | undefined): string {
+  if (model && model in LLM_MODEL_NAMES) return model;
+  return DEFAULT_LLM_MODEL;
+}
+
+/**
+ * Coerce a (possibly stale, persisted) TTS model id to a currently supported
+ * one. Saved soundscapes / user prefs may hold removed ids (e.g.
+ * "gemini-2.5-flash-preview-tts"); the backend rejects those with HTTP 400.
+ */
+export function normalizeTtsModel(model: string | null | undefined): string {
+  if (model && (TTS_AVAILABLE_MODELS as readonly string[]).includes(model)) return model;
+  return DEFAULT_TTS_MODEL;
+}
 
 // A transient status miss (e.g. a momentary 404 from the unified job endpoint)
 // must not abort a running LLM job's poll — the in-process job keeps running
@@ -694,6 +720,18 @@ export const DEFAULT_NUM_SOUNDS = 5;
 export const NUM_SOUNDS_MIN = 1;
 export const NUM_SOUNDS_MAX = 30;
 export const LIBRARY_MAX_SEARCH_RESULTS = 10; // Max results for BBC/Freesound library search
+
+// Max simultaneous per-item generations within each non-ML sound-generation lane.
+// The GPU (TangoFlux) and TTS lanes are single serial jobs; these caps apply to the
+// client-side pools (ElevenLabs browser calls + calibration/download loops) so a
+// "Generate all" fans out across lanes without hammering an external API or the
+// backend threadpool.
+export const SOUND_GEN_CONCURRENCY = {
+  ELEVENLABS: 2,
+  CALIBRATE: 3,
+  LIBRARY: 3,
+  CATALOG: 3,
+} as const;
 
 // ============================================================================
 // Google Sound Catalog Configuration
@@ -1495,6 +1533,9 @@ export const UI_TIMING = {
   SCENE_UPDATE_DELAY_MS: 100,
   ENTITY_HIGHLIGHT_DELAY_MS: 800
 } as const;
+
+/** Debounce (ms) before a per-user Advanced Settings change is pushed to the server. */
+export const USER_PREFERENCES_SAVE_DEBOUNCE_MS = 800;
 
 // ============================================================================
 // Modal Impact Sound Synthesis Configuration

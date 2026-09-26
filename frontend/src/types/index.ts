@@ -96,6 +96,8 @@ export interface SoundEvent {
   display_name?: string;
   prompt?: string;
   prompt_index?: number;
+  /** Stable identity of the owning config — generated-state matching key. */
+  config_id?: string;
   total_copies?: number;
   volume_dbfs?: number; // Level in dBFS (0 = full scale, negative = quieter)
   current_volume_dbfs?: number; // Current volume override (user-adjustable)
@@ -183,8 +185,15 @@ export interface EntityOverlay {
 
 export interface SoundGenerationConfig {
   prompt: string;
+  /** Stable identity for this card — survives index reshuffles and model switches.
+   *  Generated events carry the same `config_id`; never rely on array position. */
+  config_id?: string;
   duration: number;
   guidance_scale?: number; // Optional: not used in SED workflow
+  /** ElevenLabs `prompt_influence` (0–1). Ignored by TangoFlux (uses guidance_scale). */
+  prompt_influence?: number;
+  /** ElevenLabs seamless looping. Defaults to true at generation time for background beds. */
+  loop?: boolean;
   negative_prompt: string;
   seed_copies: number;
   steps: number;
@@ -244,16 +253,28 @@ export interface CatalogSoundSelection {
 
 // ─── Job persistence types ────────────────────────────────────────────────────
 
-export type JobType = 'sound' | 'tts' | 'sed' | 'choras' | 'pyroom' | 'llm';
+export type JobType = 'sound' | 'tts' | 'sed' | 'choras' | 'pyroom' | 'llm' | 'loop';
 
 export interface JobRecord {
   jobId: string;
   jobType: JobType;
   timestamp: number;
-  meta?: { configIndex?: number; kind?: string; scenarioId?: string };
+  meta?: {
+    configIndex?: number;
+    kind?: string;
+    scenarioId?: string;
+    /** pyroom/choras: which simulation instance card the job belongs to. */
+    instanceId?: string;
+    /** loop: which sound the loop region applies to. */
+    soundId?: string;
+  };
 }
 
 export type SoundState = 'playing' | 'paused' | 'stopped';
+
+// Per-user preferences (Advanced Settings)
+import type { UserPreferences, ListenerOrientation } from './preferences';
+export type { UserPreferences, ListenerOrientation };
 
 // Import SidebarTabValue from constants for single source of truth
 import type { SidebarTabValue } from '@/utils/constants';

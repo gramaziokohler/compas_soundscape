@@ -36,6 +36,8 @@ import {
 import { useSpeckleEngineStore } from "@/store/speckleEngineStore";
 import * as THREE from "three";
 import { useAudioNormalization } from "@/hooks/useAudioNormalization";
+import { useUserPreferencesSync } from "@/hooks/useUserPreferencesSync";
+import { reapplyUserPreferences } from "@/lib/user-preferences-sync";
 import { useAudioOrchestrator } from "@/hooks/useAudioOrchestrator";
 import { useAudioOutputDeviceSync } from "@/hooks/useAudioOutputDeviceSync";
 import { applyOutputDevice } from "@/lib/audio/output-device";
@@ -107,6 +109,24 @@ function collapseFloatingPanels() {
   ui.setShowTimeline(false);
   // Collapse every simulation card in the right sidebar too.
   ui.setExpandedSimulationTabIndex(null);
+}
+
+/**
+ * Deterministic JSON stringify with recursively sorted object keys. Used to
+ * fingerprint the persisted soundscape content so autosave can skip a save when
+ * nothing actually changed (key order / object identity must not matter).
+ */
+function stableStringify(value: unknown): string {
+  return JSON.stringify(value, (_key, val) => {
+    if (val && typeof val === 'object' && !Array.isArray(val)) {
+      const sorted: Record<string, unknown> = {};
+      for (const k of Object.keys(val as Record<string, unknown>).sort()) {
+        sorted[k] = (val as Record<string, unknown>)[k];
+      }
+      return sorted;
+    }
+    return val;
+  });
 }
 
 function applyRestoredSoundscapePayload(
@@ -205,6 +225,9 @@ function applyRestoredSoundscapePayload(
       roomMaterials: rcfg.roomMaterials,
     });
   }
+  // User preferences win over the project's saved generation settings so the
+  // person's Advanced Settings follow them across models/workspaces.
+  reapplyUserPreferences();
 }
 
 /**
@@ -236,8 +259,8 @@ function HomeContent() {
   const router = useRouter();
   const bootstrappedRef = useRef(false);
 
-  // 2. Job recovery — resume in-flight jobs that survived a page refresh
-  const { hasInflightJobs } = useJobRecovery();
+  // 2. Job recovery — resume in-flight jobs that survived a page refresh / window close
+  const { hasInflightJobs, recoveryResolved, recoveredSomething } = useJobRecovery();
 
   // 3. Model version watcher — offer to switch when a newer version is published
   const modelVersion = useModelVersionWatcher();
@@ -405,6 +428,9 @@ function HomeContent() {
     // Show a loading state (not the Home model browser) while the model loads.
     setIsBootstrappingModel(true);
 
+    // Clean slate — never inherit a previous model's configs/events into this one.
+    resetDomainForFreshModel();
+
     console.log('[page:bootstrap] Loading soundscape for model_id from URL:', urlModelId);
     apiService.loadSoundscapeFromSpeckle(urlModelId, useWorkspaceStore.getState().workspace?.id).then(loadResponse => {
       if (loadResponse.requires_invite) {
@@ -492,6 +518,16 @@ function HomeContent() {
   // Snapshot of the most recent save payload so a 409 conflict can offer a
   // "download my changes" escape hatch instead of silently discarding edits.
   const lastSavePayloadRef = useRef<{ modelId: string; savedAt: number; payload: unknown } | null>(null);
+  // Content fingerprint of the last successfully saved soundscape. The debounced
+  // autosave compares against it and skips network saves when nothing changed.
+  // `null` forces the next autosave to run (fresh model / after a load).
+  const lastSavedSignatureRef = useRef<string | null>(null);
+  // Latest signature builder (assigned every render after it is defined). Read
+  // from the mount-only autosave effect so it never captures a stale closure.
+  const computeSaveSignatureRef = useRef<(() => string) | null>(null);
+  // Set when a content change arrives while a save is already in flight, so the
+  // debounced save is re-run once the in-flight save finishes.
+  const pendingAutosaveRef = useRef(false);
   useEffect(() => {
     const unsubUI = useUIStore.subscribe((_state, _prev) => {
       autosaveEnabledRef.current = _state.enableAutoSave;
@@ -513,8 +549,16 @@ function HomeContent() {
       if (useWorkspaceStore.getState().presence > 1) return;
       if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
       autosaveTimerRef.current = setTimeout(() => {
+        // Only save when the persisted content actually changed since the last
+        // successful save — otherwise this is a no-op (e.g. transient store
+        // ticks like simulation/analysis progress updates).
+        const signature = computeSaveSignatureRef.current?.() ?? null;
+        if (signature !== null && signature === lastSavedSignatureRef.current) {
+          console.log('[autosave] no content change — save skipped');
+          return;
+        }
         lastSaveSourceRef.current = 'autosave';
-        saveSoundscapeRef.current?.();
+        void saveSoundscapeRef.current?.();
       }, 3000);
     };
     const unsubSoundscape = useSoundscapeStore.subscribe(() => scheduleAutosave('soundscapeStore'));
@@ -908,6 +952,7 @@ function HomeContent() {
     groundGridColor, setGroundGridColor,
     setGlobalSoundSpeed,
     setGlobalMeshLc,
+    listenerOrientation, setListenerOrientation,
   } = useUIStore();
   // roomScale lives in acousticsSimulationStore so undo/redo works for Resonance Audio
   const roomScale = useAcousticsSimulationStore((s) => s.roomScale);
@@ -1369,10 +1414,8 @@ function HomeContent() {
   // Expanded grid listener ID (controls which grid's points are rendered in 3D)
   const [expandedGridListenerId, setExpandedGridListenerId] = useState<string | null>(null);
 
-  // FPS listener orientation: offset direction from receiver position used as look-at target
-  const [listenerOrientation, setListenerOrientation] = useState<{ x: number; y: number; z: number }>(
-    { ...DEFAULT_LISTENER_ORIENTATION }
-  );
+  // FPS listener orientation lives in uiStore (persisted + synced to the user's
+  // preferences) so it survives refresh.
 
   // Detect model type from file extension and set model filename in context
   useEffect(() => {
@@ -1420,7 +1463,12 @@ function HomeContent() {
       );
       if (!stillInSoundscape) return;
 
-      const config = soundGen.soundConfigs[promptIndex];
+      // Link state is card-level: speech lines encode prompt_index as
+      // cardIndex * 10000 + lineIdx, so resolve the owning card first. Storing
+      // the CARD index keeps objectSoundLinks consistent with the card-indexed
+      // consumers (click-to-expand, auto-unlink, colors).
+      const cardIndex = promptIndex >= 10000 ? Math.floor(promptIndex / 10000) : promptIndex;
+      const config = soundGen.soundConfigs[cardIndex];
       if (!config?.entities?.length) return;
 
       // Resolve and register each entity in the config
@@ -1432,7 +1480,7 @@ function HomeContent() {
 
         // Register the entity-sound link in SpeckleSelectionModeContext
         // Pass hasGeneratedSound=true since this effect runs for generated sounds
-        linkObjectToSound(objectId, promptIndex, true);
+        linkObjectToSound(objectId, cardIndex, true);
       }
     });
   }, [soundGen.generatedSounds, soundGen.soundConfigs, soundGen.soundscapeData, linkObjectToSound, resolveEntityObjectId]);
@@ -2032,6 +2080,9 @@ function HomeContent() {
 
   /** Empty every domain store so a model opens without the Home elements. */
   const resetDomainForFreshModel = () => {
+    // Swapping models invalidates the autosave fingerprint — force the next save.
+    lastSavedSignatureRef.current = null;
+    pendingAutosaveRef.current = false;
     useSoundscapeStore.getState().restoreSoundscape([], [], {});
     useReceiversStore.getState().clearReceivers();
     useGridListenersStore.getState().restoreGridListeners([]);
@@ -2138,6 +2189,11 @@ function HomeContent() {
       setPendingModelSwitch({ speckleData, home: captureHomeElements(), isUpload });
       return;
     }
+    // Always start from a clean domain before opening a model. Without this, a
+    // model whose saved soundscape is missing (or has fewer entries) inherits
+    // the previous model's configs/events — fresh cards then render as "already
+    // generated" because they reuse a stale prompt_index.
+    resetDomainForFreshModel();
     // Opening a model from the Home page frames its bounding box on load -
     // do NOT restore a camera POV saved for a previously-loaded model.
     _fitCameraToBoundingBoxOnLoad = true;
@@ -2145,6 +2201,9 @@ function HomeContent() {
     collapseFloatingPanels();
     setGlobalSpeckleData(speckleData);
     setSpeckleModelUrl(speckleData.url);
+    // New model target — invalidate the autosave fingerprint so its content is
+    // saved even if it happens to resemble the previous model's.
+    lastSavedSignatureRef.current = null;
     // A Speckle model is now the active project.
     useUIStore.getState().setHomeProject(null);
     if (speckleData.display_name) {
@@ -2273,40 +2332,40 @@ function HomeContent() {
         console.log('[DEBUG-LOAD]   mutedSounds:', [...useAudioControlsStore.getState().mutedSounds]);
         console.log('[DEBUG-LOAD]   soloedSound:', useAudioControlsStore.getState().soloedSound);
 
-        // Restore receivers
+        // Restore receivers (authoritative — the domain was reset above)
+        receivers.restoreReceivers(restored.receivers, restored.selectedReceiverId);
         if (restored.receivers.length > 0) {
-          receivers.restoreReceivers(restored.receivers, restored.selectedReceiverId);
           console.log(`[page.tsx] Restored ${restored.receivers.length} receivers`);
         }
 
         // Restore grid listeners
+        gridListeners.restoreGridListeners(restored.gridListeners);
         if (restored.gridListeners.length > 0) {
-          gridListeners.restoreGridListeners(restored.gridListeners);
           console.log(`[page.tsx] Restored ${restored.gridListeners.length} grid listeners`);
         }
 
-        // Restore simulation state
-        if (restored.simulationConfigs.length > 0) {
-          // Seed pyroom persistent states BEFORE restoring configs
-          // so that when hooks mount they find the correct saved state
-          restored.simulationConfigs.forEach(config => {
-            if (config.type === 'pyroomacoustics' && config.simulationInstanceId) {
-              const pyConfig = config as any;
-              usePyroomAcousticsStore.getState().seedInstance(config.simulationInstanceId, {
-                simulationSettings: pyConfig.settings,
-                simulationResults: pyConfig.simulationResults,
-                currentSimulationId: pyConfig.currentSimulationId,
-                importedIRIds: pyConfig.importedIRIds,
-                sourceReceiverIRMapping: pyConfig.sourceReceiverIRMapping,
-                irImported: !!(pyConfig.importedIRIds?.length),
-              });
-            }
-          });
+        // Restore simulation state (authoritative — the domain was reset above)
+        // Seed pyroom persistent states BEFORE restoring configs
+        // so that when hooks mount they find the correct saved state
+        restored.simulationConfigs.forEach(config => {
+          if (config.type === 'pyroomacoustics' && config.simulationInstanceId) {
+            const pyConfig = config as any;
+            usePyroomAcousticsStore.getState().seedInstance(config.simulationInstanceId, {
+              simulationSettings: pyConfig.settings,
+              simulationResults: pyConfig.simulationResults,
+              currentSimulationId: pyConfig.currentSimulationId,
+              importedIRIds: pyConfig.importedIRIds,
+              sourceReceiverIRMapping: pyConfig.sourceReceiverIRMapping,
+              irImported: !!(pyConfig.importedIRIds?.length),
+            });
+          }
+        });
 
-          acousticsSimulation.restoreSimulationState(
-            restored.simulationConfigs,
-            restored.activeSimulationIndex,
-          );
+        acousticsSimulation.restoreSimulationState(
+          restored.simulationConfigs,
+          restored.activeSimulationIndex,
+        );
+        if (restored.simulationConfigs.length > 0) {
           console.log(
             `[page.tsx] Restored ${restored.simulationConfigs.length} simulations, ` +
             `active index: ${restored.activeSimulationIndex}`
@@ -2437,25 +2496,142 @@ function HomeContent() {
     roomMaterials.roomMaterials,
   ]);
 
-  // Save current soundscape state to Speckle + local storage
-  const handleSaveSoundscape = useCallback(async (overrides?: { modelId?: string; modelName?: string }) => {
+  // Resolve the target model for a save from live store state. Autosave calls
+  // this without overrides; manual/Home-project saves pass an override.
+  const resolveSaveTarget = useCallback((overrides?: { modelId?: string; modelName?: string }) => {
     const uiState = useUIStore.getState();
     const activeHomeProject = uiState.homeProject;
-    // A loaded Speckle model always wins; the No-model project only applies when
-    // no model is open.
     const overrideModelId =
       overrides?.modelId ?? (uiState.globalSpeckleData ? undefined : activeHomeProject?.modelId);
+    const modelId = overrideModelId ?? uiState.globalSpeckleData?.model_id ?? SANDBOX_MODEL_ID;
+    const modelName =
+      overrides?.modelName ??
+      (uiState.globalSpeckleData ? modelId : activeHomeProject?.name ?? modelId);
+    return {
+      modelId,
+      modelName,
+      hasTarget: !!overrideModelId || !!uiState.globalSpeckleData,
+    };
+  }, []);
+
+  // Build the full save payload. Shared by the real save and by the change
+  // detector so the fingerprint covers exactly what gets persisted.
+  const buildSavePayload = useCallback(
+    (modelId: string, modelName: string, uploadedFilenames: Record<string, string>) => {
+      const cardFlowState = useCardFlowStore.getState();
+      const liveAnalysis = useAnalysisStore.getState();
+      const analysisStateData = buildAnalysisStateSave(
+        liveAnalysis.analysisConfigs,
+        liveAnalysis.analysisResults,
+        liveAnalysis.activeAnalysisTab,
+        soundGen.soundConfigs.map(c => ({ parentUsageOriginalIndex: (c as any).parentUsageOriginalIndex })),
+        {
+          contextAdvanced: [...cardFlowState.contextAdvanced],
+          usageAdvanced: [...cardFlowState.usageAdvanced],
+          contextToUsage: Object.fromEntries(cardFlowState.contextToUsageMap),
+          usageToSound: Object.fromEntries(cardFlowState.usageToSoundMap),
+        },
+      );
+
+      const payload = buildSoundscapeSavePayload(
+        modelId,
+        modelName,
+        soundGen.soundConfigs,
+        soundGen.soundscapeData ?? [],
+        {
+          duration: soundGen.globalDuration,
+          steps: soundGen.globalSteps,
+          negativePrompt: soundGen.globalNegativePrompt,
+          audioModel: soundGen.audioModel,
+          ttsModel: soundGen.ttsModel,
+          orchestrateSoundsEnabled: soundGen.orchestrateSoundsEnabled,
+        },
+        useAudioControlsStore.getState().soundVolumes,
+        uploadedFilenames,
+        receivers.receivers,
+        gridListeners.gridListeners,
+        receivers.selectedReceiverId,
+        acousticsSimulation.simulationConfigs,
+        acousticsSimulation.activeSimulationIndex,
+        resonanceAudioConfig,
+        useAudioControlsStore.getState().soundTimestamps,
+        useAudioControlsStore.getState().iterationLinks,
+        [...useAudioControlsStore.getState().mutedSounds],
+        useAudioControlsStore.getState().soloedSound,
+        useAudioControlsStore.getState().excludedIterations,
+        useAudioControlsStore.getState().exclusionReasons,
+      );
+
+      // Embed analysis state in the soundscape data
+      payload.soundscape_data.analysis_state = analysisStateData.analysis_state;
+
+      // Persist project_id and version_id so the URL bootstrap can reconstruct the viewer
+      const speckle = useUIStore.getState().globalSpeckleData;
+      if (speckle?.url) {
+        const urlMatch = speckle.url.match(/\/projects\/([^/]+)\/models\/([^/@]+)(?:@([^/?]+))?/);
+        if (urlMatch) {
+          payload.soundscape_data.project_id = urlMatch[1] || '';
+          payload.soundscape_data.version_id = speckle.version_id || urlMatch[3] || '';
+        }
+      }
+      // Persist auth_token for non-public Speckle streams
+      if (speckle?.auth_token) {
+        payload.soundscape_data.auth_token = speckle.auth_token;
+      }
+
+      // Attach analysis/scenario IDs for backend file persistence
+      payload.analysis_ids = analysisStateData.analysis_ids.length > 0 ? analysisStateData.analysis_ids : undefined;
+      payload.scenario_ids = analysisStateData.scenario_ids.length > 0 ? analysisStateData.scenario_ids : undefined;
+
+      return payload;
+    },
+    [
+      soundGen.soundConfigs,
+      soundGen.soundscapeData,
+      soundGen.globalDuration,
+      soundGen.globalSteps,
+      soundGen.globalNegativePrompt,
+      soundGen.audioModel,
+      soundGen.ttsModel,
+      soundGen.orchestrateSoundsEnabled,
+      receivers.receivers,
+      receivers.selectedReceiverId,
+      gridListeners.gridListeners,
+      acousticsSimulation.simulationConfigs,
+      acousticsSimulation.activeSimulationIndex,
+      resonanceAudioConfig,
+    ],
+  );
+
+  // Fingerprint of everything that gets persisted. Excludes volatile fields
+  // (`base_revision`, derived audio/ir URL lists). Blob audio URLs are stable
+  // within a session, so uploaded sounds do not cause save churn.
+  const computeSaveSignature = useCallback((): string => {
+    const { modelId, modelName } = resolveSaveTarget();
+    const payload = buildSavePayload(modelId, modelName, {});
+    return stableStringify({
+      data: payload.soundscape_data,
+      analysis_ids: payload.analysis_ids ?? null,
+      scenario_ids: payload.scenario_ids ?? null,
+    });
+  }, [buildSavePayload, resolveSaveTarget]);
+
+  // Save current soundscape state to Speckle + local storage
+  const handleSaveSoundscape = useCallback(async (overrides?: { modelId?: string; modelName?: string }) => {
+    // A loaded Speckle model always wins; the No-model project only applies when
+    // no model is open.
+    const { modelId, modelName, hasTarget } = resolveSaveTarget(overrides);
     // Nothing to save on the fresh Home sandbox (no model, no No-model project).
-    if (!overrideModelId && !uiState.globalSpeckleData) return;
+    if (!hasTarget) return;
     const saveSource = lastSaveSourceRef.current;
     lastSaveSourceRef.current = 'manual';
     // Save camera POV alongside every soundscape save
     saveCameraToStore();
-    const modelId = overrideModelId ?? globalSpeckleData?.model_id ?? SANDBOX_MODEL_ID;
-    const modelName =
-      overrides?.modelName ??
-      (uiState.globalSpeckleData ? modelId : activeHomeProject?.name ?? modelId);
-    if (isSavingSoundscape) return;
+    if (isSavingSoundscape) {
+      // Don't drop a change that arrives mid-save: queue a single follow-up run.
+      if (saveSource === 'autosave') pendingAutosaveRef.current = true;
+      return;
+    }
     setIsSavingSoundscape(true);
     try {
       // 1. Upload blob-URL audio files (library/uploaded sounds) to the server
@@ -2499,96 +2675,10 @@ function HomeContent() {
         }
       }
 
-      // Build analysis state (serialize cards, results, pending configs) — read the live
-      // store so the just-persisted audio filenames are included in this save.
-      const cardFlowState = useCardFlowStore.getState();
-      const saveAnalysisState = useAnalysisStore.getState();
-      const analysisStateData = buildAnalysisStateSave(
-        saveAnalysisState.analysisConfigs,
-        saveAnalysisState.analysisResults,
-        saveAnalysisState.activeAnalysisTab,
-        soundGen.soundConfigs.map(c => ({ parentUsageOriginalIndex: (c as any).parentUsageOriginalIndex })),
-        {
-          contextAdvanced: [...cardFlowState.contextAdvanced],
-          usageAdvanced: [...cardFlowState.usageAdvanced],
-          contextToUsage: Object.fromEntries(cardFlowState.contextToUsageMap),
-          usageToSound: Object.fromEntries(cardFlowState.usageToSoundMap),
-        },
-      );
-
-      // 3. Build save payload (with server filenames for blob sounds + simulation state)
-      const saveTimestamps = useAudioControlsStore.getState().soundTimestamps;
-      console.log('[page:save] saving soundTimestamps, keys:', Object.keys(saveTimestamps).length,
-        'entries:', Object.entries(saveTimestamps).map(([k, v]) => `${k}:${v?.length ?? 0}ts`).join(' '));
-      const saveLinks = useAudioControlsStore.getState().iterationLinks;
-      const saveMuted = [...useAudioControlsStore.getState().mutedSounds];
-      const saveSoloed = useAudioControlsStore.getState().soloedSound;
-      console.log('[DEBUG-SAVE] === save payload debug ===');
-      console.log('[DEBUG-SAVE] mutedSounds:', JSON.stringify(saveMuted));
-      console.log('[DEBUG-SAVE] soloedSound:', JSON.stringify(saveSoloed));
-      console.log('[DEBUG-SAVE] soundTimestamps keys:', Object.keys(saveTimestamps));
-      console.log('[DEBUG-SAVE] iterationLinks:', JSON.stringify(Object.keys(saveLinks)));
-      for (const [k, v] of Object.entries(saveLinks)) {
-        console.log(`[DEBUG-SAVE]   link[${k}] =`, JSON.stringify(v));
-      }
-      console.log('[DEBUG-SAVE] soundscapeData (events) count:', soundGen.soundscapeData?.length ?? 0);
-      if (soundGen.soundscapeData) {
-        for (const ev of soundGen.soundscapeData.slice(0, 5)) {
-          console.log(`[DEBUG-SAVE]   event id=${ev.id} promptIdx=${ev.prompt_index} category=${(ev as any).category} copy_index=${(ev as any).copy_index}`);
-        }
-      }
-      console.log('[DEBUG-SAVE] soundConfigs count:', soundGen.soundConfigs.length);
-      for (const c of soundGen.soundConfigs) {
-        console.log(`[DEBUG-SAVE]   config prompt="${(c as any).prompt}" category="${(c as any).category}" type="${(c as any).type}"`);
-      }
-      const payload = buildSoundscapeSavePayload(
-        modelId,
-        modelName,
-        soundGen.soundConfigs,
-        soundGen.soundscapeData ?? [],
-        {
-          duration: soundGen.globalDuration,
-          steps: soundGen.globalSteps,
-          negativePrompt: soundGen.globalNegativePrompt,
-          audioModel: soundGen.audioModel,
-          ttsModel: soundGen.ttsModel,
-          orchestrateSoundsEnabled: soundGen.orchestrateSoundsEnabled,
-        },
-        useAudioControlsStore.getState().soundVolumes,
-        uploadedFilenames,
-        receivers.receivers,
-        gridListeners.gridListeners,
-        receivers.selectedReceiverId,
-        acousticsSimulation.simulationConfigs,
-        acousticsSimulation.activeSimulationIndex,
-        resonanceAudioConfig,
-        useAudioControlsStore.getState().soundTimestamps,
-        useAudioControlsStore.getState().iterationLinks,
-        [...useAudioControlsStore.getState().mutedSounds],
-        useAudioControlsStore.getState().soloedSound,
-        useAudioControlsStore.getState().excludedIterations,
-        useAudioControlsStore.getState().exclusionReasons,
-      );
-
-      // Embed analysis state in the soundscape data
-      payload.soundscape_data.analysis_state = analysisStateData.analysis_state;
-
-      // Persist project_id and version_id so the URL bootstrap can reconstruct the viewer
-      if (globalSpeckleData?.url) {
-        const urlMatch = globalSpeckleData.url.match(/\/projects\/([^/]+)\/models\/([^/@]+)(?:@([^/?]+))?/);
-        if (urlMatch) {
-          payload.soundscape_data.project_id = urlMatch[1] || '';
-          payload.soundscape_data.version_id = globalSpeckleData.version_id || urlMatch[3] || '';
-        }
-      }
-      // Persist auth_token for non-public Speckle streams
-      if (globalSpeckleData?.auth_token) {
-        payload.soundscape_data.auth_token = globalSpeckleData.auth_token;
-      }
-
-      // Attach analysis/scenario IDs for backend file persistence
-      payload.analysis_ids = analysisStateData.analysis_ids.length > 0 ? analysisStateData.analysis_ids : undefined;
-      payload.scenario_ids = analysisStateData.scenario_ids.length > 0 ? analysisStateData.scenario_ids : undefined;
+      // 3. Build save payload (with server filenames for blob sounds + simulation state).
+      // Reads live store state, so the freshly-persisted analysis audio filenames
+      // from step 2 are included.
+      const payload = buildSavePayload(modelId, modelName, uploadedFilenames);
 
       // Optimistic-concurrency token for shared workspaces. The backend rejects
       // the save with 409 if another member has written since we last loaded.
@@ -2600,6 +2690,9 @@ function HomeContent() {
       if (typeof result.revision === 'number') {
         useWorkspaceStore.setState({ revision: result.revision });
       }
+      // Re-baseline from live stores (after step-2 side effects) so the next
+      // autosave does not re-save identical content.
+      lastSavedSignatureRef.current = computeSaveSignatureRef.current?.() ?? null;
       console.log('[page.tsx] Soundscape saved:', result.message);
     } catch (err) {
       const conflictRevision = (err as { conflictRevision?: number }).conflictRevision;
@@ -2631,31 +2724,30 @@ function HomeContent() {
       handleApiError(err, 'Failed to save soundscape');
     } finally {
       setIsSavingSoundscape(false);
+      // A content change arrived while this save was running — run one follow-up
+      // autosave (next tick, so `isSavingSoundscape` is false and the latest save
+      // handler is used) unless the content is now identical to what we saved.
+      if (pendingAutosaveRef.current) {
+        pendingAutosaveRef.current = false;
+        setTimeout(() => {
+          const signature = computeSaveSignatureRef.current?.() ?? null;
+          if (signature !== null && signature === lastSavedSignatureRef.current) return;
+          lastSaveSourceRef.current = 'autosave';
+          void saveSoundscapeRef.current?.();
+        }, 0);
+      }
     }
   }, [
-    globalSpeckleData,
+    resolveSaveTarget,
     soundGen.soundscapeData,
-    soundGen.soundConfigs,
-    soundGen.globalDuration,
-    soundGen.globalSteps,
-    soundGen.globalNegativePrompt,
-    soundGen.audioModel,
-    soundGen.ttsModel,
-    receivers.receivers,
-    receivers.selectedReceiverId,
-    gridListeners.gridListeners,
-    acousticsSimulation.simulationConfigs,
-    acousticsSimulation.activeSimulationIndex,
+    buildSavePayload,
     isSavingSoundscape,
     handleApiError,
-    analysis.analysisConfigs,
-    analysis.analysisResults,
-    analysis.activeAnalysisTab,
-    resonanceAudioConfig,
   ]);
 
-  // Keep the autosave ref in sync with the latest save handler
+  // Keep the autosave refs in sync with the latest builders/handlers
   saveSoundscapeRef.current = handleSaveSoundscape;
+  computeSaveSignatureRef.current = computeSaveSignature;
 
   // Save the Home sandbox as a named local "Homepage project" (home-<slug>).
   const handleSaveHomeProject = useCallback(async (name: string) => {
@@ -2882,11 +2974,21 @@ function HomeContent() {
 
   const handleClearLinkedEntities = useCallback((configIndex: number) => {
     const config = soundGen.soundConfigs[configIndex];
-    if (!config?.entities?.length) return;
-    for (const ent of config.entities) {
-      const objectId = resolveEntityObjectId(ent);
-      if (objectId) unlinkObjectFromSound(objectId);
-    }
+    // A card is "linked" if either the config carries entities OR one of its
+    // generated variants carries an entity_index. These can drift (TTS mapping,
+    // undo/redo, partial detaches), so never gate the whole handler on one side —
+    // otherwise clicking Unlink silently does nothing.
+    const hasConfigEntities = !!config?.entities?.length;
+    const hasLinkedVariant = soundGen.generatedSounds.some(
+      (s: any) =>
+        (s.prompt_index === configIndex ||
+          (s.prompt_index >= 10000 && Math.floor(s.prompt_index / 10000) === configIndex)) &&
+        s.entity_index !== undefined,
+    );
+    if (!hasConfigEntities && !hasLinkedVariant) return;
+
+    // Clears config.entities, strips entity_index from ALL variants and removes
+    // every object link for the card.
     soundGen.handleDetachSoundFromEntity(configIndex);
     delete preGenActiveEntityRef.current[configIndex];
     // Also clear iteration links so link icons disappear from timeline
@@ -2897,7 +2999,7 @@ function HomeContent() {
     if (genSound) {
       useAudioControlsStore.getState().clearAllIterationLinksForSound(genSound.id);
     }
-  }, [soundGen, unlinkObjectFromSound, resolveEntityObjectId]);
+  }, [soundGen]);
 
   /**
    * Detach sound from entity and create sound sphere
@@ -3541,12 +3643,16 @@ function HomeContent() {
     audioOrchestrator.setReceiverMode(isReceiverModeActive, undefined, hasReceivers);
   }, [receivers.receivers.length, audioOrchestrator.isInitialized]);
 
-  // Cleanup on unmount — skip destructive cleanup when recovering in-flight jobs
-  // or when restoring a saved soundscape (bootstrap). The load endpoint already
-  // restores IR/audio files to temp, and cleanup would delete them.
+  // Cleanup on mount — skip destructive cleanup while jobs are being recovered,
+  // after a soundscape restore, or if anything was recovered this session. The
+  // backend job discovery must resolve first (`recoveryResolved`) so a job that
+  // completed while the window was closed is not deleted before it is fetched.
+  const cleanupDoneRef = useRef(false);
   useEffect(() => {
-    if (hasInflightJobs) {
-      console.log('[page:cleanup] Skipping cleanup — in-flight jobs being recovered');
+    if (!recoveryResolved || cleanupDoneRef.current) return;
+    cleanupDoneRef.current = true;
+    if (hasInflightJobs || recoveredSomething) {
+      console.log('[page:cleanup] Skipping cleanup — in-flight/recovered jobs present');
       return;
     }
     if (bootstrappedRef.current) {
@@ -3587,7 +3693,7 @@ function HomeContent() {
       }
       navigator.sendBeacon(`${API_BASE_URL}/api/cleanup-generated-sounds`);
     };
-  }, []);
+  }, [recoveryResolved, hasInflightJobs, recoveredSomething]);
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-background">
@@ -3991,6 +4097,11 @@ export default function Home() {
     // reduced — regardless of what was persisted.
     collapseFloatingPanels();
   }, []);
+
+  // Per-user Advanced Settings preferences — fetch + apply after local
+  // persist rehydration, then keep synced. Declared after the rehydrate effect
+  // so it runs after (server values overlay localStorage defaults).
+  useUserPreferencesSync();
 
   return (
     <>

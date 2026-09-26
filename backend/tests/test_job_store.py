@@ -62,6 +62,30 @@ def test_enqueue_and_get_queued_position():
     run(body())
 
 
+def test_list_session_jobs_scopes_and_orders():
+    api, _ = make_stores()
+
+    async def body():
+        a1 = await api.enqueue(JOB_TYPE_PYROOMACOUSTICS, "session-a", {})
+        time.sleep(0.01)
+        a2 = await api.enqueue(JOB_TYPE_PYROOMACOUSTICS, "session-a", {})
+        b1 = await api.enqueue(JOB_TYPE_PYROOMACOUSTICS, "session-b", {})
+        await api.complete(a2, {"ok": True})
+
+        jobs_a = await api.list_session_jobs("session-a")
+        assert [j.job_id for j in jobs_a] == [a2, a1]  # newest first
+        assert jobs_a[0].status == JOB_STATUS_COMPLETED
+        assert jobs_a[0].result == {"ok": True}
+
+        jobs_b = await api.list_session_jobs("session-b")
+        assert [j.job_id for j in jobs_b] == [b1]
+
+        assert await api.list_session_jobs("session-c") == []
+        assert await api.list_session_jobs("") == []
+
+    run(body())
+
+
 def test_get_unknown_job_raises():
     api, _ = make_stores()
 

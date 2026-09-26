@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { useUIStore } from '@/store/uiStore';
+import { useSpeckleStore } from '@/store';
 import { getCssColorHex } from '@/utils/utils';
 import type { SoundEvent } from '@/types';
 
@@ -32,6 +33,11 @@ export function useSpeckleSoundHighlight({
 }: SoundHighlightProps) {
   const expandedSoundCardIndex = useUIStore(s => s.expandedSoundCardIndex);
   const zoomToSoundCardTrigger = useUIStore(s => s.zoomToSoundCardTrigger);
+  // Entity-sound links drive which prompts get a surface marker (large objects).
+  // Markers are (re)built by useSpeckleSoundSpheres in response to this map, but
+  // the map resolves AFTER this effect's first run (and after a refresh), so the
+  // effect must re-run when it changes — otherwise the gumball is never attached.
+  const objectSoundLinks = useSpeckleStore(s => s.objectSoundLinks);
 
   // Keep a ref so the zoom effect can read the latest soundscapeData without
   // listing it as a dependency (prevents re-zooming when data populates on nav).
@@ -145,7 +151,7 @@ export function useSpeckleSoundHighlight({
     }
 
     viewer?.requestRender();
-  }, [isViewerReady, selectedCardIndex, expandedSoundCardIndex, soundscapeData, selectedVariants, activeSimulationPositions, hoveredSoundCardIndex]);
+  }, [isViewerReady, selectedCardIndex, expandedSoundCardIndex, soundscapeData, selectedVariants, activeSimulationPositions, hoveredSoundCardIndex, objectSoundLinks]);
 
   // Zoom to sound sphere when card is double-clicked in sidebar
   useEffect(() => {

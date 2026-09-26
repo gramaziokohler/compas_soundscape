@@ -21,6 +21,8 @@ export interface SoundscapeGlobalSettings {
 /** Serializable sound configuration (one card) */
 export interface SoundscapeSoundConfig {
   index: number;
+  /** Stable card identity — generated-state is matched by this, never by index. */
+  config_id?: string;
   prompt: string;
   type?: string; // CardType: "text-to-audio", "upload", "library"
   duration: number;
@@ -82,6 +84,8 @@ export interface SoundscapeSoundEvent {
   display_name?: string;
   prompt?: string;
   prompt_index?: number;
+  /** Stable identity of the owning config. */
+  config_id?: string;
   volume_dbfs?: number;
   current_volume_dbfs?: number;
   interval_seconds?: number;

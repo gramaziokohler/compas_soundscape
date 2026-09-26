@@ -33,6 +33,7 @@ import { notifyError } from './errorsStore';
 import { resolveSimulationLayerName, resolveSimulationGeometryObjectIds } from './acousticLayerStore';
 import { useUIStore } from './uiStore';
 import { useAudioControlsStore } from './audioControlsStore';
+import { recordInflightJob, removeInflightJob } from '@/lib/job-tracker';
 import type { SourceReceiverIRMapping } from '@/types/audio';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -432,6 +433,8 @@ export const useChorasStore = create<ChorasStoreState>()(
               geometryObjectIds?.length ? geometryObjectIds : resolveSimulationGeometryObjectIds(),
             );
 
+            recordInflightJob(simulation_id, 'choras', { instanceId });
+
             // Poll until completion
             await new Promise<void>((resolve, reject) => {
               const pollInterval = setInterval(async () => {
@@ -444,14 +447,15 @@ export const useChorasStore = create<ChorasStoreState>()(
                   _patch(set, instanceId, { _pollInterval: null }, 'choras/pollDone');
 
                   if (statusData.cancelled) {
+                    removeInflightJob(simulation_id);
                     _patch(set, instanceId, { isRunning: false, progress: 0, status: 'Cancelled' }, 'choras/runCancelled');
                     resolve();
                     return;
                   }
-                  if (statusData.error) { reject(new Error(statusData.error)); return; }
+                  if (statusData.error) { removeInflightJob(simulation_id); reject(new Error(statusData.error)); return; }
 
                   const result = statusData.result;
-                  if (!result) { reject(new Error('No result returned')); return; }
+                  if (!result) { removeInflightJob(simulation_id); reject(new Error('No result returned')); return; }
 
                   // Import IRs to the audio library
                   let irImportResult: IRImportResult = {
@@ -514,9 +518,11 @@ export const useChorasStore = create<ChorasStoreState>()(
                     `Simulation completed! ${irImportResult.importedCount} impulse ${irWord} imported to library.`,
                     'info',
                   );
+                  removeInflightJob(simulation_id);
                   resolve();
                 } catch (pollErr) {
                   clearInterval(pollInterval);
+                  removeInflightJob(simulation_id);
                   _patch(set, instanceId, { _pollInterval: null }, 'choras/pollError');
                   reject(pollErr);
                 }

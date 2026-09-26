@@ -39,8 +39,6 @@ import {
   TTS_MODEL_NAMES,
   LLM_MODEL_GEMINI_FLASH,
   LLM_MODEL_GEMINI_PRO,
-  LLM_MODEL_GEMINI_3_FLASH,
-  LLM_MODEL_GEMINI_3_PRO,
   LLM_MODEL_OPENAI,
   LLM_MODEL_ANTHROPIC,
   LLM_MODEL_NAMES,
@@ -783,10 +781,8 @@ export function AdvancedSettingsSection({
                     value={llmModel}
                     onChange={onLlmModelChange}
                     options={[
-                      LLM_MODEL_GEMINI_3_PRO,
-                      LLM_MODEL_GEMINI_3_FLASH,
-                      LLM_MODEL_GEMINI_PRO,
                       LLM_MODEL_GEMINI_FLASH,
+                      LLM_MODEL_GEMINI_PRO,
                       LLM_MODEL_OPENAI,
                       LLM_MODEL_ANTHROPIC,
                     ].map((m) => {
@@ -881,6 +877,7 @@ export function AdvancedSettingsSection({
                       checked={applyNoiseReduction}
                       onChange={onApplyNoiseReductionChange}
                       label="Apply noise reduction"
+                      disabled={audioModel === AUDIO_MODEL_ELEVENLABS}
                     />
                   )}
                   {applyNoiseReduction && isVisible('trim-silence') && (

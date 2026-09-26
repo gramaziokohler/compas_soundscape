@@ -14,6 +14,7 @@ import { loadAudioFileWithBuffer } from '@/lib/audio/utils/audio-info';
 import { API_BASE_URL, DEFAULT_DBFS, LLM_SUGGESTED_INTERVAL_SECONDS, DEFAULT_DURATION_SECONDS } from '@/utils/constants';
 import { apiService } from '@/services/api';
 import { startPolling, createPollRegistry } from '@/lib/poll-until-done';
+import { recordInflightJob, removeInflightJob } from '@/lib/job-tracker';
 
 // ─── Module-level polling registry ────────────────────────────────────────────
 // The poll handle is scoped per invocation so a second analysis can never
@@ -102,6 +103,7 @@ export const useSEDStore = create<SEDStoreState>()(
 
             const { task_id } = await apiService.startSEDAnalysis(formData);
             _activeSedTaskIds.add(task_id);
+            recordInflightJob(task_id, 'sed');
             set({ sedProgress: 'Queued...' }, false, 'sed/queued');
 
             const sedPoll = sedPollRegistry.track(
@@ -119,6 +121,7 @@ export const useSEDStore = create<SEDStoreState>()(
             } finally {
               sedPollRegistry.release(sedPoll);
               _activeSedTaskIds.delete(task_id);
+              removeInflightJob(task_id);
             }
 
             set(

@@ -1,15 +1,15 @@
 /**
- * Pure snapping math for DAW clip drags — off | fixed grid | smart (ruler tick step),
+ * Pure snapping math for DAW clip drags — on (ruler tick step) | off,
  * plus magnetism to sibling clip edges and the playhead. Alt bypasses everything.
  */
 
-export type SnapMode = 'off' | 0.1 | 0.5 | 1 | 'smart';
+export type SnapMode = 'on' | 'off';
 
 export interface SnapContext {
   mode: SnapMode;
   pxPerSecond: number;
-  /** Ruler's current primary tick step (seconds) — used when mode === 'smart'. */
-  smartStepSec: number;
+  /** Ruler's current primary tick step (seconds) — the snap grid. */
+  gridStepSec: number;
   magnetPx: number;
   playheadSec: number;
   /** Other clips' start/end times (seconds) on the same track, excluding the dragged one(s). */
@@ -23,7 +23,7 @@ export function resolveSnap(rawStartSec: number, ctx: SnapContext): number {
   const raw = Math.max(0, rawStartSec);
   if (ctx.bypass || ctx.mode === 'off') return raw;
 
-  const step = ctx.mode === 'smart' ? Math.max(0.01, ctx.smartStepSec) : ctx.mode;
+  const step = Math.max(0.01, ctx.gridStepSec);
   const gridSnapped = Math.round(raw / step) * step;
 
   const magnetSec = ctx.pxPerSecond > 0 ? ctx.magnetPx / ctx.pxPerSecond : 0;

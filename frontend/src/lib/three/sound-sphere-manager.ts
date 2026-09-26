@@ -350,12 +350,20 @@ export class SoundSphereManager {
       // Keep surface markers in sync with the current large-prompt set, then
       // (re)wire labels. Markers must exist before labels so a large sound's
       // label becomes its click target in the same pass.
+      // NOTE: the large-prompt set depends on objectSoundLinks, which resolves on
+      // a later effect than the initial placement — so this fast path is the one
+      // that usually first sees a prompt become "large". It must therefore apply
+      // the surface randomization too, otherwise the marker/label stay at the
+      // entity centroid until some unrelated full rebuild happens.
       const keepMarkers = new Set<number>();
+      const newlyPlacedPositions = new Map<string, [number, number, number]>();
       visibleSounds.forEach(se => {
         if (se.entity_index === undefined) return;
         const pi = (se as any).prompt_index ?? 0;
         if (this.entitySurfaceInfo.largePrompts.has(pi)) {
-          const pos = this.spherePositions.get(se.id) ?? (se.position as [number, number, number]);
+          const stored = this.spherePositions.get(se.id) ?? (se.position as [number, number, number]);
+          const { pos, newlyPlaced } = this.resolveMarkerPosition(pi, se, stored);
+          if (newlyPlaced) newlyPlacedPositions.set(se.id, pos);
           this.upsertMarker(pi, se, pos);
           keepMarkers.add(pi);
         }
@@ -368,7 +376,7 @@ export class SoundSphereManager {
       ]);
 
       this.lastVisibleSoundIds = new Set(newSoundIds);
-      return new Map();
+      return newlyPlacedPositions;
     }
 
     this.entityLinkedIds = newEntityLinkedIds;
@@ -542,18 +550,9 @@ export class SoundSphereManager {
 
       let finalPos = position;
       if (this.entitySurfaceInfo.largePrompts.has(promptIdx)) {
-        const box = this.entitySurfaceInfo.boxByPrompt.get(promptIdx);
-        if (box && !box.isEmpty()) {
-          const center = box.getCenter(new THREE.Vector3());
-          const atCenter =
-            Math.hypot(position[0] - center.x, position[1] - center.y, position[2] - center.z) < 1e-3;
-          if (atCenter) {
-            finalPos = this.randomPointInBox(box, soundEvent.id);
-            this.spherePositions.set(soundEvent.id, finalPos);
-            this.promptPositions.set(promptIdx, finalPos);
-            newlyPlacedPositions.set(soundEvent.id, finalPos);
-          }
-        }
+        const resolved = this.resolveMarkerPosition(promptIdx, soundEvent, position);
+        finalPos = resolved.pos;
+        if (resolved.newlyPlaced) newlyPlacedPositions.set(soundEvent.id, finalPos);
         this.upsertMarker(promptIdx, soundEvent, finalPos);
         keepMarkers.add(promptIdx);
       }
@@ -1219,6 +1218,36 @@ export class SoundSphereManager {
       center.y + (rnd() - 0.5) * size.y * 0.8,
       center.z + (rnd() - 0.5) * size.z * 0.8,
     ];
+  }
+
+  /**
+   * Resolve the surface position for a large-object marker/label.
+   *
+   * At link time the sound's stored position is set to the entity's AABB center.
+   * If the stored position is still that centroid, pick a deterministic random
+   * point inside the box so the marker/label lands on the object instead of being
+   * buried at its middle. Returns `newlyPlaced: true` when a random point was
+   * chosen, so the caller can sync it back to React state (making it stable on
+   * the next pass).
+   */
+  private resolveMarkerPosition(
+    promptIdx: number,
+    soundEvent: SoundEvent,
+    position: [number, number, number],
+  ): { pos: [number, number, number]; newlyPlaced: boolean } {
+    const box = this.entitySurfaceInfo.boxByPrompt.get(promptIdx);
+    if (box && !box.isEmpty()) {
+      const center = box.getCenter(new THREE.Vector3());
+      const atCenter =
+        Math.hypot(position[0] - center.x, position[1] - center.y, position[2] - center.z) < 1e-3;
+      if (atCenter) {
+        const pos = this.randomPointInBox(box, soundEvent.id);
+        this.spherePositions.set(soundEvent.id, pos);
+        this.promptPositions.set(promptIdx, pos);
+        return { pos, newlyPlaced: true };
+      }
+    }
+    return { pos: position, newlyPlaced: false };
   }
 
   private createMarkerGroup(soundEvent: SoundEvent): THREE.Group {

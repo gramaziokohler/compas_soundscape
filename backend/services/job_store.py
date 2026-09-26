@@ -225,6 +225,41 @@ class AsyncJobStore:
             depths[role] = await self.redis.llen(queue_key)
         return depths
 
+    async def list_session_jobs(self, session_id: str) -> list[JobView]:
+        """Return every job hash belonging to a workspace.
+
+        Used by the client to reattach to work that started before the window
+        was closed (see ``GET /api/jobs``). This scans ``job:*`` rather than
+        maintaining a secondary index — the job space is small and terminal
+        jobs expire via ``JOB_RESULT_TTL_S``. Newest first.
+        """
+        if not session_id:
+            return []
+        views: list[JobView] = []
+        async for key in self.redis.scan_iter(match="job:*"):
+            data = await self.redis.hgetall(key)
+            if not data or data.get("session_id") != session_id:
+                continue
+            views.append(
+                JobView(
+                    job_id=key.split(":", 1)[1],
+                    type=data.get("type", ""),
+                    session_id=session_id,
+                    status=data.get("status", JOB_STATUS_QUEUED),
+                    progress=int(data.get("progress") or 0),
+                    status_text=data.get("status_text", ""),
+                    partial=_parse_json_field(data.get("partial", "")),
+                    result=_parse_json_field(data.get("result", "")),
+                    error=data.get("error") or None,
+                    worker_id=data.get("worker_id") or None,
+                    created=float(data.get("created") or 0.0),
+                    position=None,
+                    total=None,
+                )
+            )
+        views.sort(key=lambda v: v.created, reverse=True)
+        return views
+
     async def reap_once(self) -> int:
         """Re-queue or fail running jobs whose worker heartbeat went stale.
 

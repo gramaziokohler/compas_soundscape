@@ -97,6 +97,7 @@ export function createSoundEventFromUpload(
     display_name: displayName,
     prompt,
     prompt_index: originalIndex,
+    config_id: config.config_id,
     total_copies: 1,
     volume_dbfs: config.dbfs ?? DEFAULT_SOUND_CONFIG.dbfs, // Default to -18 dBFS
     interval_seconds: config.interval_seconds ?? DEFAULT_SOUND_CONFIG.interval_seconds, // 0 = back-to-back auto loop

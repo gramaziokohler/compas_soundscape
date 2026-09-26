@@ -31,6 +31,7 @@ import { notifyError } from './errorsStore';
 import { resolveSimulationLayerName, resolveSimulationGeometryObjectIds } from './acousticLayerStore';
 import { useUIStore } from './uiStore';
 import { useAudioControlsStore } from './audioControlsStore';
+import { recordInflightJob, removeInflightJob } from '@/lib/job-tracker';
 import type { SourceReceiverIRMapping } from '@/types/audio';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -398,6 +399,7 @@ export const usePyroomAcousticsStore = create<PyroomAcousticsStoreState>()(
             );
 
             patchInstance(set, instanceId, { currentSimulationId: simulation_id, status: 'Queued...' }, 'pyroom/queued');
+            recordInflightJob(simulation_id, 'pyroom', { instanceId });
 
             // Build display name lookups from position keys
             const sourceDisplayNames: Record<string, string> = {};
@@ -438,6 +440,7 @@ export const usePyroomAcousticsStore = create<PyroomAcousticsStoreState>()(
 
                 if (statusData.cancelled) {
                   clearInterval(interval);
+                  removeInflightJob(simulation_id);
                   patchInstance(
                     set,
                     instanceId,
@@ -449,6 +452,7 @@ export const usePyroomAcousticsStore = create<PyroomAcousticsStoreState>()(
 
                 if (statusData.error) {
                   clearInterval(interval);
+                  removeInflightJob(simulation_id);
                   patchInstance(
                     set,
                     instanceId,
@@ -460,6 +464,7 @@ export const usePyroomAcousticsStore = create<PyroomAcousticsStoreState>()(
 
                 if (statusData.completed && statusData.result) {
                   clearInterval(interval);
+                  removeInflightJob(simulation_id);
                   const result = statusData.result;
 
                   let irImportResult: IRImportResult = {
@@ -510,6 +515,7 @@ export const usePyroomAcousticsStore = create<PyroomAcousticsStoreState>()(
                 }
               } catch (pollErr) {
                 clearInterval(interval);
+                removeInflightJob(simulation_id);
                 patchInstance(
                   set,
                   instanceId,

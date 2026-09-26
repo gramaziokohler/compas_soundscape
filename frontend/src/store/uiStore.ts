@@ -20,6 +20,7 @@ import type { AudioRenderingMode } from '@/components/audio/AudioRenderingModeSe
 import {
   DEFAULT_SPEED_OF_SOUND,
   CHORAS_DE_DEFAULT_LC,
+  DEFAULT_LISTENER_ORIENTATION,
 } from '@/utils/constants';
 import { applyColorTheme, type ColorThemePreference } from '@/utils/color-theme';
 
@@ -143,6 +144,10 @@ export interface UIStoreState {
   setGlobalSoundSpeed: (v: number) => void;
   globalMeshLc: number;
   setGlobalMeshLc: (v: number) => void;
+
+  // ── Listener orientation (FPS look-at offset from receiver; survives refresh) ─
+  listenerOrientation: { x: number; y: number; z: number };
+  setListenerOrientation: (orientation: { x: number; y: number; z: number }) => void;
 
   // ── Sound card interactions (sidebar → scene) ─────────────────────────────
   /** Index of the currently expanded sound card (set by SoundGenerationSection). */
@@ -360,6 +365,9 @@ export const useUIStore = create<UIStoreState>()(
       setGlobalSoundSpeed: (v) => set({ globalSoundSpeed: v }, false, 'ui/setGlobalSoundSpeed'),
       globalMeshLc: CHORAS_DE_DEFAULT_LC,
       setGlobalMeshLc: (v) => set({ globalMeshLc: v }, false, 'ui/setGlobalMeshLc'),
+      listenerOrientation: { ...DEFAULT_LISTENER_ORIENTATION },
+      setListenerOrientation: (orientation) =>
+        set({ listenerOrientation: orientation }, false, 'ui/setListenerOrientation'),
 
       // ── Sound card interactions ──────────────────────────────────────────────
       expandedSoundCardIndex: null,
@@ -459,7 +467,10 @@ export const useUIStore = create<UIStoreState>()(
         isSavingSoundscape, zoomToSoundCardTrigger, hoveredSoundCardIndex,
         activeSoundParentIndex, isInSoundsStep, showBoundingBox,
         cameraPosition, cameraTarget, acousticLayerSelectionMode, soundsNavTrigger,
-        leftSidebarExpandCommand, homeProject, ...persistable } = state;
+        leftSidebarExpandCommand, homeProject,
+        // Model-bound: a card index from a previous model must not decide which
+        // scene gizmo attaches after a refresh (the sidebar re-expands card 0).
+        expandedSoundCardIndex, ...persistable } = state;
       return persistable;
     },
   }),

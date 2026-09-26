@@ -10,7 +10,7 @@ fastapi==0.118.0
 uvicorn==0.37.0
 python-multipart==0.0.20
 python-dotenv==1.1.1
-pydantic==2.11.9
+pydantic==2.12.5
 
 # --- HTTP Clients ---
 requests==2.32.3
@@ -19,6 +19,15 @@ aiofiles==24.1.0
 
 # --- Auth (Cloudflare Access identity) ---
 PyJWT[crypto]==2.10.1
+
+# --- Google Gemini (LLM + TTS) ---
+# 2.25.0 is required for the Gemini 3.8 TTS schema: typed speech_metadata
+# annotations (SpeechAnnotationParam), response_format AudioResponseFormat, and
+# Interaction.output_audio. It also keeps the legacy GenerateContent API
+# (client.aio.models.generate_content[_stream]) used by services/llm_service.py.
+google-genai==2.25.0
+google-auth>=2.56.0
+typing-extensions>=4.14.0
 
 # --- Job store ---
 redis>=5

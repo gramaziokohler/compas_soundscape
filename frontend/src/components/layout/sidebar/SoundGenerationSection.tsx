@@ -2,7 +2,7 @@
 
 import { useMemo, useCallback, useEffect, useState, useRef } from "react";
 import type { SoundGenerationSectionProps } from "@/types/components";
-import type { SoundGenerationConfig, SoundEvent, CardType, CardBaseConfig } from "@/types";
+import type { SoundGenerationConfig, SoundEvent, CardType, CardBaseConfig, AnalysisConfig } from "@/types";
 import { CARD_TYPE_LABELS } from "@/types";
 import type { CardTypeOption } from "@/components/ui/CardSection";
 import type { CustomMenuItem } from "@/types/card";
@@ -17,7 +17,7 @@ import { ToggleField } from "@/components/ui/ToggleField";
 import type { VariantsBarProps } from "@/components/ui/VariantsBar";
 import { createTtsSpeechLines } from "@/hooks/useTtsSpeechLines";
 import { apiService } from "@/services/api";
-import { useAudioControlsStore, useSoundscapeStore, usePositionClipboardStore, useSpeckleStore, configValidationError, orchestrateInputsSignature } from "@/store";
+import { useAnalysisStore, useAudioControlsStore, useSoundscapeStore, usePositionClipboardStore, useSpeckleStore, configValidationError, orchestrateInputsSignature } from "@/store";
 import { useSpeckleEngineStore } from "@/store/speckleEngineStore";
 import { useUIStore } from "@/store/uiStore";
 import { useServiceVersions } from "@/hooks/useServiceVersions";
@@ -55,6 +55,31 @@ function getSoundSourceName(sound: SoundEvent | undefined, config: SoundGenerati
   // Fallback: derive from config
   if (sound?.prompt) return sound.prompt;
   return config.prompt || config.uploadedAudioInfo?.filename || config.selectedLibrarySound?.description || '';
+}
+
+/** Card types that can act as a sound-section parent (usage card). */
+const USAGE_TARGET_TYPES: CardType[] = ['scenario', 'text', 'freeform'];
+
+/** Human label for a usage card used as a transfer destination. */
+function getUsageTargetLabel(config: AnalysisConfig, fallback: string): string {
+  if (config.display_name) return config.display_name;
+  if (config.type === 'scenario') {
+    const title = config.scenarioResult?.scenarios?.[0]?.title;
+    if (title) return title;
+  }
+  return CARD_TYPE_LABELS[config.type] || fallback;
+}
+
+/** Human label for a context card (prefix of a destination row). */
+function getContextLabel(config: AnalysisConfig | undefined, fallback: string): string {
+  if (!config) return fallback;
+  if (config.display_name) return config.display_name;
+  if (config.type === 'model-analysis') {
+    const title = config.analysisResult?.spaceTitle;
+    if (title) return title;
+  }
+  if (config.type === 'audio' && config.audioFile?.name) return config.audioFile.name;
+  return CARD_TYPE_LABELS[config.type] || fallback;
 }
 
 // Extend CardBaseConfig for sound configs
@@ -124,8 +149,10 @@ export function SoundGenerationSection({
   // ── Sound generation progress from store ──
   const soundGenProgress          = useSoundscapeStore((s) => s.soundGenProgress);
   const soundGenProgressValue     = useSoundscapeStore((s) => s.soundGenProgressValue);
-  const soundGenStatusText        = useSoundscapeStore((s) => s.soundGenStatusText);
   const soundGenTargetIndices     = useSoundscapeStore((s) => s.soundGenTargetIndices);
+  const soundGenCardProgress      = useSoundscapeStore((s) => s.soundGenCardProgress);
+  const activeGenerationCardIndices = useSoundscapeStore((s) => s.activeGenerationCardIndices);
+  const soundGenCardStatus        = useSoundscapeStore((s) => s.soundGenCardStatus);
   const handleReorderSoundConfigs   = useSoundscapeStore((s) => s.handleReorderSoundConfigs);
   const duplicateConfigAt           = useSoundscapeStore((s) => s.duplicateConfigAt);
   const updateSoundPosition         = useSoundscapeStore((s) => s.updateSoundPosition);
@@ -136,14 +163,24 @@ export function SoundGenerationSection({
   const reorchestrateTimeline       = useSoundscapeStore((s) => s.reorchestrateTimeline);
   const orchestrateBaselineSignature = useSoundscapeStore((s) => s.orchestrateBaselineSignature);
   const isReorchestrating           = useSoundscapeStore((s) => s.isReorchestrating);
+  const reassignSoundParent         = useSoundscapeStore((s) => s.reassignSoundParent);
+
+  // Full analysis configs — used to build the right-click "Send to sound section"
+  // destination list (all usage/scenario cards across all contexts).
+  const analysisConfigs = useAnalysisStore((s) => s.analysisConfigs);
 
   // Copied position for the right-click "Paste position" menu item (shared across
   // sound + listener cards). Null when nothing has been copied yet.
   const copiedPosition = usePositionClipboardStore((s) => s.position);
 
-  // Helper to check if a sound is generated (defined early for use in other callbacks)
+  // Helper to check if a sound is generated (defined early for use in other callbacks).
+  // Identity is matched by `config_id` — never by array position, which is
+  // reshuffled by removals/duplicates and reused across model scenes.
   const isSoundGenerated = useCallback((index: number): boolean => {
+    const configId = soundConfigs[index]?.config_id;
     return generatedSounds.some(s => {
+      if (configId && s.config_id) return s.config_id === configId;
+      // Legacy fallback (events written before config_id existed)
       const pi = s.prompt_index;
       if (pi === index) return true;
       // Speech-line TTS sounds encode card index as prompt_index / 10000
@@ -152,81 +189,20 @@ export function SoundGenerationSection({
       }
       return false;
     });
-  }, [generatedSounds]);
+  }, [generatedSounds, soundConfigs]);
 
-  // Snapshot the total number of pending configs (all types) when generation starts.
-  // The backend only counts ML sounds in its denominator, so we replace it here.
-  const pendingAtStartRef = useRef(0);
-  // Snapshot of pending config object references in generation order (survives reordering)
-  const pendingConfigOrderRef = useRef<SoundGenerationConfig[]>([]);
+  // Generation lanes now run concurrently, so several cards can be genuinely in
+  // flight at once. Per-card progress comes from `soundGenCardProgress` (each
+  // card's completed/expected samples) and the in-flight set from
+  // `activeGenerationCardIndices`; there is no single "current card" anymore.
 
-  useEffect(() => {
-    if (isSoundGenerating) {
-      // For single-card generation, only include the targeted card in the pending snapshot.
-      // For global generation (soundGenTargetIndex === null), include all pending configs.
-      const pendingConfigs = soundConfigs.filter((_, i) =>
-        !isSoundGenerated(i) && (soundGenTargetIndices === null || soundGenTargetIndices.includes(i))
-      );
-      pendingAtStartRef.current = pendingConfigs.length;
-      pendingConfigOrderRef.current = pendingConfigs;
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSoundGenerating]); // intentionally snapshot once when generation starts
-
-  // The final orchestrator sync + parametric bake now runs inside
+  // The final orchestrator sync + parametric bake runs inside
   // `soundscapeStore.handleGenerateInternal`, at the very end of the pipeline
   // (after the parallel orchestrate agent joins and all sounds are merged), so
   // it always sees fresh store state and real buffer durations. See
   // `handleGenerateInternal` → "Final orchestrator finalize".
 
-  // Find the current generating card index by matching config object references.
-  // This is stable even if the user reorders cards, since the reference stays the same.
-  // When the ref snapshot is absent (e.g. the section remounts on a sidebar-step
-  // switch while a generation is still in flight), fall back to store state so the
-  // card keeps its progress UI instead of reverting to the idle config view.
-  const getCurrentGeneratingCardIndex = useCallback((): number | null => {
-    if (!isSoundGenerating) return null;
-
-    const generatedIndices = new Set<number>();
-    generatedSounds.forEach(s => {
-      const pi = s.prompt_index;
-      if (pi != null) {
-        generatedIndices.add(pi);
-        // Speech-line TTS sounds encode card index as prompt_index / 10000
-        if (pi >= 10000) {
-          generatedIndices.add(Math.floor(pi / 10000));
-        }
-      }
-    });
-
-    // Walk the original generation order; find the first not yet generated
-    if (pendingConfigOrderRef.current.length > 0) {
-      for (const pendingConfig of pendingConfigOrderRef.current) {
-        // Find where this config object lives in the current soundConfigs array
-        const currentIdx = soundConfigs.indexOf(pendingConfig);
-        if (currentIdx === -1) continue; // config was removed
-        if (!generatedIndices.has(currentIdx)) {
-          return currentIdx;
-        }
-      }
-      // Fall through to the store-derived loop below if the snapshot is fully
-      // consumed (e.g. configs were replaced mid-generation).
-    }
-
-    // No snapshot — derive from the persisted generation targets. The first
-    // targeted card that hasn't generated a sound yet is the active one.
-    for (let idx = 0; idx < soundConfigs.length; idx++) {
-      if (soundGenTargetIndices !== null && !soundGenTargetIndices.includes(idx)) continue;
-      if (!generatedIndices.has(idx)) {
-        return idx;
-      }
-    }
-    return null;
-  }, [isSoundGenerating, soundConfigs, generatedSounds, soundGenTargetIndices]);
-
-  const currentGeneratingCardIndex = getCurrentGeneratingCardIndex();
-
-  // The store now emits a single unified "N/total <stage>" progress string across
+  // The store emits a single unified "N/total <stage>" progress string across
   // all sound kinds (TTA + TTS + others), so no denominator rewriting is needed.
   const displayProgress = soundGenProgress || 'Generating Sounds...';
 
@@ -264,6 +240,8 @@ export function SoundGenerationSection({
   );
 
   const _soundMatchesCard = (sound: any, index: number): boolean => {
+    const configId = soundConfigs[index]?.config_id;
+    if (configId && sound.config_id) return sound.config_id === configId;
     if (sound.prompt_index === index) return true;
     const pi = sound.prompt_index;
     if (pi != null && pi >= 10000 && Math.floor(pi / 10000) === index) return true;
@@ -413,9 +391,23 @@ export function SoundGenerationSection({
     if (filteredCardItems.length > prevConfigsLength.current) {
       // New item was added that is visible in the current filter, expand it
       setExpandedIndex(filteredCardItems.length - 1);
+      const originalIdx = filteredCardItems[filteredCardItems.length - 1]?.originalIndex;
+      if (originalIdx !== undefined) setExpandedSoundCardIndex(originalIdx);
     }
     prevConfigsLength.current = filteredCardItems.length;
-  }, [filteredCardItems.length]);
+  }, [filteredCardItems.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The sidebar auto-expands the first visible card locally, but the store value
+  // is not persisted. Publish that first card once cards exist so the scene gizmo
+  // targets the same card the user sees expanded (instead of nothing / a stale one).
+  const initialExpandPublishedRef = useRef(false);
+  useEffect(() => {
+    if (initialExpandPublishedRef.current || filteredCardItems.length === 0) return;
+    initialExpandPublishedRef.current = true;
+    if (useUIStore.getState().expandedSoundCardIndex === null) {
+      setExpandedSoundCardIndex(filteredCardItems[0].originalIndex);
+    }
+  }, [filteredCardItems]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Keep a ref to soundConfigs.length so the selection effect below can bounds-check
   // without listing soundConfigs.length as a dependency (which would cause the effect
@@ -438,6 +430,9 @@ export function SoundGenerationSection({
     if (selectedCardIndex !== null && selectedCardIndex >= 0) {
       const filteredIdx = filteredCardItemsRef.current.findIndex(item => item.originalIndex === selectedCardIndex);
       if (filteredIdx >= 0) setExpandedIndex(filteredIdx);
+      // Keep the scene gizmo target in lockstep with the scene-driven selection:
+      // otherwise a stale expandedSoundCardIndex would win over selectedCardIndex.
+      setExpandedSoundCardIndex(selectedCardIndex);
     }
   }, [selectedCardIndex]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -504,24 +499,13 @@ export function SoundGenerationSection({
   }, [isSoundGenerated]);
 
   // Get collapsed info for a config
-  const getCollapsedInfo = useCallback((config: SoundGenerationConfig, index: number): string => {
+  const getCollapsedInfo = useCallback((_config: SoundGenerationConfig, index: number): string => {
     if (isSoundGenerated(index)) {
       const variants = getVariantsForPrompt(index);
       return `(${variants.length} sound${variants.length !== 1 ? 's' : ''})`;
     }
-    if (isSoundGenerating && pendingConfigOrderRef.current.length > 0) {
-      const orderIdx = pendingConfigOrderRef.current.indexOf(config);
-      const currentConfig = pendingConfigOrderRef.current.find(c => {
-        const idx = soundConfigs.indexOf(c);
-        return idx !== -1 && !isSoundGenerated(idx);
-      });
-      const currentOrderIdx = currentConfig ? pendingConfigOrderRef.current.indexOf(currentConfig) : -1;
-      if (orderIdx >= 0 && currentOrderIdx >= 0) {
-        if (orderIdx > currentOrderIdx) return `(queued #${orderIdx - currentOrderIdx})`;
-      }
-    }
     return '';
-  }, [isSoundGenerated, getVariantsForPrompt, isSoundGenerating, soundConfigs]);
+  }, [isSoundGenerated, getVariantsForPrompt]);
 
   // Handle config update (bridge between Card's partial update and original update signature)
   // Note: `originalIndex` is passed explicitly; the `index` arg from Card is ignored.
@@ -530,6 +514,29 @@ export function SoundGenerationSection({
       onUpdateConfig(originalIndex, 'display_name', updates.display_name);
     }
   }, [onUpdateConfig]);
+
+  // ── "Send to sound section" destinations ────────────────────────────────
+  // Every usage card (scenario / text / freeform-with-parent) across ALL contexts,
+  // labelled with its context so same-named sections stay distinguishable.
+  const usageTargets = useMemo((): Array<{ index: number; label: string }> => {
+    const targets: Array<{ index: number; label: string }> = [];
+    analysisConfigs.forEach((config, idx) => {
+      const type = config.type;
+      if (!USAGE_TARGET_TYPES.includes(type)) return;
+      if (type === 'freeform' && config.parentContextOriginalIndex === undefined) return;
+      const ctxIdx = config.parentContextOriginalIndex;
+      const ctxCfg = typeof ctxIdx === 'number' && ctxIdx >= 0 && ctxIdx < analysisConfigs.length
+        ? analysisConfigs[ctxIdx]
+        : undefined;
+      const sectionLabel = getUsageTargetLabel(config, `Section ${idx + 1}`);
+      const ctxLabel = ctxCfg ? getContextLabel(ctxCfg, `Context ${(ctxIdx ?? 0) + 1}`) : undefined;
+      targets.push({
+        index: idx,
+        label: ctxLabel ? `${ctxLabel} › ${sectionLabel}` : sectionLabel,
+      });
+    });
+    return targets;
+  }, [analysisConfigs]);
 
   // Render card function
   const renderCard = useCallback((
@@ -647,6 +654,29 @@ export function SoundGenerationSection({
       });
     }
 
+    // Send to sound section (only if generated) — re-parent the card to another
+    // usage/scenario card from any context. Generated variants/events move with it.
+    if (isGenerated && usageTargets.length > 0) {
+      customButtons.push({
+        key: 'send-to-section',
+        icon: (
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+          </svg>
+        ),
+        label: 'Send to sound section',
+        subItems: usageTargets.map((target) => ({
+          key: `section-${target.index}`,
+          label: target.label,
+          isActive: config.parentUsageOriginalIndex === target.index,
+          onClick: (e) => {
+            e.stopPropagation();
+            reassignSoundParent(originalIndex, target.index);
+          },
+        })),
+      });
+    }
+
     // ── Position copy / paste (right-click menu) ─────────────────────────────
     // Effective position of this card, used by "Copy position": generated events
     // always carry one; pending cards fall back to an explicit config.position or,
@@ -736,18 +766,26 @@ export function SoundGenerationSection({
       || !!config.entities?.length
       || (isGenerated && generatedSound?.entity_index !== undefined);
 
+    const configEntityLabel = config.entities?.length
+      ? config.entities.map((e: any) => e.name || (e.index !== undefined
+          ? `Entity ${e.index}`
+          : (e.id as string)?.slice(0, 8) || 'Object')).join(', ')
+      : undefined;
+    // Link state is card-level: the config entities are the source of truth, but
+    // a generated variant carrying entity_index also counts (e.g. after restore
+    // or when the event was mapped from the config). Checking only the SELECTED
+    // variant's entity_index made the unlink affordance disappear for TTS/other
+    // cards whose variant lacked it, so clicking "unlink" silently started linking.
+    const anyVariantLinked = getVariantsForPrompt(originalIndex).some(
+      (s: any) => s.entity_index !== undefined,
+    );
     const linkedEntityLabel = isGenerated
-      ? (generatedSound?.entity_index !== undefined
-          ? `Entity ${generatedSound.entity_index}`
-          : undefined)
-      : (config.entities?.length
-          ? config.entities.map((e: any) => e.name || (e.index !== undefined
-              ? `Entity ${e.index}`
-              : (e.id as string)?.slice(0, 8) || 'Object')).join(', ')
-          : undefined);
-    const isLinkedInHeader = isGenerated
-      ? generatedSound?.entity_index !== undefined
-      : !!config.entities?.length;
+      ? (configEntityLabel
+          ?? (generatedSound?.entity_index !== undefined
+              ? `Entity ${generatedSound.entity_index}`
+              : undefined))
+      : configEntityLabel;
+    const isLinkedInHeader = !!config.entities?.length || anyVariantLinked;
 
     // Determine active entity index in config.entities array (for selector highlighting)
     const activeEntityArrayIdx = (() => {
@@ -1054,6 +1092,20 @@ export function SoundGenerationSection({
     const isPreGenPreviewPlaying = previewingSoundId === preGenPreviewKey;
     const isThisCardPreviewPlaying = isGenerated ? previewingSoundId === generatedSound?.id : isPreGenPreviewPlaying;
 
+    // This card is running if a generation lane currently has it in flight.
+    // Single-card regeneration uses the global progress value instead.
+    const isRegenerating = regeneratingIndices.includes(originalIndex);
+    const isCardRunning =
+      (isSoundGenerating && activeGenerationCardIndices.includes(originalIndex)) || isRegenerating;
+    const cardProgress = isRegenerating
+      ? soundGenProgressValue
+      : (soundGenCardProgress[originalIndex] ?? 0);
+    // Per-card status: each concurrent card shows its own lane status instead of
+    // the shared global string. Untargeted/queued cards show their init "Pending…".
+    const cardStatus = isRegenerating
+      ? 'Regenerating...'
+      : (soundGenCardStatus[originalIndex] ?? 'Pending…');
+
     return (
       <div key={originalIndex} style={{ position: 'relative' }}>
       <Card
@@ -1062,24 +1114,9 @@ export function SoundGenerationSection({
         isExpanded={isExpanded}
         hasResult={isGenerated}
         result={generatedSound}
-        isRunning={
-          (isSoundGenerating && originalIndex === currentGeneratingCardIndex)
-          || regeneratingIndices.includes(originalIndex)
-        }
-        progress={
-          (isSoundGenerating && originalIndex === currentGeneratingCardIndex)
-          || regeneratingIndices.includes(originalIndex)
-            ? soundGenProgressValue
-            : 0
-        }
-        status={
-          (isSoundGenerating && originalIndex === currentGeneratingCardIndex)
-          || regeneratingIndices.includes(originalIndex)
-            ? (soundGenStatusText || soundGenProgress || (regeneratingIndices.includes(originalIndex) ? 'Regenerating...' : 'Generating...'))
-            : !isGenerated && isSoundGenerating && (soundGenTargetIndices === null || soundGenTargetIndices.includes(originalIndex))
-              ? 'Queued'
-              : undefined
-        }
+        isRunning={isCardRunning}
+        progress={isCardRunning ? cardProgress : 0}
+        status={isCardRunning ? cardStatus : undefined}
         defaultName={undefined}
         collapsedInfo={getCollapsedInfo(config, originalIndex)}
         isPlayingCollapsedInfo={isThisCardPreviewPlaying}
@@ -1211,16 +1248,19 @@ export function SoundGenerationSection({
     onDeleteVariant,
     audioModel,
     triggerZoomToSoundCard,
-    currentGeneratingCardIndex,
     soundGenProgress,
     soundGenProgressValue,
-    soundGenStatusText,
+    soundGenCardProgress,
+    activeGenerationCardIndices,
+    soundGenCardStatus,
     onGenerateSingle,
     isConfigValid,
     copiedPosition,
     linkingSelectedIds,
     showSpectrograms,
     setShowSpectrograms,
+    usageTargets,
+    reassignSoundParent,
   ]);  
 
   // Footer with generate button

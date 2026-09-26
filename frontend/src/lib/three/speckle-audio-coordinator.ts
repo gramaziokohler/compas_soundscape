@@ -232,6 +232,31 @@ export class SpeckleAudioCoordinator {
       this.externalOnGridListenerDoubleClickedCallback?.(pointId);
     });
 
+    this.dragHandler.setOnDrag((objects: THREE.Object3D[]) => {
+      // Surface markers move their invisible group + label live so the sound
+      // visibly follows the gumball. The store commit happens on drag end.
+      for (const object of objects) {
+        if (object.userData.customObjectType !== 'sound') continue;
+        if (!object.userData.isSurfaceMarker) continue;
+        const promptIdx = parseInt(
+          String(object.userData.promptKey).replace('prompt_', ''),
+          10,
+        );
+        const pos: [number, number, number] = [
+          object.position.x,
+          object.position.y,
+          object.position.z,
+        ];
+        if (!Number.isNaN(promptIdx)) {
+          this.soundSphereManager!.updateMarkerPosition(promptIdx, pos);
+        }
+        const soundId = object.userData.soundEvent?.id || object.userData.positionKey;
+        if (soundId) {
+          this.soundSphereManager!.setEntityDarkModeLightPosition(soundId, pos);
+        }
+      }
+    });
+
     this.dragHandler.setOnDragEnd((objects: THREE.Object3D[], position: THREE.Vector3) => {
       for (const object of objects) {
         const objectType = object.userData.customObjectType;

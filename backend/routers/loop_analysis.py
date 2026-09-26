@@ -15,7 +15,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, Request
 
 from services.job_store import job_store
-from services.paths import user_audio_dir, user_sounds_dir
+from services.paths import find_session_audio, user_sounds_dir
 from models.schemas import LoopAnalysisRequest, JobEnqueueResponse
 from config.constants import GENERATED_SOUNDS_DIR, JOB_TYPE_LOOP
 
@@ -35,7 +35,9 @@ def _resolve_audio_path(sound_url: str, session_id: str | None) -> str:
     candidates: list[str] = []
     if session_id:
         candidates.append(str(user_sounds_dir(session_id) / filename))
-        candidates.append(str(user_audio_dir(session_id) / filename))
+        persisted = find_session_audio(session_id, filename)
+        if persisted:
+            candidates.append(str(persisted))
     candidates.append(os.path.join(GENERATED_SOUNDS_DIR, filename))
 
     for path in candidates:

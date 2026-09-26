@@ -36,8 +36,6 @@ except ImportError:
 from config.constants import (
     LLM_MODEL_OPENAI,
     LLM_MODEL_ANTHROPIC,
-    LLM_MODEL_GEMINI_3_FLASH,
-    LLM_MODEL_GEMINI_3_PRO,
     DEFAULT_LLM_MODEL,
     LLM_MODEL_VERSIONS,
     DEFAULT_DBFS,
@@ -254,17 +252,15 @@ def _answer_text_from_gemini(response) -> str:
 
 
 def _gemini_thinking_config(llm_model: str):
-    """Thought summaries on; budget only for Gemini 2.5 (Gemini 3 uses thinking_level)."""
+    """Thought summaries on.
+
+    Every supported Gemini model is a Gemini 3 model (which configures thoughts
+    via ``thinking_level``); the legacy Gemini 2.5 ``thinking_budget`` branch was
+    removed together with the 2.5 models.
+    """
     from google.genai import types as _gtypes
 
-    kwargs: dict = {"include_thoughts": True}
-    is_gemini_3 = (
-        llm_model in (LLM_MODEL_GEMINI_3_FLASH, LLM_MODEL_GEMINI_3_PRO)
-        or "gemini-3" in (llm_model or "")
-    )
-    if not is_gemini_3:
-        kwargs["thinking_budget"] = -1
-    return _gtypes.ThinkingConfig(**kwargs)
+    return _gtypes.ThinkingConfig(include_thoughts=True)
 
 
 class _ProgressEmitter:
@@ -565,7 +561,9 @@ class LLMService:
                     if not self.gemini_client:
                         self.gemini_client = genai.Client()
                     from google.genai import types as _gtypes
-                    model_to_use = LLM_MODEL_VERSIONS.get(llm_model, "gemini-2.5-flash")
+                    model_to_use = LLM_MODEL_VERSIONS.get(
+                        llm_model, LLM_MODEL_VERSIONS[DEFAULT_LLM_MODEL]
+                    )
                     parts = [_gtypes.Part.from_text(text=user_prompt)]
                     for b64_data in clean_b64:
                         image_bytes = base64.b64decode(b64_data)
@@ -749,7 +747,9 @@ class LLMService:
             if not self.gemini_client:
                 self.gemini_client = genai.Client()
             from google.genai import types as _gtypes
-            model_to_use = LLM_MODEL_VERSIONS.get(llm_model, "gemini-2.5-flash")
+            model_to_use = LLM_MODEL_VERSIONS.get(
+                llm_model, LLM_MODEL_VERSIONS[DEFAULT_LLM_MODEL]
+            )
             config = _gtypes.GenerateContentConfig(
                 thinking_config=_gemini_thinking_config(llm_model),
             )
@@ -1027,6 +1027,10 @@ ENTITY: [comma-separated entity numbers (e.g., 1 or 1,3) if this sound is linked
 
 For the sound prompts:
     *   CRITICALLY IMPORTANT: The sound MUST make sense in the context of: {context}
+    *   Write a clear, concise description of the sound source and the action or material that produces it, in 2 to 10 words (e.g., "Glass shattering on concrete", "Heavy wooden door creaking open", "Thunder rumbling in the distance").
+    *   For sounds made of several parts, describe the sequence in order using "then" (e.g., "Footsteps on gravel, then a metallic door opens").
+    *   You may use standard sound-design vocabulary where it improves clarity (e.g., impact, whoosh, drone, ambience).
+    *   For continuous/background sounds, describe a single seamless texture suitable for looping (e.g., "Soft rain ambience", "Low HVAC drone, seamless loop") and set INTERVAL to 0.
     *   Think about how this object would be used or what sounds would occur in this specific scenario
     *   Use adjectives for description (e.g., "clear", "gentle", "heavy").
     *   Be context-specific (e.g., for "{context}", describe how the interaction would occur in that setting)
@@ -1769,9 +1773,11 @@ For the duration estimation (in seconds with 0.1 precision):
             '→ 1 sound: "footsteps".\n'
             '4. It is STRICTLY FORBIDDEN to append personal names, character roles, or scene numbers to the '
             '"soundName" or "id" fields (e.g., "laptop_placement_sarah" or "footsteps_michael" are WRONG).\n'
-            '5. The "description" must focus on a SINGLE generic instance of that acoustic profile, optimized '
-            "for a Text-to-Audio (TTA) generation model. "
-            '(e.g., use "An office chair" instead of "Multiple chairs").\n'
+            '5. The "description" is the Text-to-Audio prompt for a SINGLE generic instance of that acoustic '
+            "profile. Write a clear, concise 2 to 10 word description naming the sound source and the action or "
+            'material producing it (e.g., "office chair wheels rolling on parquet"). For multi-part sounds, '
+            'describe the sequence in order with "then" (e.g., "footsteps on gravel, then a metallic door opens"). '
+            'Never write "Multiple chairs" — describe one instance.\n'
             '6. The "objectsInvolved" array must collect ALL the target object hex IDs from the spatial context '
             "that execute this specific sound type across the entire story timeline. "
             "Order them chronologically as they appear in the text.\n"
@@ -1784,7 +1790,8 @@ For the duration estimation (in seconds with 0.1 precision):
             "8. Always add at least one background sound that matches the space.\n"
             '9. Classify each entry with a "category": use "background" for continuous/ambient '
             'beds (HVAC, room tone, distant traffic) and "sound event" for discrete, punctual actions '
-            "(footsteps, door, object placement).\n"
+            "(footsteps, door, object placement). Describe background beds as a single seamless looping "
+            "texture suitable for repeat playback.\n"
             '10. Estimate a realistic "duration" (MM:SS) for a SINGLE occurrence of the sound: short for '
             "impacts (e.g. 00:02), longer for continuous beds (e.g. 00:20).\n\n"
             "Output Format — respond ONLY with a JSON array:\n"
@@ -1794,8 +1801,8 @@ For the duration estimation (in seconds with 0.1 precision):
             'suffix, e.g. footsteps_1, door_close_1, chair_scrape_2. Derive the root from the sound '
             "category; NEVER use generic \\\"sound_NN\\\" ids and NEVER append personal/character names.\",\n"
             '    "soundName": "string (brief generic descriptive name of the sound profile)",\n'
-            '    "description": "1-sentence (5 to 10 words) description of the sound. '
-            'Do NOT include scenario character names.",\n'
+            '    "description": "clear 2 to 10 word Text-to-Audio prompt naming the sound source and '
+            'action/material; use then for multi-part sequences. Do NOT include scenario character names.",\n'
             '    "category": "\\"background sound\\" | \\"sound event\\"",\n'
             '    "duration": "MM:SS duration of a single sound occurrence",\n'
             '    "timestamps": ["MM:SS", ...],\n'
@@ -1909,7 +1916,7 @@ For the duration estimation (in seconds with 0.1 precision):
             screenshots:  Optional list of base64 PNG data URIs (max 3). If None
                           or empty, analysis runs on metadata only.
             user_context: Optional free-text context (e.g. "open-plan office")
-            llm_model:    Provider key ("gemini-2.5-flash", "openai", "anthropic")
+            llm_model:    Provider key ("gemini-3.8-flash", "openai", "anthropic")
 
         Returns:
             dict with an "objects" key — list of raw dicts matching ModelObjectResult fields.

@@ -24,6 +24,7 @@ import type { GridListenerData } from '@/types/receiver';
 import type { ImpulseResponseMetadata, SourceReceiverIRMapping, ResonanceAudioConfig } from '@/types/audio';
 import type { AnalysisConfig, AnalysisResult, TextPromptResult } from '@/types/analysis';
 import { API_BASE_URL, AUDIO_PLAYBACK } from '@/utils/constants';
+import { newConfigId } from '@/utils/config-id';
 import { parseAuthoredSeconds } from '@/lib/audio/utils/timeline-utils';
 
 /**
@@ -139,6 +140,7 @@ export function buildSoundscapeSavePayload(
       if (cat) console.log(`[DEBUG-SERIALIZE-SAVE] config[${index}] category="${cat}" prompt="${config.prompt?.substring(0, 30)}"`);
       return {
       index,
+      config_id: config.config_id || undefined,
       prompt: config.prompt || '',
       type: config.type || undefined,
       duration: config.duration,
@@ -234,6 +236,7 @@ export function buildSoundscapeSavePayload(
         display_name: event.display_name,
         prompt: event.prompt,
         prompt_index: event.prompt_index,
+        config_id: event.config_id || undefined,
         volume_dbfs: event.volume_dbfs,
         current_volume_dbfs: adjustedVolume,
         interval_seconds: event.interval_seconds,
@@ -562,6 +565,8 @@ export function restoreSoundscapeState(
   const soundConfigs: SoundGenerationConfig[] = loadedData.sound_configs.map(
     (saved) => ({
       prompt: saved.prompt,
+      // Preserve the saved identity; legacy payloads without one get a fresh id.
+      config_id: saved.config_id || newConfigId(),
       duration: saved.duration,
       negative_prompt: loadedData.global_settings.negative_prompt || '',
       seed_copies: saved.seed_copies,
@@ -613,6 +618,18 @@ export function restoreSoundscapeState(
   // default loop from interval_seconds on load.
   const soundTimestamps: Record<string, number[]> = {};
 
+  // Config index → config_id, used to backfill legacy events that predate
+  // `config_id`. Speech-line events encode `cardIdx * 10000 + lineIdx`.
+  const configIdByIndex = new Map<number, string>();
+  loadedData.sound_configs.forEach((saved, i) => {
+    if (saved.index != null) configIdByIndex.set(saved.index, soundConfigs[i]?.config_id ?? '');
+  });
+  const configIdForEventIndex = (pi: number | undefined): string | undefined => {
+    if (pi == null) return undefined;
+    const cardIdx = pi >= 10000 ? Math.floor(pi / 10000) : pi;
+    return configIdByIndex.get(cardIdx) || undefined;
+  };
+
   // Rebuild SoundEvent[] with resolved audio URLs
   // Include events with empty audio_filename (uploaded/sample sounds) —
   // they keep the card in "generated" state even though audio needs re-upload
@@ -648,6 +665,7 @@ export function restoreSoundscapeState(
       display_name: saved.display_name,
       prompt: saved.prompt,
       prompt_index: saved.prompt_index,
+      config_id: saved.config_id || configIdForEventIndex(saved.prompt_index),
       volume_dbfs: saved.volume_dbfs,
       current_volume_dbfs: saved.current_volume_dbfs ?? undefined,
       interval_seconds: saved.interval_seconds,

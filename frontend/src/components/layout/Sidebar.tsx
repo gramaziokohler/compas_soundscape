@@ -283,7 +283,10 @@ export function Sidebar(props: SidebarProps) {
       sounds.forEach((s, si) => {
         const soundLabel = s.display_name || s.prompt || `Sound ${si + 1}`;
         const soundOrigIdx = props.soundConfigs.indexOf(s);
-        const pending = !props.generatedSounds.some((g: any) => g.prompt_index === soundOrigIdx);
+        const configId = s.config_id;
+        const pending = !props.generatedSounds.some((g: any) =>
+          configId && g.config_id ? g.config_id === configId : g.prompt_index === soundOrigIdx,
+        );
         lines.push(`  • ${soundLabel}${pending ? ' (pending)' : ''}`);
       });
     });

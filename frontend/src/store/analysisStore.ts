@@ -36,6 +36,7 @@ import {
   SED_MIN_CONFIDENCE,
   SED_TOP_N_CLASSES,
   TTS_VOICES,
+  DEFAULT_LLM_MODEL,
   resolveVoiceForCharacter,
 } from '@/utils/constants';
 import { loadAudioFileWithBuffer } from '@/lib/audio/utils/audio-info';
@@ -2069,7 +2070,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
 
           const body = {
             user_context: config.userContext || undefined,
-            llm_model: 'gemini-2.5-flash',
+            llm_model: DEFAULT_LLM_MODEL,
             analysis_id: analysisId,
             people_count: config.peopleCount,
             likeliness: config.likeliness,
@@ -2170,13 +2171,13 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             const foleyBody = {
               scenario_id: config.scenarioId,
               analysis_id: analysisId,
-              llm_model: 'gemini-2.5-flash',
+              llm_model: DEFAULT_LLM_MODEL,
               maximum_sounds: maximumFoleySounds,
             };
             const speechBody = {
               scenario_id: config.scenarioId,
               analysis_id: analysisId,
-              llm_model: 'gemini-2.5-flash',
+              llm_model: DEFAULT_LLM_MODEL,
               language: (await import('@/store/audioControlsStore')).useAudioControlsStore.getState().ttsLanguage,
             };
 

@@ -1,6 +1,6 @@
 """API router for impulse response management"""
 
-from fastapi import APIRouter, UploadFile, File, HTTPException, Form
+from fastapi import APIRouter, UploadFile, File, HTTPException, Form, Request
 from fastapi.responses import JSONResponse
 from typing import Optional
 import os
@@ -25,6 +25,7 @@ def init_impulse_response_router(service: ImpulseResponseService):
 
 @router.post("/api/impulse-responses/upload", response_model=ImpulseResponseMetadata)
 async def upload_impulse_response(
+    req: Request,
     file: UploadFile = File(...),
     name: str = Form(...)
 ):
@@ -59,8 +60,9 @@ async def upload_impulse_response(
             tmp_file.write(content)
             tmp_path = tmp_file.name
         
-        # Process IR file
-        metadata, output_path = ir_service.process_ir_file(tmp_path, name)
+        # Process IR file (workspace-scoped library dir)
+        workspace_id = getattr(getattr(req, "state", None), "session_id", None)
+        metadata, output_path = ir_service.process_ir_file(tmp_path, name, workspace_id)
         
         # Clean up temp file
         os.unlink(tmp_path)
@@ -77,7 +79,7 @@ async def upload_impulse_response(
 
 
 @router.get("/api/impulse-responses", response_model=ImpulseResponseListResponse)
-async def list_impulse_responses():
+async def list_impulse_responses(req: Request):
     """
     List all available impulse responses
     
@@ -88,7 +90,8 @@ async def list_impulse_responses():
         raise HTTPException(status_code=500, detail="IR service not initialized")
     
     try:
-        irs = ir_service.list_impulse_responses()
+        workspace_id = getattr(getattr(req, "state", None), "session_id", None)
+        irs = ir_service.list_impulse_responses(workspace_id)
         return ImpulseResponseListResponse(impulse_responses=irs)
     except Exception as e:
         raise HTTPException(
@@ -98,7 +101,7 @@ async def list_impulse_responses():
 
 
 @router.delete("/api/impulse-responses/{ir_id}")
-async def delete_impulse_response(ir_id: str):
+async def delete_impulse_response(ir_id: str, req: Request):
     """
     Delete an impulse response
     
@@ -112,7 +115,8 @@ async def delete_impulse_response(ir_id: str):
         raise HTTPException(status_code=500, detail="IR service not initialized")
     
     try:
-        deleted = ir_service.delete_impulse_response(ir_id)
+        workspace_id = getattr(getattr(req, "state", None), "session_id", None)
+        deleted = ir_service.delete_impulse_response(ir_id, workspace_id)
         if not deleted:
             raise HTTPException(status_code=404, detail=f"Impulse response '{ir_id}' not found")
         

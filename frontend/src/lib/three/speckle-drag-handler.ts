@@ -216,15 +216,49 @@ export class SpeckleDragHandler {
   }
 
   /**
+   * Expand a marker's linked object ids to the render-space ids reported by the
+   * intersection raycaster (`renderView.renderData.id`).
+   *
+   * A linked id is a world-tree host id (e.g. a BIM element with `displayValue`),
+   * which is non-atomic — its geometry lives on descendant display meshes. The
+   * renderer assigns `renderData.id = node.model.id`, so the raycast returns the
+   * descendant mesh ids, never the host id. Comparing the raw linked ids alone
+   * therefore rejects every hit and the marker never moves. Resolving each linked
+   * id through the render tree yields the atomic ids that actually get hit.
+   */
+  private collectAllowedRenderIds(object: THREE.Object3D): Set<string> {
+    const surfaceIds: string[] | undefined = object.userData?.surfaceObjectIds;
+    if (!surfaceIds || surfaceIds.length === 0) return new Set();
+
+    const allowed = new Set<string>(surfaceIds);
+    try {
+      const renderTree: any = (this.viewer.getWorldTree?.() as any)?.getRenderTree?.();
+      if (renderTree?.getRenderViewsForNodeId) {
+        for (const id of surfaceIds) {
+          const rvs: any[] = renderTree.getRenderViewsForNodeId(id) ?? [];
+          for (const rv of rvs) {
+            const renderId = rv?.renderData?.id;
+            if (renderId) allowed.add(renderId);
+            const subtreeId = rv?.renderData?.subtreeId;
+            if (subtreeId) allowed.add(subtreeId);
+          }
+        }
+      }
+    } catch {
+      // Fall back to the raw linked ids.
+    }
+    return allowed;
+  }
+
+  /**
    * Snap a surface marker to the linked object's surface by raycasting from the
    * camera through the gizmo anchor's screen position. Only hits on the marker's
    * linked object ids are accepted; the marker is oriented to the hit normal.
    * @returns true when a surface hit was applied.
    */
   private snapMarkerToSurface(object: THREE.Object3D): boolean {
-    const surfaceIds: string[] | undefined = object.userData?.surfaceObjectIds;
-    if (!surfaceIds || surfaceIds.length === 0) return false;
-    const allowed = new Set(surfaceIds);
+    const allowed = this.collectAllowedRenderIds(object);
+    if (allowed.size === 0) return false;
 
     const renderer: any = this.viewer.getRenderer();
     const camera = renderer.renderingCamera;
@@ -343,9 +377,8 @@ export class SpeckleDragHandler {
    * the linked object at that point (world space), or null if not hit.
    */
   private probeSurfaceNormal(object: THREE.Object3D): THREE.Vector3 | null {
-    const surfaceIds: string[] | undefined = object.userData?.surfaceObjectIds;
-    if (!surfaceIds || surfaceIds.length === 0) return null;
-    const allowed = new Set(surfaceIds);
+    const allowed = this.collectAllowedRenderIds(object);
+    if (allowed.size === 0) return null;
 
     const renderer: any = this.viewer.getRenderer();
     const camera = renderer.renderingCamera;

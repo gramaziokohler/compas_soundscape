@@ -23,7 +23,7 @@ interface UseClipGestureArgs {
   soundsRef: React.RefObject<TimelineSound[]>;
   pxPerSecondRef: React.RefObject<number>;
   snapModeRef: React.RefObject<SnapMode>;
-  smartStepSecRef: React.RefObject<number>;
+  gridStepSecRef: React.RefObject<number>;
   playheadMsRef: React.RefObject<number>;
   timelineDurationMsRef: React.RefObject<number>;
   /** Reverse trigger-dependency graph: key `${soundId}-${iterationIndex}` -> dependents that must move with it. */
@@ -61,7 +61,7 @@ export function useClipGesture({
   soundsRef,
   pxPerSecondRef,
   snapModeRef,
-  smartStepSecRef,
+  gridStepSecRef,
   playheadMsRef,
   timelineDurationMsRef,
   triggerReverseRef,
@@ -116,9 +116,9 @@ export function useClipGesture({
         });
 
         const snappedStartSec = resolveSnap(rawStartSec, {
-          mode: snapModeRef.current ?? 'smart',
+          mode: snapModeRef.current ?? 'on',
           pxPerSecond,
-          smartStepSec: smartStepSecRef.current ?? 1,
+          gridStepSec: gridStepSecRef.current ?? 1,
           magnetPx: SNAP_MAGNET_PX,
           playheadSec: (playheadMsRef.current ?? 0) / 1000,
           neighborEdgesSec: siblingsEdges,
@@ -264,7 +264,7 @@ export function useClipGesture({
       target.addEventListener('pointerup', endDrag);
       target.addEventListener('pointercancel', endDrag);
     },
-    [soundsRef, pxPerSecondRef, snapModeRef, smartStepSecRef, playheadMsRef, timelineDurationMsRef,
+    [soundsRef, pxPerSecondRef, snapModeRef, gridStepSecRef, playheadMsRef, timelineDurationMsRef,
       triggerReverseRef, selectedClipKeysRef, clipRegistryRef, onClickResolved],
   );
 

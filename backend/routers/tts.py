@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import uuid
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -92,7 +93,9 @@ async def generate_tts(request: TTSGenerationRequest, req: Request):
                 partial=completed_sounds,
             )
 
-            filename = f"tts_{voice_name}_{voice_num}_{sanitize_filename(text)}.wav"
+            # Unique suffix per item so re-generating the same line/voice never
+            # overwrites or reuses a previous file.
+            filename = f"tts_{voice_name}_{voice_num}_{sanitize_filename(text)}_{uuid.uuid4().hex[:8]}.wav"
             output_path = os.path.normpath(os.path.join(str(sounds_out), filename))
 
             try:

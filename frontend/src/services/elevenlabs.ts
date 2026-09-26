@@ -5,10 +5,18 @@
  * Returns a blob URL that can be used as an audio source — same pattern as
  * uploaded and library sounds.
  *
+ * Duration is left unset by default (the model picks the optimal length from the
+ * prompt); pass `loop: true` for seamless background/ambience beds.
+ *
  * Requires: NEXT_PUBLIC_ELEVENLABS_API_KEY set in .env.local
  */
 
 import { ElevenLabsClient } from "@elevenlabs/elevenlabs-js";
+import {
+  DEFAULT_PROMPT_INFLUENCE,
+  ELEVENLABS_DURATION_MAX,
+  ELEVENLABS_DURATION_MIN,
+} from "@/utils/constants";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -16,10 +24,16 @@ export interface ElevenLabsGenerateOptions {
   /** Text description of the desired sound effect. */
   text: string;
   /**
-   * Requested duration in seconds (0.5 – 22).
-   * Pass undefined to let the model auto-detect the best duration.
+   * Requested duration in seconds (0.5 – 30).
+   * Pass undefined to let the model guess the optimal duration from the prompt
+   * (ElevenLabs `duration_seconds: null`, the default).
    */
   durationSeconds?: number;
+  /**
+   * Create a sound effect that loops smoothly (seamless start/end point).
+   * Only available for the `eleven_text_to_sound_v2` model.
+   */
+  loop?: boolean;
   /**
    * How strongly the prompt influences the generated output (0.0 – 1.0).
    * Default: 0.3
@@ -69,20 +83,27 @@ function getClient(): ElevenLabsClient {
 export async function generateSoundEffect(
   options: ElevenLabsGenerateOptions
 ): Promise<string> {
-  const { text, durationSeconds, promptInfluence = 0.3 } = options;
+  const {
+    text,
+    durationSeconds,
+    loop = false,
+    promptInfluence = DEFAULT_PROMPT_INFLUENCE,
+  } = options;
 
   const client = getClient();
 
   // The SDK returns a Web ReadableStream<Uint8Array>
   const stream = await client.textToSoundEffects.convert({
     text,
-    // Only pass duration_seconds when it is within the accepted range
+    // Only pass duration_seconds when it is within the accepted range —
+    // otherwise omit it so ElevenLabs guesses the optimal duration (None).
     durationSeconds:
       durationSeconds !== undefined &&
-      durationSeconds >= 0.5 &&
-      durationSeconds <= 22
+      durationSeconds >= ELEVENLABS_DURATION_MIN &&
+      durationSeconds <= ELEVENLABS_DURATION_MAX
         ? durationSeconds
         : undefined,
+    loop,
     promptInfluence: promptInfluence,
   });
 
