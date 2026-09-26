@@ -85,7 +85,13 @@ export function applyPreferences(prefs: UserPreferences): void {
   if (prefs.showGroundGrid !== undefined) ui.setShowGroundGrid(prefs.showGroundGrid);
   if (prefs.showGroundGridLabels !== undefined) ui.setShowGroundGridLabels(prefs.showGroundGridLabels);
   if (prefs.groundGridSpacing !== undefined) ui.setGroundGridSpacing(prefs.groundGridSpacing);
-  if (prefs.groundGridColor !== undefined) ui.setGroundGridColor(prefs.groundGridColor);
+  if (prefs.groundGridColor !== undefined) {
+    // Legacy defaults must not resurrect the grey grid for profiles whose
+    // durable preference predates the primary-blue default (`#888888` was the
+    // original default; `''` followed `--color-primary`). Normalize both.
+    const color = prefs.groundGridColor;
+    ui.setGroundGridColor(color === '' || color === '#888888' ? '#002aff' : color);
+  }
   if (prefs.globalSoundSpeed !== undefined) ui.setGlobalSoundSpeed(prefs.globalSoundSpeed);
   if (prefs.globalMeshLc !== undefined) ui.setGlobalMeshLc(prefs.globalMeshLc);
   if (prefs.listenerOrientation !== undefined) ui.setListenerOrientation(prefs.listenerOrientation);
