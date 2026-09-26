@@ -435,6 +435,8 @@ export const DEFAULT_DURATION_SECONDS = 5;
 export const DEFAULT_GUIDANCE_SCALE = 4.5;
 export const DEFAULT_DIFFUSION_STEPS = 25;
 export const DEFAULT_SEED_COPIES = 1;
+/** Maximum number of audio variants generated per sound card (matches the Variants slider). */
+export const MAX_SEED_COPIES = 5;
 export const DEFAULT_DBFS = -18;
 export const DBFS_MIN = -60;
 export const DBFS_MAX = 0;
@@ -478,6 +480,10 @@ export const DEFAULT_AUDIO_MODEL = AUDIO_MODEL_TANGOFLUX;
 export const DEFAULT_SOUND_LOOP = false;
 export const ELEVENLABS_DURATION_MIN = 0.5;
 export const ELEVENLABS_DURATION_MAX = 30;
+// Only send an explicit duration to ElevenLabs for non-background sounds whose
+// target (LLM) duration is at least this long. Shorter events and background
+// beds omit it so the model picks the optimal length itself.
+export const ELEVENLABS_MIN_PROMPT_DURATION = 4;
 export const DEFAULT_PROMPT_INFLUENCE = 0.3;
 export const PROMPT_INFLUENCE_MIN = 0;
 export const PROMPT_INFLUENCE_MAX = 1;

@@ -14,6 +14,7 @@ import {
   DEFAULT_GUIDANCE_SCALE,
   DEFAULT_PROMPT_INFLUENCE,
   DEFAULT_SEED_COPIES,
+  MAX_SEED_COPIES,
   PROMPT_INFLUENCE_MAX,
   PROMPT_INFLUENCE_MIN,
   PROMPT_INFLUENCE_STEP,
@@ -126,7 +127,7 @@ export function TextToAudioSliders({
           label="Variants"
           value={config.seed_copies}
           min={1}
-          max={5}
+          max={MAX_SEED_COPIES}
           step={1}
           defaultValue={DEFAULT_SEED_COPIES}
           onDragStart={variantsSlider.onDragStart}

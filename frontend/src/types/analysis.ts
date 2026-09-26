@@ -147,6 +147,8 @@ export interface FoleySoundEvent {
   objectsInvolved: string[];
   position: number[];
   spl: string;
+  /** Distinct audio variants to generate for this sound type (1-5). */
+  copyCount?: number;
 }
 
 export interface FoleyScenario {

@@ -665,6 +665,11 @@ class FoleySoundEvent(BaseModel):
     timestamps: list[str]        # starting positions in MM:SS format
     objectsInvolved: list[str]   # hex IDs chronologically ordered
     position: list[float] = []   # [x,y,z]; empty when objectsInvolved is populated
+    # Number of distinct audio variants worth generating for this sound type,
+    # estimated from how often it recurs (1-5). 1 = a single occurrence or an
+    # always-identical sound; higher for frequently repeated actions so the
+    # timeline can rotate between copies instead of retriggering one clip.
+    copyCount: int = 1
 
 
 class FoleyOutput(BaseModel):

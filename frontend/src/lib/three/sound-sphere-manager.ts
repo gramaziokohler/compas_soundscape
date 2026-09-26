@@ -258,6 +258,16 @@ export class SoundSphereManager {
       }
     });
 
+    // ALL non-pending variants (not just the selected one per prompt) must be
+    // registered as audio sources so per-iteration variant overrides can play.
+    // Computed up front because the change-detection fast path below must also
+    // load variants that arrived while the visible (selected) set was unchanged —
+    // e.g. the trailing variants of the LAST generated card, which have no later
+    // card's first variant to force a full rebuild.
+    const allNonPendingSounds = Object.values(soundsByPromptIndex)
+      .flat()
+      .filter((s) => !(s as any).isPending);
+
     // Keep prompt-level positions bounded to prompts that still exist.
     const visiblePromptIndices = new Set(
       realSoundData.map((s) => ((s as any).prompt_index ?? 0) as number)
@@ -374,6 +384,20 @@ export class SoundSphereManager {
         ...visibleSounds.filter(s => s.entity_index !== undefined),
         ...iterationLabels,
       ]);
+
+      // New variants may have arrived while the selected/visible set stayed the
+      // same (see `allNonPendingSounds` above) — load their buffers here so the
+      // fast path never permanently skips a non-selected variant. Non-selected
+      // variants have no mesh/position of their own, so seed their position from
+      // the prompt-level position first (exactly as the full path does).
+      allNonPendingSounds.forEach((sound) => {
+        if (!this.spherePositions.has(sound.id)) {
+          const promptIdx = (sound as any).prompt_index ?? 0;
+          const pos = this.promptPositions.get(promptIdx);
+          if (pos) this.spherePositions.set(sound.id, pos);
+        }
+      });
+      this.syncAudioSources(allNonPendingSounds);
 
       this.lastVisibleSoundIds = new Set(newSoundIds);
       return newlyPlacedPositions;
@@ -601,9 +625,7 @@ export class SoundSphereManager {
     // orchestrator always has every variant's buffer loaded so that playAll (which always
     // schedules copy-index 0) and per-iteration iterationLinks can both find their target
     // without the card selection affecting what plays on the timeline.
-    const allNonPendingSounds = Object.values(soundsByPromptIndex)
-      .flat()
-      .filter((s) => !(s as any).isPending);
+    // (`allNonPendingSounds` is computed up front, before the fast-path branch.)
 
     // Non-selected variants don't go through the mesh/position pipeline above, so they
     // may lack entries in spherePositions.  Give them the prompt-level position so that

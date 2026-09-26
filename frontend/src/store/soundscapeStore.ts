@@ -35,6 +35,7 @@ import {
   TTS_DEFAULT_VOICE,
   DEFAULT_PROMPT_INFLUENCE,
   DEFAULT_SOUND_LOOP,
+  ELEVENLABS_MIN_PROMPT_DURATION,
   normalizeSoundCategory,
   SOUND_GEN_CONCURRENCY,
 } from '@/utils/constants';
@@ -73,6 +74,21 @@ const _targetIndices = new Set<number>();
 // Latest orchestrate-agent status string, so the generation poll can combine it
 // into the progress line ("Generating … · Orchestrating …"). Cleared per invocation.
 let _orchestrateProgressStatus: string | null = null;
+
+/**
+ * Duration to request from ElevenLabs for a config.
+ *
+ * Background beds (looping) and short target events omit it so the model picks
+ * the optimal length; longer events pass the target (LLM) duration so the clip
+ * matches the authored event length.
+ */
+function elevenLabsDurationSeconds(
+  config: SoundGenerationConfig,
+  isBackground: boolean,
+): number | undefined {
+  if (isBackground) return undefined;
+  return config.duration >= ELEVENLABS_MIN_PROMPT_DURATION ? config.duration : undefined;
+}
 
 // Per-type config-validation error shown inline on the sound card (mirrors the
 // "Assign materials first" card-error pattern — not a toast). Also used as the
@@ -1782,7 +1798,8 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
 
             // ── ElevenLabs (browser pool) ───────────────────────────────────────
             // ElevenLabs takes a different request shape from TangoFlux:
-            //  - duration is omitted (None) so the model guesses it from the prompt;
+            //  - duration is omitted for background beds and short (<4 s) events,
+            //    otherwise the target (LLM) duration is passed;
             //  - background beds request a seamless loop (opt-in per config);
             //  - prompt_influence replaces the diffusion guidance scale;
             //  - noise reduction is never applied (only optional silence trimming).
@@ -1796,6 +1813,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                     const loop = config.loop ?? (isBackground || DEFAULT_SOUND_LOOP);
                     const rawUrl = await generateSoundEffect({
                       text: config.prompt,
+                      durationSeconds: elevenLabsDurationSeconds(config, isBackground),
                       loop,
                       promptInfluence: config.prompt_influence ?? DEFAULT_PROMPT_INFLUENCE,
                     });
@@ -2072,13 +2090,15 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           try {
             // ElevenLabs regenerates client-side — never through the TangoFlux
             // backend. Mirrors the ElevenLabs branch of handleGenerateInternal
-            // (duration None, seamless loop for background beds, prompt influence).
+            // (duration for long non-background events, seamless loop for
+            // background beds, prompt influence).
             if (audioModel === AUDIO_MODEL_ELEVENLABS) {
               const globalBaseDbfs = useAudioControlsStore.getState().globalBaseDbfs;
               const isBackground = normalizeSoundCategory(config.category) === 'background';
               const loop = config.loop ?? (isBackground || DEFAULT_SOUND_LOOP);
               const rawUrl = await generateSoundEffect({
                 text: config.prompt,
+                durationSeconds: elevenLabsDurationSeconds(config, isBackground),
                 loop,
                 promptInfluence: config.prompt_influence ?? DEFAULT_PROMPT_INFLUENCE,
               });

@@ -5,8 +5,10 @@
  * Returns a blob URL that can be used as an audio source — same pattern as
  * uploaded and library sounds.
  *
- * Duration is left unset by default (the model picks the optimal length from the
- * prompt); pass `loop: true` for seamless background/ambience beds.
+ * Duration defaults to unset (the model picks the optimal length from the
+ * prompt). The caller decides when to send an explicit length — background beds
+ * and short events omit it. Pass `loop: true` for seamless background/ambience
+ * beds.
  *
  * Requires: NEXT_PUBLIC_ELEVENLABS_API_KEY set in .env.local
  */

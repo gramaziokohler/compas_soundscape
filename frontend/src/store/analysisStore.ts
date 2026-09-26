@@ -33,6 +33,7 @@ import {
   DBFS_MIN,
   LLM_JOB_STATUS_MISS_TOLERANCE,
   LLM_SUGGESTED_INTERVAL_SECONDS,
+  MAX_SEED_COPIES,
   SED_MIN_CONFIDENCE,
   SED_TOP_N_CLASSES,
   TTS_VOICES,
@@ -1426,7 +1427,9 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                       speechId,
                       entryId: sound.id,
                       isSpeech: false,
-                      copyCount: 1,
+                      copyCount: isBgFoley
+                        ? 1
+                        : Math.max(1, Math.min(MAX_SEED_COPIES, sound.copyCount ?? 1)),
                       soundName: sound.soundName,
                       description: sound.description,
                       category: sound.category,

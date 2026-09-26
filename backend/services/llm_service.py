@@ -1793,7 +1793,13 @@ For the duration estimation (in seconds with 0.1 precision):
             "(footsteps, door, object placement). Describe background beds as a single seamless looping "
             "texture suitable for repeat playback.\n"
             '10. Estimate a realistic "duration" (MM:SS) for a SINGLE occurrence of the sound: short for '
-            "impacts (e.g. 00:02), longer for continuous beds (e.g. 00:20).\n\n"
+            "impacts (e.g. 00:02), longer for continuous beds (e.g. 00:20).\n"
+            '11. Estimate "copyCount" (integer 1 to 5): how many DISTINCT audio variants are worth '
+            "generating for this sound type so repeated occurrences do not sound like the exact same clip "
+            "retriggered. Base it on the number of times the sound recurs in the scenario (the length of "
+            "'timestamps'): a one-off sound or an always-identical texture gets 1; a sound that repeats a "
+            "few times gets 2 to 3; a very frequent action (e.g. many footsteps, several door closings) "
+            "gets 4 to 5. Background beds always get 1. Never exceed 5.\n\n"
             "Output Format — respond ONLY with a JSON array:\n"
             "[\n"
             "  {\n"
@@ -1806,6 +1812,7 @@ For the duration estimation (in seconds with 0.1 precision):
             '    "category": "\\"background sound\\" | \\"sound event\\"",\n'
             '    "duration": "MM:SS duration of a single sound occurrence",\n'
             '    "timestamps": ["MM:SS", ...],\n'
+            '    "copyCount": 1,\n'
             '    "objectsInvolved": ["hex IDs chronologically, or empty list []"],\n'
             '    "position": [x, y, z or empty list []]\n'
             "  }\n"
@@ -2525,11 +2532,13 @@ For the duration estimation (in seconds with 0.1 precision):
                 "10. Strict Array Alignment: 'trigger.expression', 'trigger.delay' and 'variants' MUST ALWAYS be "
                 "arrays whose length exactly equals the number of timestamps for that entry.\n\n"
                 "VARIANTS\n"
-                "11. For each foley entry, estimate how many variants to provide based on repetitions, ordered in "
-                "a list (e.g. [1,2,1]). For speech, use an arithmetic series [1,2,3,4,...]. IMPORTANT: the number "
-                "of audio copies is USER-AUTHORITATIVE — if an entry carries a \"copyCount\", the maximum value in "
-                "its 'variants' array MUST equal that copy count (or the line count for speech); never exceed it "
-                "and never under-provision below the entry's occurrence count.\n\n"
+                "11. The number of distinct audio copies per entry is ALREADY FIXED by the input "
+                "'copyCount' — do NOT estimate or change it. Your job is only to decide, for each "
+                "timestamp, which copy to play: output a 'variants' array whose length equals that entry's "
+                "number of timestamps, whose values are 1-based copy indices in the range 1..copyCount, and "
+                "whose maximum value equals copyCount (use every available copy at least once). Rotate so "
+                "consecutive occurrences do not always reuse the same copy (e.g. [1,2,1,2]). For speech use "
+                "an arithmetic series [1,2,3,4,...].\n\n"
                 "SPL (loudness levels)\n"
                 "12. Estimate a realistic 'spl' (target loudness in dBFS) for every entry, expressed as a float "
                 "string with units (e.g. \"-18 dBFS\"). dBFS is relative to digital full scale: NEGATIVE values "
@@ -2565,6 +2574,7 @@ For the duration estimation (in seconds with 0.1 precision):
                 "- [ ] trigger.expression is always an array (never a bare string).\n"
                 "- [ ] trigger.delay is always an array of floats (never a bare float).\n"
                 "- [ ] len(trigger.expression) == len(trigger.delay) == len(variants) == number of timestamps.\n"
+                "- [ ] every 'variants' value is within 1..copyCount and max(variants) == copyCount.\n"
                 "- [ ] type \"absolute\" entries contain ONLY MM:SS timestamp strings — no after(/alignEnd(/overlap(.\n"
                 "- [ ] any parametric entry contains ONLY after( / alignEnd( / overlap( formulas — no raw MM:SS.\n"
                 "- [ ] every reference uses the EXACT input id (including its trailing '_<number>'), optionally "
