@@ -447,6 +447,7 @@ class SoundscapeSimulationConfig(BaseModel):
     speckle_scattering_assignments: Optional[dict[str, float]] = None
     simulation_results: Optional[str] = None
     current_simulation_id: Optional[str] = None
+    current_simulation_run_id: Optional[str] = None
     imported_ir_ids: Optional[list[str]] = None
     source_receiver_ir_mapping: Optional[dict[str, dict[str, SoundscapeIRMetadata]]] = None
     receiver_positions: Optional[dict[str, list[float]]] = None  # receiverId -> [x, y, z]

@@ -12,17 +12,19 @@ import {
 } from '@/store/soundscapeStore';
 import { useSEDStore } from '@/store/sedStore';
 import { useAnalysisStore, applyRecoveredLlmResult, resumeLlmJob } from '@/store/analysisStore';
-import { usePyroomAcousticsStore } from '@/store/pyroomAcousticsStore';
-import { useChorasStore } from '@/store/chorasStore';
+import { useAcousticsSimulationStore } from '@/store/acousticsSimulationStore';
+import { useReceiversStore } from '@/store/receiversStore';
+import { useGridListenersStore } from '@/store/gridListenersStore';
 import { useAudioControlsStore } from '@/store/audioControlsStore';
+import { collapseVariantsToOne, groupSoundsByPosition } from '@/utils/positionKey';
 import {
   importPyroomIRFiles,
   importChorasIRFiles,
   buildSimulationResultsText,
   buildChorasSimulationResultsText,
-  type IRImportResult,
 } from '@/utils/acousticMetrics';
 import type { JobType, JobRecord } from '@/types';
+import type { PyroomAcousticsSimulationConfig } from '@/types/acoustics';
 
 const POLL_INTERVAL_MS = 1500;
 
@@ -33,32 +35,90 @@ function isJobLikelyStillAlive(record: JobRecord): boolean {
   return Date.now() - record.timestamp < MAX_AGE_MS;
 }
 
-function emptyIRImport(): IRImportResult {
+/**
+ * Find the acoustics simulation card a job belongs to. Prefers the stable
+ * `configId` recorded at submission; falls back to the persisted run id
+ * (`currentSimulationRunId`) and finally the completed simulation id — so both
+ * local records and backend-discovered jobs reattach after a window close.
+ */
+function findAcousticsConfigIndex(jobId: string, simulationId: string, record: JobRecord): number {
+  const { simulationConfigs } = useAcousticsSimulationStore.getState();
+  if (simulationConfigs.length === 0) return -1;
+
+  const configId = record.meta?.configId;
+  if (configId) {
+    const byId = simulationConfigs.findIndex((c) => c.id === configId);
+    if (byId >= 0) return byId;
+  }
+
+  const byRunId = simulationConfigs.findIndex(
+    (c) => (c as { currentSimulationRunId?: string | null }).currentSimulationRunId === jobId,
+  );
+  if (byRunId >= 0) return byRunId;
+
+  return simulationConfigs.findIndex((c) => {
+    const sid = (c as { currentSimulationId?: string | null }).currentSimulationId;
+    return sid != null && (sid === simulationId || sid === jobId);
+  });
+}
+
+/**
+ * Wait (briefly) for the matching simulation card to exist. On a cold reload
+ * the soundscape restore and this recovery run concurrently, so the card may
+ * not be in the store yet even though its persisted `currentSimulationRunId`
+ * will bring it back a moment later.
+ */
+async function waitForAcousticsConfigIndex(
+  jobId: string,
+  simulationId: string,
+  record: JobRecord,
+  timeoutMs = 8000,
+): Promise<number> {
+  const deadline = Date.now() + timeoutMs;
+  let index = findAcousticsConfigIndex(jobId, simulationId, record);
+  while (index < 0 && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    index = findAcousticsConfigIndex(jobId, simulationId, record);
+  }
+  return index;
+}
+
+/**
+ * Rebuild the simulation-time source/receiver position snapshot from the live
+ * stores (used by recovery, mirroring what the run path captures on completion).
+ * Returns undefined when no placed sounds/receivers are available yet.
+ */
+function buildRecoveredSimulationPositions(): PyroomAcousticsSimulationConfig['simulationPositions'] | undefined {
+  const soundscapeData = useSoundscapeStore.getState().soundscapeData;
+  if (!soundscapeData || soundscapeData.length === 0) return undefined;
+
+  const sourceSounds = collapseVariantsToOne(
+    soundscapeData as Array<{ id: string; position: [number, number, number]; prompt_index?: number; copy_index?: number }>,
+    useAudioControlsStore.getState().selectedVariants,
+  );
+  const { uniquePositions, soundToPosKey } = groupSoundsByPosition(sourceSounds);
+  if (uniquePositions.size === 0) return undefined;
+
+  const receivers = useReceiversStore.getState().receivers;
+  const gridListeners = useGridListenersStore.getState().gridListeners;
+
   return {
-    importedCount: 0,
-    totalCount: 0,
-    importedIRIds: [],
-    importedIRMetadataList: [],
-    sourceReceiverMapping: {},
+    sources: Object.fromEntries(uniquePositions.entries()),
+    receivers: Object.fromEntries(receivers.map((r) => [r.id, r.position])),
+    soundToPosKey: Object.fromEntries(soundToPosKey.entries()),
+    gridListeners: gridListeners
+      .filter((g) => !g.hiddenForSimulation)
+      .map((g) => ({
+        id: g.id,
+        name: g.name,
+        xSpacing: g.xSpacing,
+        ySpacing: g.ySpacing,
+        zOffset: g.zOffset,
+        selectedObjectIds: g.selectedObjectIds,
+        boundingBox: g.boundingBox,
+        points: g.points,
+      })),
   };
-}
-
-/** Find the pyroom instance card whose recorded simulation id matches. */
-function findPyroomInstanceId(simulationId: string): string | undefined {
-  const { instances } = usePyroomAcousticsStore.getState();
-  for (const [id, inst] of Object.entries(instances)) {
-    if (inst.currentSimulationId === simulationId) return id;
-  }
-  return undefined;
-}
-
-/** Find the choras instance card whose recorded simulation id matches. */
-function findChorasInstanceId(simulationId: string): string | undefined {
-  const { instances } = useChorasStore.getState();
-  for (const [id, inst] of Object.entries(instances)) {
-    if (inst.currentSimulationId === simulationId) return id;
-  }
-  return undefined;
 }
 
 /**
@@ -250,25 +310,15 @@ function updateProgress(jobType: JobType, progress: number, statusText: string, 
         isSEDAnalyzing: true,
       });
       break;
-    case 'pyroom': {
-      const instanceId = record.meta?.instanceId ?? findPyroomInstanceId(record.jobId);
-      if (instanceId) {
-        usePyroomAcousticsStore.getState().patchInstance(instanceId, {
-          isRunning: true,
-          progress,
-          status: statusText,
-        });
-      }
-      break;
-    }
+    case 'pyroom':
     case 'choras': {
-      const instanceId = record.meta?.instanceId ?? findChorasInstanceId(record.jobId);
-      if (instanceId) {
-        useChorasStore.getState().patchInstance(instanceId, {
+      const index = findAcousticsConfigIndex(record.jobId, record.jobId, record);
+      if (index >= 0) {
+        useAcousticsSimulationStore.getState().handleUpdateConfig(index, {
           isRunning: true,
           progress,
           status: statusText,
-        });
+        } as any);
       }
       break;
     }
@@ -295,23 +345,15 @@ function resetJobState(jobType: JobType, record: JobRecord): void {
         sedProgress: '',
       });
       break;
-    case 'pyroom': {
-      const instanceId = record.meta?.instanceId ?? findPyroomInstanceId(record.jobId);
-      if (instanceId) {
-        usePyroomAcousticsStore.getState().patchInstance(instanceId, {
-          isRunning: false,
-          _pollInterval: null,
-        });
-      }
-      break;
-    }
+    case 'pyroom':
     case 'choras': {
-      const instanceId = record.meta?.instanceId ?? findChorasInstanceId(record.jobId);
-      if (instanceId) {
-        useChorasStore.getState().patchInstance(instanceId, {
+      const index = findAcousticsConfigIndex(record.jobId, record.jobId, record);
+      if (index >= 0) {
+        useAcousticsSimulationStore.getState().handleUpdateConfig(index, {
           isRunning: false,
-          _pollInterval: null,
-        });
+          progress: 0,
+          currentSimulationRunId: null,
+        } as any);
       }
       break;
     }
@@ -351,6 +393,9 @@ async function processCompletedJob(
         const merged = [...store.generatedSounds, ...newEvents];
         useSoundscapeStore.setState({
           generatedSounds: merged,
+          // Keep the save/3D source of truth in sync (the live generation path
+          // writes both; recovery must too, or the result never persists).
+          soundscapeData: merged.length > 0 ? merged : null,
           soundGenProgress: '',
           soundGenProgressValue: 0,
           soundGenStatusText: '',
@@ -379,6 +424,8 @@ async function processCompletedJob(
         const merged = [...store.generatedSounds, ...newEvents];
         useSoundscapeStore.setState({
           generatedSounds: merged,
+          // Keep the save/3D source of truth in sync (see the sound case above).
+          soundscapeData: merged.length > 0 ? merged : null,
           soundGenProgress: '',
           soundGenProgressValue: 0,
           soundGenStatusText: '',
@@ -409,10 +456,10 @@ async function processCompletedJob(
       break;
     }
     case 'pyroom':
-      await recoverPyroomJob(jobId, result, record);
+      await recoverAcousticsJob('pyroom', jobId, result, record);
       break;
     case 'choras':
-      await recoverChorasJob(jobId, result, record);
+      await recoverAcousticsJob('choras', jobId, result, record);
       break;
     case 'loop':
       recoverLoopJob(result, record);
@@ -422,58 +469,92 @@ async function processCompletedJob(
   }
 }
 
-async function recoverPyroomJob(jobId: string, result: any, record: JobRecord): Promise<void> {
+/**
+ * Restore a completed (or still-running, then completed) acoustics simulation
+ * job into the matching `acousticsSimulationStore` card — the UI source of
+ * truth for pyroom/choras. Re-imports the IRs, rebuilds the metrics text and
+ * the simulation-time position snapshot, and marks the card complete.
+ *
+ * Idempotent: if the card already holds this simulation's results, it only
+ * clears the in-flight run id (no duplicate IR upload).
+ */
+async function recoverAcousticsJob(
+  jobType: 'pyroom' | 'choras',
+  jobId: string,
+  result: any,
+  record: JobRecord,
+): Promise<void> {
   const simulationId: string = result?.simulation_id || jobId;
-  const instanceId = record.meta?.instanceId ?? findPyroomInstanceId(simulationId) ?? findPyroomInstanceId(jobId);
-  if (!instanceId) return;
-
-  const store = usePyroomAcousticsStore.getState();
-  store.ensureInstance(instanceId);
-
-  let irImportResult = emptyIRImport();
-  if (Array.isArray(result?.ir_files) && result.ir_files.length > 0) {
-    irImportResult = await importPyroomIRFiles(simulationId, result.ir_files);
+  // Local records carry a configId, so we know the card should come back with
+  // the bootstrap restore — wait briefly for it. Backend-discovered records are
+  // resolved immediately by the persisted run id (or dropped if the card is gone).
+  const index = record.meta?.configId
+    ? await waitForAcousticsConfigIndex(jobId, simulationId, record)
+    : findAcousticsConfigIndex(jobId, simulationId, record);
+  if (index < 0) {
+    console.log(`[useJobRecovery] ${jobType} job ${jobId} completed but no matching simulation card — result dropped`);
+    return;
   }
-  const resultsText = await buildSimulationResultsText(simulationId);
 
-  store.patchInstance(instanceId, {
+  const store = useAcousticsSimulationStore.getState();
+  const config = store.simulationConfigs[index] as { currentSimulationId?: string | null; importedIRIds?: string[]; simulationPositions?: unknown } | undefined;
+
+  // Already applied on an earlier recovery — avoid re-uploading the IR files.
+  if (config?.currentSimulationId === simulationId && (config?.importedIRIds?.length ?? 0) > 0) {
+    store.handleUpdateConfig(index, {
+      isRunning: false,
+      progress: 100,
+      status: 'Complete!',
+      currentSimulationRunId: null,
+    } as any);
+    return;
+  }
+
+  const irFiles: string[] = Array.isArray(result?.ir_files) ? result.ir_files : [];
+  if (irFiles.length === 0) {
+    store.handleUpdateConfig(index, {
+      isRunning: false,
+      status: 'Error',
+      error: 'Simulation completed but generated no impulse responses.',
+      currentSimulationRunId: null,
+    } as any);
+    return;
+  }
+
+  const irImportResult = jobType === 'pyroom'
+    ? await importPyroomIRFiles(simulationId, irFiles)
+    : await importChorasIRFiles(simulationId, irFiles);
+
+  if (irImportResult.importedCount === 0) {
+    store.handleUpdateConfig(index, {
+      isRunning: false,
+      status: 'Error',
+      error: 'Simulation completed but failed to import impulse responses.',
+      currentSimulationRunId: null,
+    } as any);
+    return;
+  }
+
+  const resultsText = jobType === 'pyroom'
+    ? await buildSimulationResultsText(simulationId)
+    : await buildChorasSimulationResultsText(simulationId, irImportResult);
+
+  const simulationPositions = buildRecoveredSimulationPositions();
+
+  store.handleUpdateConfig(index, {
+    state: 'completed',
     isRunning: false,
     progress: 100,
     status: 'Complete!',
+    error: null,
+    completedAt: Date.now(),
     simulationResults: resultsText,
-    currentSimulationId: simulationId,
-    irImported: irImportResult.importedCount > 0,
     importedIRIds: irImportResult.importedIRIds,
     sourceReceiverIRMapping: irImportResult.sourceReceiverMapping,
-    _pollInterval: null,
-  });
-}
-
-async function recoverChorasJob(jobId: string, result: any, record: JobRecord): Promise<void> {
-  const simulationId: string = result?.simulation_id || jobId;
-  const instanceId = record.meta?.instanceId ?? findChorasInstanceId(simulationId) ?? findChorasInstanceId(jobId);
-  if (!instanceId) return;
-
-  const store = useChorasStore.getState();
-  store.ensureInstance(instanceId);
-
-  let irImportResult = emptyIRImport();
-  if (Array.isArray(result?.ir_files) && result.ir_files.length > 0) {
-    irImportResult = await importChorasIRFiles(simulationId, result.ir_files);
-  }
-  const resultsText = await buildChorasSimulationResultsText(simulationId, irImportResult);
-
-  store.patchInstance(instanceId, {
-    isRunning: false,
-    progress: 100,
-    status: 'Complete!',
-    simulationResults: resultsText,
     currentSimulationId: simulationId,
-    irImported: irImportResult.importedCount > 0,
-    importedIRIds: irImportResult.importedIRIds,
-    sourceReceiverIRMapping: irImportResult.sourceReceiverMapping,
-    _pollInterval: null,
-  });
+    currentSimulationRunId: null,
+    ...(simulationPositions ? { simulationPositions } : {}),
+  } as any);
 }
 
 function recoverLoopJob(result: any, record: JobRecord): void {
