@@ -92,6 +92,7 @@ import {
 } from '@/utils/constants';
 import { groupSoundsByPosition, collapseVariantsToOne } from '@/utils/positionKey';
 import { useServiceVersions } from '@/hooks/useServiceVersions';
+import { recordInflightJob, removeInflightJob } from '@/lib/job-tracker';
 
 interface AcousticsSectionProps {
   // IR Library props
@@ -665,6 +666,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
 
       // Store the running simulation ID so the cancel handler can reach it
       handleUpdateConfig(index, { currentSimulationRunId: simulation_id } as any);
+      recordInflightJob(simulation_id, 'choras', { configId: config.id, instanceId: config.simulationInstanceId });
 
       // Poll for progress every second
       const pollInterval = setInterval(async () => {
@@ -679,6 +681,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
           // ── Terminal states ──────────────────────────────────────────────
           clearInterval(pollInterval);
           pollIntervalsRef.current.delete(index);
+          removeInflightJob(simulation_id);
 
           if (statusData.cancelled) {
             handleUpdateConfig(index, { isRunning: false, progress: 0, status: 'Cancelled', currentSimulationRunId: null } as any);
@@ -733,6 +736,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         } catch (pollErr) {
           clearInterval(pollInterval);
           pollIntervalsRef.current.delete(index);
+          removeInflightJob(simulation_id);
           handleUpdateConfig(index, {
             isRunning: false,
             status: 'Error',
@@ -833,6 +837,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
 
       // Store running simulation ID so the cancel handler can reach it
       handleUpdateConfig(index, { currentSimulationRunId: simulation_id } as any);
+      recordInflightJob(simulation_id, 'pyroom', { configId: config.id, instanceId: config.simulationInstanceId });
 
       // Poll for progress every 1.5 seconds
       const pollInterval = setInterval(async () => {
@@ -851,6 +856,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
           // ── Terminal states ──────────────────────────────────────────────
           clearInterval(pollInterval);
           pollIntervalsRef.current.delete(index);
+          removeInflightJob(simulation_id);
 
           if (statusData.cancelled) {
             handleUpdateConfig(index, { isRunning: false, progress: 0, status: 'Cancelled', currentSimulationRunId: null } as any);
@@ -905,6 +911,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         } catch (pollErr) {
           clearInterval(pollInterval);
           pollIntervalsRef.current.delete(index);
+          removeInflightJob(simulation_id);
           handleUpdateConfig(index, {
             isRunning: false,
             status: 'Error',
@@ -950,6 +957,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     // Tell backend to cancel (fire-and-forget — UI resets regardless)
     const config = simulationConfigs[index] as any;
     if (config?.currentSimulationRunId) {
+      removeInflightJob(config.currentSimulationRunId);
       if (config.type === 'pyroomacoustics') {
         apiService.cancelPyroomacousticsSimulation(config.currentSimulationRunId).catch(console.error);
       } else {
@@ -1062,6 +1070,11 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     }
 
     const simConfig = config as ChorasSimulationConfig | PyroomAcousticsSimulationConfig;
+
+    // If a run is still in flight, stop tracking it so recovery doesn't resurrect it.
+    if ((simConfig as any).currentSimulationRunId) {
+      removeInflightJob((simConfig as any).currentSimulationRunId);
+    }
 
     // Explicitly preserve Speckle material assignments and isolation across reset
     // so that SpeckleSurfaceMaterialsSection can restore them on remount

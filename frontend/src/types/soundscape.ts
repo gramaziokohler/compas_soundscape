@@ -196,6 +196,8 @@ export interface SoundscapeSimulationConfig {
   speckle_acoustic_selection?: SoundscapeAcousticSelection;
   simulation_results?: string;
   current_simulation_id?: string;
+  /** Backend job id of an in-flight simulation, persisted so recovery can reattach after a reload. */
+  current_simulation_run_id?: string;
   imported_ir_ids?: string[];
   source_receiver_ir_mapping?: Record<string, Record<string, SoundscapeIRMetadata>>;
   receiver_positions?: Record<string, number[]>; // receiverId -> [x, y, z]

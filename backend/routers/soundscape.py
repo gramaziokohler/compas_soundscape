@@ -69,6 +69,51 @@ def _require_role(request: Request, workspace_id: str, allowed: tuple[str, ...])
     return role
 
 
+def _resolve_owning_workspace(
+    request: Request, model_id: str, workspace_id: str | None = None
+) -> tuple[str, bool]:
+    """Resolve the workspace that owns ``model_id`` for the calling session.
+
+    A user opening a shared model may not have it in their own workspace, so we
+    look up the owning workspace and switch the caller's session to it when they
+    are a member (or the workspace is link-shared). Returns
+    ``(session_id, requires_invite)``.
+
+    Every read/mutation endpoint that resolves files by ``model_id`` must go
+    through this (load, stats, …) so a member editing a shared model sees and
+    writes the owner's files, not an empty workspace of their own.
+    """
+    session_id = _get_session_id(request)
+    user_hash = getattr(getattr(request, "state", None), "user_hash", None)
+    session_token = getattr(getattr(request, "state", None), "session_token", None)
+
+    candidate_json = user_model_dir(session_id, model_id) / SOUNDSCAPE_JSON_FILENAME
+    if candidate_json.exists():
+        return session_id, False
+
+    owner_wid = metadata_store.resolve_model_workspace(model_id, prefer_workspace_id=workspace_id)
+    if not owner_wid or owner_wid == session_id:
+        return session_id, False
+
+    owner_ws = metadata_store.get_workspace(owner_wid)
+    role = metadata_store.get_member_role(owner_wid, user_hash) if user_hash else None
+    if role:
+        if session_token:
+            metadata_store.set_session_workspace(session_token, owner_wid)
+        request.state.workspace_id = owner_wid
+        request.state.session_id = owner_wid
+        return owner_wid, False
+    if owner_ws and owner_ws.get("sharing_mode") == "link" and user_hash and session_token:
+        metadata_store.ensure_member(owner_wid, user_hash, ROLE_EDITOR)
+        metadata_store.set_session_workspace(session_token, owner_wid)
+        request.state.workspace_id = owner_wid
+        request.state.session_id = owner_wid
+        return owner_wid, False
+    if owner_ws and owner_ws.get("sharing_mode") == "private":
+        return session_id, True
+    return session_id, False
+
+
 @router.get("/home-projects")
 async def list_home_projects_endpoint(request: Request):
     """List locally saved Home (sandbox) projects for this workspace."""
@@ -584,36 +629,12 @@ async def load_soundscape(model_id: str, req: Request, workspace_id: str | None 
 
     Also restores IR files and analysis files from persistent storage back to temp.
     """
-    session_id = _get_session_id(req)
-    user_hash = getattr(req.state, "user_hash", None)
-    session_token = getattr(req.state, "session_token", None)
-
     # ── Resolve the workspace that owns this model ───────────────────────────
     # A user opening `?model_id=` may not have the model in their own workspace
     # yet (shared project). Resolve the owning workspace; members are switched to
     # it, link-shared workspaces auto-join, private non-member workspaces signal
     # `requires_invite`.
-    requires_invite = False
-    candidate_json = user_model_dir(session_id, model_id) / SOUNDSCAPE_JSON_FILENAME
-    if not candidate_json.exists():
-        owner_wid = metadata_store.resolve_model_workspace(model_id, prefer_workspace_id=workspace_id)
-        if owner_wid and owner_wid != session_id:
-            owner_ws = metadata_store.get_workspace(owner_wid)
-            role = metadata_store.get_member_role(owner_wid, user_hash) if user_hash else None
-            if role:
-                session_id = owner_wid
-                if session_token:
-                    metadata_store.set_session_workspace(session_token, owner_wid)
-                req.state.workspace_id = owner_wid
-                req.state.session_id = owner_wid
-            elif owner_ws and owner_ws.get("sharing_mode") == "link" and user_hash and session_token:
-                metadata_store.ensure_member(owner_wid, user_hash, ROLE_EDITOR)
-                metadata_store.set_session_workspace(session_token, owner_wid)
-                session_id = owner_wid
-                req.state.workspace_id = owner_wid
-                req.state.session_id = owner_wid
-            elif owner_ws and owner_ws.get("sharing_mode") == "private":
-                requires_invite = True
+    session_id, requires_invite = _resolve_owning_workspace(req, model_id, workspace_id)
 
     audio_base_url = f"{SOUNDSCAPE_DATA_URL_PREFIX}/{session_id}/{model_id}/audio"
     ir_base_url = f"{SOUNDSCAPE_DATA_URL_PREFIX}/{session_id}/{model_id}/ir_files"
@@ -871,8 +892,11 @@ async def get_soundscape_stats(model_id: str, req: Request):
 
     Reads soundscape.json for domain counts and walks the filesystem
     for IR, analysis, and simulation file sizes and dates.
+
+    Resolves the workspace that owns the model so members viewing a shared model
+    (e.g. an editor) see the owner's saved data, not their own empty workspace.
     """
-    session_id = _get_session_id(req)
+    session_id, _ = _resolve_owning_workspace(req, model_id)
     model_dir = user_model_dir(session_id, model_id)
     audio_dir = user_audio_dir(session_id, model_id)
 
@@ -977,12 +1001,6 @@ async def get_soundscape_stats(model_id: str, req: Request):
                 mtime = f.stat().st_mtime
                 if mtime > last_modified:
                     last_modified = mtime
-    for filename in referenced_audio:
-        candidate = audio_dir / filename
-        if candidate.is_file():
-            mtime = candidate.stat().st_mtime
-            if mtime > last_modified:
-                last_modified = mtime
     stats["last_modified"] = (
         datetime.fromtimestamp(last_modified, tz=timezone.utc).isoformat()
         if last_modified > 0 else None

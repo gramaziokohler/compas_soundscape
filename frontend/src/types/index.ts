@@ -269,6 +269,8 @@ export interface JobRecord {
     configIndex?: number;
     kind?: string;
     scenarioId?: string;
+    /** pyroom/choras: the simulation config id the job belongs to (stable across reorder/reload). */
+    configId?: string;
     /** pyroom/choras: which simulation instance card the job belongs to. */
     instanceId?: string;
     /** loop: which sound the loop region applies to. */

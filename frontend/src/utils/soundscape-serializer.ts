@@ -434,6 +434,7 @@ export function buildSoundscapeSavePayload(
       } : undefined,
       simulation_results: pyConfig.simulationResults,
       current_simulation_id: pyConfig.currentSimulationId,
+      current_simulation_run_id: pyConfig.currentSimulationRunId,
       imported_ir_ids: pyConfig.importedIRIds,
       source_receiver_ir_mapping: serializedMapping,
       receiver_positions: Object.keys(receiverPositions).length > 0 ? receiverPositions : undefined,
@@ -887,6 +888,7 @@ export function restoreSoundscapeState(
       // Restored state
       simulationResults: saved.simulation_results ?? null,
       currentSimulationId: saved.current_simulation_id,
+      currentSimulationRunId: saved.current_simulation_run_id,
       importedIRIds: saved.imported_ir_ids,
       sourceReceiverIRMapping,
       // Restore simulation-time source/receiver positions (needed by the mismatch
