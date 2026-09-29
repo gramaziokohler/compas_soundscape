@@ -127,6 +127,11 @@ export type { RightSidebarStoreState } from './rightSidebarStore';
 export { useAcousticLayerStore } from './acousticLayerStore';
 export type { AcousticLayerState } from './acousticLayerStore';
 export { resolveSimulationLayerName, resolveSimulationGeometryObjectIds, toBackendGeometryIds } from './acousticLayerStore';
+export {
+  captureAcousticSelectionSnapshot,
+  restoreAcousticSelectionSnapshot,
+  discardAcousticSelectionSnapshot,
+} from './acousticLayerStore';
 
 export { useUIStore } from './uiStore';
 export type { UIStoreState } from './uiStore';

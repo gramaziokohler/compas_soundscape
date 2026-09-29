@@ -33,6 +33,7 @@ from config.constants import (
     GENERATED_SOUNDS_DIR,
     GENERATED_SOUND_URL_PREFIX,
     DEFAULT_DBFS,
+    DENOISING_REDUCTION_STRENGTH,
     DEFAULT_AUDIO_MODEL,
     DEFAULT_DURATION_SECONDS,
     DEFAULT_GUIDANCE_SCALE,
@@ -46,7 +47,7 @@ from config.constants import (
     JOB_TYPE_SA3,
     AUDIO_MODEL_SA3,
     STABLE_AUDIO_DEFAULT_STEPS,
-    STABLE_AUDIO_DEFAULT_CFG_SCALE,
+    STABLE_AUDIO_DEFAULT_GUIDANCE,
     STABLE_AUDIO_DEFAULT_DURATION_PADDING_S,
     STABLE_AUDIO_DEFAULT_SAMPLER,
     STABLE_AUDIO_MODE_TEXT,
@@ -144,7 +145,10 @@ def _build_sa3_clip_plan(sound_configs: list[dict], base_dbfs: float | None) -> 
         if not prompt:
             continue
         duration = cfg.get("duration_seconds") or cfg.get("duration", DEFAULT_DURATION_SECONDS)
-        cfg_scale = cfg.get("cfg_scale", cfg.get("guidance_scale", STABLE_AUDIO_DEFAULT_CFG_SCALE))
+        # Stable Audio 3 uses the app-wide diffusion steps (advanced settings) and
+        # its own guidance (= CFG scale, 0-1). Falls back to the model defaults at
+        # 25 steps / 0.9 guidance.
+        cfg_scale = cfg.get("guidance_scale", STABLE_AUDIO_DEFAULT_GUIDANCE)
         seed_copies = cfg.get("seed_copies", DEFAULT_SEED_COPIES)
         steps = cfg.get("steps", STABLE_AUDIO_DEFAULT_STEPS)
         dbfs = cfg.get("dbfs") if cfg.get("dbfs") is not None else (base_dbfs if base_dbfs is not None else DEFAULT_DBFS)
@@ -353,6 +357,60 @@ async def calibrate_audio(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Calibration failed: {str(e)}")
+
+    finally:
+        if tmp_input and os.path.exists(tmp_input.name):
+            os.unlink(tmp_input.name)
+
+
+@router.post("/api/audio/post-process")
+async def post_process_audio(
+    audio: UploadFile = File(...),
+    apply_noise_reduction: bool = Form(False),
+    noise_reduction_strength: float = Form(DENOISING_REDUCTION_STRENGTH),
+    trim_silence: bool = Form(False),
+    req: Request = None,
+):
+    """
+    Apply FX-panel post-effects (noise reduction and/or trim silence) to an
+    uploaded audio file, returning a static URL to the processed WAV.
+
+    Deliberately does NOT normalize RMS / calibrate dBFS — the FX editor's Save
+    path calibrates the final bounced result, so a post-effect placed mid-chain
+    must not alter the level. Reuses the same DSP as generation-time denoising
+    and trim-silence detection.
+    """
+    tmp_input = None
+    try:
+        ext = os.path.splitext(audio.filename or "audio.wav")[1] or ".wav"
+        tmp_input = tempfile.NamedTemporaryFile(suffix=ext, delete=False)
+        tmp_input.write(await audio.read())
+        tmp_input.close()
+
+        session_id = getattr(getattr(req, "state", None), "session_id", None)
+        if session_id:
+            out_dir = str(user_sounds_dir(session_id))
+        else:
+            out_dir = GENERATED_SOUNDS_DIR
+        os.makedirs(out_dir, exist_ok=True)
+
+        filename = f"fx_process_{uuid.uuid4().hex}.wav"
+        output_path = os.path.join(out_dir, filename)
+
+        await run_in_threadpool(
+            audio_service.apply_post_effects_file,
+            tmp_input.name,
+            output_path,
+            apply_noise_reduction=apply_noise_reduction,
+            noise_reduction_strength=noise_reduction_strength,
+            trim_silence=trim_silence,
+        )
+
+        url_prefix = f"{GENERATED_SOUND_URL_PREFIX}/{session_id}" if session_id else GENERATED_SOUND_URL_PREFIX
+        return {"url": f"{url_prefix}/{filename}"}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Post-processing failed: {str(e)}")
 
     finally:
         if tmp_input and os.path.exists(tmp_input.name):

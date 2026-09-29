@@ -27,6 +27,12 @@
   /* Granular card-surface tokens */
   --color-surface: #f6f5ee;
   --color-surface-2: #fafaf6;
+
+  /* Reduced (collapsed) generated card — a recessed surface that reads as
+   * neither the pending surface nor the solid-blue active generated card. */
+  --color-reduced-surface: #002aff8d;
+  --color-reduced-border: #ffffffc8;
+
   --color-field-hover: #e8e7dd;
   --color-border: rgba(0, 0, 0, 0.08);
   --color-border-strong: rgba(0, 0, 0, 0.16);
@@ -142,6 +148,8 @@
   --color-secondary-lighter: var(--color-secondary-lighter);
   --color-surface: var(--color-surface);
   --color-surface-2: var(--color-surface-2);
+  --color-reduced-surface: var(--color-reduced-surface);
+  --color-reduced-border: var(--color-reduced-border);
   --color-field-hover: var(--color-field-hover);
   --color-border: var(--color-border);
   --color-border-strong: var(--color-border-strong);
@@ -194,6 +202,8 @@
     --color-secondary-lighter: #0f1012;
     --color-surface: #0a0a0a;
     --color-surface-2: #1c1e22;
+    --color-reduced-surface: #002aff75;
+    --color-reduced-border: rgba(143, 161, 255, 0.22);
     --color-field-hover: #131418;
     --color-border: rgba(255, 255, 255, 0.07);
     --color-border-strong: rgba(255, 255, 255, 0.15);
@@ -217,6 +227,8 @@ html[data-theme="dark"] {
   --color-secondary-lighter: #0f1012;
   --color-surface: #0a0a0a;
   --color-surface-2: #1c1e22;
+  --color-reduced-surface: #002aff75;
+  --color-reduced-border: rgba(4, 4, 5, 0.22);
   --color-field-hover: #131418;
   --color-border: rgba(255, 255, 255, 0.07);
   --color-border-strong: rgba(255, 255, 255, 0.15);

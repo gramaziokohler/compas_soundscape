@@ -1,7 +1,14 @@
 'use client';
 
-import type { CleanParams, CompressorParams, DelayParams, DriveParams, FxInstance, GainParams, GateParams, LimiterParams, PitchParams, StableAudioParams } from '@/lib/audio/fx/fx-types';
+import { useMemo, useState } from 'react';
+import type { CleanParams, CompressorParams, DelayParams, DriveParams, FxChain, FxInstance, GainParams, GateParams, LimiterParams, NoiseReductionParams, PitchParams, StableAudioParams, TrimSilenceParams } from '@/lib/audio/fx/fx-types';
 import { stableAudioModeFor } from '@/lib/audio/fx/fx-types';
+import { SOUND_FX } from '@/utils/constants';
+import { notifyError, useSoundFxStore } from '@/store';
+import { getStableAudioSource } from '@/lib/audio/fx/stable-audio-render';
+import { processServerPost, serverPostSignature, type ServerPostInstance } from '@/lib/audio/fx/server-post-render';
+import { Spinner } from '@/components/ui/Spinner';
+import { Badge } from '@/components/ui/Badge';
 import { EqEditor } from './EqEditor';
 import { StableAudioEditor } from './StableAudioEditor';
 import { FxParamSlider } from './FxParamSlider';
@@ -44,6 +51,26 @@ export function FxInstanceEditor({ soundId, instance, analyser, sampleRate, onLi
       return <PitchEditor params={instance.params} onLive={onLive} onCommit={onCommit} />;
     case 'gain':
       return <GainEditor params={instance.params} onLive={onLive} onCommit={onCommit} />;
+    case 'noiseReduction':
+      return (
+        <NoiseReductionEditor
+          soundId={soundId}
+          instanceId={instance.instanceId}
+          params={instance.params}
+          onLive={onLive as (p: NoiseReductionParams) => void}
+          onCommit={onCommit as (p: NoiseReductionParams) => void}
+        />
+      );
+    case 'trimSilence':
+      return (
+        <TrimSilenceEditor
+          soundId={soundId}
+          instanceId={instance.instanceId}
+          params={instance.params}
+          onLive={onLive as (p: TrimSilenceParams) => void}
+          onCommit={onCommit as (p: TrimSilenceParams) => void}
+        />
+      );
     case 'stableAudioRestyle':
     case 'stableAudioInpaint':
     case 'stableAudioExtend':
@@ -170,5 +197,160 @@ function GainEditor({ params, onLive, onCommit }: { params: GainParams; onLive: 
   };
   return (
     <FxParamSlider label="Gain" value={params.gainDb} min={-24} max={12} step={0.5} unit="dB" defaultValue={0} onLive={(v) => set({ gainDb: v }, false)} onCommit={(v) => set({ gainDb: v }, true)} />
+  );
+}
+
+/** Instances of the chain before the given stage (its server render input). */
+function usePreChain(soundId: string, instanceId: string): FxChain {
+  const chains = useSoundFxStore((s) => s.chains);
+  return useMemo(() => {
+    const chain = chains[soundId];
+    if (!chain) return { instances: [], outputGainDb: 0 };
+    const idx = chain.instances.findIndex((i) => i.instanceId === instanceId);
+    return { instances: idx >= 0 ? chain.instances.slice(0, idx) : [], outputGainDb: 0 };
+  }, [chains, soundId, instanceId]);
+}
+
+/**
+ * Process + cache button shared by the backend post-effect editors. On success
+ * the caller merges the returned URL + signature into its params.
+ */
+function ServerPostProcessRow({
+  soundId,
+  instance,
+  preChain,
+  signature,
+  onProcessed,
+}: {
+  soundId: string;
+  instance: ServerPostInstance;
+  preChain: FxChain;
+  signature: string;
+  onProcessed: (renderedUrl: string, renderedSignature: string) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const params = instance.params;
+  const isStale = Boolean(params.renderedUrl) && params.renderedSignature !== signature;
+
+  const handleProcess = async () => {
+    const srcBuffer = getStableAudioSource(soundId);
+    if (!srcBuffer) {
+      notifyError('Load a sound before processing');
+      return;
+    }
+    setBusy(true);
+    try {
+      const url = await processServerPost({ instance, preChain, sourceBuffer: srcBuffer });
+      onProcessed(url, signature);
+    } catch (err) {
+      console.error('[fx] server post-effect failed', err);
+      notifyError(err instanceof Error ? err.message : 'Post-processing failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => void handleProcess()}
+        className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded disabled:opacity-40"
+        style={{ background: 'var(--color-primary)', color: 'var(--color-on-blue)' }}
+      >
+        {busy ? <Spinner /> : null}
+        {busy ? 'Processing' : params.renderedUrl ? 'Re-process' : 'Process'}
+      </button>
+      {params.renderedUrl && (
+        isStale
+          ? <Badge variant="warning" size="sm">Out of date</Badge>
+          : <Badge variant="success" size="sm">Ready</Badge>
+      )}
+    </div>
+  );
+}
+
+function NoiseReductionEditor({
+  soundId,
+  instanceId,
+  params,
+  onLive,
+  onCommit,
+}: {
+  soundId: string;
+  instanceId: string;
+  params: NoiseReductionParams;
+  onLive: (p: NoiseReductionParams) => void;
+  onCommit: (p: NoiseReductionParams) => void;
+}) {
+  const preChain = usePreChain(soundId, instanceId);
+  const instance = useMemo<ServerPostInstance>(
+    () => ({ instanceId, type: 'noiseReduction', enabled: true, params }),
+    [instanceId, params],
+  );
+  const signature = useMemo(() => serverPostSignature(instance, preChain), [instance, preChain]);
+
+  const set = (reduction: number, commit: boolean) => {
+    const next = { ...params, reduction };
+    if (commit) onCommit(next);
+    else onLive(next);
+  };
+
+  return (
+    <div className="card-stack">
+      <FxParamSlider
+        label="Reduction"
+        value={params.reduction}
+        min={SOUND_FX.NOISE_REDUCTION_MIN}
+        max={SOUND_FX.NOISE_REDUCTION_MAX}
+        step={SOUND_FX.NOISE_REDUCTION_STEP}
+        defaultValue={SOUND_FX.NOISE_REDUCTION_DEFAULT}
+        onLive={(v) => set(v, false)}
+        onCommit={(v) => set(v, true)}
+      />
+      <ServerPostProcessRow
+        soundId={soundId}
+        instance={instance}
+        preChain={preChain}
+        signature={signature}
+        onProcessed={(url, sig) => onCommit({ ...params, renderedUrl: url, renderedSignature: sig })}
+      />
+    </div>
+  );
+}
+
+function TrimSilenceEditor({
+  soundId,
+  instanceId,
+  params,
+  onCommit,
+}: {
+  soundId: string;
+  instanceId: string;
+  params: TrimSilenceParams;
+  onLive: (p: TrimSilenceParams) => void;
+  onCommit: (p: TrimSilenceParams) => void;
+}) {
+  const preChain = usePreChain(soundId, instanceId);
+  const instance = useMemo<ServerPostInstance>(
+    () => ({ instanceId, type: 'trimSilence', enabled: true, params }),
+    [instanceId, params],
+  );
+  const signature = useMemo(() => serverPostSignature(instance, preChain), [instance, preChain]);
+
+  return (
+    <div className="card-stack">
+      <p className="text-[10px] text-secondary-hover">
+        Crops the clip to its longest continuous sound, removing leading and trailing silence.
+      </p>
+      <ServerPostProcessRow
+        soundId={soundId}
+        instance={instance}
+        preChain={preChain}
+        signature={signature}
+        onProcessed={(url, sig) => onCommit({ ...params, renderedUrl: url, renderedSignature: sig })}
+      />
+    </div>
   );
 }

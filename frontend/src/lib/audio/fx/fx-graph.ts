@@ -82,12 +82,15 @@ async function createEffect(ctx: BaseAudioContext, inst: FxInstance): Promise<Ef
       return createPitch(ctx, inst.params);
     case 'gain':
       return createGain(ctx, inst.params);
+    case 'noiseReduction':
+    case 'trimSilence':
     case 'stableAudioRestyle':
     case 'stableAudioInpaint':
     case 'stableAudioExtend':
       // Server-rendered stages: the live/offline graph passes audio through
-      // unchanged. The real transform runs when the user presses Generate in
-      // the editor (see lib/audio/fx/stable-audio-render.ts).
+      // unchanged. The real transform runs when the user presses Process in
+      // the editor (see lib/audio/fx/stable-audio-render.ts and
+      // lib/audio/fx/server-post-render.ts).
       return createPassthrough(ctx);
   }
 }

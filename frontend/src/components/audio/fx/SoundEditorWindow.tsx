@@ -17,11 +17,11 @@ import { emptyFxChain } from '@/lib/audio/fx/fx-defaults';
 import { FxEngine } from '@/lib/audio/fx/fx-engine';
 import { renderFxToWav } from '@/lib/audio/fx/fx-render';
 import {
-  chainHasStableAudio,
+  chainHasServerStage,
   registerStableAudioSource,
   renderFxChainToWav,
 } from '@/lib/audio/fx/stable-audio-render';
-import { isStableAudioInstance, type FxChain, type FxInstance, type FxParams, type FxRegion, type StableAudioParams } from '@/lib/audio/fx/fx-types';
+import { isServerRenderedInstance, type FxChain, type FxInstance, type FxParams, type FxRegion, type StableAudioParams } from '@/lib/audio/fx/fx-types';
 import type { SoundEvent } from '@/types';
 import { SoundEditorCanvas } from './SoundEditorCanvas';
 import { FxStack } from './FxStack';
@@ -56,15 +56,16 @@ async function decodeUrl(url: string, name: string): Promise<AudioBuffer> {
 }
 
 /**
- * When a chain contains an enabled, already-generated Stable Audio stage, the
- * editor previews from that stage's result: the audio the user sees/hears is
- * the Stable Audio output, and only the effects AFTER it run live. Bypassing the
- * stage (or before generating) falls back to the original clip + full chain.
+ * When a chain contains an enabled, already-processed server-rendered stage
+ * (Stable Audio or a backend post-effect), the editor previews from that
+ * stage's result: the audio the user sees/hears is the server output, and only
+ * the effects AFTER it run live. Bypassing the stage (or before processing)
+ * falls back to the original clip + full chain.
  */
-function lastStableAudioResultUrl(chain: FxChain): string | null {
+function lastServerResultUrl(chain: FxChain): string | null {
   for (let i = chain.instances.length - 1; i >= 0; i--) {
     const inst = chain.instances[i];
-    if (isStableAudioInstance(inst) && inst.enabled && inst.params.renderedUrl) {
+    if (isServerRenderedInstance(inst) && inst.enabled && inst.params.renderedUrl) {
       return inst.params.renderedUrl;
     }
   }
@@ -74,7 +75,7 @@ function lastStableAudioResultUrl(chain: FxChain): string | null {
 function previewChainFor(chain: FxChain): FxChain {
   for (let i = chain.instances.length - 1; i >= 0; i--) {
     const inst = chain.instances[i];
-    if (isStableAudioInstance(inst) && inst.enabled && inst.params.renderedUrl) {
+    if (isServerRenderedInstance(inst) && inst.enabled && inst.params.renderedUrl) {
       return { ...chain, instances: chain.instances.slice(i + 1) };
     }
   }
@@ -117,10 +118,10 @@ export function SoundEditorWindow() {
   const chainRef = useRef(chain);
   chainRef.current = chain;
 
-  // The waveform/preview follows the Stable Audio result when a stage is enabled
-  // and has been generated; bypassing it reverts to the original sound.
-  const sa3ResultUrl = lastStableAudioResultUrl(chain);
-  const displayUrl = sa3ResultUrl ?? event?.url ?? '';
+  // The waveform/preview follows the last processed server-rendered stage when
+  // enabled and ready; bypassing it reverts to the original sound.
+  const serverResultUrl = lastServerResultUrl(chain);
+  const displayUrl = serverResultUrl ?? event?.url ?? '';
 
   const variants = event
     ? generatedSounds
@@ -250,9 +251,10 @@ export function SoundEditorWindow() {
         const srcBuffer = id === soundId && sourceBufferRef.current
           ? sourceBufferRef.current
           : await decodeUrl(target.url, target.display_name || id);
-        // Chains with a Stable Audio stage are server-rendered around the
-        // locally-bounced segments; otherwise use the plain offline bounce.
-        const blob = chainHasStableAudio(c)
+        // Chains with a server-rendered stage (Stable Audio / noise reduction /
+        // trim silence) are rendered around the locally-bounced segments;
+        // otherwise use the plain offline bounce.
+        const blob = chainHasServerStage(c)
           ? await renderFxChainToWav(srcBuffer, c, decodeUrl)
           : await renderFxToWav(srcBuffer, c);
         const result = await apiService.calibrateAudio(blob, globalBaseDbfs ?? DEFAULT_DBFS, false, false);

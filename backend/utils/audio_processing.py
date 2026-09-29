@@ -462,6 +462,7 @@ def _get_channel_noise_profile(
 def apply_denoising(
     audio_tensor: torch.Tensor,
     sample_rate: int = 44100,
+    reduction: float = DENOISING_REDUCTION_STRENGTH,
 ) -> torch.Tensor:
     """Apply noise reduction to audio using spectral gating.
 
@@ -475,6 +476,8 @@ def apply_denoising(
     Args:
         audio_tensor: Audio tensor of shape (channels, samples).
         sample_rate: Sample rate in Hz (default 44100).
+        reduction: Spectral-gating strength (``noisereduce`` ``prop_decrease``),
+            clamped to [0, 1]. Defaults to ``DENOISING_REDUCTION_STRENGTH``.
 
     Returns:
         Denoised audio tensor.
@@ -482,6 +485,8 @@ def apply_denoising(
     if not NOISEREDUCE_AVAILABLE:
         print("Warning: noisereduce not available, returning original audio")
         return audio_tensor
+
+    prop_decrease = float(max(0.0, min(1.0, reduction)))
 
     try:
         original_device = audio_tensor.device
@@ -509,7 +514,7 @@ def apply_denoising(
                             y=channel_data,
                             sr=sample_rate,
                             y_noise=noise_profile,
-                            prop_decrease=DENOISING_REDUCTION_STRENGTH,
+                            prop_decrease=prop_decrease,
                         )
                     else:
                         print(f"Channel {channel_idx}: no noise profile found, returning original")
@@ -539,7 +544,7 @@ def apply_denoising(
                     y=audio_1d,
                     sr=sample_rate,
                     y_noise=noise_profile,
-                    prop_decrease=DENOISING_REDUCTION_STRENGTH,
+                    prop_decrease=prop_decrease,
                 )
             else:
                 print("No noise profile found, returning original audio")
@@ -560,3 +565,32 @@ def apply_denoising(
         import traceback
         traceback.print_exc()
         return audio_tensor
+
+
+def trim_to_noise_region(
+    audio: np.ndarray,
+    sample_rate: int,
+) -> np.ndarray:
+    """Destructively trim audio to its longest continuous SFX region.
+
+    Uses the same onset-based noise-gap detection as
+    :func:`compute_noise_trim_region` and returns the sliced samples. When no
+    usable trim region is found the input is returned unchanged.
+
+    Args:
+        audio: Audio array of shape ``(samples,)`` or ``(samples, channels)``.
+        sample_rate: Sample rate in Hz.
+
+    Returns:
+        The trimmed array (stereo channels preserved for 2-D input).
+    """
+    audio_1d = ensure_mono(audio)
+    region = compute_noise_trim_region(audio_1d, sample_rate)
+    if region is None:
+        return audio
+
+    start_frac, end_frac = region
+    n = audio.shape[0]
+    start = max(0, min(n, int(round(start_frac * n))))
+    end = max(start + 1, min(n, int(round(end_frac * n))))
+    return audio[start:end]

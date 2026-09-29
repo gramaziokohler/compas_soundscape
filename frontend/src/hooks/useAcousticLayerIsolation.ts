@@ -20,7 +20,7 @@
 
 import { useEffect, useRef } from 'react';
 import type React from 'react';
-import { useSpeckleStore, useAcousticLayerStore, useUIStore } from '@/store';
+import { useSpeckleStore, useAcousticLayerStore, useUIStore, discardAcousticSelectionSnapshot } from '@/store';
 import { getRootNodesForModel, getGeometryLeafIdsFromNode, getExplorerNodeId, countTopLevelLayers, findSingleTopLevelLayer } from '@/hooks/useSpeckleTree';
 import { setAcousticLayerAllIds, setAllModelGeometryIds } from '@/store/speckleStore';
 import { computeGeometryFaceCounts } from '@/utils/face-count';
@@ -267,6 +267,9 @@ export function useAcousticLayerIsolation(
   useEffect(() => {
     if (!isAcousticMode) {
       useUIStore.getState().setAcousticLayerSelectionMode(false);
+      // Leaving acoustic mode abandons any in-progress re-assign — drop the
+      // pre-re-assign snapshot so a later Cancel cannot restore a stale region.
+      discardAcousticSelectionSnapshot();
       return;
     }
     if (acousticLayerId) {

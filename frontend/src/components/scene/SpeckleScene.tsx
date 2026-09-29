@@ -468,15 +468,35 @@ export function SpeckleScene({
     const container = containerRef.current;
     if (!container) return;
 
+    // Track the gesture locally rather than via the coordinator's event bridge:
+    // during initialization (React StrictMode double-mount / async viewer init)
+    // more than one bridge can exist, and the coordinator may hold a different
+    // instance than the one receiving the canvas events — so its `wasOrbiting`
+    // flag can read stale. Local pointer tracking is independent of that race.
+    const DRAG_THRESHOLD_PX = 4;
+    let downPos: { x: number; y: number } | null = null;
+    let dragged = false;
+
+    const handlePointerDown = (e: PointerEvent) => {
+      downPos = { x: e.clientX, y: e.clientY };
+      dragged = false;
+    };
+
+    const handlePointerMove = (e: PointerEvent) => {
+      if (!downPos) return;
+      const dx = e.clientX - downPos.x;
+      const dy = e.clientY - downPos.y;
+      if (dx * dx + dy * dy > DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) {
+        dragged = true;
+      }
+    };
+
     const handleContextMenu = (e: MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();
 
       // Do not open in FPS mode or when the mouse was dragged (orbiting/panning).
-      // Reuse SpeckleEventBridge's wasOrbiting flag — it tracks pointerdown/pointerup
-      // for all buttons (no button filter), so right-click drags are already detected.
-      const wasDragging = coordinatorRef.current?.getWasOrbiting() ?? false;
-      if (isFirstPersonModeRef.current || wasDragging) return;
+      if (isFirstPersonModeRef.current || dragged) return;
 
       // Dismiss hover preview immediately when the full panel opens
       setHoverPreview(null);
@@ -636,9 +656,13 @@ export function SpeckleScene({
       }
     };
 
+    container.addEventListener('pointerdown', handlePointerDown, true);
+    container.addEventListener('pointermove', handlePointerMove, true);
     container.addEventListener('contextmenu', handleContextMenu);
 
     return () => {
+      container.removeEventListener('pointerdown', handlePointerDown, true);
+      container.removeEventListener('pointermove', handlePointerMove, true);
       container.removeEventListener('contextmenu', handleContextMenu);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps

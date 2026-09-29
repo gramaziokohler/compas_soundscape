@@ -486,9 +486,14 @@ export const STABLE_AUDIO_MODE_LABELS: Record<StableAudioMode, string> = {
   [STABLE_AUDIO_MODES.INPAINT]: "Inpaint",
   [STABLE_AUDIO_MODES.EXTEND]: "Extend",
 };
-export const STABLE_AUDIO_DEFAULT_STEPS = 50;
-export const STABLE_AUDIO_DEFAULT_CFG_SCALE = 3;
-export const STABLE_AUDIO_DEFAULT_STRENGTH = 0.5;
+// Stable Audio 3 uses the app-wide diffusion steps (advanced settings) and its
+// own guidance (model CFG scale), restrained to [0, 1] with 0.9 recommended.
+export const STABLE_AUDIO_DEFAULT_STEPS = 25;
+export const STABLE_AUDIO_DEFAULT_GUIDANCE = 0.9;
+export const STABLE_AUDIO_GUIDANCE_MIN = 0;
+export const STABLE_AUDIO_GUIDANCE_MAX = 1;
+export const STABLE_AUDIO_GUIDANCE_STEP = 0.05;
+export const STABLE_AUDIO_DEFAULT_STRENGTH = 0.9;
 export const STABLE_AUDIO_DEFAULT_DURATION_PADDING_SEC = 6;
 export const STABLE_AUDIO_DEFAULT_SAMPLER = "pingpong";
 export const STABLE_AUDIO_SAMPLERS = ["pingpong", "euler", "rk4", "dpmpp"] as const;
@@ -1074,6 +1079,11 @@ export const SOUND_FX = {
   METER_MIN_DB: -60,
   METER_MAX_DB: 6,
   METER_CLIP_LINEAR: 0.999,
+  /** Backend noise-reduction strength (noisereduce prop_decrease) bounds. */
+  NOISE_REDUCTION_DEFAULT: 0.8,
+  NOISE_REDUCTION_MIN: 0,
+  NOISE_REDUCTION_MAX: 1,
+  NOISE_REDUCTION_STEP: 0.01,
 } as const;
 
 // ============================================================================

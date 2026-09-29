@@ -111,7 +111,7 @@ export interface AdvancedSettingsSectionProps {
 
 // ── Section key type ──────────────────────────────────────────────────────────
 
-type SectionKey = 'display' | 'acoustic' | 'tokens' | 'llm' | 'rendering' | 'history';
+type SectionKey = 'display' | 'acoustic' | 'tokens' | 'llm' | 'rendering' | 'workspaces' | 'history';
 
 const SECTION_LABELS: Record<SectionKey, string> = {
   display: 'Display',
@@ -119,10 +119,11 @@ const SECTION_LABELS: Record<SectionKey, string> = {
   tokens: 'API Tokens',
   llm: 'Models',
   rendering: 'Audio settings',
+  workspaces: 'Workspaces',
   history: 'History',
 };
 
-const SECTION_KEYS: SectionKey[] = ['display', 'acoustic', 'tokens', 'llm', 'rendering', 'history'];
+const SECTION_KEYS: SectionKey[] = ['display', 'acoustic', 'tokens', 'llm', 'rendering', 'workspaces', 'history'];
 
 type SettingKey =
   | 'label-sprites' | 'hovering-highlight' | 'sound-spheres' | 'playing-highlight' | 'listeners' | 'ground-grid'
@@ -134,6 +135,7 @@ type SettingKey =
   | 'diffusion-steps' | 'negative-prompt' | 'noise-reduction' | 'trim-silence'
   | 'listener-orientation' | 'spectrograms'
   | 'base-spl' | 'max-foley' | 'output-device'
+  | 'collaboration'
   | 'auto-save' | 'delete-history';
 
 interface SettingEntry {
@@ -173,6 +175,8 @@ const SETTINGS: SettingEntry[] = [
   { section: 'rendering', key: 'spectrograms', terms: ['spectrograms', 'spectrogram'] },
   { section: 'rendering', key: 'base-spl', terms: ['base level', 'base spl', 'spl', 'volume', 'db', 'decibel'] },
   { section: 'rendering', key: 'max-foley', terms: ['max sounds', 'max foley', 'foley', 'maximum sounds', 'prompt'] },
+
+  { section: 'workspaces', key: 'collaboration', terms: ['workspaces', 'workspace', 'members', 'collaboration', 'collaborators', 'invite', 'sharing', 'owner', 'leave'] },
 
   { section: 'history', key: 'auto-save', terms: ['autosave', 'auto-save', 'soundscape', 'auto save', 'persist'] },
   { section: 'history', key: 'delete-history', terms: ['delete history', 'clear history', 'delete', 'history', 'reset project'] },
@@ -997,9 +1001,12 @@ export function AdvancedSettingsSection({
             </div>
           )}
 
+          {activeSection === 'workspaces' && (
+            <CollaborationPanel />
+          )}
+
           {activeSection === 'history' && (
             <div className="flex flex-col gap-2">
-              <CollaborationPanel />
               {isVisible('auto-save') && (
                 <ToggleField
                   checked={enableAutoSave}

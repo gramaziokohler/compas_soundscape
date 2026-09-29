@@ -113,6 +113,35 @@ export class SpeckleEventBridge {
     const button = event.event?.button;
     if (button === undefined || button === 0) return;
 
+    // A non-left gesture that was a drag (orbit/pan) must not change the
+    // selection. Speckle's SelectionExtension has already auto-selected the
+    // object under the release point, so restore the pre-gesture selection.
+    // Do not rely on `wasOrbiting` alone — it is set by our pointerup listener,
+    // which (at the canvas target) may run after Speckle emits ObjectClicked.
+    const raw = event.event as PointerEvent | undefined;
+    let dragged = this.wasOrbiting;
+    if (raw && this.pointerDownPos) {
+      const dx = raw.clientX - this.pointerDownPos.x;
+      const dy = raw.clientY - this.pointerDownPos.y;
+      if (dx * dx + dy * dy > SpeckleEventBridge.DRAG_THRESHOLD_PX * SpeckleEventBridge.DRAG_THRESHOLD_PX) {
+        dragged = true;
+      }
+    }
+
+    if (dragged) {
+      const restore = this.selectionBeforeClick;
+      this.selectionBeforeClick = [];
+      if (restore.length > 0) {
+        this.selectionExtension.selectObjects(restore);
+      } else {
+        this.selectionExtension.clearSelection();
+      }
+      if (this.onSpeckleObjectSelected) {
+        this.onSpeckleObjectSelected(restore);
+      }
+      return;
+    }
+
     this.selectionExtension.clearSelection();
     if (this.onSpeckleObjectSelected) {
       this.onSpeckleObjectSelected([]);
@@ -311,10 +340,12 @@ export class SpeckleEventBridge {
 
     this.applyCameraRemapForButton(e);
 
-    // Snapshot the current Speckle selection on left-press, BEFORE Speckle's own
-    // pointerup-driven auto-select mutates it. We use it to rebuild shift+click
-    // additive selections deterministically in handleSpeckleSelection.
-    if (e.button === 0 && !this.isFirstPersonModeActive) {
+    // Snapshot the current Speckle selection on press, BEFORE Speckle's own
+    // pointerup-driven auto-select mutates it. Left-press uses it to rebuild
+    // shift+click additive selections deterministically in handleSpeckleSelection;
+    // non-left press uses it to restore the selection after a drag (orbit/pan)
+    // undoes Speckle's auto-select in handleViewerObjectClicked.
+    if (!this.isFirstPersonModeActive) {
       try {
         const objs = this.selectionExtension.getSelectedObjects() || [];
         this.selectionBeforeClick = (objs as any[]).map((o: any) => {

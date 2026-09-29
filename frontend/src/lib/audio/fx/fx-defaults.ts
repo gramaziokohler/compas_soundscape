@@ -11,13 +11,16 @@ import type {
   GainParams,
   GateParams,
   LimiterParams,
+  NoiseReductionParams,
   PitchParams,
   StableAudioParams,
+  TrimSilenceParams,
 } from './fx-types';
 import { FX_TYPES } from './fx-types';
 import {
+  SOUND_FX,
   STABLE_AUDIO_DEFAULT_STEPS,
-  STABLE_AUDIO_DEFAULT_CFG_SCALE,
+  STABLE_AUDIO_DEFAULT_GUIDANCE,
   STABLE_AUDIO_DEFAULT_STRENGTH,
   STABLE_AUDIO_DEFAULT_DURATION_PADDING_SEC,
 } from '@/utils/constants';
@@ -55,6 +58,10 @@ export const FX_DEFAULTS = {
   delay: (): DelayParams => ({ timeMs: 80, feedback: 0.2, mix: 0.18, dampingHz: 3500 }),
   pitch: (): PitchParams => ({ semitones: 0 }),
   gain: (): GainParams => ({ gainDb: 0 }),
+  noiseReduction: (): NoiseReductionParams => ({
+    reduction: SOUND_FX.NOISE_REDUCTION_DEFAULT,
+  }),
+  trimSilence: (): TrimSilenceParams => ({}),
   stableAudioRestyle: stableAudioParams,
   stableAudioInpaint: stableAudioParams,
   stableAudioExtend: stableAudioParams,
@@ -66,7 +73,7 @@ function stableAudioParams(): StableAudioParams {
     negativePrompt: '',
     strength: STABLE_AUDIO_DEFAULT_STRENGTH,
     steps: STABLE_AUDIO_DEFAULT_STEPS,
-    cfgScale: STABLE_AUDIO_DEFAULT_CFG_SCALE,
+    guidance: STABLE_AUDIO_DEFAULT_GUIDANCE,
     seed: -1,
     regions: [],
     duration: 0,
@@ -101,6 +108,10 @@ export function createDefaultInstance(type: FxType): FxInstance {
       return { instanceId, type, enabled: true, params: FX_DEFAULTS.pitch() };
     case 'gain':
       return { instanceId, type, enabled: true, params: FX_DEFAULTS.gain() };
+    case 'noiseReduction':
+      return { instanceId, type, enabled: true, params: FX_DEFAULTS.noiseReduction() };
+    case 'trimSilence':
+      return { instanceId, type, enabled: true, params: FX_DEFAULTS.trimSilence() };
     case 'stableAudioRestyle':
     case 'stableAudioInpaint':
     case 'stableAudioExtend':

@@ -10,6 +10,7 @@ from utils.audio_processing import (
     normalize_audio_rms,
     apply_dbfs_calibration,
     apply_denoising as denoise_audio,
+    trim_to_noise_region,
     ensure_mono,
 )
 from config.constants import (
@@ -34,6 +35,7 @@ from config.constants import (
     TARGET_RMS,
     AUDIO_SAMPLE_RATE,
     DEFAULT_DBFS,
+    DENOISING_REDUCTION_STRENGTH,
     GENERATED_SOUNDS_DIR,
     GENERATED_SOUND_URL_PREFIX,
     FORCE_CPU_MODE
@@ -346,6 +348,50 @@ class AudioService:
 
         torchaudio.save(output_path, audio_tensor.cpu(), sample_rate)
         print(f"Calibrated: {output_path} -> {target_dbfs} dBFS")
+
+    def apply_post_effects_file(
+        self,
+        input_path: str,
+        output_path: str,
+        apply_noise_reduction: bool = False,
+        noise_reduction_strength: float = DENOISING_REDUCTION_STRENGTH,
+        trim_silence: bool = False,
+    ):
+        """Apply FX-panel post-effects (noise reduction / trim silence) to any audio file.
+
+        Unlike :meth:`calibrate_audio_file`, this changes neither the RMS nor the
+        dBFS level — the FX editor's Save path still calibrates the final result.
+        Only the requested processing is applied, letting the clients place these
+        stages anywhere in their FX chain.
+
+        Args:
+            input_path: Path to the source audio file.
+            output_path: Path where the processed WAV will be saved.
+            apply_noise_reduction: Run spectral-gating noise reduction.
+            noise_reduction_strength: ``noisereduce`` prop_decrease in [0, 1].
+            trim_silence: Crop to the longest continuous SFX region.
+        """
+        import soundfile as sf
+
+        audio_np, sample_rate = sf.read(input_path)
+        audio_np = ensure_mono(audio_np)
+
+        if apply_noise_reduction:
+            print("Applying noise reduction during post-processing...")
+            audio_tensor = torch.from_numpy(audio_np).float().unsqueeze(0)
+            audio_tensor = denoise_audio(
+                audio_tensor,
+                sample_rate=sample_rate,
+                reduction=noise_reduction_strength,
+            )
+            audio_np = audio_tensor.squeeze(0).cpu().numpy()
+
+        if trim_silence:
+            print("Applying trim silence during post-processing...")
+            audio_np = trim_to_noise_region(audio_np, sample_rate)
+
+        sf.write(output_path, audio_np, sample_rate)
+        print(f"Post-processed: {output_path}")
 
     @staticmethod
     def cleanup_generated_sounds(output_dir: str = GENERATED_SOUNDS_DIR):

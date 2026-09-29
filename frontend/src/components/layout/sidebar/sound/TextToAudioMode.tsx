@@ -10,6 +10,7 @@ import { useBatchedSlider } from '@/hooks/useBatchedSlider';
 import { useSoundscapeStore } from '@/store';
 import {
   AUDIO_MODEL_ELEVENLABS,
+  AUDIO_MODEL_SA3,
   DEFAULT_DURATION_SECONDS,
   DEFAULT_GUIDANCE_SCALE,
   DEFAULT_PROMPT_INFLUENCE,
@@ -18,6 +19,10 @@ import {
   PROMPT_INFLUENCE_MAX,
   PROMPT_INFLUENCE_MIN,
   PROMPT_INFLUENCE_STEP,
+  STABLE_AUDIO_DEFAULT_GUIDANCE,
+  STABLE_AUDIO_GUIDANCE_MAX,
+  STABLE_AUDIO_GUIDANCE_MIN,
+  STABLE_AUDIO_GUIDANCE_STEP,
   normalizeSoundCategory,
 } from '@/utils/constants';
 
@@ -50,6 +55,7 @@ export function TextToAudioSliders({
 }: Omit<TextToAudioModeProps, 'hideSliders'>) {
   const audioModel = useSoundscapeStore((s) => s.audioModel);
   const isElevenLabs = audioModel === AUDIO_MODEL_ELEVENLABS;
+  const isSA3 = audioModel === AUDIO_MODEL_SA3;
   const isBackground = normalizeSoundCategory(config.category) === 'background';
 
   const durationSlider = useBatchedSlider<number>('soundscape', (v) =>
@@ -98,7 +104,21 @@ export function TextToAudioSliders({
           />
         )}
 
-        {!isElevenLabs && (
+        {isSA3 ? (
+          <RangeSlider
+            label="Guidance"
+            value={config.guidance_scale ?? STABLE_AUDIO_DEFAULT_GUIDANCE}
+            min={STABLE_AUDIO_GUIDANCE_MIN}
+            max={STABLE_AUDIO_GUIDANCE_MAX}
+            step={STABLE_AUDIO_GUIDANCE_STEP}
+            defaultValue={STABLE_AUDIO_DEFAULT_GUIDANCE}
+            onDragStart={guidanceSlider.onDragStart}
+            onChange={guidanceSlider.onChange}
+            onChangeCommitted={guidanceSlider.onCommit}
+            showLabels={false}
+            hoverText="Stable Audio 3 guidance (0-1). Recommended: 0.9."
+          />
+        ) : !isElevenLabs && (
           <RangeSlider
             label="Guidance"
             value={config.guidance_scale ?? DEFAULT_GUIDANCE_SCALE}

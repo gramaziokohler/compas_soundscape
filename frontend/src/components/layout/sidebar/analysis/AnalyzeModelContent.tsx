@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import { useState, useRef, useEffect, useMemo, useCallback, type ChangeEvent } from 'react';
 import { toPng } from 'html-to-image';
 import type { AnalyzeModelConfig } from '@/types/analysis';
 import { useSpeckleStore, useAnalysisStore, useUIStore } from '@/store';
 import { getRootNodesForModel } from '@/hooks/useSpeckleTree';
 import { DashedAddButton } from '@/components/ui/DashedAddButton';
+import { ContextMenu } from '@/components/ui/ContextMenu';
 
 /**
  * AnalyzeModelContent
@@ -191,13 +192,16 @@ interface CaptureViewSectionProps {
 }
 
 function CaptureViewSection({ index, screenshots, screenshotFilenames, onUpdateConfig }: CaptureViewSectionProps) {
-  const [isCapturing, setIsCapturing] = useState(false);
+  const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const addButtonRef = useRef<HTMLSpanElement>(null);
 
   const handleCapture = useCallback(async () => {
     const container = document.getElementById('speckle-scene-container');
     if (!container) { setError('Viewer not found'); return; }
-    setIsCapturing(true);
+    setIsBusy(true);
     setError(null);
     const { showGroundGrid, setShowGroundGrid } = useUIStore.getState();
     const wasShowingGrid = showGroundGrid;
@@ -224,9 +228,49 @@ function CaptureViewSection({ index, screenshots, screenshotFilenames, onUpdateC
       if (!wasShowingGrid) {
         setShowGroundGrid(false);
       }
-      setIsCapturing(false);
+      setIsBusy(false);
     }
   }, [index, screenshots, screenshotFilenames, onUpdateConfig]);
+
+  const handleUpload = useCallback(
+    async (e: ChangeEvent<HTMLInputElement>) => {
+      const files = Array.from(e.target.files ?? []).filter((f) => f.type.startsWith('image/'));
+      e.target.value = '';
+      if (files.length === 0) return;
+      setIsBusy(true);
+      setError(null);
+      try {
+        const addedImages: string[] = [];
+        const addedFilenames: string[] = [];
+        for (const file of files) {
+          const dataUrl = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = () => reject(new Error(`Failed to read ${file.name}`));
+            reader.readAsDataURL(file);
+          });
+          const res = await fetch('/api/screenshot', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image: dataUrl }),
+          });
+          if (!res.ok) throw new Error(`Server error: ${res.status}`);
+          const { image, filename } = (await res.json()) as { image: string; filename: string };
+          addedImages.push(image);
+          addedFilenames.push(filename);
+        }
+        onUpdateConfig(index, {
+          liveScreenshots: [...screenshots, ...addedImages],
+          liveScreenshotFilenames: [...screenshotFilenames, ...addedFilenames],
+        });
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Upload failed');
+      } finally {
+        setIsBusy(false);
+      }
+    },
+    [index, screenshots, screenshotFilenames, onUpdateConfig],
+  );
 
   const handleRemove = useCallback(
     (i: number) => {
@@ -242,6 +286,11 @@ function CaptureViewSection({ index, screenshots, screenshotFilenames, onUpdateC
     [index, screenshots, screenshotFilenames, onUpdateConfig],
   );
 
+  const handleOpenMenu = useCallback(() => {
+    const rect = addButtonRef.current?.getBoundingClientRect();
+    setMenuPos(rect ? { x: rect.left, y: rect.bottom + 4 } : { x: 0, y: 0 });
+  }, []);
+
   return (
     <div className="card-field">
       <label className="text-xxs font-medium" style={{ color: 'var(--color-secondary-hover)' }}>
@@ -251,20 +300,40 @@ function CaptureViewSection({ index, screenshots, screenshotFilenames, onUpdateC
         {screenshots.map((src, i) => (
           <Thumbnail key={i} src={src} onRemove={() => handleRemove(i)} />
         ))}
-        <DashedAddButton
-          onClick={handleCapture}
-          disabled={isCapturing}
-          className="flex-shrink-0 self-center"
-          icon={isCapturing ? '…' : '+'}
-          style={{
-            cursor: isCapturing ? 'wait' : 'pointer',
-            opacity: isCapturing ? 0.6 : 1,
-          }}
-          title="Capture current view"
-        />
+        <span ref={addButtonRef} className="flex-shrink-0 self-center">
+          <DashedAddButton
+            onClick={handleOpenMenu}
+            disabled={isBusy}
+            icon={isBusy ? '…' : '+'}
+            style={{
+              cursor: isBusy ? 'wait' : 'pointer',
+              opacity: isBusy ? 0.6 : 1,
+            }}
+            title="Add screenshot"
+          />
+        </span>
       </div>
       {error && (
         <p className="text-xs" style={{ color: 'var(--color-error, #f87171)' }}>{error}</p>
+      )}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        onChange={handleUpload}
+        className="hidden"
+      />
+      {menuPos && (
+        <ContextMenu
+          x={menuPos.x}
+          y={menuPos.y}
+          items={[
+            { key: 'capture', label: 'Capture current view', onClick: handleCapture },
+            { key: 'upload', label: 'Upload image…', onClick: () => fileInputRef.current?.click() },
+          ]}
+          onClose={() => setMenuPos(null)}
+        />
       )}
     </div>
   );

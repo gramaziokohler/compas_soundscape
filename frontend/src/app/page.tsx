@@ -60,7 +60,6 @@ import type { SelectedGeometry, AcousticMaterial } from "@/types/materials";
 import type { AudioRenderingMode } from "@/components/audio/AudioRenderingModeSelector";
 import { buildSoundscapeSavePayload, restoreSoundscapeState, getBlobUrlSounds, buildAnalysisStateSave, restoreAnalysisState } from "@/utils/soundscape-serializer";
 import { getStoredJobs, recordInflightJob } from "@/lib/job-tracker";
-import { PrivacyNotice } from "@/components/layout/PrivacyNotice";
 import { ImportSandboxModal } from "@/components/scene/ImportSandboxModal";
 import { NewModelVersionModal } from "@/components/scene/NewModelVersionModal";
 import { HomeProjectModal } from "@/components/scene/HomeProjectModal";
@@ -3757,7 +3756,6 @@ function HomeContent() {
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-background">
-      <PrivacyNotice />
       {/* Home stage → model import prompt */}
       <ImportSandboxModal
         open={pendingModelSwitch !== null}

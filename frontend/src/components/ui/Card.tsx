@@ -165,17 +165,22 @@ export function Card<TConfig extends CardBaseConfig>({
   // Whole shell turns solid blue once a result exists (and no error) — signals
   // "generated" without needing the separate accent strip.
   const isGenerated = hasResult && !error;
+  // A generated card that is reduced (collapsed) drops the solid blue for a
+  // recessed surface — visibly neither the active generated card nor a pending
+  // surface card.
+  const isReduced = isGenerated && !isExpanded;
+  const isGeneratedActive = isGenerated && !isReduced;
 
   // Build Tailwind class names
   const cardClassName = [
     'relative border rounded-xl transition-all duration-200',
-    isGenerated ? 'card-generated' : 'bg-surface',
-    error ? 'border-error' : 'border-border',
+    isGeneratedActive ? 'card-generated' : isReduced ? 'bg-reduced-surface' : 'bg-surface',
+    error ? 'border-error' : isReduced ? 'border-reduced-border' : 'border-border',
   ].filter(Boolean).join(' ');
 
   const titleClassName = [
     `flex-1 text-left text-xs font-sans font-medium transition-opacity group`,
-    isGenerated ? 'text-on-blue' : 'text-foreground',
+    isGeneratedActive ? 'text-on-blue' : 'text-foreground',
   ].filter(Boolean).join(' ');
 
   // Tracks the expansion state captured at the first click of a potential double-click sequence,
@@ -285,10 +290,10 @@ export function Card<TConfig extends CardBaseConfig>({
     'card-context-menu-item flex items-center gap-2 w-full text-left py-2 text-xs transition-colors',
     indented ? 'pl-8 pr-3' : 'px-3',
     state === 'disabled'
-      ? `opacity-40 cursor-not-allowed${isGenerated ? '' : ' text-secondary-hover'}`
+      ? `opacity-40 cursor-not-allowed${isGeneratedActive ? '' : ' text-secondary-hover'}`
       : state === 'active'
         ? 'active cursor-pointer'
-        : isGenerated
+        : isGeneratedActive
           ? 'cursor-pointer'
           : 'text-foreground cursor-pointer hover:bg-secondary-light',
   ].join(' ');
@@ -300,7 +305,7 @@ export function Card<TConfig extends CardBaseConfig>({
       onContextMenu={handleContextMenu}
       style={{
         ...cardColorStyle,
-        ...(isGenerated ? { backgroundColor: 'color-mix(in srgb, var(--color-primary) 72%, var(--color-surface))' } : {}),
+        ...(isGeneratedActive ? { backgroundColor: 'color-mix(in srgb, var(--color-primary) 72%, var(--color-surface))' } : {}),
         ...(error ? { borderColor: `var(--color-error)` } : {}),
         ...(dimmed ? { filter: 'brightness(0.55)' } : {}),
       }}
@@ -347,13 +352,13 @@ export function Card<TConfig extends CardBaseConfig>({
               {...inputProps}
               onClick={e => e.stopPropagation()}
               className={`flex-1 text-xs font-medium px-2 py-1 rounded-lg border outline-none focus:ring-1 ${
-                isGenerated ? 'xyz-input on-blue' : 'bg-background text-foreground'
+                isGeneratedActive ? 'xyz-input on-blue' : 'bg-background text-foreground'
               }`}
               style={{
-                ...(isGenerated ? {} : { borderColor: 'var(--card-color)' }),
+                ...(isGeneratedActive ? {} : { borderColor: 'var(--card-color)' }),
                 userSelect: 'text',
                 // @ts-expect-error -- CSS custom property for focus ring
-                '--tw-ring-color': isGenerated ? 'var(--color-on-blue)' : 'var(--card-color)',
+                '--tw-ring-color': isGeneratedActive ? 'var(--color-on-blue)' : 'var(--card-color)',
               }}
             />
           ) : (
@@ -366,8 +371,14 @@ export function Card<TConfig extends CardBaseConfig>({
               </div>
               {!isExpanded && collapsedInfo && (
                 <div
-                  className={`text-xxs card-title-info ${isGenerated ? '' : 'text-primary'}`}
-                  style={isGenerated ? { color: 'var(--color-on-blue)' } : undefined}
+                  className={`text-xxs card-title-info ${isGeneratedActive ? '' : 'text-primary'}`}
+                  style={
+                    isGeneratedActive
+                      ? { color: 'var(--color-on-blue)' }
+                      : isReduced
+                        ? { color: 'var(--color-blue-text)' }
+                        : undefined
+                  }
                 >
                   {collapsedInfo}
                 </div>
@@ -380,7 +391,7 @@ export function Card<TConfig extends CardBaseConfig>({
               {isExpanded && version && (
                 <div className="card-title-meta flex items-center gap-1 min-w-0">
                   <div
-                    className={`text-xxs min-w-0 overflow-hidden text-ellipsis whitespace-nowrap ${isGenerated ? 'text-on-blue-muted' : 'text-text-3'}`}
+                    className={`text-xxs min-w-0 overflow-hidden text-ellipsis whitespace-nowrap ${isGeneratedActive ? 'text-on-blue-muted' : 'text-text-3'}`}
                     title={versionTitle}
                   >
                     {versionTitle}
@@ -411,7 +422,7 @@ export function Card<TConfig extends CardBaseConfig>({
               title={resetButtonTitle}
               onClick={handleResetClick}
               variant="default"
-              onBlueBackground={isGenerated}
+              onBlueBackground={isGeneratedActive}
             />
           )}
 
@@ -422,7 +433,7 @@ export function Card<TConfig extends CardBaseConfig>({
               title={closeButtonTitle}
               onClick={handleRemoveClick}
               variant="close"
-              onBlueBackground={isGenerated}
+              onBlueBackground={isGeneratedActive}
             />
           )}
         </div>
@@ -445,7 +456,7 @@ export function Card<TConfig extends CardBaseConfig>({
 
             {/* Variants bar — letter-square selector (pre-gen speech lines / post-gen audio variants) */}
             {showVariantsBar && variants && (
-              <VariantsBar {...variants} onBlueBackground={isGenerated} />
+              <VariantsBar {...variants} onBlueBackground={isGeneratedActive} />
             )}
 
             {/* Error display - shown before content but keeps configuration visible */}
@@ -479,7 +490,7 @@ export function Card<TConfig extends CardBaseConfig>({
         (isExpanded && generateStatus === 'done' && !!doneActionLabel && !!onDoneAction)) && (
         <div
           className={`border-border${showFooterExtras ? ' flex items-stretch gap-1.5 overflow-visible' : ''}`}
-          style={isGenerated && generateStatus === 'done' ? {
+          style={isGeneratedActive && generateStatus === 'done' ? {
             backgroundColor: 'rgba(0, 0, 0, 0.15)',
             borderBottomLeftRadius: '10px',
             borderBottomRightRadius: '10px',
@@ -511,7 +522,7 @@ export function Card<TConfig extends CardBaseConfig>({
           which creates a new stacking context and would trap z-index:9999 behind other cards. */}
       {contextMenu && createPortal(
         <div
-          className={isGenerated ? 'card-context-menu--generated' : undefined}
+          className={isGeneratedActive ? 'card-context-menu--generated' : undefined}
           onPointerDown={e => e.stopPropagation()}
           onClick={e => e.stopPropagation()}
           onDoubleClick={e => e.stopPropagation()}
@@ -520,8 +531,8 @@ export function Card<TConfig extends CardBaseConfig>({
             left: `${contextMenu.x}px`,
             top: `${contextMenu.y}px`,
             zIndex: 9999,
-            backgroundColor: isGenerated ? undefined : 'var(--color-surface-2)',
-            border: isGenerated ? '1px solid var(--color-on-blue-faint)' : '1px solid var(--color-border-strong)',
+            backgroundColor: isGeneratedActive ? undefined : 'var(--color-surface-2)',
+            border: isGeneratedActive ? '1px solid var(--color-on-blue-faint)' : '1px solid var(--color-border-strong)',
             borderRadius: '8px',
             boxShadow: 'var(--shadow-lg)',
             minWidth: '150px',
@@ -569,10 +580,10 @@ export function Card<TConfig extends CardBaseConfig>({
                       : 'default',
                 )}
                 style={item.isActive ? {
-                  backgroundColor: isGenerated
+                  backgroundColor: isGeneratedActive
                     ? 'var(--color-blue-chip-bg)'
                     : 'var(--card-color-lighter, var(--color-primary-light))',
-                  color: isGenerated
+                  color: isGeneratedActive
                     ? 'var(--color-on-blue)'
                     : 'var(--card-color, var(--color-primary))',
                 } : undefined}
@@ -582,7 +593,7 @@ export function Card<TConfig extends CardBaseConfig>({
                 </span>
                 <span className="flex-1">{item.label}</span>
                 {item.subItems && (
-                  <span className={`text-[10px] ${isGenerated ? 'card-context-menu-chevron' : 'text-secondary-hover'}`}>
+                  <span className={`text-[10px] ${isGeneratedActive ? 'card-context-menu-chevron' : 'text-secondary-hover'}`}>
                     {expandedSubKey === item.key ? '▾' : '▸'}
                   </span>
                 )}
@@ -590,7 +601,7 @@ export function Card<TConfig extends CardBaseConfig>({
 
               {/* Sub-items accordion */}
               {item.subItems && expandedSubKey === item.key && (
-                <div className={`border-t ${isGenerated ? 'card-context-menu-divider' : 'border-secondary-light'}`}>
+                <div className={`border-t ${isGeneratedActive ? 'card-context-menu-divider' : 'border-secondary-light'}`}>
                   {item.subItems.map(sub => (
                     <button
                       key={sub.key}
@@ -612,10 +623,10 @@ export function Card<TConfig extends CardBaseConfig>({
                         true,
                       )}
                       style={sub.isActive ? {
-                        backgroundColor: isGenerated
+                        backgroundColor: isGeneratedActive
                           ? 'var(--color-blue-chip-bg)'
                           : 'var(--card-color-lighter, var(--color-primary-light))',
-                        color: isGenerated
+                        color: isGeneratedActive
                           ? 'var(--color-on-blue)'
                           : 'var(--card-color, var(--color-primary))',
                       } : undefined}

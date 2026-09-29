@@ -4,7 +4,7 @@ import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { ObjectExplorer } from '@/components/layout/ObjectExplorer';
 import { useUIStore } from '@/store/uiStore';
-import { useAcousticMaterialStore, useAcousticLayerStore, useSpeckleStore, useAcousticsSimulationStore } from '@/store';
+import { useAcousticMaterialStore, useAcousticLayerStore, useSpeckleStore, useAcousticsSimulationStore, captureAcousticSelectionSnapshot } from '@/store';
 import { RefreshIcon } from '@/components/ui/Icon';
 import { CardButton, CloseIcon } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
@@ -80,6 +80,8 @@ export function ObjectExplorerPanel({ onClose, isVisible, isRightSidebarExpanded
   }, [cardAcousticSelection, selectedAcousticLayerIds]);
 
   const handleReassignAcoustic = useCallback(() => {
+    // Snapshot the current region so the selection phase's Cancel can restore it.
+    captureAcousticSelectionSnapshot();
     useAcousticLayerStore.getState().clearAcousticLayer();
     useAcousticMaterialStore.getState().deactivateViewer();
     useUIStore.getState().setAcousticLayerSelectionMode(true);
@@ -117,17 +119,19 @@ export function ObjectExplorerPanel({ onClose, isVisible, isRightSidebarExpanded
     handleReassignAcoustic();
   }, [handleReassignAcoustic]);
 
-  /** "Re-assign acoustic layer" text button, warning-colored, placed right of the title. */
+  /** "Re-assign acoustic layer" text button, danger-colored, placed right of the title. */
   const reassignButton = showReassign ? (
     <button
       data-no-drag
       onClick={handleReassignClick}
       className="shrink-0 px-1.5 py-0.5 rounded border text-[10px] font-medium whitespace-nowrap transition-colors"
       style={{
-        color: acousticRegionMismatch ? 'var(--color-warning)' : 'var(--color-secondary-hover)',
-        borderColor: acousticRegionMismatch ? 'var(--color-warning)' : 'var(--color-secondary)',
+        color: 'var(--color-error)',
+        borderColor: 'var(--color-error)',
         backgroundColor: 'transparent',
       }}
+      onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--color-error-light)')}
+      onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
       title={acousticRegionMismatch
         ? 'This simulation was generated with different acoustic layers — click to restore them'
         : 'Re-assign acoustic layer'}

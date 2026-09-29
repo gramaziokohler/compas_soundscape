@@ -14,9 +14,27 @@ export const STABLE_AUDIO_FX_TYPES = [
 export type StableAudioFxType = (typeof STABLE_AUDIO_FX_TYPES)[number];
 export type StableAudioModeName = 'restyle' | 'inpaint' | 'extend';
 
-/** Stable Audio effects come first in the add menu. */
+/**
+ * Backend DSP post-effects (spectral-gating noise reduction, silence trim).
+ * Like Stable Audio they are SERVER-rendered stages: no live Web Audio node,
+ * the result is produced by a Process action and cached in `renderedUrl`.
+ */
+export const SERVER_POST_FX_TYPES = ['noiseReduction', 'trimSilence'] as const;
+
+export type ServerPostFxType = (typeof SERVER_POST_FX_TYPES)[number];
+
+/** Every stage that is rendered by the backend rather than Web Audio. */
+export const SERVER_RENDERED_FX_TYPES = [
+  ...STABLE_AUDIO_FX_TYPES,
+  ...SERVER_POST_FX_TYPES,
+] as const;
+
+export type ServerRenderedFxType = (typeof SERVER_RENDERED_FX_TYPES)[number];
+
+/** Stable Audio effects, then backend post-effects, come first in the add menu. */
 export const FX_TYPES = [
   ...STABLE_AUDIO_FX_TYPES,
+  ...SERVER_POST_FX_TYPES,
   'eq',
   'clean',
   'gate',
@@ -35,6 +53,8 @@ export const FX_TYPE_LABELS: Record<FxType, string> = {
   stableAudioRestyle: 'Stable Audio · Restyle',
   stableAudioInpaint: 'Stable Audio · Inpaint',
   stableAudioExtend: 'Stable Audio · Extend',
+  noiseReduction: 'Noise Reduction',
+  trimSilence: 'Trim Silence',
   eq: 'Equalizer',
   clean: 'HP / LP',
   gate: 'Gate',
@@ -51,11 +71,35 @@ export function isStableAudioFx(type: FxType): type is StableAudioFxType {
   return (STABLE_AUDIO_FX_TYPES as readonly string[]).includes(type);
 }
 
+/** True for the backend DSP post-effects (noise reduction / trim silence). */
+export function isServerPostFx(type: FxType): type is ServerPostFxType {
+  return (SERVER_POST_FX_TYPES as readonly string[]).includes(type);
+}
+
+/** True for every server-rendered stage (Stable Audio + backend post-effects). */
+export function isServerRenderedFx(type: FxType): type is ServerRenderedFxType {
+  return (SERVER_RENDERED_FX_TYPES as readonly string[]).includes(type);
+}
+
 /** Narrows an instance (and its params) to the Stable Audio variants. */
 export function isStableAudioInstance(
   inst: FxInstance,
 ): inst is Extract<FxInstance, { type: StableAudioFxType }> {
   return isStableAudioFx(inst.type);
+}
+
+/** Narrows an instance (and its params) to the backend post-effect variants. */
+export function isServerPostInstance(
+  inst: FxInstance,
+): inst is Extract<FxInstance, { type: ServerPostFxType }> {
+  return isServerPostFx(inst.type);
+}
+
+/** Narrows an instance (and its params) to every server-rendered stage. */
+export function isServerRenderedInstance(
+  inst: FxInstance,
+): inst is Extract<FxInstance, { type: ServerRenderedFxType }> {
+  return isServerRenderedFx(inst.type);
 }
 
 export function stableAudioModeFor(type: StableAudioFxType): StableAudioModeName {
@@ -132,19 +176,31 @@ export interface GainParams {
 }
 
 /**
+ * Shared shape for every server-rendered stage: the URL of the last processed
+ * result plus a signature of the inputs that produced it (staleness check).
+ */
+export interface ServerRenderedParams {
+  /** URL of the last processed result (server static file). */
+  renderedUrl?: string;
+  /** Signature of the params+pre-chain that produced `renderedUrl`. */
+  renderedSignature?: string;
+}
+
+/**
  * Stable Audio 3 — a SERVER-rendered stage (audio-to-audio restyle, inpainting
  * or continuation). It has no live Web Audio node (the graph treats it as a
  * passthrough) and produces its output when the user presses Generate, which
  * stores the result URL in `renderedUrl`. Save threads that result through the
  * remaining effects.
  */
-export interface StableAudioParams {
+export interface StableAudioParams extends ServerRenderedParams {
   prompt: string;
   negativePrompt: string;
   /** 0 = keep the source, 1 = full re-imagining (maps to init_noise_level). */
   strength: number;
   steps: number;
-  cfgScale: number;
+  /** Model guidance / CFG scale, restrained to [0, 1]. */
+  guidance: number;
   /** -1 = random. */
   seed: number;
   /** Inpaint replace-regions as fractions of the clip duration. */
@@ -152,11 +208,22 @@ export interface StableAudioParams {
   /** Extend/continuation target length in seconds. Ignored by restyle/inpaint. */
   duration: number;
   durationPaddingSec: number;
-  /** URL of the last generated result (server static file). */
-  renderedUrl?: string;
-  /** Signature of the params+pre-chain that produced `renderedUrl` (staleness check). */
-  renderedSignature?: string;
 }
+
+/**
+ * Backend spectral-gating noise reduction (same DSP as generation-time
+ * denoising). Processed server-side when the user presses Process.
+ */
+export interface NoiseReductionParams extends ServerRenderedParams {
+  /** Spectral-gating strength (noisereduce prop_decrease), 0-1. */
+  reduction: number;
+}
+
+/**
+ * Backend trim silence — crops the clip to its longest continuous SFX region
+ * (same onset-based detection as generation-time trim). No user parameters.
+ */
+export type TrimSilenceParams = ServerRenderedParams;
 
 export type FxParams =
   | EqParams
@@ -168,7 +235,9 @@ export type FxParams =
   | DelayParams
   | PitchParams
   | GainParams
-  | StableAudioParams;
+  | StableAudioParams
+  | NoiseReductionParams
+  | TrimSilenceParams;
 
 export interface FxInstanceBase {
   instanceId: string;
@@ -186,6 +255,8 @@ export type FxInstance =
   | (FxInstanceBase & { type: 'delay'; params: DelayParams })
   | (FxInstanceBase & { type: 'pitch'; params: PitchParams })
   | (FxInstanceBase & { type: 'gain'; params: GainParams })
+  | (FxInstanceBase & { type: 'noiseReduction'; params: NoiseReductionParams })
+  | (FxInstanceBase & { type: 'trimSilence'; params: TrimSilenceParams })
   | (FxInstanceBase & { type: 'stableAudioRestyle'; params: StableAudioParams })
   | (FxInstanceBase & { type: 'stableAudioInpaint'; params: StableAudioParams })
   | (FxInstanceBase & { type: 'stableAudioExtend'; params: StableAudioParams });

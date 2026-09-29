@@ -184,8 +184,12 @@ STABLE_AUDIO_HF_TOKEN = os.environ.get("HF_TOKEN", "")
 # Local weights cache root (mirrors TANGOFLUX_LOCAL_DIR). Optional.
 STABLE_AUDIO_LOCAL_DIR = os.environ.get("STABLE_AUDIO_LOCAL_DIR", "")
 # Generation defaults (see backend/stable_audio_3_test.py)
-STABLE_AUDIO_DEFAULT_STEPS = 8
-STABLE_AUDIO_DEFAULT_CFG_SCALE = 3.0
+# Steps default to the app-wide diffusion-steps value (advanced settings);
+# guidance is Stable Audio 3's CFG scale, kept in [0, 1] (0.9 recommended).
+STABLE_AUDIO_DEFAULT_STEPS = 25
+STABLE_AUDIO_DEFAULT_GUIDANCE = 0.9
+STABLE_AUDIO_GUIDANCE_MIN = 0.0
+STABLE_AUDIO_GUIDANCE_MAX = 1.0
 STABLE_AUDIO_DEFAULT_INIT_NOISE_LEVEL = 0.9
 STABLE_AUDIO_DEFAULT_DURATION_PADDING_S = 6.0
 STABLE_AUDIO_DEFAULT_SAMPLER = "pingpong"

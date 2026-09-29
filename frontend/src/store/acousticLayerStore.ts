@@ -231,6 +231,52 @@ export const useAcousticLayerStore = create<AcousticLayerState & AcousticLayerAc
 );
 
 /**
+ * Transient snapshot of the acoustic selection, captured right before a
+ * re-assign clears the current region so a cancel can restore it. Module-level
+ * (not store state): it is transient and must never be persisted or recorded in
+ * undo history.
+ */
+let _reassignSnapshot: AcousticSelectionPayload | null = null;
+
+/**
+ * Capture the current acoustic selection before it is cleared by a re-assign.
+ * Call this immediately before `clearAcousticLayer()`. A no-op region (nothing
+ * assigned) leaves the snapshot null so Cancel simply aborts.
+ */
+export function captureAcousticSelectionSnapshot(): void {
+  const s = useAcousticLayerStore.getState();
+  if (s.selectedAcousticLayerIds.length === 0) {
+    _reassignSnapshot = null;
+    return;
+  }
+  _reassignSnapshot = {
+    nodeIds: [...s.selectedAcousticLayerIds],
+    nodeNames: [...s.selectedAcousticLayerNames],
+    geometryIds: [...s.selectedAcousticGeometryIds],
+    faceCount: s.selectedAcousticFaceCount,
+    isWholeModel: s.isWholeModel,
+    autoDetected: s.autoDetected,
+  };
+}
+
+/**
+ * Restore the pre-re-assign selection. Returns true when a previous region
+ * existed and was restored; false when there was nothing to return to (abort).
+ */
+export function restoreAcousticSelectionSnapshot(): boolean {
+  const snap = _reassignSnapshot;
+  _reassignSnapshot = null;
+  if (!snap) return false;
+  useAcousticLayerStore.getState().setAcousticSelection(snap);
+  return true;
+}
+
+/** Drop the snapshot after a re-assign is confirmed (no restore). */
+export function discardAcousticSelectionSnapshot(): void {
+  _reassignSnapshot = null;
+}
+
+/**
  * Resolve the layer name to send to the backend simulation routers.
  *
  * When the acoustic layer is the whole model (single-layer model), return an empty

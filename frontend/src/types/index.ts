@@ -195,7 +195,8 @@ export interface SoundGenerationConfig {
    *  Generated events carry the same `config_id`; never rely on array position. */
   config_id?: string;
   duration: number;
-  guidance_scale?: number; // Optional: not used in SED workflow
+  /** Classifier-free guidance. TangoFlux/AudioLDM2: 0-10; Stable Audio 3: 0-1 (default 0.9). */
+  guidance_scale?: number;
   /** ElevenLabs `prompt_influence` (0–1). Ignored by TangoFlux (uses guidance_scale). */
   prompt_influence?: number;
   /** ElevenLabs seamless looping. Defaults to true at generation time for background beds. */

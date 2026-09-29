@@ -6,7 +6,10 @@ import { notifyError, pauseStore, commitStore, useSoundFxStore } from '@/store';
 import {
   STABLE_AUDIO_MODES,
   STABLE_AUDIO_DEFAULT_STEPS,
-  STABLE_AUDIO_DEFAULT_CFG_SCALE,
+  STABLE_AUDIO_DEFAULT_GUIDANCE,
+  STABLE_AUDIO_GUIDANCE_MIN,
+  STABLE_AUDIO_GUIDANCE_MAX,
+  STABLE_AUDIO_GUIDANCE_STEP,
   STABLE_AUDIO_DEFAULT_STRENGTH,
   STABLE_AUDIO_EXTEND_DEFAULT_SECONDS,
   STABLE_AUDIO_EXTEND_MAX_SECONDS,
@@ -175,13 +178,13 @@ export function StableAudioEditor({ soundId, instanceId, mode, params, onLive, o
           />
           <FxParamSlider
             label="Guidance"
-            value={params.cfgScale}
-            min={0}
-            max={10}
-            step={0.5}
-            defaultValue={STABLE_AUDIO_DEFAULT_CFG_SCALE}
-            onLive={(v) => set({ cfgScale: v }, false)}
-            onCommit={(v) => set({ cfgScale: v }, true)}
+            value={params.guidance}
+            min={STABLE_AUDIO_GUIDANCE_MIN}
+            max={STABLE_AUDIO_GUIDANCE_MAX}
+            step={STABLE_AUDIO_GUIDANCE_STEP}
+            defaultValue={STABLE_AUDIO_DEFAULT_GUIDANCE}
+            onLive={(v) => set({ guidance: v }, false)}
+            onCommit={(v) => set({ guidance: v }, true)}
           />
           <div className="card-field--row">
             <label className="text-[10px] text-secondary-hover">Seed</label>

@@ -815,6 +815,38 @@ export const apiService = {
     }
   },
 
+  // FX post-processing (noise reduction / trim silence) — DSP only, no calibration.
+  // Used by the FX panel's server-rendered post-effect stages.
+  async postProcessAudio(
+    audioBlob: Blob,
+    options: { noiseReduction?: boolean; reduction?: number; trimSilence?: boolean } = {}
+  ): Promise<{ url: string }> {
+    try {
+      const formData = new FormData();
+      formData.append('audio', audioBlob, 'audio.wav');
+      formData.append('apply_noise_reduction', (options.noiseReduction ?? false).toString());
+      if (options.reduction !== undefined) {
+        formData.append('noise_reduction_strength', options.reduction.toString());
+      }
+      formData.append('trim_silence', (options.trimSilence ?? false).toString());
+
+      const response = await fetchWithErrorHandling(
+        `${API_BASE_URL}/api/audio/post-process`,
+        { method: 'POST', body: formData },
+        'Audio post-processing'
+      );
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ detail: 'Post-processing failed' }));
+        throw new Error(err.detail || 'Post-processing failed');
+      }
+
+      return await response.json();
+    } catch (error) {
+      handleApiError(error, 'Audio post-processing');
+    }
+  },
+
   // Stable Audio 3 transform (FX restyle / inpaint / extend) — queued GPU job.
   async stableAudioTransform(
     audioBlob: Blob,

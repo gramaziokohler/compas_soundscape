@@ -13,7 +13,7 @@
 import { STABLE_AUDIO_MODES } from '@/utils/constants';
 import { apiService } from '@/services/api';
 import { audioBufferToWavBlob24 } from '@/lib/audio/utils/wav-encode';
-import { isStableAudioInstance, type FxChain, type FxInstance, type FxRegion, type StableAudioModeName, type StableAudioParams } from './fx-types';
+import { FX_TYPE_LABELS, isServerRenderedInstance, isStableAudioInstance, type FxChain, type FxInstance, type FxRegion, type StableAudioModeName, type StableAudioParams } from './fx-types';
 
 const POLL_INTERVAL_MS = 1500;
 const POLL_MAX_MS = 15 * 60 * 1000;
@@ -44,7 +44,7 @@ export function stableAudioSignature(
     negativePrompt: params.negativePrompt,
     strength: params.strength,
     steps: params.steps,
-    cfgScale: params.cfgScale,
+    cfgScale: params.guidance,
     seed: params.seed,
     regions: params.regions,
     duration: params.duration,
@@ -111,7 +111,7 @@ export async function generateStableAudio({
     negativePrompt: params.negativePrompt,
     strength: params.strength,
     steps: params.steps,
-    cfgScale: params.cfgScale,
+    cfgScale: params.guidance,
     seed: params.seed,
     duration,
     regions: regionsSec,
@@ -143,12 +143,13 @@ export async function generateStableAudio({
 }
 
 /**
- * Render a chain that may contain Stable Audio stages to a WAV blob.
+ * Render a chain that may contain server-rendered stages (Stable Audio and the
+ * backend post-effects) to a WAV blob.
  *
- * Instances are processed in order: local effects accumulate until a Stable
- * Audio stage is hit (then the accumulated buffer is bounced), the stage's
- * `renderedUrl` is decoded and becomes the new source, and so on. Crop regions
- * + output gain are applied last across the whole result.
+ * Instances are processed in order: local effects accumulate until a
+ * server-rendered stage is hit (then the accumulated buffer is bounced), the
+ * stage's `renderedUrl` is decoded and becomes the new source, and so on. Crop
+ * regions + output gain are applied last across the whole result.
  */
 export async function renderFxChainToWav(
   buffer: AudioBuffer,
@@ -166,12 +167,12 @@ export async function renderFxChainToWav(
   };
 
   for (const inst of chain.instances) {
-    if (isStableAudioInstance(inst)) {
+    if (isServerRenderedInstance(inst)) {
       await flush();
       if (!inst.enabled) continue;
       const url = inst.params.renderedUrl;
-      if (!url) throw new Error('Generate the Stable Audio stage before saving');
-      current = await decodeUrl(url, 'stable-audio');
+      if (!url) throw new Error(`Process the "${FX_TYPE_LABELS[inst.type]}" stage before saving`);
+      current = await decodeUrl(url, 'server-fx');
     } else {
       pending.push(inst);
     }
@@ -187,6 +188,12 @@ export async function renderFxChainToWav(
   return audioBufferToWavBlob24(current);
 }
 
+/** True when the chain contains any server-rendered stage. */
+export function chainHasServerStage(chain: FxChain): boolean {
+  return chain.instances.some((i) => isServerRenderedInstance(i));
+}
+
+/** @deprecated Use {@link chainHasServerStage}; kept for Stable Audio callers. */
 export function chainHasStableAudio(chain: FxChain): boolean {
   return chain.instances.some((i) => isStableAudioInstance(i));
 }

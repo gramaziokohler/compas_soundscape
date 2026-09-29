@@ -6,7 +6,7 @@ import { useSpeckleTree, getRootNodesForModel, getGeometryLeafIdsFromNode, getEx
 import { useSpeckleFiltering } from '@/hooks/useSpeckleFiltering';
 import { useSpeckleInteractions } from '@/hooks/useSpeckleInteractions';
 import { useObjectSelectionPhase } from '@/hooks/useObjectSelectionPhase';
-import { useSpeckleStore, useAcousticLayerStore, useUIStore, useAcousticMaterialStore } from '@/store';
+import { useSpeckleStore, useAcousticLayerStore, useUIStore, useAcousticMaterialStore, restoreAcousticSelectionSnapshot, discardAcousticSelectionSnapshot } from '@/store';
 import { setSelectionPreviewIds } from '@/store/speckleStore';
 import type { VirtualTreeItem as TreeItem } from '@/hooks/useSpeckleTree';
 import { getMaterialColorByAbsorption } from '@/utils/utils';
@@ -620,6 +620,21 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
     clearSelection();
   }, [clearSelection]);
 
+  // Cancel the selection phase: discard the in-progress draft and restore the
+  // region that was assigned before the re-assign started. If there was no
+  // previous region, the selection is simply aborted (left empty).
+  const handleCancelReassign = useCallback(() => {
+    draftLeafIdsRef.current = new Set();
+    lastDraftSyncRef.current = JSON.stringify([]);
+    setDraftVersion((v) => v + 1);
+    setSelectionPreviewIds(null);
+    useSpeckleStore.getState().clearViewerSelection();
+    clearSelection();
+    restoreAcousticSelectionSnapshot();
+    useUIStore.getState().setAcousticLayerSelectionMode(false);
+    useSpeckleStore.getState().applyVisibility();
+  }, [clearSelection]);
+
   const handleConfirmSelection = useCallback(() => {
     const draft = draftLeafIdsRef.current;
     if (draft.size === 0) return;
@@ -663,6 +678,7 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
     useSpeckleStore.getState().applyVisibility();
     useSpeckleStore.getState().clearViewerSelection();
     useUIStore.getState().setAcousticLayerSelectionMode(false);
+    discardAcousticSelectionSnapshot();
     draftLeafIdsRef.current = new Set();
     setDraftVersion((v) => v + 1);
     clearSelection();
@@ -823,6 +839,15 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
                 <br />
                 {selectedFaceCount.toLocaleString()} / {totalFaceCount.toLocaleString()} faces
               </span>
+              <button
+                type="button"
+                className="px-2 py-0.5 rounded border transition-colors"
+                style={{ borderColor: 'var(--color-border-strong)', color: 'var(--foreground)' }}
+                onClick={handleCancelReassign}
+                title="Restore the previously assigned layer, or abort if none was assigned"
+              >
+                Cancel
+              </button>
               <button
                 type="button"
                 disabled={selectedCount === 0}

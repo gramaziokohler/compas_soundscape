@@ -27,7 +27,9 @@ import torch
 from config.constants import (
     STABLE_AUDIO_MODEL_NAME,
     STABLE_AUDIO_DEFAULT_STEPS,
-    STABLE_AUDIO_DEFAULT_CFG_SCALE,
+    STABLE_AUDIO_DEFAULT_GUIDANCE,
+    STABLE_AUDIO_GUIDANCE_MIN,
+    STABLE_AUDIO_GUIDANCE_MAX,
     STABLE_AUDIO_DEFAULT_INIT_NOISE_LEVEL,
     STABLE_AUDIO_DEFAULT_DURATION_PADDING_S,
     STABLE_AUDIO_MODE_RESTYLE,
@@ -139,7 +141,7 @@ class StableAudioService:
         negative_prompt: str | None = None,
         duration: float = 8.0,
         steps: int = STABLE_AUDIO_DEFAULT_STEPS,
-        cfg_scale: float = STABLE_AUDIO_DEFAULT_CFG_SCALE,
+        cfg_scale: float = STABLE_AUDIO_DEFAULT_GUIDANCE,
         seed: int = -1,
         dbfs: float = DEFAULT_DBFS,
         init_audio_path: str | None = None,
@@ -170,6 +172,9 @@ class StableAudioService:
         # TangoFlux/AudioLDM2 concept, so Stable Audio 3 deliberately ignores it.
         if negative_prompt:
             print("[sa3] ignoring negative prompt (destabilizes the distilled small-sfx model)")
+
+        # Guidance (model CFG scale) is constrained to [0, 1].
+        cfg_scale = max(STABLE_AUDIO_GUIDANCE_MIN, min(float(cfg_scale), STABLE_AUDIO_GUIDANCE_MAX))
 
         kwargs: dict = dict(
             prompt=prompt,
