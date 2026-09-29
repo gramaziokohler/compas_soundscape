@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { ChevronDown, ChevronRight, Pencil, RefreshCw } from 'lucide-react';
 import type { CardBaseConfig, CardType } from '@/types/card';
 import type { PyroomAcousticsSimulationConfig, ChorasSimulationConfig } from '@/types/acoustics';
 import type {
@@ -51,12 +51,105 @@ interface SettingsSummaryProps {
   rows: SettingsRow[];
   /** Whether the section starts expanded. */
   defaultExpanded?: boolean;
+  /**
+   * When provided and the rows include a `Prompt`, that row gains a pen icon
+   * that reveals an inline editor plus a regenerate button. Submitting calls
+   * `onRegenerate(newPrompt)` — the owning card regenerates the active variant
+   * in place (same variant id / DAW / entity links).
+   */
+  promptAction?: {
+    onRegenerate: (newPrompt: string) => void;
+    isRegenerating?: boolean;
+  };
+}
+
+/** Editable Prompt row — pen toggles an inline textarea + regenerate button. */
+function PromptRow({
+  label,
+  value,
+  onRegenerate,
+  isRegenerating,
+}: {
+  label: string;
+  value: string;
+  onRegenerate: (newPrompt: string) => void;
+  isRegenerating?: boolean;
+}) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+
+  // Keep the draft in sync with the active variant while not editing.
+  useEffect(() => {
+    if (!isEditing) setDraft(value);
+  }, [value, isEditing]);
+
+  const submit = () => {
+    const trimmed = draft.trim();
+    if (!trimmed) return;
+    onRegenerate(trimmed);
+    setIsEditing(false);
+  };
+
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="shrink-0" style={{ color: 'var(--color-on-blue-muted)' }}>{label}</span>
+        <span className="flex items-center gap-1 justify-end min-w-0 max-w-[70%]">
+          {!isEditing && (
+            <span className="text-right break-words" style={{ color: 'var(--color-on-blue)' }}>
+              {value}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => setIsEditing((v) => !v)}
+            title={isEditing ? 'Cancel editing' : 'Edit prompt'}
+            aria-label={isEditing ? 'Cancel editing prompt' : 'Edit prompt'}
+            className="on-blue-btn flex-shrink-0 flex h-5 w-5 items-center justify-center rounded transition-colors"
+          >
+            <Pencil size={11} />
+          </button>
+        </span>
+      </div>
+      {isEditing && (
+        <div className="flex items-end gap-1.5">
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
+                submit();
+              }
+            }}
+            rows={2}
+            autoFocus
+            placeholder="Prompt…"
+            className="flex-1 min-w-0 rounded-lg border border-on-blue-faint bg-blue-chip-bg p-2 text-xxs text-on-blue outline-none focus:border-on-blue"
+          />
+          <button
+            type="button"
+            onClick={submit}
+            disabled={isRegenerating || !draft.trim()}
+            title="Regenerate this variant with the edited prompt"
+            aria-label="Regenerate this variant"
+            className={`on-blue-btn flex-shrink-0 flex h-7 w-7 items-center justify-center rounded transition-colors ${
+              isRegenerating || !draft.trim() ? 'opacity-50 cursor-not-allowed' : ''
+            }`}
+          >
+            <RefreshCw size={13} className={isRegenerating ? 'animate-spin' : ''} />
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function SettingsSummary({
   title = 'Settings',
   rows,
   defaultExpanded = false,
+  promptAction,
 }: SettingsSummaryProps) {
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(() => new Set());
@@ -87,6 +180,17 @@ export function SettingsSummary({
       {isExpanded && (
         <div className="card-collapse-body card-stack--tight text-xxs">
           {rows.map((row) => {
+            if (row.label === 'Prompt' && promptAction) {
+              return (
+                <PromptRow
+                  key={row.label}
+                  label={row.label}
+                  value={row.value}
+                  onRegenerate={promptAction.onRegenerate}
+                  isRegenerating={promptAction.isRegenerating}
+                />
+              );
+            }
             const isRowExpanded = expandedRows.has(row.label);
             const truncateAt = row.truncateAt ?? 48;
             const isLong = row.value.length > truncateAt;

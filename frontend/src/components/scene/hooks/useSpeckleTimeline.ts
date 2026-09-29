@@ -298,6 +298,7 @@ export function useSpeckleTimeline({
         soundLoopable,
         iterationLinks,
         simulationName: activeSimulation?.display_name ?? null,
+        variantEvents: soundscapeData ?? [],
       };
 
       await exportSoundscapeToWav(timelineSounds, timelineDurationMs, config);

@@ -27,6 +27,7 @@ import { useAnalysisStore, analysisPartialize, applyRecoveredLlmResult, resumeLl
 import { useSEDStore, sedPartialize } from './sedStore';
 import { useModalImpactStore, modalImpactPartialize } from './modalImpactStore';
 import { useAreaDrawingStore, areaDrawingPartialize } from './areaDrawingStore';
+import { useSoundFxStore, soundFxPartialize } from './soundFxStore';
 import { registerTemporalStore } from './undoRedoRegistry';
 
 // ── Register all temporal stores ─────────────────────────────────────────────
@@ -99,6 +100,11 @@ registerTemporalStore(
   'gridListeners',
   useGridListenersStore.temporal,
   () => gridListenersPartialize(useGridListenersStore.getState()),
+);
+registerTemporalStore(
+  'soundFx',
+  useSoundFxStore.temporal,
+  () => soundFxPartialize(useSoundFxStore.getState()),
 );
 
 // ── Re-exports ────────────────────────────────────────────────────────────────
@@ -196,6 +202,9 @@ export type { AnalysisPreviewStoreState, AnalysisPreviewPoint } from './analysis
 
 export { useModalImpactStore };
 export type { ModalImpactStoreState } from './modalImpactStore';
+
+export { useSoundFxStore };
+export type { SoundFxStoreState } from './soundFxStore';
 
 export { useWorkspaceStore } from './workspaceStore';
 

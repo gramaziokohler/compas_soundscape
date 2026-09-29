@@ -31,6 +31,7 @@ from config.constants import (
     REDIS_URL,
     JOB_TYPE_QUEUE,
     JOB_TYPE_SOUND,
+    GPU_LIKE_JOB_TYPES,
     JOB_STATUS_QUEUED,
     JOB_STATUS_RUNNING,
     JOB_STATUS_COMPLETED,
@@ -118,7 +119,7 @@ class AsyncJobStore:
         if queue_key is None:
             raise ValueError(f"Job type {job_type!r} has no queue — use enqueue_io() instead")
 
-        if job_type == JOB_TYPE_SOUND and session_id:
+        if job_type in GPU_LIKE_JOB_TYPES and session_id:
             pending_count = await self.redis.scard(pending_gpu_key(session_id))
             if pending_count >= GPU_QUEUE_PER_SESSION_MAX:
                 raise GpuQueueFullError(
@@ -148,7 +149,7 @@ class AsyncJobStore:
         pipe = self.redis.pipeline()
         pipe.hset(job_key(job_id), mapping=mapping)
         pipe.rpush(queue_key, job_id)
-        if job_type == JOB_TYPE_SOUND and session_id:
+        if job_type in GPU_LIKE_JOB_TYPES and session_id:
             pipe.sadd(pending_gpu_key(session_id), job_id)
         await pipe.execute()
         return job_id
@@ -207,7 +208,7 @@ class AsyncJobStore:
                 pipe.lrem(queue_key, 1, job_id)
             pipe.hset(key, mapping={"status": JOB_STATUS_CANCELLED, "status_text": "Cancelled"})
             pipe.expire(key, JOB_RESULT_TTL_S)
-            if job_type == JOB_TYPE_SOUND and session_id:
+            if job_type in GPU_LIKE_JOB_TYPES and session_id:
                 pipe.srem(pending_gpu_key(session_id), job_id)
             await pipe.execute()
             return True
@@ -221,7 +222,12 @@ class AsyncJobStore:
 
     async def pool_depths(self) -> dict:
         depths = {}
-        for role, queue_key in {"gpu": "queue:gpu", "cpu": "queue:cpu", "choras": "queue:choras"}.items():
+        for role, queue_key in {
+            "gpu": "queue:gpu",
+            "sa3": "queue:sa3",
+            "cpu": "queue:cpu",
+            "choras": "queue:choras",
+        }.items():
             depths[role] = await self.redis.llen(queue_key)
         return depths
 
@@ -305,7 +311,7 @@ class AsyncJobStore:
                     "error": "Worker heartbeat timed out after max attempts",
                 })
                 pipe.expire(key, JOB_RESULT_TTL_S)
-                if job_type == JOB_TYPE_SOUND and session_id:
+                if job_type in GPU_LIKE_JOB_TYPES and session_id:
                     pipe.srem(pending_gpu_key(session_id), job_id)
                 await pipe.execute()
             acted += 1
@@ -483,7 +489,7 @@ class WorkerJobStore:
             "result": json.dumps(result),
         })
         pipe.expire(key, JOB_RESULT_TTL_S)
-        if job_type == JOB_TYPE_SOUND and session_id:
+        if job_type in GPU_LIKE_JOB_TYPES and session_id:
             pipe.srem(pending_gpu_key(session_id), job_id)
         pipe.execute()
 
@@ -500,7 +506,7 @@ class WorkerJobStore:
             "error": err,
         })
         pipe.expire(key, JOB_RESULT_TTL_S)
-        if job_type == JOB_TYPE_SOUND and session_id:
+        if job_type in GPU_LIKE_JOB_TYPES and session_id:
             pipe.srem(pending_gpu_key(session_id), job_id)
         pipe.execute()
 
@@ -514,7 +520,7 @@ class WorkerJobStore:
         pipe = self.redis.pipeline()
         pipe.hset(key, mapping={"status": JOB_STATUS_CANCELLED, "status_text": "Cancelled"})
         pipe.expire(key, JOB_RESULT_TTL_S)
-        if job_type == JOB_TYPE_SOUND and session_id:
+        if job_type in GPU_LIKE_JOB_TYPES and session_id:
             pipe.srem(pending_gpu_key(session_id), job_id)
         pipe.execute()
 

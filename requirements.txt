@@ -43,6 +43,10 @@ diffusers==0.30.0
 safetensors==0.4.4
 transformers==4.44.2
 huggingface-hub==0.24.6
+# peft is a transitive diffusers optional dep. Newer peft (>=0.15) imports
+# LocalEntryNotFoundError from huggingface_hub.errors, which 0.24.6 lacks, and
+# breaks `from diffusers import AutoencoderOobleck` (TangoFlux). Pin the era match.
+peft==0.12.0
 soundfile==0.13.1
 librosa==0.11.0
 noisereduce==3.0.3

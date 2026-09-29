@@ -3,6 +3,11 @@
   "instructions": [
     ".cursor/rules/*.mdc"
   ],
+  "skills": {
+    "paths": [
+      "backend/.agents/skills"
+    ]
+  },
   "mcp": {
     "chrome-devtools": {
       "type": "local",

@@ -6,6 +6,7 @@ import { SpeckleScene } from "@/components/scene/SpeckleScene";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { RightSidebar } from "@/components/layout/RightSidebar";
 import { AdvancedSettingsPanel } from "@/components/scene/AdvancedSettingsPanel";
+import { SoundEditorWindow } from "@/components/audio/fx/SoundEditorWindow";
 import { ErrorToast } from "@/components/ui/ErrorToast";
 import { useApiErrorHandler } from "@/hooks/useApiErrorHandler";
 import { useObjectSelectionPhase } from "@/hooks/useObjectSelectionPhase";
@@ -63,6 +64,7 @@ import { PrivacyNotice } from "@/components/layout/PrivacyNotice";
 import { ImportSandboxModal } from "@/components/scene/ImportSandboxModal";
 import { NewModelVersionModal } from "@/components/scene/NewModelVersionModal";
 import { HomeProjectModal } from "@/components/scene/HomeProjectModal";
+import { WorkspaceJoinDialog } from "@/components/ui/WorkspaceJoinDialog";
 
 /**
  * Build a map from applicationId (Rhino GUID) → current Speckle tree ID.
@@ -420,6 +422,15 @@ function HomeContent() {
       return;
     }
 
+    // An invite token with a model means the invite flow owns navigation: it
+    // joins the workspace, then reloads to this model. Don't pre-load here —
+    // it would race the join and may show a spurious "requires invite".
+    if (params.get('invite')) {
+      bootstrappedRef.current = true;
+      setIsBootstrappingModel(true);
+      return;
+    }
+
     const gsd = useUIStore.getState().globalSpeckleData;
     if (gsd !== null) return; // model already loaded via normal flow
     bootstrappedRef.current = true;
@@ -431,8 +442,16 @@ function HomeContent() {
     // Clean slate — never inherit a previous model's configs/events into this one.
     resetDomainForFreshModel();
 
-    console.log('[page:bootstrap] Loading soundscape for model_id from URL:', urlModelId);
-    apiService.loadSoundscapeFromSpeckle(urlModelId, useWorkspaceStore.getState().workspace?.id).then(loadResponse => {
+    void (async () => {
+      // Resolve the active workspace first so the model loads under the
+      // workspace the user is currently in (matters when the same model is
+      // saved in several workspaces — see the workspace switcher / invite flow).
+      if (!useWorkspaceStore.getState().workspace) {
+        await useWorkspaceStore.getState().init();
+      }
+      const activeWorkspaceId = useWorkspaceStore.getState().workspace?.id ?? null;
+      console.log('[page:bootstrap] Loading soundscape for model_id from URL:', urlModelId);
+      await apiService.loadSoundscapeFromSpeckle(urlModelId, activeWorkspaceId).then(loadResponse => {
       if (loadResponse.requires_invite) {
         notifyError(
           'This project belongs to a private workspace. Ask a member for an invite link to collaborate.',
@@ -506,6 +525,7 @@ function HomeContent() {
       console.error('[page:bootstrap] Failed to load soundscape:', err);
       setIsBootstrappingModel(false);
     });
+    })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -581,29 +601,69 @@ function HomeContent() {
   }, []);
 
   // Workspace/collaboration state (shared sessions): load the active workspace
-  // and start the presence heartbeat.
+  // and start the presence heartbeat. Skipped when an invite token is present —
+  // the invite effect below owns init so the join result is not overwritten.
   useEffect(() => {
+    if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("invite")) {
+      return;
+    }
     void useWorkspaceStore.getState().init();
   }, []);
 
-  // Accept an invite link (?invite=<token>): join the shared workspace, then
-  // strip the token from the URL so it is not bookmarked/reshared accidentally.
+  // Accept an invite link (?invite=<token>&model_id=<id>): join the shared
+  // workspace, then open the model the invite was scoped to. If the recipient
+  // already has their own saved soundscape for that model, ask which version to
+  // open (they can switch later in Advanced settings → Workspaces). The token is
+  // stripped from the URL so it is not bookmarked/reshared accidentally.
+  const [workspaceJoinChoice, setWorkspaceJoinChoice] = useState<{
+    modelId: string;
+    ownWorkspaceId: string | null;
+    sharedName: string;
+  } | null>(null);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
     const token = params.get("invite");
     if (!token) return;
+    const stripInvite = () => {
+      params.delete("invite");
+      const qs = params.toString();
+      window.history.replaceState({}, "", `${window.location.pathname}${qs ? `?${qs}` : ""}`);
+    };
     void (async () => {
       try {
         await useWorkspaceStore.getState().init();
+        await useWorkspaceStore.getState().loadWorkspaces();
+        const wsState = useWorkspaceStore.getState();
+        // "My version" always means the user's personal (owned) workspace.
+        const ownWorkspaceId =
+          wsState.workspaces.find((w) => w.role === "owner")?.id ??
+          wsState.workspace?.id ??
+          null;
+        const modelId = params.get("model_id");
+        // Does the recipient already have their own soundscape for this model?
+        let hasOwn = false;
+        if (modelId && ownWorkspaceId) {
+          const probe = await apiService.soundscapeExists(modelId, ownWorkspaceId);
+          hasOwn = probe.found;
+        }
         await useWorkspaceStore.getState().join(token);
+        const sharedName = useWorkspaceStore.getState().workspace?.name ?? "the shared workspace";
+        // Keep model_id so the model can be opened under the joined workspace.
+        stripInvite();
+
+        if (modelId && hasOwn) {
+          setWorkspaceJoinChoice({ modelId, ownWorkspaceId, sharedName });
+          return;
+        }
         notifyError("Joined the shared workspace.", "info");
+        if (modelId) {
+          window.location.replace(`${window.location.pathname}?model_id=${encodeURIComponent(modelId)}`);
+        }
       } catch (err) {
         notifyError(err instanceof Error ? err.message : "Failed to join workspace", "warning");
-      } finally {
-        params.delete("invite");
-        const qs = params.toString();
-        window.history.replaceState({}, "", `${window.location.pathname}${qs ? `?${qs}` : ""}`);
+        stripInvite();
       }
     })();
   }, []);
@@ -3738,6 +3798,28 @@ function HomeContent() {
         onKeepCurrent={modelVersion.dismiss}
       />
 
+      {/* Joined a model invite while already having a saved soundscape for it */}
+      <WorkspaceJoinDialog
+        open={workspaceJoinChoice !== null}
+        workspaceName={workspaceJoinChoice?.sharedName}
+        modelName={
+          globalSpeckleData?.display_name ||
+          workspaceJoinChoice?.modelId
+        }
+        onOpenShared={() => {
+          // Session is already bound to the shared workspace after join.
+          window.location.reload();
+        }}
+        onOpenMine={() => {
+          const own = workspaceJoinChoice?.ownWorkspaceId;
+          if (own) {
+            void useWorkspaceStore.getState().switchTo(own);
+          } else {
+            window.location.reload();
+          }
+        }}
+      />
+
       {/* Main 3D Scene - Fixed at screen center, full size, lowest z-index */}
       <main className="absolute inset-0">
         {/* Viewer Toggle Button - Top Left */}
@@ -4001,6 +4083,8 @@ function HomeContent() {
         onListenerOrientationChange={setListenerOrientation}
         onDeleteHistory={handleDeleteHistory}
       />
+
+      <SoundEditorWindow />
 
       {/* Right Sidebar - Acoustics + Listeners */}
       <RightSidebar

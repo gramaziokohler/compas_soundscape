@@ -90,34 +90,34 @@ export const CARD_TYPE_LABELS: Record<CardType, string> = {
  */
 export const CARD_TYPE_DESCRIPTIONS: Record<CardType, string> = {
   'audio':
-    "Captures the acoustic character of the space via AI audio analysis. Can extract audio features/spectrograms and send them to the Sounds step ('Extract & go to Sounds').",
+    "Sound events detection in a sound recording using an SED model trained over 400 classes. Can extract audio samples and send them to the Sounds section.",
   'text':
-    'Free-text card. Describe the intended soundscape and the LLM converts it into sound-generation prompts. Optionally use the parent 3D model analysis as context to link prompts to objects, and draw an area to place sounds.',
+    'Describe the intended soundscape and the LLM converts it into sound-generation prompts. Optionally draw an area to place sounds inside.',
   'text-to-audio':
-    'Generate an original clip from a text prompt with AI (TangoFlux / AudioLDM2). Tune duration, guidance scale, denoising and inference steps; each run can produce multiple seed variants (A/B/C).',
+    'Generate an original clip from a text prompt with a latent diffusion model (LDM). Duration: length of the generated clip (seconds), Guidance scale: how much should the result follow your prompt (1 to 10), inference steps: the more the better quality is the sound; Variants: Different seed generation of the same prompt.',
   'text-to-speech':
-    'Convert typed text into spoken audio via a TTS model. Each line becomes a speech segment managed by the variants bar.',
+    'Convert typed text into spoken audio via a TTS model. Each line becomes a speech segment managed by the variants bar. Choose the spoken language in Advanced settings.',
   'upload':
-    'Use a local WAV/AIFF file as the source. Supports automatic segment extraction so one file can yield multiple clips.',
+    'Import a .wav, .mp3 audio file. The first',
   'library':
     'Search the Freesound / BBC Sound Effects API and use a pre-recorded clip as the source.',
   'catalog':
-    'Pick from a curated built-in catalog of sounds — no network or LLM required; fast placeholder sources.',
-  'sample-audio': 'Use a short bundled sample clip as the source.',
+    'Pick from a curated built-in catalog of sounds — no network or LLM required.',
+  'sample-audio': 'A dry-recorded sound sample.',
   'resonance':
     'Resonance Audio synthetic room: parametric shoebox with early reflections + late reverb rendered by the Web Audio engine. No external solver; instant real-time 6DOF auralization.',
   'choras':
-    'Choras wave-based solver (Diffusion Equation / Discontinuous Galerkin) on a gmsh-meshed room. Full impulse responses, highest fidelity, slowest.',
+    'Wave-based solver (Diffusion Equation / Discontinuous Galerkin) on a gmsh-meshed room. Full impulse responses, highest fidelity, slowest.',
   'pyroomacoustics':
-    'ISM + ray tracing on the Speckle mesh. Computes RT60 / EDT / C80 and per-source-per-receiver IR WAVs (mono or FOA B-format).',
+    'ISM + ray tracing on mesh faces. Multi-band absorption coefficients, single scattering coefficient per face. Computes RT60 / EDT / C80 and per-source-per-receiver IR WAVs (mono or FOA B-format).',
   'import-irs':
     'Upload pre-recorded impulse-response WAVs (mono/stereo/FOA/SOA/TOA) and use them directly for spatial convolution — no simulation needed.',
   'listener':
     'Add a single listener (receiver) at a point in the scene; the audio pipeline renders the soundscape binaurally from that position.',
   'grid-listener':
-    'Place a grid of listeners over an area to evaluate the soundscape at multiple positions at once (e.g. across a room).',
+    'Place a grid of listeners over an area to evaluate the acoustics at multiple positions at once.',
   'model-analysis':
-    "Runs LLM analysis on the loaded Speckle model to describe the space's geometry, materials and acoustics — the basis of the Context step.",
+    "Runs LLM segmentation on the loaded 3D model to describe the space's geometry, typology and materials. Add an optional screenshot if you want to focus on a specific part.",
   'scenario':
     'Generate scenario-based sound prompts from a description of how the space will be used (LLM-driven pipeline).',
   'freeform':
@@ -340,6 +340,16 @@ export interface CardProps<TConfig extends CardBaseConfig = CardBaseConfig, TRes
   showVariantsPreGen?: boolean;
   /** Show the variants bar when the card is in post-generation state (hasResult). */
   showVariantsPostGen?: boolean;
+
+  /**
+   * When provided, the settings summary's `Prompt` row becomes editable: a pen
+   * icon reveals an inline editor with a regenerate button that swaps the
+   * active variant's audio in place (same sound id / DAW / entity links).
+   */
+  promptAction?: {
+    onRegenerate: (newPrompt: string) => void;
+    isRegenerating?: boolean;
+  };
 
   /**
    * Show a collapsible, read-only recap of the card's pre-generation settings

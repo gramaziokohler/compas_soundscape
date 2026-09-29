@@ -1072,6 +1072,31 @@ canvas {
 .card-generated .toggle-switch.checked::after {
   background: var(--color-primary);
 }
+/* FX chip sits on the solid-blue generated card where the default primary
+ * variant text (#002aff) is unreadable — keep it on-blue. Hover lightens the
+ * recessed chip; enabled flips it to a solid white fill (white works on the
+ * blue card in both light and dark mode). */
+.card-generated .fx-badge {
+  background: var(--color-blue-chip-bg);
+  border-color: var(--color-on-blue-faint);
+  color: var(--color-on-blue-muted);
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.card-generated .fx-badge:hover {
+  background: color-mix(in srgb, var(--color-on-blue) 20%, transparent);
+  border-color: var(--color-on-blue);
+  color: var(--color-on-blue);
+}
+.card-generated .fx-badge--enabled {
+  background: var(--color-on-blue);
+  border-color: var(--color-on-blue);
+  color: var(--color-primary);
+}
+.card-generated .fx-badge--enabled:hover {
+  background: color-mix(in srgb, var(--color-primary) 14%, var(--color-on-blue));
+  border-color: var(--color-on-blue);
+  color: var(--color-primary);
+}
 .card-generated .gen-status {
   color: var(--color-on-blue-muted);
 }

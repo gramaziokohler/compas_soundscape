@@ -24,6 +24,9 @@ import {
 } from '@/utils/constants';
 import { applyColorTheme, type ColorThemePreference } from '@/utils/color-theme';
 
+/** Settings the Advanced Settings panel can be opened directly on. */
+export type AdvancedSettingsFocusTarget = 'tts-language' | 'text-to-audio';
+
 export interface UIStoreState {
   // ── Load tab ──────────────────────────────────────────────────────────────
   activeLoadTab: LoadTab;
@@ -126,6 +129,10 @@ export interface UIStoreState {
   // ── Panel toggles ──────────────────────────────────────────────────────────
   showAdvancedSettings: boolean;
   setShowAdvancedSettings: (v: boolean) => void;
+  /** Transient request to open the settings panel focused on a specific setting.
+   *  `seq` bumps on every call so a repeated click re-triggers. Not persisted. */
+  advancedSettingsFocus: { target: AdvancedSettingsFocusTarget; seq: number } | null;
+  openAdvancedSettingsAt: (target: AdvancedSettingsFocusTarget) => void;
 
   // ── Timeline disabled flag (user closed the DAW panel) ─────────────────────
   isTimelineDisabled: boolean;
@@ -153,6 +160,9 @@ export interface UIStoreState {
   /** Index of the currently expanded sound card (set by SoundGenerationSection). */
   expandedSoundCardIndex: number | null;
   setExpandedSoundCardIndex: (index: number | null) => void;
+  /** Sound id currently open in the Foley FX editor. Not persisted (model-bound). */
+  soundEditorSoundId: string | null;
+  setSoundEditorSoundId: (id: string | null) => void;
   /** Incremented each time the user double-clicks a sound card to zoom to its sphere. */
   zoomToSoundCardTrigger: { index: number; version: number } | null;
   triggerZoomToSoundCard: (index: number) => void;
@@ -350,6 +360,16 @@ export const useUIStore = create<UIStoreState>()(
       // ── Panel toggles ────────────────────────────────────────────────────
       showAdvancedSettings: false,
       setShowAdvancedSettings: (v) => set({ showAdvancedSettings: v }, false, 'ui/setShowAdvancedSettings'),
+      advancedSettingsFocus: null,
+      openAdvancedSettingsAt: (target) =>
+        set(
+          (s) => ({
+            showAdvancedSettings: true,
+            advancedSettingsFocus: { target, seq: (s.advancedSettingsFocus?.seq ?? 0) + 1 },
+          }),
+          false,
+          'ui/openAdvancedSettingsAt',
+        ),
 
       isTimelineDisabled: false,
       setIsTimelineDisabled: (v) => set({ isTimelineDisabled: v }, false, 'ui/setIsTimelineDisabled'),
@@ -373,6 +393,9 @@ export const useUIStore = create<UIStoreState>()(
       expandedSoundCardIndex: null,
       setExpandedSoundCardIndex: (index) =>
         set({ expandedSoundCardIndex: index }, false, 'ui/setExpandedSoundCardIndex'),
+      soundEditorSoundId: null,
+      setSoundEditorSoundId: (id) =>
+        set({ soundEditorSoundId: id }, false, 'ui/setSoundEditorSoundId'),
       zoomToSoundCardTrigger: null,
       triggerZoomToSoundCard: (index) =>
         set(
@@ -471,9 +494,11 @@ export const useUIStore = create<UIStoreState>()(
         activeSoundParentIndex, isInSoundsStep, showBoundingBox,
         cameraPosition, cameraTarget, acousticLayerSelectionMode, soundsNavTrigger,
         leftSidebarExpandCommand, homeProject,
+        // Transient: a settings-shortcut request must not replay after a refresh.
+        advancedSettingsFocus,
         // Model-bound: a card index from a previous model must not decide which
         // scene gizmo attaches after a refresh (the sidebar re-expands card 0).
-        expandedSoundCardIndex, ...persistable } = state;
+        expandedSoundCardIndex, soundEditorSoundId, ...persistable } = state;
       return persistable;
     },
   }),

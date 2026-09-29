@@ -144,7 +144,7 @@ def _make_worker_id(role: str, explicit: str | None) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Redis job store worker process")
-    parser.add_argument("--role", required=True, choices=["gpu", "cpu", "choras"])
+    parser.add_argument("--role", required=True, choices=["gpu", "cpu", "choras", "sa3"])
     parser.add_argument("--slots", type=int, default=1)
     parser.add_argument("--worker-id", default=None)
     args = parser.parse_args()
@@ -181,6 +181,14 @@ def main() -> None:
         if args.slots != 1:
             print(f"[worker:{worker_id}] warning: GPU role runs 1 slot per process; ignoring --slots={args.slots}")
         runner = GpuRunner(job_store, state, worker_id)
+    elif args.role == "sa3":
+        # Stable Audio 3 runs in the isolated compas-sa3 env (see
+        # services/stable_audio_service.py). Launch this role with that interpreter.
+        from workers.sa3_runner import Sa3Runner
+
+        if args.slots != 1:
+            print(f"[worker:{worker_id}] warning: SA3 role runs 1 slot per process; ignoring --slots={args.slots}")
+        runner = Sa3Runner(job_store, state, worker_id)
     elif args.role == "cpu":
         from workers.cpu_runner import CpuRunner
 

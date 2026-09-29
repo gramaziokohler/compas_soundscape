@@ -4,8 +4,8 @@ import { useState } from 'react';
 import type { SoundGenerationConfig } from '@/types';
 import { RangeSlider } from '@/components/ui/RangeSlider';
 import { ToggleField } from '@/components/ui/ToggleField';
-import { ChevronDown, ChevronRight } from 'lucide-react';
-import { pauseStore, commitStore, globalUndo, globalRedo } from '@/store';
+import { ChevronDown, ChevronRight, SlidersHorizontal } from 'lucide-react';
+import { pauseStore, commitStore, globalUndo, globalRedo, useUIStore } from '@/store';
 import { useBatchedSlider } from '@/hooks/useBatchedSlider';
 import { useSoundscapeStore } from '@/store';
 import {
@@ -148,6 +148,7 @@ export function AdditionalSettings({
   onUpdateConfig,
 }: Omit<TextToAudioModeProps, 'hideSliders'>) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const openAdvancedSettingsAt = useUIStore((s) => s.openAdvancedSettingsAt);
 
   return (
     <div className="mt-0">
@@ -161,6 +162,14 @@ export function AdditionalSettings({
       {isExpanded && (
         <div className="card-collapse-body">
           <TextToAudioSliders config={config} index={index} onUpdateConfig={onUpdateConfig} />
+          <button
+            type="button"
+            onClick={() => openAdvancedSettingsAt('text-to-audio')}
+            className="flex items-center gap-1.5 w-full text-left text-xs text-secondary-hover hover:text-foreground transition-colors"
+          >
+            <SlidersHorizontal size={11} className="shrink-0" />
+            <span>Even more settings</span>
+          </button>
         </div>
       )}
     </div>

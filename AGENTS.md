@@ -26,11 +26,15 @@ redis-cli ping   # → PONG
 mamba activate compas-toy
 cd backend && uvicorn main:app --reload --log-config log_config.json
 
-# Worker processes (one terminal each; required for GPU/CPU/Choras job queues)
+# Worker processes (one terminal each; required for GPU/CPU/Choras/SA3 job queues)
 cd backend
 python -m workers.worker_main --role gpu --slots 1 --worker-id gpu-1     # ×2 for two GPU lanes
 python -m workers.worker_main --role cpu --slots 4 --worker-id cpu-1
 python -m workers.worker_main --role choras --slots 1 --worker-id choras-1
+# Stable Audio 3 (stable-audio-3-small-sfx) MUST run in the isolated compas-sa3 env
+# (torch 2.7.1 / transformers 5 for T5Gemma; incompatible with compas-toy). One-time:
+#   mamba activate compas-sa3 && pip install redis python-dotenv
+mamba activate compas-sa3 && python -m workers.worker_main --role sa3 --slots 1 --worker-id sa3-1
 
 # Frontend (from repo root), to run the app
 cd frontend && pnpm dev

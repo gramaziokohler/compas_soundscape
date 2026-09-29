@@ -207,6 +207,9 @@ export function buildSoundscapeSavePayload(
       if (event.url && !event.url.startsWith('blob:')) {
         audioUrls.push(event.url);
       }
+      if (event.fx_url && !event.fx_url.startsWith('blob:')) {
+        audioUrls.push(event.fx_url);
+      }
 
       // Merge user-adjusted volume from audioControls maps (overrides the event's own current_* field)
       const adjustedVolume = soundVolumes?.[event.id] ?? event.current_volume_dbfs;
@@ -248,6 +251,9 @@ export function buildSoundscapeSavePayload(
         category: (event as any).category || undefined,
         copy_index: (event as any).copy_index ?? undefined,
         pinned: event.pinned || undefined,
+        fx: event.fx || undefined,
+        fx_audio_filename: event.fx_url ? extractFilename(event.fx_url) : undefined,
+        fx_enabled: event.fx_enabled || undefined,
       };
     }
   );
@@ -675,6 +681,11 @@ export function restoreSoundscapeState(
     };
     (event as any).copy_index = saved.copy_index ?? undefined;
     if (saved.pinned) event.pinned = true;
+    if (saved.fx) event.fx = saved.fx;
+    if (saved.fx_enabled) event.fx_enabled = true;
+    if (saved.fx_audio_filename) {
+      event.fx_url = `${baseUrl}/${saved.fx_audio_filename}`;
+    }
 
     // Only set entity_index when it's a real number (not null/undefined)
     // so that the sphere manager's `=== undefined` check works correctly

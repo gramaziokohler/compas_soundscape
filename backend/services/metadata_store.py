@@ -104,7 +104,8 @@ CREATE TABLE IF NOT EXISTS invites (
     expires_at    TEXT,
     revoked       INTEGER NOT NULL DEFAULT 0,
     max_uses      INTEGER NOT NULL DEFAULT 0,
-    used_count    INTEGER NOT NULL DEFAULT 0
+    used_count    INTEGER NOT NULL DEFAULT 0,
+    model_id      TEXT
 );
 
 CREATE TABLE IF NOT EXISTS model_workspace (
@@ -190,6 +191,8 @@ class MetadataStore:
             conn.execute("ALTER TABLE invites ADD COLUMN max_uses INTEGER NOT NULL DEFAULT 0")
         if "used_count" not in invite_cols:
             conn.execute("ALTER TABLE invites ADD COLUMN used_count INTEGER NOT NULL DEFAULT 0")
+        if "model_id" not in invite_cols:
+            conn.execute("ALTER TABLE invites ADD COLUMN model_id TEXT")
 
     def _query(self, sql: str, params: tuple = ()) -> list[sqlite3.Row]:
         with self._lock:
@@ -281,6 +284,19 @@ class MetadataStore:
         if rows:
             return dict(rows[0])
         return self.create_workspace(user_hash, name)
+
+    def get_owned_workspace(self, user_hash: str) -> Optional[dict]:
+        """The single workspace this user owns (oldest owned), if any.
+
+        Enforces the "one user = one workspace" model: users join many
+        workspaces as members but own exactly one personal workspace.
+        """
+        rows = self._query(
+            "SELECT w.* FROM workspaces w JOIN workspace_members m ON m.workspace_id = w.id "
+            "WHERE m.user_hash = ? AND w.owner_hash = ? ORDER BY w.created_at ASC LIMIT 1",
+            (user_hash, user_hash),
+        )
+        return dict(rows[0]) if rows else None
 
     def set_sharing_mode(self, workspace_id: str, mode: str) -> None:
         if mode not in (SHARING_PRIVATE, SHARING_LINK):
@@ -535,15 +551,25 @@ class MetadataStore:
         created_by: str,
         expires_at: Optional[str] = None,
         max_uses: int = 0,
+        model_id: Optional[str] = None,
     ) -> str:
         if role not in VALID_ROLES:
             raise ValueError(f"invalid role: {role}")
         token = uuid.uuid4().hex
         self._execute(
             "INSERT INTO invites "
-            "(token_hash, workspace_id, role, created_by, created_at, expires_at, revoked, max_uses, used_count) "
-            "VALUES (?, ?, ?, ?, ?, ?, 0, ?, 0)",
-            (hash_token(token), workspace_id, role, created_by, _now(), expires_at, max(0, int(max_uses))),
+            "(token_hash, workspace_id, role, created_by, created_at, expires_at, revoked, max_uses, used_count, model_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, 0, ?, 0, ?)",
+            (
+                hash_token(token),
+                workspace_id,
+                role,
+                created_by,
+                _now(),
+                expires_at,
+                max(0, int(max_uses)),
+                model_id,
+            ),
         )
         return token
 
@@ -572,7 +598,7 @@ class MetadataStore:
         """Invite metadata for management UI. `token_hash` is exposed as `id` —
         it is a one-way hash and cannot be used to join."""
         rows = self._query(
-            "SELECT token_hash, role, created_by, created_at, expires_at, revoked, max_uses, used_count "
+            "SELECT token_hash, role, created_by, created_at, expires_at, revoked, max_uses, used_count, model_id "
             "FROM invites WHERE workspace_id = ? ORDER BY created_at DESC",
             (workspace_id,),
         )

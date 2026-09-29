@@ -25,13 +25,14 @@ import { useSoundscapeStore } from "@/store";
 import { setElevenLabsApiKey, isElevenLabsKeySet } from "@/services/elevenlabs";
 import { useServiceVersions } from "@/hooks/useServiceVersions";
 import { useAudioControlsStore } from "@/store/audioControlsStore";
-import { useUIStore } from "@/store/uiStore";
+import { useUIStore, type AdvancedSettingsFocusTarget } from "@/store/uiStore";
 import { CollaborationPanel } from "@/components/layout/CollaborationPanel";
 import { OutputDeviceSelector } from "@/components/audio/OutputDeviceSelector";
 import type { ColorThemePreference } from "@/utils/color-theme";
 import {
   UI_BORDER_RADIUS,
   AUDIO_MODEL_TANGOFLUX,
+  AUDIO_MODEL_SA3,
   AUDIO_MODEL_ELEVENLABS,
   AUDIO_MODEL_NAMES,
   AUDIO_MODEL_DESCRIPTIONS,
@@ -318,17 +319,29 @@ function TokenGroup({
 function CollapsibleGroup({
   title,
   forceExpanded = false,
+  highlight = false,
+  expandSignal = 0,
   children,
 }: {
   title: string;
   forceExpanded?: boolean;
+  highlight?: boolean;
+  /** Bumping this to a positive value opens the group (stays open after). */
+  expandSignal?: number;
   children: ReactNode;
 }) {
   const [expanded, setExpanded] = useState(false);
   const isOpen = forceExpanded || expanded;
 
+  useEffect(() => {
+    if (expandSignal > 0) setExpanded(true);
+  }, [expandSignal]);
+
   return (
-    <div className="flex flex-col gap-1">
+    <div
+      className="flex flex-col gap-1"
+      style={highlight ? { boxShadow: '0 0 0 1.5px var(--color-primary)', borderRadius: '6px' } : undefined}
+    >
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
@@ -524,6 +537,8 @@ export function AdvancedSettingsSection({
   const [deleting, setDeleting] = useState(false);
   const [soundscapeStats, setSoundscapeStats] = useState<SoundscapeStats | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
+  const [highlightTarget, setHighlightTarget] = useState<AdvancedSettingsFocusTarget | null>(null);
+  const ttsLanguageRef = useRef<HTMLInputElement>(null);
 
   const isSearchActive = searchQuery.trim().length > 0;
 
@@ -576,6 +591,24 @@ export function AdvancedSettingsSection({
   useEffect(() => {
     if (tokenSettingsTrigger > 0) setActiveSection('tokens');
   }, [tokenSettingsTrigger]);
+
+  // Shortcut requests from cards (e.g. the TTS Language row / "Even more settings").
+  const advancedSettingsFocus = useUIStore((s) => s.advancedSettingsFocus);
+  useEffect(() => {
+    if (!advancedSettingsFocus) return;
+    setSearchQuery('');
+    setActiveSection('llm');
+    setHighlightTarget(advancedSettingsFocus.target);
+    const t = setTimeout(() => setHighlightTarget(null), 2500);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [advancedSettingsFocus?.seq]);
+
+  // Move focus into the TTS Language field once its section is rendered.
+  useEffect(() => {
+    if (activeSection !== 'llm' || highlightTarget !== 'tts-language') return;
+    ttsLanguageRef.current?.focus();
+  }, [activeSection, highlightTarget]);
 
   const globalBaseDbfs = useAudioControlsStore((s) => s.globalBaseDbfs);
   const setGlobalBaseDbfs = useAudioControlsStore((s) => s.setGlobalBaseDbfs);
@@ -814,12 +847,18 @@ export function AdvancedSettingsSection({
                 <div className="flex flex-col gap-0.5">
                   <label className="text-[10px] text-secondary-hover">TTS Language</label>
                   <input
+                    ref={ttsLanguageRef}
                     type="text"
                     value={ttsLanguage}
                     onChange={(e) => setTtsLanguage(e.target.value)}
                     placeholder="e.g. English with a slightly german accent"
                     className="w-full px-2 py-1 text-xs rounded bg-secondary-lighter text-foreground border border-secondary-light focus:outline-none focus:border-primary transition-colors"
-                    style={{ borderRadius: `${UI_BORDER_RADIUS.SM}px` }}
+                    style={{
+                      borderRadius: `${UI_BORDER_RADIUS.SM}px`,
+                      ...(highlightTarget === 'tts-language'
+                        ? { boxShadow: '0 0 0 1.5px var(--color-primary)' }
+                        : {}),
+                    }}
                   />
                 </div>
               )}
@@ -837,6 +876,11 @@ export function AdvancedSettingsSection({
                         title: AUDIO_MODEL_DESCRIPTIONS[AUDIO_MODEL_TANGOFLUX],
                       },
                       {
+                        value: AUDIO_MODEL_SA3,
+                        label: AUDIO_MODEL_NAMES[AUDIO_MODEL_SA3],
+                        title: AUDIO_MODEL_DESCRIPTIONS[AUDIO_MODEL_SA3],
+                      },
+                      {
                         value: AUDIO_MODEL_ELEVENLABS,
                         label: AUDIO_MODEL_NAMES[AUDIO_MODEL_ELEVENLABS],
                         title: AUDIO_MODEL_DESCRIPTIONS[AUDIO_MODEL_ELEVENLABS],
@@ -846,7 +890,12 @@ export function AdvancedSettingsSection({
                 </div>
               )}
               {isVisible('diffusion-steps', 'negative-prompt', 'noise-reduction', 'trim-silence') && (
-                <CollapsibleGroup title="Text-to-audio settings" forceExpanded={isSearchActive}>
+                <CollapsibleGroup
+                  title="Text-to-audio settings"
+                  forceExpanded={isSearchActive || highlightTarget === 'text-to-audio'}
+                  highlight={highlightTarget === 'text-to-audio'}
+                  expandSignal={highlightTarget === 'text-to-audio' ? (advancedSettingsFocus?.seq ?? 0) : 0}
+                >
                   {audioModel !== AUDIO_MODEL_ELEVENLABS && isVisible('diffusion-steps') && (
                     <RangeSlider
                       label="Diffusion Steps"

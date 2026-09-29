@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Users, Link2, Check, Trash2, Crown, LogOut, X } from "lucide-react";
-import { useWorkspaceStore, notifyError } from "@/store";
+import { useWorkspaceStore, useUIStore, notifyError } from "@/store";
 import { apiService, type CurrentUser, type WorkspaceMember } from "@/services/api";
 import { UI_BORDER_RADIUS } from "@/utils/constants";
 import { CardSelect } from "@/components/ui/CardSelect";
@@ -23,6 +23,8 @@ export function CollaborationPanel() {
   const workspace = useWorkspaceStore((s) => s.workspace);
   const presence = useWorkspaceStore((s) => s.presence);
   const invites = useWorkspaceStore((s) => s.invites);
+  const workspaces = useWorkspaceStore((s) => s.workspaces);
+  const switchTo = useWorkspaceStore((s) => s.switchTo);
   const createInvite = useWorkspaceStore((s) => s.createInvite);
   const loadInvites = useWorkspaceStore((s) => s.loadInvites);
   const revokeInvite = useWorkspaceStore((s) => s.revokeInvite);
@@ -43,6 +45,7 @@ export function CollaborationPanel() {
   const isOwner = workspace?.role === "owner";
   const canManage = workspace?.role === "owner" || workspace?.role === "editor";
   const multi = presence > 1;
+  const currentModelId = useUIStore((s) => s.globalSpeckleData?.model_id ?? null);
 
   useEffect(() => {
     void apiService.getCurrentUser().then(setMe).catch(() => {});
@@ -119,6 +122,38 @@ export function CollaborationPanel() {
           }}
         >
           Autosave is paused while others are editing. Save manually.
+        </div>
+      )}
+
+      {/* Workspace switcher — personal workspace vs workspaces you joined.
+          Switching reloads the current model under the selected workspace, so
+          the model's own soundscape version is loaded for that workspace. */}
+      {workspaces.length > 1 && (
+        <div className="flex flex-col gap-1">
+          <span className="text-[9px] uppercase tracking-wider text-secondary-hover">Workspaces</span>
+          {workspaces.map((w) => {
+            const active = w.id === workspace.id;
+            return (
+              <button
+                key={w.id}
+                type="button"
+                disabled={busy || active}
+                onClick={() => { if (!active) void switchTo(w.id); }}
+                className="flex items-center gap-1.5 px-1.5 py-1 text-[10px] text-left rounded transition-colors disabled:cursor-default"
+                style={{
+                  background: active ? "var(--color-primary-lighter)" : "transparent",
+                  color: active ? "var(--color-blue-text)" : "var(--color-secondary-hover)",
+                  borderRadius: `${UI_BORDER_RADIUS.SM}px`,
+                }}
+              >
+                <span className="truncate flex-1 min-w-0">{w.name}</span>
+                <Badge variant={w.role === "owner" ? "primary" : "neutral"} size="sm">
+                  {w.role}
+                </Badge>
+                {active && <Check size={11} />}
+              </button>
+            );
+          })}
         </div>
       )}
 
@@ -216,9 +251,14 @@ export function CollaborationPanel() {
               style={{ background: "var(--color-primary)", color: "var(--color-on-blue)", borderRadius: `${UI_BORDER_RADIUS.SM}px` }}
             >
               {copied ? <Check size={12} /> : <Link2 size={12} />}
-              {copied ? "Link copied" : busy ? "Creating\u2026" : "Copy invite link"}
+              {copied ? "Link copied" : busy ? "Creating\u2026" : currentModelId ? "Copy model invite link" : "Copy invite link"}
             </button>
           </div>
+          {currentModelId && (
+            <span className="text-[9px] text-secondary-hover">
+              Recipients land on this model after joining.
+            </span>
+          )}
           {inviteUrl && (
             <input
               readOnly

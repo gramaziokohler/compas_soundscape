@@ -40,6 +40,7 @@ Client polls GET /api/jobs/{id}  (routers/jobs.py reads the Redis hash)
 | Job type | Redis queue | Runs on | Slots |
 | -------- | ----------- | ------- | ----- |
 | `sound` (TangoFlux) | `queue:gpu` | `worker_main --role gpu` (1 model per process, resident) | `GPU_WORKER_SLOTS` (2) |
+| `sa3` (Stable Audio 3) | `queue:sa3` | `worker_main --role sa3` — **must run in the isolated `compas-sa3` env** (resident) | `SA3_WORKER_SLOTS` (1) |
 | `pyroomacoustics`, `sed`, `loop` | `queue:cpu` | `--role cpu` — child process per job | `CPU_WORKER_SLOTS` (4) |
 | `choras` (DE/DG) | `queue:choras` | `--role choras` — child process per job (gmsh in child main thread) | `CHORAS_WORKER_SLOTS` (1) |
 | `llm`, `model_analysis`, `tts` | *(none)* | **Inside the API process** as `asyncio.create_task`, semaphore-gated | `LLM_MAX_CONCURRENT` (8), `TTS_MAX_CONCURRENT` (2) |
@@ -137,6 +138,7 @@ through `job_store.enqueue`.
 | Task type | Mechanism |
 | --------- | --------- |
 | Text-to-audio (TangoFlux) | GPU worker queue (`queue:gpu`) — AudioLDM2 is NOT loaded by workers |
+| Text-to-audio / restyle / inpaint (Stable Audio 3) | SA3 worker queue (`queue:sa3`) — isolated `compas-sa3` env (`--role sa3`) |
 | LLM API call (Gemini / OpenAI / Anthropic) | in-process asyncio task (`LLM_SEMAPHORE`) |
 | Gemini TTS | in-process asyncio task (`TTS_SEMAPHORE`) + `run_in_threadpool` per item |
 | 3D model analysis | in-process asyncio task (`run_blocking` for sync `analyze_3dmodel`) |

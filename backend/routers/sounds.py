@@ -43,6 +43,13 @@ from config.constants import (
     PARAM_HASH_LENGTH,
     WINDOWS_ILLEGAL_FILENAME_CHARS,
     JOB_TYPE_SOUND,
+    JOB_TYPE_SA3,
+    AUDIO_MODEL_SA3,
+    STABLE_AUDIO_DEFAULT_STEPS,
+    STABLE_AUDIO_DEFAULT_CFG_SCALE,
+    STABLE_AUDIO_DEFAULT_DURATION_PADDING_S,
+    STABLE_AUDIO_DEFAULT_SAMPLER,
+    STABLE_AUDIO_MODE_TEXT,
     TEMP_PARENT_DIR,
 )
 
@@ -123,6 +130,73 @@ def _build_clip_plan(sound_configs: list[dict], apply_denoising: bool, audio_mod
     return clips
 
 
+def _build_sa3_clip_plan(sound_configs: list[dict], base_dbfs: float | None) -> list[dict]:
+    """Stable Audio 3 text-to-audio clip plan.
+
+    Mirrors `_build_clip_plan` but emits SA3-specific fields (cfg_scale,
+    sampler_type, duration_padding_sec) and starts from a unique run token so a
+    new request never reuses a previous artifact.
+    """
+    clips: list[dict] = []
+    run_token = uuid.uuid4().hex[:8]
+    for idx, cfg in enumerate(sound_configs):
+        prompt = cfg.get("prompt", "")
+        if not prompt:
+            continue
+        duration = cfg.get("duration_seconds") or cfg.get("duration", DEFAULT_DURATION_SECONDS)
+        cfg_scale = cfg.get("cfg_scale", cfg.get("guidance_scale", STABLE_AUDIO_DEFAULT_CFG_SCALE))
+        seed_copies = cfg.get("seed_copies", DEFAULT_SEED_COPIES)
+        steps = cfg.get("steps", STABLE_AUDIO_DEFAULT_STEPS)
+        dbfs = cfg.get("dbfs") if cfg.get("dbfs") is not None else (base_dbfs if base_dbfs is not None else DEFAULT_DBFS)
+        interval_seconds = cfg.get("interval_seconds", DEFAULT_INTERVAL_BETWEEN_SOUNDS)
+        negative_prompt = cfg.get("negative_prompt", "")
+        display_name = cfg.get("display_name") or prompt
+        sampler_type = cfg.get("sampler_type", STABLE_AUDIO_DEFAULT_SAMPLER)
+        duration_padding_sec = cfg.get("duration_padding_sec", STABLE_AUDIO_DEFAULT_DURATION_PADDING_S)
+
+        short_prompt = prompt[:FILENAME_MAX_LENGTH]
+        for char in WINDOWS_ILLEGAL_FILENAME_CHARS:
+            short_prompt = short_prompt.replace(char, "_")
+        short_prompt = short_prompt.replace(" ", "_")
+
+        param_string = f"{prompt}_{duration}_{cfg_scale}_{steps}_{AUDIO_MODEL_SA3}"
+        regeneration_ts = cfg.get("_regeneration_ts", "")
+        if regeneration_ts:
+            param_string += f"_{regeneration_ts}"
+        param_hash = hashlib.md5(param_string.encode()).hexdigest()[:PARAM_HASH_LENGTH]
+
+        entity = cfg.get("entity")
+        if entity and entity.get("position"):
+            position = entity["position"]
+            entity_index = entity.get("index")
+        else:
+            position = [0, 0, 0]
+            entity_index = None
+
+        for copy_idx in range(seed_copies):
+            clips.append({
+                "id": f"generated_{idx}_{copy_idx}",
+                "prompt": prompt,
+                "prompt_index": idx,
+                "display_name": display_name,
+                "duration": duration,
+                "steps": steps,
+                "cfg_scale": cfg_scale,
+                "dbfs": dbfs,
+                "copy_index": copy_idx,
+                "total_copies": seed_copies,
+                "position": position,
+                "entity_index": entity_index,
+                "interval_seconds": interval_seconds,
+                "negative_prompt": negative_prompt,
+                "generation_mode": STABLE_AUDIO_MODE_TEXT,
+                "sampler_type": sampler_type,
+                "duration_padding_sec": duration_padding_sec,
+                "filename": f"{short_prompt}_{param_hash}_{run_token}_copy{copy_idx}.wav",
+            })
+    return clips
+
+
 # ─── Generate sounds (async) ──────────────────────────────────────────────────
 
 @router.post("/api/generate-sounds", response_model=JobEnqueueResponse)
@@ -146,7 +220,13 @@ async def generate_sounds(request: SoundGenerationRequest, req: Request):
         url_prefix = f"{GENERATED_SOUND_URL_PREFIX}/{session_id}"
 
         audio_model = request.audio_model or DEFAULT_AUDIO_MODEL
-        clips = _build_clip_plan(ml_configs, request.apply_denoising, audio_model, request.base_dbfs)
+
+        if audio_model == AUDIO_MODEL_SA3:
+            clips = _build_sa3_clip_plan(ml_configs, request.base_dbfs)
+            job_type = JOB_TYPE_SA3
+        else:
+            clips = _build_clip_plan(ml_configs, request.apply_denoising, audio_model, request.base_dbfs)
+            job_type = JOB_TYPE_SOUND
         if not clips:
             raise HTTPException(status_code=400, detail="No valid sound prompts provided")
 
@@ -162,7 +242,7 @@ async def generate_sounds(request: SoundGenerationRequest, req: Request):
         }
 
         try:
-            job_id = await job_store.enqueue(JOB_TYPE_SOUND, session_id, payload)
+            job_id = await job_store.enqueue(job_type, session_id, payload)
         except GpuQueueFullError as exc:
             raise HTTPException(status_code=429, detail=str(exc))
 

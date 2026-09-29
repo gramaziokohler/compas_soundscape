@@ -3,9 +3,14 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import type WaveSurfer from 'wavesurfer.js';
 import { useAudioControlsStore } from '@/store/audioControlsStore';
-import { pauseStore, commitStore } from '@/store';
+import { pauseStore, commitStore, useSoundscapeStore, useSoundFxStore, useUIStore } from '@/store';
 import { registerPreviewInstance, unregisterPreviewInstance, seekPreviewInstances, getPreviewPosition } from '@/lib/audio/previewRegistry';
+import { resolveSoundAudioUrl } from '@/lib/audio/utils/resolve-sound-url';
+import { isStableAudioFx } from '@/lib/audio/fx/fx-types';
+import { Sparkles } from 'lucide-react';
+import { Badge } from '@/components/ui/Badge';
 import { WaveSurferPlayer } from './WaveSurferPlayer';
+import type { SoundEvent } from '@/types';
 
 interface SoundCardWaveSurferProps {
   audioUrl: string;
@@ -47,6 +52,25 @@ export function SoundCardWaveSurfer({
   soundId,
 }: SoundCardWaveSurferProps) {
   const wsRef = useRef<WaveSurfer | null>(null);
+  const event = useSoundscapeStore((s) => {
+    if (!soundId) return undefined;
+    const gen = (s.generatedSounds as SoundEvent[]).find((e) => e.id === soundId);
+    if (gen) return gen;
+    return (s.soundscapeData as SoundEvent[] | null)?.find((e) => e.id === soundId);
+  });
+  const resolvedUrl = event ? resolveSoundAudioUrl(event) : audioUrl;
+  const hasSavedFx = Boolean(event?.fx_url);
+  const fxEnabled = Boolean(event?.fx_enabled);
+  const fxChain = useSoundFxStore((s) => (soundId ? s.chains[soundId] : undefined));
+  const hasStableAudioFx = Boolean(fxChain?.instances.some((i) => isStableAudioFx(i.type)));
+  const openEditor = useCallback(() => {
+    if (soundId) useUIStore.getState().setSoundEditorSoundId(soundId);
+  }, [soundId]);
+  const toggleFx = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!soundId || !event?.fx_url) return;
+    useSoundscapeStore.getState().patchSoundEvent(soundId, { fx_enabled: !event.fx_enabled });
+  }, [soundId, event?.fx_url, event?.fx_enabled]);
   const waveformWrapperRef = useRef<HTMLDivElement>(null);
   const [currentTime, setCurrentTime] = useState(0);
 
@@ -321,6 +345,30 @@ export function SoundCardWaveSurfer({
   const showLeftHandle = hoveredHandle === 'left' || hoveredHandle === 'pan';
   const showRightHandle = hoveredHandle === 'right' || hoveredHandle === 'pan';
 
+  const fxBadge = soundId ? (
+    <span className="inline-flex items-center gap-1">
+      <Badge
+        variant={hasSavedFx ? 'primary' : 'neutral'}
+        className={`fx-badge${fxEnabled ? ' fx-badge--enabled' : ''}`}
+        onClick={openEditor}
+        title={hasStableAudioFx ? 'Edit this sample — includes a Stable Audio effect' : 'Edit this sample'}
+      >
+        {hasStableAudioFx && <Sparkles size={9} className="mr-0.5 inline-block align-text-bottom" />}
+        FX
+      </Badge>
+      {hasSavedFx && (
+        <span
+          role="switch"
+          aria-checked={fxEnabled}
+          title={fxEnabled ? 'Disable processed sound' : 'Enable processed sound'}
+          className={`toggle-switch ${fxEnabled ? 'checked' : ''}`}
+          style={{ transform: 'scale(0.75)', transformOrigin: 'center' }}
+          onClick={toggleFx}
+        />
+      )}
+    </span>
+  ) : null;
+
   const trimClearButton =
     isTrimActive ? (
       <button
@@ -347,7 +395,7 @@ export function SoundCardWaveSurfer({
 
   return (
     <WaveSurferPlayer
-      audioUrl={audioUrl}
+      audioUrl={resolvedUrl}
       isPlaying={isPlaying}
       onPlayPause={handlePlayPause}
       onStop={handleStop}
@@ -390,7 +438,12 @@ export function SoundCardWaveSurfer({
         onPointerLeave: handlePointerLeave,
       }}
       cursor={cursor}
-      controlsExtra={trimClearButton}
+      controlsExtra={
+        <>
+          {fxBadge}
+          {trimClearButton}
+        </>
+      }
     >
       <div ref={waveformWrapperRef} />
 

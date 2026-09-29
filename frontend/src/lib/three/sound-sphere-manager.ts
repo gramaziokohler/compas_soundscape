@@ -11,6 +11,7 @@ import type { SoundEvent } from "@/types";
 import type { AuralizationConfig, SoundMetadata } from "@/types/audio";
 import type { AudioOrchestrator } from "@/lib/audio/AudioOrchestrator";
 import { useAudioControlsStore } from "@/store/audioControlsStore";
+import { resolveSoundAudioUrl } from "@/lib/audio/utils/resolve-sound-url";
 // import type { BoundingBoxBounds } from "@/lib/three/BoundingBoxManager"; // Bounding-box placement removed
 
 /**
@@ -76,6 +77,8 @@ export class SoundSphereManager {
   // calling loadAudioForSound again for the same ID while a load is already in flight,
   // which would cause duplicate AudioOrchestrator sources and the "already exists" loop.
   private pendingLoads: Set<string> = new Set();
+  /** Resolved URL that was last loaded into the orchestrator, per soundId. */
+  private loadedUrls: Map<string, string> = new Map();
   // Latest non-pending sounds passed to syncAudioSources — used by buffer load callbacks
   // to sync _generatedSounds before re-baking the orchestrate schedule.
   private latestSounds: SoundEvent[] = [];
@@ -680,15 +683,28 @@ export class SoundSphereManager {
         }
         this.soundMetadata.delete(soundId);
         this.spherePositions.delete(soundId);
-        this.pendingLoads.delete(soundId); // clear any stale in-flight marker
+        this.pendingLoads.delete(soundId);
+        this.loadedUrls.delete(soundId);
       }
     }
 
     // Create audio sources for new sounds (not already in metadata or currently loading)
     visibleSounds.forEach(soundEvent => {
-      if (this.soundMetadata.has(soundEvent.id)) return; // already loaded
-      if (this.pendingLoads.has(soundEvent.id)) return;  // load in-flight — don't duplicate
-      if (soundEvent.isPending) return; // pre-generation placeholder
+      if (soundEvent.isPending) return;
+      const resolved = resolveSoundAudioUrl(soundEvent);
+      if (this.soundMetadata.has(soundEvent.id)) {
+        const loaded = this.loadedUrls.get(soundEvent.id);
+        if (loaded !== resolved && resolved) {
+          if (this.audioOrchestrator) {
+            this.audioOrchestrator.removeSource(soundEvent.id);
+          }
+          this.soundMetadata.delete(soundEvent.id);
+          this.pendingLoads.delete(soundEvent.id);
+          this.loadAudioForSound(soundEvent);
+        }
+        return;
+      }
+      if (this.pendingLoads.has(soundEvent.id)) return;
       this.loadAudioForSound(soundEvent);
     });
   }
@@ -701,7 +717,8 @@ export class SoundSphereManager {
     // Missing audio (e.g. a saved event whose file no longer exists on the
     // server — the backend clears its audio_filename) has no URL. Skip the load
     // instead of fetching the API base URL, which would fail noisily.
-    if (!soundEvent.url) {
+    const audioUrl = resolveSoundAudioUrl(soundEvent);
+    if (!audioUrl) {
       return;
     }
     const audioPosition = this.spherePositions.get(soundEvent.id);
@@ -713,8 +730,8 @@ export class SoundSphereManager {
     const isEntityLinked = soundEvent.entity_index !== undefined;
 
     // Determine full URL (blob for uploads, backend for generated)
-    const isUploadedSound = soundEvent.url.startsWith('blob:') || soundEvent.url.startsWith('http');
-    const fullUrl = isUploadedSound ? soundEvent.url : `${API_BASE_URL}${soundEvent.url}`;
+    const isUploadedSound = audioUrl.startsWith('blob:') || audioUrl.startsWith('http');
+    const fullUrl = isUploadedSound ? audioUrl : `${API_BASE_URL}${audioUrl}`;
 
     // Mark as in-flight so concurrent syncAudioSources calls don't start a second load
     this.pendingLoads.add(soundEvent.id);
@@ -763,7 +780,7 @@ export class SoundSphereManager {
             display_name: soundEvent.display_name || soundEvent.id,
             color: (soundEvent as any).color,
             prompt_index: (soundEvent as any).prompt_index,
-            url: soundEvent.url,
+            url: audioUrl,
             isUploaded: soundEvent.isUploaded,
             interval_seconds: soundEvent.interval_seconds,
             copy_index: (soundEvent as any).copy_index,
@@ -773,6 +790,7 @@ export class SoundSphereManager {
         };
 
         this.soundMetadata.set(soundEvent.id, metadata);
+        this.loadedUrls.set(soundEvent.id, audioUrl);
 
         // Store buffer duration and re-bake the orchestrate schedule so that
         // after() / alignEnd() expressions resolve using the real buffer length.

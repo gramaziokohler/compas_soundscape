@@ -24,6 +24,7 @@ from models.schemas import (
     SoundscapeSaveRequest,
     SoundscapeSaveResponse,
     SoundscapeLoadResponse,
+    SoundscapeExistsResponse,
     SoundscapeData,
 )
 from config.constants import (
@@ -185,6 +186,9 @@ def _collect_referenced_audio(data: SoundscapeData) -> list[str]:
         name = (event.audio_filename or "").strip()
         if name:
             filenames.append(name)
+        fx_name = (event.fx_audio_filename or "").strip()
+        if fx_name:
+            filenames.append(fx_name)
 
     def _walk(node: object) -> None:
         if isinstance(node, dict):
@@ -262,6 +266,9 @@ def _drop_missing_audio_filenames(data: SoundscapeData, missing: list[str]) -> N
     for event in data.sound_events or []:
         if (event.audio_filename or "").strip() in missing_set:
             event.audio_filename = ""
+        if (event.fx_audio_filename or "").strip() in missing_set:
+            event.fx_audio_filename = ""
+            event.fx_enabled = False
 
     def _drop(node: object) -> None:
         if isinstance(node, dict):
@@ -549,6 +556,25 @@ async def save_soundscape(request: SoundscapeSaveRequest, req: Request):
         ),
         revision=new_revision,
     )
+
+
+@router.get("/{model_id}/exists", response_model=SoundscapeExistsResponse)
+async def soundscape_exists(model_id: str, req: Request, workspace_id: str | None = None):
+    """Probe whether a saved soundscape.json exists for a model in a workspace.
+
+    Used by the invite flow to detect a collision with the recipient's own
+    saved soundscape without loading/restoring any files or auto-joining.
+    Defaults to the active workspace.
+    """
+    session_id = _get_session_id(req)
+    user_hash = getattr(req.state, "user_hash", None)
+    target = workspace_id or session_id
+    if target != session_id and user_hash:
+        if metadata_store.get_member_role(target, user_hash) is None:
+            raise HTTPException(status_code=403, detail="You are not a member of this workspace")
+
+    json_path = user_model_dir(target, model_id) / SOUNDSCAPE_JSON_FILENAME
+    return SoundscapeExistsResponse(found=json_path.exists(), workspace_id=target)
 
 
 @router.get("/{model_id}", response_model=SoundscapeLoadResponse)

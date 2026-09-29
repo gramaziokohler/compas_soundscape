@@ -289,7 +289,6 @@ export function ContextSection({
               config={config as AudioAnalysisConfig}
               index={originalIndex}
               isAnalyzing={isRunning}
-              onUpdateConfig={onUpdateConfig}
               isPreviewPlaying={previewingSoundId === `context-audio:${originalIndex}`}
               onPreviewPlayPause={() => handlePreviewPlayPause(`context-audio:${originalIndex}`)}
               onPreviewStop={() => handlePreviewStop(`context-audio:${originalIndex}`)}

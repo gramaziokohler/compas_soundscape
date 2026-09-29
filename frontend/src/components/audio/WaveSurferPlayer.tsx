@@ -31,6 +31,16 @@ const FREQ_LABELS = [
   { freq: 20000, label: '20 kHz' },
 ];
 
+/** Fades used when swapping the audio source (e.g. FX on/off) during playback. */
+const SOURCE_SWAP_FADE_OUT_MS = 70;
+const SOURCE_SWAP_FADE_IN_MS = 180;
+
+/** Prefetch a swap source as a Blob so the swap skips the network round-trip. */
+async function fetchAudioBlob(url: string): Promise<Blob> {
+  const res = await fetch(url);
+  return await res.blob();
+}
+
 /**
  * Resolve the silhouette fill plus the played-region / playhead colors. The
  * progress and cursor colors default to the palette progress color but can be
@@ -143,6 +153,35 @@ export function WaveSurferPlayer({
   // Latest onSeek without re-creating the WaveSurfer instance.
   const onSeekRef = useRef(onSeek);
   useEffect(() => { onSeekRef.current = onSeek; }, [onSeek]);
+  // Latest callbacks/state read from inside the long-lived WaveSurfer listeners.
+  const playingRef = useRef(isPlaying);
+  playingRef.current = isPlaying;
+  const onAudioProcessRef = useRef(onAudioProcess);
+  onAudioProcessRef.current = onAudioProcess;
+  const onFinishRef = useRef(onFinish);
+  onFinishRef.current = onFinish;
+  // The volume the player should settle at (kept in a ref so a source swap's
+  // fade can restore it without re-subscribing to prop changes).
+  const targetVolumeRef = useRef(1);
+  // URL currently loaded, so a change (e.g. FX on/off) is treated as a swap.
+  const loadedUrlRef = useRef<string | null>(null);
+  // Bumped on every source change so a superseded swap aborts its fades/load.
+  const swapTokenRef = useRef(0);
+
+  const fadeVolumeTo = useCallback(
+    (ws: WaveSurfer, from: number, to: number, ms: number, onDone?: () => void, isCancelled?: () => boolean) => {
+      const t0 = performance.now();
+      const step = () => {
+        if (isCancelled?.()) return;
+        const k = Math.min(1, (performance.now() - t0) / ms);
+        try { ws.setVolume(Math.max(0, from + (to - from) * k)); } catch { /* ignore */ }
+        if (k < 1) requestAnimationFrame(step);
+        else onDone?.();
+      };
+      requestAnimationFrame(step);
+    },
+    [],
+  );
 
   // Hover state for spectrogram labels
   const [isHovered, setIsHovered] = useState(false);
@@ -224,7 +263,7 @@ export function WaveSurferPlayer({
         lastAudioProcessUpdateRef.current = now;
         setCurrentTime(t);
       }
-      onAudioProcess?.(t, ws.getDuration());
+      onAudioProcessRef.current?.(t, ws.getDuration());
     });
 
     ws.on('seeking', () => {
@@ -238,7 +277,7 @@ export function WaveSurferPlayer({
     });
 
     ws.on('finish', () => {
-      onFinish?.();
+      onFinishRef.current?.();
     });
 
     ws.on('error', (error: Error) => {
@@ -247,12 +286,9 @@ export function WaveSurferPlayer({
       setIsLoadingAudio(false);
     });
 
-    ws.load(resolveAudioUrl(audioUrl)).catch((error: Error) => {
-      if (error.name === 'AbortError' || error.message?.includes('aborted')) return;
-      console.error('[WaveSurferPlayer] Load error:', error);
-      setIsLoadingAudio(false);
-    });
-
+    // The audio source is (re)loaded by the dedicated effect below, which either
+    // loads fresh or swaps in place (preserving playhead + play state).
+    loadedUrlRef.current = null;
     wsRef.current = ws;
     onWavesurferReady?.(ws);
 
@@ -269,8 +305,59 @@ export function WaveSurferPlayer({
     // those are cosmetic/interaction options WaveSurfer supports updating live
     // via setOptions() below — recreating (and re-fetching + re-decoding) the
     // whole instance for a resize-handle drag or a mute-color change was the
-    // cause of the spinner flash on every such interaction. Only the audio
-    // source itself and the spectrogram plugin wiring need a real recreate.
+    // cause of the spinner flash on every such interaction. Only the spectrogram
+    // plugin wiring needs a real recreate; the audio source loads separately.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSpectrogramMode]);
+
+  // Load — or seamlessly swap — the audio source.
+  //   * first load / after a recreate: load from the start.
+  //   * source change on the existing instance (FX on/off, variant switch):
+  //     keep the playhead position and play state, fade the old source out, then
+  //     fade the new one in at the SAME position. The old source is stopped before
+  //     the new one starts, so the two never sound together.
+  useEffect(() => {
+    const ws = wsRef.current;
+    if (!ws || !audioUrl) return;
+    const url = resolveAudioUrl(audioUrl);
+    const prev = loadedUrlRef.current;
+    loadedUrlRef.current = url;
+    const isSwap = Boolean(prev) && prev !== url;
+    const token = ++swapTokenRef.current;
+    const superseded = () => swapTokenRef.current !== token;
+
+    const handleError = (error: Error) => {
+      if (error.name === 'AbortError' || error.message?.includes('aborted')) return;
+      console.error('[WaveSurferPlayer] Load error:', error);
+      setIsLoadingAudio(false);
+    };
+    const fadeIn = () => fadeVolumeTo(ws, 0, targetVolumeRef.current, SOURCE_SWAP_FADE_IN_MS, undefined, superseded);
+
+    if (!isSwap) {
+      void ws.load(url).then(() => { if (!superseded()) fadeIn(); }).catch(handleError);
+      return;
+    }
+
+    // Prefetch the new source as a Blob BEFORE fading, so the swap has no
+    // network gap. Falls back to a plain URL load on failure.
+    void fetchAudioBlob(url)
+      .catch(() => null)
+      .then((blob) => {
+        if (superseded()) return;
+        fadeVolumeTo(ws, targetVolumeRef.current, 0, SOURCE_SWAP_FADE_OUT_MS, () => {
+          if (superseded()) return;
+          const t = ws.getCurrentTime();
+          void (blob ? ws.loadBlob(blob) : ws.load(url))
+            .then(() => {
+              if (superseded()) return;
+              try { ws.setTime(t); } catch { /* ignore */ }
+              if (playingRef.current) { try { ws.play(); } catch { /* ignore */ } }
+              fadeIn();
+            })
+            .catch(handleError);
+        }, superseded);
+      });
+    // `resolveAudioUrl` is stable; only the URL/instance identity matters here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [audioUrl, isSpectrogramMode]);
 
@@ -330,16 +417,14 @@ export function WaveSurferPlayer({
   useEffect(() => {
     const ws = wsRef.current;
     if (!ws) return;
-    if (silent || isMuted) {
-      ws.setVolume(0);
-      return;
-    }
     // The audio file is already calibrated to baseVolumeDbfs, so the preview
     // gain is the ratio of the desired level to that base. With the WebAudio
     // backend the GainNode accepts gains > 1, so the displayed dBFS value maps
     // truthfully to the actual output level (up to 0 dBFS).
-    const linearVolume = dbfsToLinear(volumeDbfs - baseVolumeDbfs);
-    ws.setVolume(Math.max(0, linearVolume));
+    const target = silent || isMuted ? 0 : Math.max(0, dbfsToLinear(volumeDbfs - baseVolumeDbfs));
+    // Remember the resting level so a source swap's fade-in can restore it.
+    targetVolumeRef.current = target;
+    ws.setVolume(target);
   }, [volumeDbfs, baseVolumeDbfs, isMuted, silent]);
 
   const handleStop = useCallback(() => {

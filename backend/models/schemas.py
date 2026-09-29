@@ -75,6 +75,7 @@ class JobCancelResponse(BaseModel):
 
 class QueueStatusResponse(BaseModel):
     gpu: int
+    sa3: int = 0
     cpu: int
     choras: int
 
@@ -344,6 +345,10 @@ class SoundscapeSoundEvent(BaseModel):
     # Explicit-position sound that must stay where authored (Home sandbox Sample
     # pinned at the origin — the sphere manager otherwise relocates [0,0,0]).
     pinned: bool = False
+    # Foley FX chain authored in the sound editor (opaque JSON).
+    fx: Optional[dict] = None
+    fx_audio_filename: Optional[str] = None
+    fx_enabled: bool = False
 
     @field_validator("timestamps", mode="before")
     @classmethod
@@ -615,6 +620,13 @@ class SoundscapeLoadResponse(BaseModel):
     # True when the model belongs to a private workspace the caller is not a
     # member of (the client should ask for an invite rather than retry).
     requires_invite: bool = False
+
+
+class SoundscapeExistsResponse(BaseModel):
+    """Lightweight probe: whether a saved soundscape.json exists for a model in
+    a given workspace (used by the invite collision flow)."""
+    found: bool = False
+    workspace_id: Optional[str] = None
 
 
 # ── LLM Analysis Output Schemas ───────────────────────────────────────────────

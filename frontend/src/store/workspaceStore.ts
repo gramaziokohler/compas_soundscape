@@ -2,7 +2,8 @@
 
 import { create } from "zustand";
 import { devtools } from "zustand/middleware";
-import { apiService, type WorkspaceDetail, type WorkspaceInvite } from "@/services/api";
+import { apiService, type WorkspaceDetail, type WorkspaceInvite, type WorkspaceSummary } from "@/services/api";
+import { useUIStore } from "./uiStore";
 
 /**
  * Active workspace + collaboration state (shared sessions).
@@ -26,6 +27,8 @@ interface WorkspaceState {
   conflictRevision: number | null;
   inviteUrl: string | null;
   invites: WorkspaceInvite[];
+  /** All workspaces this user can switch to (personal + joined). */
+  workspaces: WorkspaceSummary[];
 
   init: () => Promise<void>;
   refresh: () => Promise<void>;
@@ -34,8 +37,9 @@ interface WorkspaceState {
   join: (token: string) => Promise<void>;
   createInvite: (
     role?: "editor" | "viewer",
-    options?: { expiresInS?: number; maxUses?: number },
+    options?: { expiresInS?: number; maxUses?: number; modelId?: string | null },
   ) => Promise<string | null>;
+  loadWorkspaces: () => Promise<void>;
   loadInvites: () => Promise<void>;
   revokeInvite: (inviteId: string) => Promise<void>;
   setSharingMode: (mode: "private" | "link") => Promise<void>;
@@ -60,6 +64,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
   conflictRevision: null,
   inviteUrl: null,
   invites: [],
+  workspaces: [],
 
   init: async () => {
     set({ loading: true, error: null }, false, "workspace/init");
@@ -84,6 +89,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
     }
     if (_heartbeatTimer) clearInterval(_heartbeatTimer);
     _heartbeatTimer = setInterval(() => void get().heartbeat(), HEARTBEAT_MS);
+    void get().loadWorkspaces();
   },
 
   refresh: async () => {
@@ -118,16 +124,28 @@ export const useWorkspaceStore = create<WorkspaceState>()(
   join: async (token) => {
     const ws = await apiService.joinWorkspace(token);
     set({ workspace: ws, presence: ws.presence ?? 1, revision: ws.revision }, false, "workspace/join");
+    void get().loadWorkspaces();
   },
 
   createInvite: async (role = "editor", options) => {
     const ws = get().workspace;
     if (!ws) return null;
-    const invite = await apiService.createWorkspaceInvite(ws.id, role, options);
+    const modelId =
+      options?.modelId ?? useUIStore.getState().globalSpeckleData?.model_id ?? null;
+    const invite = await apiService.createWorkspaceInvite(ws.id, role, { ...options, modelId });
     const url = `${window.location.origin}${invite.url}`;
     set({ inviteUrl: url }, false, "workspace/invite");
     void get().loadInvites();
     return url;
+  },
+
+  loadWorkspaces: async () => {
+    try {
+      const workspaces = await apiService.listWorkspaces();
+      set({ workspaces }, false, "workspace/loadWorkspaces");
+    } catch {
+      /* non-critical */
+    }
   },
 
   loadInvites: async () => {

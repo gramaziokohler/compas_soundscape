@@ -50,7 +50,7 @@ from services.metadata_store import metadata_store
 # from services.modal_analysis_service import ModalAnalysisService
 
 # Import routers
-from routers import upload, generation, sounds, sed_analysis, sed_extract, library_search, reprocess, impulse_responses, modal_analysis, choras, pyroomacoustics, speckle, soundscape, tokens, tts, loop_analysis, jobs, auth, workspaces, preferences
+from routers import upload, generation, sounds, stable_audio, sed_analysis, sed_extract, library_search, reprocess, impulse_responses, modal_analysis, choras, pyroomacoustics, speckle, soundscape, tokens, tts, loop_analysis, jobs, auth, workspaces, preferences
 
 # Import constants
 from config.constants import (
@@ -306,6 +306,7 @@ app.include_router(upload.router)
 # app.include_router(analysis.router)
 app.include_router(generation.router)
 app.include_router(sounds.router)
+app.include_router(stable_audio.router)
 app.include_router(sed_analysis.router)
 app.include_router(sed_extract.router)
 app.include_router(library_search.router)
@@ -333,6 +334,7 @@ def get_service_versions(llm_model: str = None):
     from services.pyroomacoustics_service import PyroomacousticsService
     from services.audio_service import AudioService
     from services.audioldm2_service import AudioLDM2Service
+    from services.stable_audio_service import StableAudioService
     from services.bbc_service import get_service_version_info as bbc_version_info
     from services.llm_service import LLMService
     from services.sed_service import SEDService
@@ -343,6 +345,7 @@ def get_service_versions(llm_model: str = None):
         "pyroomacoustics": PyroomacousticsService.get_service_version_info(),
         "tangoflux": AudioService.get_service_version_info(),
         "audioldm2": AudioLDM2Service.get_service_version_info(),
+        "stable_audio_3": StableAudioService.get_service_version_info(),
         "bbc": bbc_version_info(),
         "llm_providers": LLMService.get_service_version_info(),
         "yamnet": SEDService.get_service_version_info(),

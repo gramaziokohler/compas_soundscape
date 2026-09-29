@@ -24,6 +24,8 @@ import { cartesianToSpherical } from './utils/ambisonic-utils';
 import { applyAmbisonicRotation } from './utils/ambisonic-rotation';
 import { OmnitoneDecoder } from './decoders/OmnitoneDecoder';
 import { applyFadeInOut, resolveClipFade, type FadeOptions } from './utils/fade-envelope';
+import { audioBufferToWavBlob24 } from './utils/wav-encode';
+import { resolveVariantSoundIdByPrompt } from './utils/variant-sound-id';
 
 // ============================================================================
 // Public Types
@@ -85,6 +87,9 @@ export interface SoundscapeExportConfig {
 
   /** Per-iteration variant/entity links (for resolving variant buffers per iteration) */
   iterationLinks?: Record<string, IterationLink>;
+
+  /** Generated sound events — used to resolve variant ids by prompt_index. */
+  variantEvents?: ReadonlyArray<{ id: string; prompt_index?: number | null; copy_index?: number | null }>;
 
   // ── Resonance Audio specific ──
 
@@ -336,7 +341,7 @@ async function buildAnechoicGraph(
     distNode.connect(encoder.in);
     encoder.out.connect(mixBus);
 
-    scheduleIterations(offlineCtx, resolveIterationBuffers(sound, sourceRegistry, config.iterationLinks), sound.scheduledIterations, gainNode, durationSecs(offlineCtx), config.soundTrims?.[sound.id], resolveClipFade(sound.soundGroup, !!config.soundLoopable?.[sound.id]));
+    scheduleIterations(offlineCtx, resolveIterationBuffers(sound, sourceRegistry, config.iterationLinks, config.variantEvents), sound.scheduledIterations, gainNode, durationSecs(offlineCtx), config.soundTrims?.[sound.id], resolveClipFade(sound.soundGroup, !!config.soundLoopable?.[sound.id]));
   }
 }
 
@@ -449,7 +454,7 @@ async function buildAmbisonicIRGraph(
     gainNode.connect(convolver.in);
     convolver.out.connect(mixBus);
 
-    scheduleIterations(offlineCtx, resolveIterationBuffers(sound, sourceRegistry, config.iterationLinks), sound.scheduledIterations, gainNode, durationSecs(offlineCtx), config.soundTrims?.[sound.id], resolveClipFade(sound.soundGroup, !!config.soundLoopable?.[sound.id]));
+    scheduleIterations(offlineCtx, resolveIterationBuffers(sound, sourceRegistry, config.iterationLinks, config.variantEvents), sound.scheduledIterations, gainNode, durationSecs(offlineCtx), config.soundTrims?.[sound.id], resolveClipFade(sound.soundGroup, !!config.soundLoopable?.[sound.id]));
   }
 }
 
@@ -566,7 +571,7 @@ async function buildResonanceGraph(
       gainNode.gain.value = soundGains.get(sound.id) ?? 1.0;
       gainNode.connect(resonanceSource.input);
 
-      scheduleIterations(offlineCtx, resolveIterationBuffers(sound, sourceRegistry, config.iterationLinks), sound.scheduledIterations, gainNode, durationSecs(offlineCtx), config.soundTrims?.[sound.id], resolveClipFade(sound.soundGroup, !!config.soundLoopable?.[sound.id]));
+      scheduleIterations(offlineCtx, resolveIterationBuffers(sound, sourceRegistry, config.iterationLinks, config.variantEvents), sound.scheduledIterations, gainNode, durationSecs(offlineCtx), config.soundTrims?.[sound.id], resolveClipFade(sound.soundGroup, !!config.soundLoopable?.[sound.id]));
     }
 
     // Omnitone's HOARenderer.initialize() is async (Promise).  Yield to the
@@ -620,7 +625,7 @@ async function buildSimpleMixGraph(
     gainNode.gain.value = soundGains.get(sound.id) ?? 1.0;
     gainNode.connect(masterGain);
 
-    scheduleIterations(offlineCtx, resolveIterationBuffers(sound, sourceRegistry, config.iterationLinks), sound.scheduledIterations, gainNode, durationSecs(offlineCtx), config.soundTrims?.[sound.id], resolveClipFade(sound.soundGroup, !!config.soundLoopable?.[sound.id]));
+    scheduleIterations(offlineCtx, resolveIterationBuffers(sound, sourceRegistry, config.iterationLinks, config.variantEvents), sound.scheduledIterations, gainNode, durationSecs(offlineCtx), config.soundTrims?.[sound.id], resolveClipFade(sound.soundGroup, !!config.soundLoopable?.[sound.id]));
   }
 }
 
@@ -741,6 +746,7 @@ function resolveIterationBuffers(
   sound: TimelineSound,
   sourceRegistry: Map<string, { buffer: AudioBuffer; position: Position }>,
   iterationLinks?: Record<string, IterationLink>,
+  variantEvents?: ReadonlyArray<{ id: string; prompt_index?: number | null; copy_index?: number | null }>,
 ): (AudioBuffer | undefined)[] {
   const primaryEntry = sourceRegistry.get(sound.id);
   const fallbackBuffer = primaryEntry?.buffer;
@@ -753,7 +759,12 @@ function resolveIterationBuffers(
     const origIdx = originalIndices[i] ?? i;
     const link = iterationLinks?.[`${sound.id}-${origIdx}`];
     if (link?.variantIndex !== undefined && link.variantIndex > 0) {
-      const variantId = resolveVariantId(sound.id, link.variantIndex);
+      const variantId = resolveVariantSoundIdByPrompt(
+        sound.id,
+        link.variantIndex,
+        sound.promptIndex,
+        variantEvents ?? [],
+      );
       const variantEntry = sourceRegistry.get(variantId);
       buffers.push(variantEntry?.buffer || fallbackBuffer);
     } else {
@@ -761,22 +772,6 @@ function resolveIterationBuffers(
     }
   }
   return buffers;
-}
-
-/** Build a variant sound ID from primary ID + variant index. */
-function resolveVariantId(primarySoundId: string, variantIndex: number): string {
-  const parts = primarySoundId.split('_');
-  if (parts[0] === 'generated' && parts.length >= 3) {
-    const p = [...parts];
-    p[p.length - 1] = String(variantIndex);
-    return p.join('_');
-  }
-  if (parts[0] === 'tts' && parts.length >= 4) {
-    const p = [...parts];
-    p[2] = String(variantIndex);
-    return p.join('_');
-  }
-  return primarySoundId;
 }
 
 function scheduleIterations(
@@ -827,99 +822,6 @@ function getModeLabel(mode: AudioMode): string {
     case AudioMode.AMBISONIC_IR:    return 'ir';
     case AudioMode.NO_IR_RESONANCE: return 'resonance';
     default:                        return 'mix';
-  }
-}
-
-// ============================================================================
-// 24-bit PCM WAV Encoding (with AES69-2015 ambisonics metadata chunk)
-// ============================================================================
-
-function audioBufferToWavBlob24(buffer: AudioBuffer): Blob {
-  const numChannels = buffer.numberOfChannels;
-  const { sampleRate, length: numSamples } = buffer;
-  const bytesPerSample = 3;
-  const dataByteLength = numChannels * numSamples * bytesPerSample;
-
-  const isAmbisonic = numChannels === 4 || numChannels === 9 || numChannels === 16;
-
-  // Build AES69-2015 axml chunk for ambisonic formats
-  let axmlBuf: Uint8Array | null = null;
-  let axmlByteLength = 0;
-  let axmlPadding = 0;
-  if (isAmbisonic) {
-    const axmlStr = `<?xml version="1.0" encoding="UTF-8"?>
-<ambisonics>
-  <version>1.0.0</version>
-  <normalization>SN3D</normalization>
-  <channelOrdering>ACN</channelOrdering>
-</ambisonics>`;
-    axmlBuf = new TextEncoder().encode(axmlStr);
-    axmlByteLength = axmlBuf.length;
-    axmlPadding = axmlByteLength % 2; // pad to even boundary
-  }
-
-  const fmtEnd = 36; // offset after 'fmt ' chunk
-  const axmlChunkSize = isAmbisonic ? 8 + axmlByteLength + axmlPadding : 0;
-  const dataOffset = fmtEnd + axmlChunkSize;
-
-  const totalFileSize = dataOffset + 8 + dataByteLength;
-  const arrayBuffer = new ArrayBuffer(totalFileSize);
-  const view = new DataView(arrayBuffer);
-
-  writeStr(view, 0,  'RIFF');
-  view.setUint32(4,  totalFileSize - 8, true);
-  writeStr(view, 8,  'WAVE');
-  writeStr(view, 12, 'fmt ');
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1,  true);
-  view.setUint16(22, numChannels, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * numChannels * bytesPerSample, true);
-  view.setUint16(32, numChannels * bytesPerSample, true);
-  view.setUint16(34, 24, true);
-
-  // axml chunk (AES69-2015 ambisonics metadata)
-  if (isAmbisonic && axmlBuf) {
-    writeStr(view, 36, 'axml');
-    view.setUint32(40, axmlByteLength + axmlPadding, true);
-    for (let i = 0; i < axmlByteLength; i++) {
-      view.setUint8(44 + i, axmlBuf[i]);
-    }
-  }
-
-  writeStr(view, dataOffset, 'data');
-  view.setUint32(dataOffset + 4, dataByteLength, true);
-
-  const channels: Float32Array[] = [];
-  for (let c = 0; c < numChannels; c++) {
-    channels.push(buffer.getChannelData(c));
-  }
-
-  let offset = dataOffset + 8;
-  for (let i = 0; i < numSamples; i++) {
-    for (let c = 0; c < numChannels; c++) {
-      const sample = Math.max(-1, Math.min(1, channels[c][i]));
-      setInt24(view, offset, sample);
-      offset += bytesPerSample;
-    }
-  }
-
-  return new Blob([arrayBuffer], { type: 'audio/wav' });
-}
-
-function setInt24(view: DataView, offset: number, value: number): void {
-  const clamped = Math.max(-1, Math.min(1, value));
-  const intVal = clamped < 0
-    ? Math.round(clamped * 0x800000)
-    : Math.round(clamped * 0x7FFFFF);
-  view.setUint8(offset,     intVal & 0xFF);
-  view.setUint8(offset + 1, (intVal >> 8) & 0xFF);
-  view.setUint8(offset + 2, (intVal >> 16) & 0xFF);
-}
-
-function writeStr(view: DataView, offset: number, str: string): void {
-  for (let i = 0; i < str.length; i++) {
-    view.setUint8(offset + i, str.charCodeAt(i));
   }
 }
 

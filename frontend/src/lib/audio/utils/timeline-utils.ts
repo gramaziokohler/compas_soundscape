@@ -9,6 +9,7 @@ import { AUDIO_TIMELINE } from '@/utils/constants';
 import type { TimelineSound, SoundMetadata, IterationLink } from '@/types/audio';
 import type { SoundEvent } from '@/types';
 import { resolveVariantSoundIdByPrompt } from '@/lib/audio/utils/variant-sound-id';
+import { resolveSoundAudioUrl } from '@/lib/audio/utils/resolve-sound-url';
 
 /** Per-iteration audio URL + duration derived from the assigned variant's loaded buffer. */
 function getIterationVariantInfo(
@@ -45,8 +46,8 @@ function getIterationVariantInfo(
   }
 
   const audioUrl =
-    eventOverride?.url ??
-    variantMeta?.soundEvent.url ??
+    (eventOverride ? resolveSoundAudioUrl(eventOverride) : undefined) ||
+    variantMeta?.soundEvent.url ||
     primaryMetadata.soundEvent.url;
   return { audioUrl, durationMs };
 }
@@ -412,7 +413,9 @@ export function extractTimelineSoundsFromData(
       });
 
     // Primary copy URL — used as fallback when iterationAudioUrls is absent
-    const audioUrl = metadata.soundEvent.url;
+    const audioUrl = eventOverride
+      ? resolveSoundAudioUrl(eventOverride)
+      : metadata.soundEvent.url;
 
     // Map category → soundGroup for DAW grouping
     let soundGroup: 'background' | 'sound_event' | 'speech' | undefined;

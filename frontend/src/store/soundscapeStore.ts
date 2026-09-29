@@ -14,7 +14,7 @@
 import { create } from 'zustand';
 import { temporal } from 'zundo';
 import { devtools } from 'zustand/middleware';
-import type { SoundGenerationConfig, CardType, LibrarySearchResult, CatalogSoundSelection } from '@/types';
+import type { SoundGenerationConfig, CardType, LibrarySearchResult, CatalogSoundSelection, SoundEvent } from '@/types';
 import {
   API_BASE_URL,
   DEFAULT_DURATION_SECONDS,
@@ -78,15 +78,18 @@ let _orchestrateProgressStatus: string | null = null;
 /**
  * Duration to request from ElevenLabs for a config.
  *
- * Background beds (looping) and short target events omit it so the model picks
- * the optimal length; longer events pass the target (LLM) duration so the clip
- * matches the authored event length.
+ * Only LLM-derived (scenario/foley) sounds carry a meaningful target length:
+ * background beds and short (<4 s) events omit it so the model picks the
+ * optimal length, and manual prompts never send one either — they have no
+ * authored length, just the global default.
  */
 function elevenLabsDurationSeconds(
   config: SoundGenerationConfig,
   isBackground: boolean,
 ): number | undefined {
   if (isBackground) return undefined;
+  const isLlmDerived = !!config.scenarioSource || !!config.orchestrateMeta;
+  if (!isLlmDerived) return undefined;
   return config.duration >= ELEVENLABS_MIN_PROMPT_DURATION ? config.duration : undefined;
 }
 
@@ -648,6 +651,9 @@ export interface SoundscapeStoreState {
   trimSilence: boolean;
   applyNoiseReduction: boolean;
   regeneratingIndices: number[];
+  /** Card indices with an IN-PLACE variant regeneration in flight (audio swapped
+   *  on the SAME sound event, keeping its id / DAW / entity / sphere links). */
+  regeneratingVariantIndices: number[];
   audioModel: string;
   llmModel: string;
   ttsModel: string;
@@ -680,6 +686,14 @@ export interface SoundscapeStoreState {
   handleGenerateFiltered: (targetIndices: number[]) => Promise<void>;
   handleGenerateInternal: (targetIndices?: number[]) => Promise<void>;
   handleRegenerateSingle: (targetIndex: number) => Promise<void>;
+  /**
+   * Regenerate the audio of ONE existing variant IN PLACE, keeping its sound
+   * id, copy_index, position, entity links and DAW variant/timeline assignment
+   * identical — only the underlying WAV (url/duration) is swapped. Optionally
+   * regenerates from an edited prompt (`newPrompt`), which is also written back
+   * onto the card config / its TTS speech line.
+   */
+  regenerateVariantInPlace: (targetIndex: number, variantIdx: number, newPrompt?: string) => Promise<void>;
   handleStopGeneration: () => void;
   handleReprocessSounds: (applyDenoising: boolean) => Promise<void>;
   setActiveSoundConfigTab: (tab: number) => void;
@@ -720,6 +734,7 @@ export interface SoundscapeStoreState {
   handleDetachSoundFromEntity: (index: number) => void;
   handleAttachSoundToEntity: (index: number, entity: any, append?: boolean) => void;
   updateSoundPosition: (soundId: string, position: [number, number, number]) => void;
+  patchSoundEvent: (soundId: string, patch: Partial<SoundEvent>) => void;
   selectLinkedEntity: (soundId: string, entityIndex: number, position: [number, number, number]) => void;
   restoreSoundscape: (
     configs: SoundGenerationConfig[],
@@ -760,6 +775,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
         trimSilence: false,
         applyNoiseReduction: true,
         regeneratingIndices: [],
+        regeneratingVariantIndices: [],
         soundGenTargetIndices: null,
         llmModel: DEFAULT_LLM_MODEL,
         audioModel: DEFAULT_AUDIO_MODEL,
@@ -1184,8 +1200,11 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               lines && lines.length > 0 ? lines.length : (config.seed_copies ?? 1),
             );
           });
-          [...uploadedConfigs, ...libraryConfigs, ...catalogConfigs, ...elevenLabsConfigs]
+          [...uploadedConfigs, ...libraryConfigs, ...catalogConfigs]
             .forEach(({ originalIndex }) => registerExpected(originalIndex, 1));
+          elevenLabsConfigs.forEach(({ config, originalIndex }) =>
+            registerExpected(originalIndex, config.seed_copies ?? 1),
+          );
 
           const totalSamples = Object.values(expectedSamples).reduce((a, b) => a + b, 0);
           const doneTotal = () =>
@@ -1803,46 +1822,59 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             //  - background beds request a seamless loop (opt-in per config);
             //  - prompt_influence replaces the diffusion guidance scale;
             //  - noise reduction is never applied (only optional silence trimming).
+            // Like TangoFlux, a config generates `seed_copies` variants so repeated
+            // occurrences can rotate instead of retriggering one clip.
             if (elevenLabsConfigs.length > 0) {
               lanePromises.push((async () => {
                 const { results, errors } = await mapWithConcurrency(
                   elevenLabsConfigs,
-                  async ({ config, originalIndex }) => {
+                  async ({ config, originalIndex }): Promise<any[]> => {
                     setCardStatus(originalIndex, 'Generating…');
                     const isBackground = normalizeSoundCategory(config.category) === 'background';
                     const loop = config.loop ?? (isBackground || DEFAULT_SOUND_LOOP);
-                    const rawUrl = await generateSoundEffect({
-                      text: config.prompt,
-                      durationSeconds: elevenLabsDurationSeconds(config, isBackground),
-                      loop,
-                      promptInfluence: config.prompt_influence ?? DEFAULT_PROMPT_INFLUENCE,
-                    });
-                    const resolvedDbfs = config.dbfs ?? globalBaseDbfs;
-                    const { url: audioUrl, noise_trim } = await calibrateBlobUrl(
-                      rawUrl,
-                      globalBaseDbfs,
-                      false, // noise reduction never applies to ElevenLabs
-                      trimSilence,
-                    );
-                    const elevenLabsEvent = createSoundEventFromUpload(
-                      { ...config, dbfs: resolvedDbfs, ...(loop ? { interval_seconds: 0 } : {}) },
-                      audioUrl,
-                      originalIndex,
-                      total,
-                      geometryBounds as GeometryBounds | undefined,
-                      'elevenlabs',
-                    );
-                    if (noise_trim) {
-                      useAudioControlsStore.getState().setSoundTrim(elevenLabsEvent.id, { start: noise_trim[0], end: noise_trim[1] });
+                    const copies = Math.max(1, config.seed_copies ?? 1);
+                    const events: any[] = [];
+                    for (let copyIdx = 0; copyIdx < copies; copyIdx++) {
+                      const rawUrl = await generateSoundEffect({
+                        text: config.prompt,
+                        durationSeconds: elevenLabsDurationSeconds(config, isBackground),
+                        loop,
+                        promptInfluence: config.prompt_influence ?? DEFAULT_PROMPT_INFLUENCE,
+                      });
+                      const resolvedDbfs = config.dbfs ?? globalBaseDbfs;
+                      const { url: audioUrl, noise_trim } = await calibrateBlobUrl(
+                        rawUrl,
+                        globalBaseDbfs,
+                        false, // noise reduction never applies to ElevenLabs
+                        trimSilence,
+                      );
+                      const baseEvent = createSoundEventFromUpload(
+                        { ...config, dbfs: resolvedDbfs, ...(loop ? { interval_seconds: 0 } : {}) },
+                        audioUrl,
+                        originalIndex,
+                        total,
+                        geometryBounds as GeometryBounds | undefined,
+                        'elevenlabs',
+                      );
+                      const elevenLabsEvent: any = {
+                        ...baseEvent,
+                        id: `elevenlabs_${originalIndex}_${copyIdx}`,
+                        copy_index: copyIdx,
+                        total_copies: copies,
+                      };
+                      if (noise_trim) {
+                        useAudioControlsStore.getState().setSoundTrim(elevenLabsEvent.id, { start: noise_trim[0], end: noise_trim[1] });
+                      }
+                      mergePartialEvents([elevenLabsEvent]);
+                      bumpSamples(originalIndex, 1);
+                      events.push(elevenLabsEvent);
                     }
-                    mergePartialEvents([elevenLabsEvent]);
-                    bumpSamples(originalIndex, 1);
-                    return elevenLabsEvent;
+                    return events;
                   },
                   SOUND_GEN_CONCURRENCY.ELEVENLABS,
                   controller.signal,
                 );
-                elevenLabsEvents = results.filter(Boolean) as any[];
+                elevenLabsEvents = results.flat().filter(Boolean) as any[];
                 errors.forEach(({ error }) => console.error('[soundscapeStore] ElevenLabs error:', error));
               })().catch((err) => recordLaneError('ElevenLabs', err)));
             }
@@ -2146,7 +2178,15 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               return;
             }
 
-            const configForGeneration = { ...config, seed_copies: 1, _regeneration_ts: Date.now() };
+            // Mirror handleGenerateInternal: the global negative prompt is what
+            // the TTA models (TangoFlux/AudioLDM2) actually receive, so a
+            // regenerate must apply it too — not the card's (empty) per-config value.
+            const configForGeneration = {
+              ...config,
+              seed_copies: 1,
+              negative_prompt: globalNegativePrompt,
+              _regeneration_ts: Date.now(),
+            };
 
             const result = await apiService.generateSounds({
               sounds: [configForGeneration],
@@ -2267,6 +2307,206 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           }
         },
 
+        regenerateVariantInPlace: async (targetIndex, variantIdx, newPrompt) => {
+          const state = get();
+          const config = state.soundConfigs[targetIndex];
+          if (!config) return;
+          if (state.regeneratingVariantIndices.includes(targetIndex)) return;
+
+          const isTts = config.type === 'text-to-speech';
+          const { soundscapeData, applyNoiseReduction, trimSilence, audioModel } = state;
+          const data = soundscapeData || [];
+
+          // Ordered variants for this card — matches the VariantsBar letter order.
+          const variants = data
+            .filter((s: any) => promptMatchesCard(s.prompt_index, targetIndex))
+            .sort((a: any, b: any) => ((a.copy_index ?? 0) - (b.copy_index ?? 0)));
+          const target = variants[variantIdx] ?? variants[0];
+          if (!target) return;
+
+          // Resolve the prompt this variant was generated from. TTS variants each
+          // map to a speech line; text-to-audio variants share the card prompt.
+          const speechLines = (config.orchestrateMeta?.speechLines
+            ?? config.scenarioSource?.speechLines) as string[] | undefined;
+          const currentPrompt = isTts && speechLines?.length
+            ? (speechLines[variantIdx] ?? config.prompt)
+            : config.prompt;
+          const prompt = ((newPrompt ?? currentPrompt) || '').trim() || currentPrompt;
+
+          // A user-edited prompt is written back onto the config / its speech line
+          // so the settings summary and later regenerations stay in sync.
+          if (newPrompt !== undefined && newPrompt !== currentPrompt) {
+            if (isTts && speechLines?.length) {
+              const newLines = [...speechLines];
+              newLines[variantIdx] = prompt;
+              if (config.scenarioSource && !config.orchestrateMeta?.speechLines) {
+                get().handleUpdateConfig(targetIndex, 'scenarioSource', {
+                  ...config.scenarioSource,
+                  speechLines: newLines,
+                });
+              } else if (config.orchestrateMeta) {
+                get().handleUpdateConfig(targetIndex, 'orchestrateMeta', {
+                  ...config.orchestrateMeta,
+                  speechLines: newLines,
+                });
+              }
+            }
+            get().handleUpdateConfig(targetIndex, 'prompt', prompt);
+          }
+
+          set(
+            {
+              regeneratingVariantIndices: [...get().regeneratingVariantIndices, targetIndex],
+              soundGenProgress: 'Regenerating…',
+              soundGenProgressValue: 0,
+              soundGenStatusText: '',
+            },
+            false,
+            'soundscape/regenVariantStart',
+          );
+          beginSoundGeneration();
+          trackGenerationTargets([targetIndex]);
+
+          try {
+            let patch: Record<string, any> = {};
+
+            if (isTts) {
+              const globalBaseDbfs = useAudioControlsStore.getState().globalBaseDbfs;
+              const { generation_id } = await apiService.generateTTS({
+                texts: [{
+                  text: prompt,
+                  voice_name: config.voice_name,
+                  display_name: config.display_name || prompt,
+                  position: target.position ?? config.position,
+                  dbfs: config.dbfs ?? globalBaseDbfs,
+                  prompt_index: target.prompt_index ?? targetIndex,
+                  copy_index: target.copy_index ?? variantIdx,
+                  total_copies: speechLines?.length ?? target.total_copies ?? 1,
+                }],
+                language: useAudioControlsStore.getState().ttsLanguage,
+                tts_model: get().ttsModel,
+              });
+              _activeTtsJobIds.add(generation_id);
+              recordInflightJob(generation_id, 'tts');
+
+              const poll = soundPollRegistry.track(startPolling({
+                fetchStatus: () => apiService.getTTSGenerationStatus(generation_id),
+                onStatus: (s) => set({ soundGenProgressValue: s.progress }, false, 'soundscape/regenVariantPoll'),
+              }));
+              let ttsResult: any[] = [];
+              try {
+                ttsResult = await poll.done;
+              } finally {
+                soundPollRegistry.release(poll);
+                _activeTtsJobIds.delete(generation_id);
+                removeInflightJob(generation_id);
+              }
+              const s = ttsResult[0];
+              if (s) {
+                patch = {
+                  url: s.url,
+                  duration: s.duration ?? target.duration,
+                  volume_dbfs: config.dbfs ?? target.volume_dbfs,
+                };
+              }
+            } else if (audioModel === AUDIO_MODEL_ELEVENLABS) {
+              const globalBaseDbfs = useAudioControlsStore.getState().globalBaseDbfs;
+              const isBackground = normalizeSoundCategory(config.category) === 'background';
+              const loop = config.loop ?? (isBackground || DEFAULT_SOUND_LOOP);
+              const rawUrl = await generateSoundEffect({
+                text: prompt,
+                durationSeconds: elevenLabsDurationSeconds(config, isBackground),
+                loop,
+                promptInfluence: config.prompt_influence ?? DEFAULT_PROMPT_INFLUENCE,
+              });
+              const resolvedDbfs = config.dbfs ?? globalBaseDbfs;
+              const { url: audioUrl, noise_trim } = await calibrateBlobUrl(
+                rawUrl,
+                globalBaseDbfs,
+                false, // noise reduction never applies to ElevenLabs
+                trimSilence,
+              );
+              patch = {
+                url: audioUrl,
+                volume_dbfs: resolvedDbfs,
+                ...(noise_trim ? { noise_trim } : {}),
+              };
+            } else {
+              const configForGeneration = { ...config, prompt, seed_copies: 1, _regeneration_ts: Date.now() };
+              const result = await apiService.generateSounds({
+                sounds: [configForGeneration],
+                bounding_box: config.entities?.length ? null : useFileUploadStore.getState().geometryBounds,
+                apply_denoising: applyNoiseReduction,
+                trim_silence: trimSilence,
+                audio_model: audioModel,
+              });
+              if (!result) throw new Error('Failed to submit regeneration');
+              const { generation_id } = result;
+              _activeSoundJobIds.add(generation_id);
+              recordInflightJob(generation_id, 'sound');
+
+              const poll = soundPollRegistry.track(startPolling({
+                fetchStatus: () => apiService.getSoundGenerationStatus(generation_id),
+                onStatus: (s) => set({ soundGenProgressValue: s.progress }, false, 'soundscape/regenVariantPoll'),
+              }));
+              let mlResult: any[] = [];
+              try {
+                mlResult = await poll.done;
+              } finally {
+                soundPollRegistry.release(poll);
+                _activeSoundJobIds.delete(generation_id);
+                removeInflightJob(generation_id);
+              }
+              const s = mlResult[0];
+              if (s) {
+                patch = {
+                  url: s.url,
+                  duration: s.duration ?? target.duration,
+                  geometry: s.geometry || target.geometry,
+                  ...(s.noise_trim ? { noise_trim: s.noise_trim } : {}),
+                  ...(s.volume_dbfs !== undefined ? { volume_dbfs: s.volume_dbfs } : {}),
+                };
+              }
+            }
+
+            if (!patch.url && !patch.duration) throw new Error('No audio returned');
+
+            // Swap the audio payload IN PLACE. The event keeps the SAME id,
+            // copy_index, position, geometry fallback and entity indices, so
+            // DAW clip keys (soundId-iteration), iterationLinks, sound spheres
+            // and linked entities all stay rooted to this variant.
+            const updated = { ...target, ...patch, prompt };
+            const nextData = (get().soundscapeData || []).map((s: any) =>
+              s.id === target.id ? updated : s,
+            );
+            set(
+              { generatedSounds: nextData, soundscapeData: nextData },
+              false,
+              'soundscape/regenVariantComplete',
+            );
+            applyTrimRegions([updated]);
+          } catch (err: any) {
+            if (err?.message !== 'AbortError') {
+              const msg = `Regeneration failed: ${err?.message || err}`;
+              set({ soundGenError: msg }, false, 'soundscape/regenVariantError');
+              notifySectionError(msg);
+            }
+          } finally {
+            endSoundGeneration();
+            untrackGenerationTargets([targetIndex]);
+            set(
+              {
+                soundGenProgress: '',
+                soundGenProgressValue: 0,
+                soundGenStatusText: '',
+                regeneratingVariantIndices: get().regeneratingVariantIndices.filter((i) => i !== targetIndex),
+              },
+              false,
+              'soundscape/regenVariantEnd',
+            );
+          }
+        },
+
         handleStopGeneration: () => {
           // Stop every in-flight poll (each rejects its promise → the owning
           // invocation unwinds and cleans up its own state).
@@ -2312,6 +2552,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               activeGenerationCardIndices: [],
               soundGenCardStatus: {},
               regeneratingIndices: [],
+              regeneratingVariantIndices: [],
             },
             false,
             'soundscape/stop',
@@ -2427,6 +2668,12 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 ...prev,
                 // Fresh identity only when the previous card was generated.
                 ...(isGenerated ? { config_id: newConfigId() } : {}),
+                // Re-sending a scenario/analysis to Sounds is authoritative:
+                // refresh the variant count and the pipeline linkage too, so a
+                // card created before the count was known does not stay at 1.
+                seed_copies: newConfig.seed_copies,
+                scenarioSource: newConfig.scenarioSource,
+                orchestrateMeta: newConfig.orchestrateMeta,
                 dbfs: newConfig.dbfs,
                 interval_seconds: newConfig.interval_seconds,
                 timestamps: newConfig.timestamps,
@@ -3181,6 +3428,20 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             },
             false,
             'soundscape/updatePosition',
+          );
+        },
+
+        patchSoundEvent: (soundId, patch) => {
+          const { soundscapeData, generatedSounds } = get();
+          const update = (sounds: SoundEvent[]) =>
+            sounds.map((s) => (s.id === soundId ? { ...s, ...patch } : s));
+          set(
+            {
+              soundscapeData: soundscapeData ? update(soundscapeData) : null,
+              generatedSounds: update(generatedSounds),
+            },
+            false,
+            'soundscape/patchSoundEvent',
           );
         },
 

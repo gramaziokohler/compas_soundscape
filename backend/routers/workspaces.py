@@ -47,6 +47,9 @@ class InviteCreate(BaseModel):
     # None = use default (7 days / unlimited); 0 = never expires / unlimited.
     expires_in_s: Optional[int] = None
     max_uses: Optional[int] = None
+    # The model this invite is scoped to. The invite link opens this model
+    # after joining so the recipient lands on the shared soundscape.
+    model_id: Optional[str] = None
 
 
 class JoinRequest(BaseModel):
@@ -116,6 +119,12 @@ async def list_workspaces(request: Request) -> dict:
 @router.post("")
 async def create_workspace(payload: WorkspaceCreate, request: Request) -> dict:
     user_hash, token = _identity(request)
+    # One user = one workspace: idempotently return the existing personal
+    # workspace instead of creating additional owned workspaces.
+    existing = metadata_store.get_owned_workspace(user_hash)
+    if existing:
+        metadata_store.set_session_workspace(token, existing["id"])
+        return _workspace_view(existing["id"], user_hash)
     user = metadata_store.get_user(user_hash) or {}
     name = (payload.name or "").strip() or f"{user.get('display_name') or 'New'}'s workspace"
     ws = metadata_store.create_workspace(user_hash, name)
@@ -143,7 +152,10 @@ async def join_workspace(payload: JoinRequest, request: Request) -> dict:
     # bumped (bumping would fire false 409s / pause autosave for active editors).
     if existing is None:
         metadata_store.record_invite_use(payload.token)
-    return _workspace_view(workspace_id, user_hash)
+    view = _workspace_view(workspace_id, user_hash)
+    # Surface the model the invite was scoped to so the client can open it.
+    view["model_id"] = invite.get("model_id")
+    return view
 
 
 @router.get("/{workspace_id}")
@@ -205,13 +217,22 @@ async def create_invite(workspace_id: str, payload: InviteCreate, request: Reque
     max_uses = max(0, min(max_uses, INVITE_MAX_USES_HARD_CAP))
 
     token = metadata_store.create_invite(
-        workspace_id, role, user_hash, expires_at=expires_at, max_uses=max_uses
+        workspace_id,
+        role,
+        user_hash,
+        expires_at=expires_at,
+        max_uses=max_uses,
+        model_id=payload.model_id,
     )
+    url = f"/?invite={token}"
+    if payload.model_id:
+        url += f"&model_id={payload.model_id}"
     return {
         "token": token,
         "role": role,
         "workspace_id": workspace_id,
-        "url": f"/?invite={token}",
+        "model_id": payload.model_id,
+        "url": url,
         "expires_at": expires_at,
         "max_uses": max_uses,
     }

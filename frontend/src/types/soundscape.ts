@@ -105,6 +105,12 @@ export interface SoundscapeSoundEvent {
   copy_index?: number;
   /** Explicit-position sound that must stay where authored (Home Sample at origin). */
   pinned?: boolean;
+  /** Foley FX chain (ordered instances). */
+  fx?: import('@/lib/audio/fx/fx-types').FxChain;
+  /** Filename of the bounced FX WAV (sibling of audio_filename). */
+  fx_audio_filename?: string;
+  /** When true, clients should play the bounced FX file. */
+  fx_enabled?: boolean;
 }
 
 /** Serializable receiver position */

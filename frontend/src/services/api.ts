@@ -201,6 +201,7 @@ export interface ServiceVersions {
   pyroomacoustics: ServiceVersionInfo;
   tangoflux: ServiceVersionInfo;
   audioldm2: ServiceVersionInfo;
+  stable_audio_3: ServiceVersionInfo;
   bbc: ServiceVersionInfo;
   llm_providers: LLMProviders;
   yamnet: ServiceVersionInfo;
@@ -255,6 +256,8 @@ export interface WorkspaceMember {
 export interface WorkspaceDetail extends WorkspaceSummary {
   members?: WorkspaceMember[];
   presence?: number;
+  /** Present on the join response: the model the invite was scoped to. */
+  model_id?: string | null;
 }
 
 /** Invite metadata for the management list. `id` is a hash, not the secret token. */
@@ -267,6 +270,8 @@ export interface WorkspaceInvite {
   revoked: boolean;
   max_uses: number;
   used_count: number;
+  /** The model this invite is scoped to (opened after joining), if any. */
+  model_id: string | null;
 }
 
 // ─── Preferences wire mapping (camelCase domain ↔ snake_case API) ──────────
@@ -456,8 +461,8 @@ export const apiService = {
   async createWorkspaceInvite(
     workspaceId: string,
     role: 'editor' | 'viewer' = 'editor',
-    options?: { expiresInS?: number; maxUses?: number },
-  ): Promise<{ token: string; role: string; url: string; expires_at: string | null; max_uses: number }> {
+    options?: { expiresInS?: number; maxUses?: number; modelId?: string | null },
+  ): Promise<{ token: string; role: string; url: string; model_id: string | null; expires_at: string | null; max_uses: number }> {
     const response = await fetchWithErrorHandling(
       `${API_BASE_URL}/api/workspaces/${encodeURIComponent(workspaceId)}/invites`,
       {
@@ -467,6 +472,7 @@ export const apiService = {
           role,
           expires_in_s: options?.expiresInS,
           max_uses: options?.maxUses,
+          model_id: options?.modelId ?? null,
         }),
       },
       'Create invite'
@@ -806,6 +812,54 @@ export const apiService = {
       return await response.json();
     } catch (error) {
       handleApiError(error, 'Audio calibration');
+    }
+  },
+
+  // Stable Audio 3 transform (FX restyle / inpaint / extend) — queued GPU job.
+  async stableAudioTransform(
+    audioBlob: Blob,
+    params: {
+      mode: string;
+      prompt: string;
+      negativePrompt: string;
+      strength: number;
+      steps: number;
+      cfgScale: number;
+      seed: number;
+      duration: number;
+      regions: [number, number][];
+      durationPaddingSec: number;
+      samplerType: string;
+    }
+  ): Promise<{ job_id: string; position: number; total: number }> {
+    try {
+      const formData = new FormData();
+      formData.append('audio', audioBlob, 'source.wav');
+      formData.append('mode', params.mode);
+      formData.append('prompt', params.prompt);
+      formData.append('negative_prompt', params.negativePrompt);
+      formData.append('strength', params.strength.toString());
+      formData.append('steps', params.steps.toString());
+      formData.append('cfg_scale', params.cfgScale.toString());
+      formData.append('seed', params.seed.toString());
+      formData.append('duration', params.duration.toString());
+      formData.append('regions', JSON.stringify(params.regions));
+      formData.append('duration_padding_sec', params.durationPaddingSec.toString());
+      formData.append('sampler_type', params.samplerType);
+
+      const response = await fetchWithErrorHandling(
+        `${API_BASE_URL}/api/stable-audio/transform`,
+        { method: 'POST', body: formData },
+        'Stable Audio transform'
+      );
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ detail: 'Stable Audio transform failed' }));
+        if (response.status === 429) throw new Error(JOB_LIMIT_MESSAGE);
+        throw new Error(err.detail || 'Stable Audio transform failed');
+      }
+      return await response.json();
+    } catch (error) {
+      handleApiError(error, 'Stable Audio transform');
     }
   },
 
@@ -1584,6 +1638,26 @@ export const apiService = {
       return response.json();
     } catch (error) {
       handleApiError(error, 'Load soundscape from Speckle');
+    }
+  },
+
+  /**
+   * Probe whether a saved soundscape exists for a model in a workspace.
+   * Lightweight — does not load/restore files or auto-join. Used by the
+   * invite flow to detect a collision with the recipient's own soundscape.
+   */
+  async soundscapeExists(modelId: string, workspaceId?: string | null): Promise<{ found: boolean; workspace_id: string | null }> {
+    try {
+      const qs = workspaceId ? `?workspace_id=${encodeURIComponent(workspaceId)}` : '';
+      const response = await fetchWithErrorHandling(
+        `${API_BASE_URL}/api/speckle/soundscape/${encodeURIComponent(modelId)}/exists${qs}`,
+        undefined,
+        'Check soundscape exists'
+      );
+      if (!response.ok) return { found: false, workspace_id: workspaceId ?? null };
+      return response.json();
+    } catch {
+      return { found: false, workspace_id: workspaceId ?? null };
     }
   },
 

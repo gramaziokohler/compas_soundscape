@@ -140,8 +140,9 @@ LOOP_FINDER_TASK_CLEANUP_DELAY_SECONDS = 300  # Task state retention after compl
 # Audio Generation Models
 AUDIO_MODEL_TANGOFLUX = "tangoflux"
 AUDIO_MODEL_AUDIOLDM2 = "audioldm2"
+AUDIO_MODEL_SA3 = "stable-audio-3"  # StabilityAI stable-audio-3 (small-sfx)
 AUDIO_MODEL_TTS = "gemini-tts"
-DEFAULT_AUDIO_MODEL = AUDIO_MODEL_TANGOFLUX  # Default model to use
+DEFAULT_AUDIO_MODEL = AUDIO_MODEL_SA3  # Default model for text-to-audio
 
 # Device Configuration
 # Set to false to force CPU mode (useful for systems with limited GPU memory)
@@ -166,6 +167,49 @@ AUDIOLDM2_MODEL_NAME = "cvssp/audioldm2-large"
 AUDIOLDM2_INFERENCE_STEPS = 200  # Default number of inference steps for AudioLDM2
 AUDIOLDM2_NUM_WAVEFORMS = 1  # Number of waveforms to generate per prompt
 AUDIOLDM2_SAMPLE_RATE = 16000  # AudioLDM2 output sample rate
+
+# Stable Audio 3 (StabilityAI) — text-to-audio, audio-to-audio and inpainting.
+# Runs in an ISOLATED conda env (compas-sa3: Python 3.10, torch 2.7.1, transformers 5)
+# because small-sfx needs T5GemmaEncoderModel, which is incompatible with the
+# transformers 4.44 / numpy 1.26 pinned by TangoFlux in the main env. It is executed
+# by a dedicated resident worker (workers/sa3_runner.py, --role sa3) launched with
+# STABLE_AUDIO_PYTHON. Never import stable_audio_3 from the API process.
+STABLE_AUDIO_MODEL_NAME = os.environ.get("STABLE_AUDIO_MODEL", "small-sfx")
+# Interpreter of the isolated env that has `stable_audio_3` installed. Empty =
+# resolved at launch time from the user's conda envs (see workers/sa3_runner.py).
+STABLE_AUDIO_PYTHON = os.environ.get("STABLE_AUDIO_PYTHON", "")
+# HuggingFace token for the gated stabilityai/stable-audio-3-small-sfx repo. The
+# weights are already cached locally; set HF_HUB_OFFLINE=1 to load without a token.
+STABLE_AUDIO_HF_TOKEN = os.environ.get("HF_TOKEN", "")
+# Local weights cache root (mirrors TANGOFLUX_LOCAL_DIR). Optional.
+STABLE_AUDIO_LOCAL_DIR = os.environ.get("STABLE_AUDIO_LOCAL_DIR", "")
+# Generation defaults (see backend/stable_audio_3_test.py)
+STABLE_AUDIO_DEFAULT_STEPS = 8
+STABLE_AUDIO_DEFAULT_CFG_SCALE = 3.0
+STABLE_AUDIO_DEFAULT_INIT_NOISE_LEVEL = 0.9
+STABLE_AUDIO_DEFAULT_DURATION_PADDING_S = 6.0
+STABLE_AUDIO_DEFAULT_SAMPLER = "pingpong"
+STABLE_AUDIO_AVAILABLE_SAMPLERS = ("pingpong", "euler", "rk4", "dpmpp")
+STABLE_AUDIO_MIN_DURATION_S = 1.0
+STABLE_AUDIO_MAX_DURATION_S = 380.0
+# Generation modes
+STABLE_AUDIO_MODE_TEXT = "text"
+STABLE_AUDIO_MODE_RESTYLE = "restyle"  # audio-to-audio (init_audio + init_noise_level)
+STABLE_AUDIO_MODE_INPAINT = "inpaint"  # regenerate masked region(s)
+STABLE_AUDIO_MODE_EXTEND = "extend"  # continuation: inpaint a region reaching the tail
+STABLE_AUDIO_MODES = (
+    STABLE_AUDIO_MODE_TEXT,
+    STABLE_AUDIO_MODE_RESTYLE,
+    STABLE_AUDIO_MODE_INPAINT,
+    STABLE_AUDIO_MODE_EXTEND,
+)
+# Inpaint regions are [start_seconds, end_seconds] pairs; the mask is 0 (regenerate)
+# inside each region and 1 (keep) elsewhere.
+STABLE_AUDIO_MAX_INPAINT_REGIONS = 8
+STABLE_AUDIO_WARMUP_DURATION_S = 2.0
+STABLE_AUDIO_WARMUP_STEPS = 2
+# Directory where the API stages uploaded source audio for a transform job.
+STABLE_AUDIO_SOURCE_DIR = str(BACKEND_DIR / "temp" / "sa3_sources")
 
 # Gemini TTS Configuration — Gemini 3.8 TTS only (2.5 and 3.1-preview removed).
 # Both models share the same schema (Interactions API, WAV unary output).
@@ -259,7 +303,7 @@ TTS_TASK_CLEANUP_DELAY_SECONDS = 600
 
 # Default Generation Parameters (TangoFlux)
 DEFAULT_GUIDANCE_SCALE = 4.5  # Default guidance scale for generation
-DEFAULT_DIFFUSION_STEPS = 25  # Default number of diffusion steps
+DEFAULT_DIFFUSION_STEPS = 50  # Default number of diffusion steps
 DEFAULT_SEED_COPIES = 1  # Default number of copies per sound
 DEFAULT_INTERVAL_BETWEEN_SOUNDS = 0  # Default interval between sounds (sequential playback)
 
@@ -702,6 +746,7 @@ REDIS_URL = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
 GPU_WORKER_SLOTS = int(os.environ.get("GPU_WORKER_SLOTS", "2"))
 CPU_WORKER_SLOTS = int(os.environ.get("CPU_WORKER_SLOTS", "4"))
 CHORAS_WORKER_SLOTS = int(os.environ.get("CHORAS_WORKER_SLOTS", "1"))
+SA3_WORKER_SLOTS = int(os.environ.get("SA3_WORKER_SLOTS", "1"))
 
 # Fairness / rate limiting
 GPU_QUEUE_PER_SESSION_MAX = int(os.environ.get("GPU_QUEUE_PER_SESSION_MAX", "3"))
@@ -726,6 +771,7 @@ TEMP_JANITOR_INTERVAL_S = int(os.environ.get("TEMP_JANITOR_INTERVAL_S", "3600"))
 
 # Job types (queue names in Redis)
 JOB_TYPE_SOUND = "sound"
+JOB_TYPE_SA3 = "sa3"
 JOB_TYPE_PYROOMACOUSTICS = "pyroomacoustics"
 JOB_TYPE_SED = "sed"
 JOB_TYPE_LOOP = "loop"
@@ -746,11 +792,15 @@ JOB_STATUS_ERROR = "error"
 # Redis queue names per job type -> worker role
 JOB_TYPE_QUEUE = {
     JOB_TYPE_SOUND: "queue:gpu",
+    JOB_TYPE_SA3: "queue:sa3",
     JOB_TYPE_PYROOMACOUSTICS: "queue:cpu",
     JOB_TYPE_SED: "queue:cpu",
     JOB_TYPE_LOOP: "queue:cpu",
     JOB_TYPE_CHORAS: "queue:choras",
 }
+
+# GPU-style jobs share the per-session fairness cap and the pending-GPU set.
+GPU_LIKE_JOB_TYPES = (JOB_TYPE_SOUND, JOB_TYPE_SA3)
 
 JOB_CANCEL_CHANNEL = "job:cancel"
 

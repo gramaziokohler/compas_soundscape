@@ -27,6 +27,7 @@
  * ```
  */
 
+import { RefreshCw } from 'lucide-react';
 import { DashedAddButton } from '@/components/ui/DashedAddButton';
 
 export interface VariantsBarItem {
@@ -46,6 +47,14 @@ export interface VariantsBarProps {
   onDelete?: (index: number) => void;
   /** Called when the "+" button is clicked (rendered even when items is empty). */
   onAdd?: () => void;
+  /**
+   * When provided, renders a refresh icon pinned to the far right of the bar.
+   * Clicking it regenerates the CURRENTLY SELECTED variant in place (TTA/TTS),
+   * keeping its id / DAW / entity / sphere links intact.
+   */
+  onRegenerateVariant?: () => void;
+  /** When true, the refresh button spins and is disabled while regeneration runs. */
+  isRegeneratingVariant?: boolean;
   /** When true, renders a pending spinner square at pendingIndex. */
   isRegenerating?: boolean;
   /** Index of the variant currently being generated. */
@@ -70,6 +79,8 @@ export function VariantsBar({
   onSelect,
   onDelete,
   onAdd,
+  onRegenerateVariant,
+  isRegeneratingVariant = false,
   isRegenerating = false,
   pendingIndex,
   onBlueBackground = false,
@@ -134,6 +145,22 @@ export function VariantsBar({
           onBlueBackground={onBlueBackground}
           className="relative flex-shrink-0"
         />
+      )}
+
+      {/* Regenerate the active variant in place — same prompt, new render. */}
+      {onRegenerateVariant && (
+        <button
+          type="button"
+          onClick={onRegenerateVariant}
+          disabled={isRegeneratingVariant}
+          title="Regenerate this variant"
+          aria-label="Regenerate this variant"
+          className={`tag add relative flex-shrink-0 ml-auto flex items-center justify-center ${
+            isRegeneratingVariant ? 'opacity-60 cursor-wait' : ''
+          }`}
+        >
+          <RefreshCw size={12} className={isRegeneratingVariant ? 'animate-spin' : ''} />
+        </button>
       )}
     </div>
   );

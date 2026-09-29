@@ -22,9 +22,10 @@ import { useSpeckleEngineStore } from "@/store/speckleEngineStore";
 import { useUIStore } from "@/store/uiStore";
 import { useServiceVersions } from "@/hooks/useServiceVersions";
 import {
-  AUDIO_MODEL_TANGOFLUX,
   AUDIO_MODEL_AUDIOLDM2,
   AUDIO_MODEL_ELEVENLABS,
+  AUDIO_MODEL_SA3,
+  DEFAULT_AUDIO_MODEL,
   ELEVENLABS_SERVICE_VERSION,
   GOOGLE_SOUND_LIBRARY_SERVICE_VERSION,
   SOUND_CATEGORIES,
@@ -126,7 +127,7 @@ export function SoundGenerationSection({
   onDuplicateConfig,
   onRegenerateSingle,
   onDeleteVariant,
-  audioModel = AUDIO_MODEL_TANGOFLUX,
+  audioModel = DEFAULT_AUDIO_MODEL,
   visibleParentUsageIndex,
 }: SoundGenerationSectionProps) {
   const serviceVersions = useServiceVersions();
@@ -160,6 +161,8 @@ export function SoundGenerationSection({
   const updateSoundPosition         = useSoundscapeStore((s) => s.updateSoundPosition);
   const handleDetachSoundFromEntity = useSoundscapeStore((s) => s.handleDetachSoundFromEntity);
   const regeneratingIndices         = useSoundscapeStore((s) => s.regeneratingIndices);
+  const regeneratingVariantIndices  = useSoundscapeStore((s) => s.regeneratingVariantIndices);
+  const regenerateVariantInPlace    = useSoundscapeStore((s) => s.regenerateVariantInPlace);
   const orchestrateSoundsEnabled    = useSoundscapeStore((s) => s.orchestrateSoundsEnabled);
   const setOrchestrateSoundsEnabled = useSoundscapeStore((s) => s.setOrchestrateSoundsEnabled);
   const reorchestrateTimeline       = useSoundscapeStore((s) => s.reorchestrateTimeline);
@@ -754,6 +757,10 @@ export function SoundGenerationSection({
           const v = serviceVersions.audioldm2;
           return v.version && v.version !== 'unknown' ? `${v.name} ${v.version}` : v.name;
         }
+        if (audioModel === AUDIO_MODEL_SA3) {
+          const v = serviceVersions.stable_audio_3;
+          return v && v.version && v.version !== 'unknown' ? `${v.name} ${v.version}` : v?.name;
+        }
         const v = serviceVersions.tangoflux;
         return v.version && v.version !== 'unknown' ? `${v.name} ${v.version}` : v.name;
       }
@@ -1053,6 +1060,10 @@ export function SoundGenerationSection({
     const cardGenerating = isSoundGenerating &&
       (soundGenTargetIndices === null || soundGenTargetIndices.includes(originalIndex));
 
+    // In-place variant regeneration (refresh button / edited prompt) — same
+    // sound id, so DAW / entity / sphere links stay rooted.
+    const isRegeneratingVariant = regeneratingVariantIndices.includes(originalIndex);
+
     let cardVariants: VariantsBarProps | undefined;
     if (isTtsType && !isGenerated) {
       const tts = createTtsSpeechLines(config, originalIndex, onUpdateConfig);
@@ -1072,6 +1083,8 @@ export function SoundGenerationSection({
         onAdd: (isTextToAudioType && onRegenerateSingle && !cardGenerating)
           ? () => onRegenerateSingle(originalIndex)
           : undefined,
+        onRegenerateVariant: () => regenerateVariantInPlace(originalIndex, selectedVariantIdx),
+        isRegeneratingVariant: isRegeneratingVariant || cardGenerating,
         isRegenerating: regeneratingIndices.includes(originalIndex),
         pendingIndex: variants.length,
       };
@@ -1105,13 +1118,15 @@ export function SoundGenerationSection({
     // Single-card regeneration uses the global progress value instead.
     const isRegenerating = regeneratingIndices.includes(originalIndex);
     const isCardRunning =
-      (isSoundGenerating && activeGenerationCardIndices.includes(originalIndex)) || isRegenerating;
-    const cardProgress = isRegenerating
+      (isSoundGenerating && activeGenerationCardIndices.includes(originalIndex))
+      || isRegenerating
+      || isRegeneratingVariant;
+    const cardProgress = (isRegenerating || isRegeneratingVariant)
       ? soundGenProgressValue
       : (soundGenCardProgress[originalIndex] ?? 0);
     // Per-card status: each concurrent card shows its own lane status instead of
     // the shared global string. Untargeted/queued cards show their init "Pending…".
-    const cardStatus = isRegenerating
+    const cardStatus = (isRegenerating || isRegeneratingVariant)
       ? 'Regenerating...'
       : (soundGenCardStatus[originalIndex] ?? 'Pending…');
 
@@ -1155,6 +1170,10 @@ export function SoundGenerationSection({
         variants={cardVariants}
         showVariantsPreGen={showVariantsPreGen}
         showVariantsPostGen={showVariantsPostGen}
+        promptAction={(isGenerated && (isTextToAudioType || isTtsType) && generatedSound) ? {
+          onRegenerate: (newPrompt) => regenerateVariantInPlace(originalIndex, selectedVariantIdx, newPrompt),
+          isRegenerating: isRegeneratingVariant || cardGenerating,
+        } : undefined}
         beforeContent={isGenerated ? undefined : (
           <>
             {!isCurrentlyLinking && linkedEntitiesDisplay}
@@ -1253,6 +1272,8 @@ export function SoundGenerationSection({
     handleDetachSoundFromEntity,
     serviceVersions,
     regeneratingIndices,
+    regeneratingVariantIndices,
+    regenerateVariantInPlace,
     onRegenerateSingle,
     onDeleteVariant,
     audioModel,

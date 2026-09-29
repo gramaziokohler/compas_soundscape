@@ -21,7 +21,6 @@ interface AudioContextContentProps {
   config: AudioAnalysisConfig;
   index: number;
   isAnalyzing: boolean;
-  onUpdateConfig: (index: number, updates: Partial<AudioAnalysisConfig>) => void;
   /** Controlled preview state — owned by the parent so previews are mutually exclusive. */
   isPreviewPlaying?: boolean;
   onPreviewPlayPause?: () => void;
@@ -31,8 +30,6 @@ interface AudioContextContentProps {
 export function AudioContextContent({
   config,
   index,
-  isAnalyzing,
-  onUpdateConfig,
   isPreviewPlaying = false,
   onPreviewPlayPause,
   onPreviewStop,
@@ -48,6 +45,7 @@ export function AudioContextContent({
   // instead of a misleading "upload a new file" dropzone.
   const rehydratingAudioConfigs = useAnalysisStore((s) => s.rehydratingAudioConfigs);
   const audioRehydrateFailedConfigs = useAnalysisStore((s) => s.audioRehydrateFailedConfigs);
+  const handleAudioFileUpload = useAnalysisStore((s) => s.handleAudioFileUpload);
   const isRestoringAudio = rehydratingAudioConfigs.has(index);
   const audioRestoreFailed = audioRehydrateFailedConfigs.has(index);
   const savedAudioPending = !hasAudioFile && !!config.persistedAudioFilename;
@@ -73,7 +71,7 @@ export function AudioContextContent({
     setIsDragging(false);
   };
 
-  const handleDrop = async (e: React.DragEvent<HTMLDivElement>) => {
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setIsDragging(false);
 
@@ -81,17 +79,17 @@ export function AudioContextContent({
     if (files.length === 0) return;
 
     const file = files[0];
-    // Update config - useEffect in page.tsx will handle loading buffer
-    onUpdateConfig(index, { audioFile: file });
+    // Decode + buffer the file via the store so the waveform (gated on audioInfo)
+    // renders and the source is persisted for refresh survival.
+    void handleAudioFileUpload(index, file);
   };
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
     const file = files[0];
-    // Update config - useEffect in page.tsx will handle loading buffer
-    onUpdateConfig(index, { audioFile: file });
+    void handleAudioFileUpload(index, file);
     
     // Reset input
     e.target.value = "";

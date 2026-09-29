@@ -23,7 +23,7 @@ from services.job_store import Job, WorkerJobStore
 from utils.audio_processing import compute_noise_trim_region_from_file
 from tangoflux.model import GenerationCancelled
 from config.constants import (
-    DEFAULT_AUDIO_MODEL,
+    AUDIO_MODEL_TANGOFLUX,
     DEFAULT_DBFS,
     DEFAULT_GUIDANCE_SCALE,
     JOB_TYPE_SOUND,
@@ -60,7 +60,7 @@ class GpuRunner:
                 steps=TANGOFLUX_WARMUP_STEPS,
                 dbfs=DEFAULT_DBFS,
                 apply_denoising=False,
-                audio_model=DEFAULT_AUDIO_MODEL,
+                audio_model=AUDIO_MODEL_TANGOFLUX,
             )
             print(f"[gpu:{self.worker_id}] warm-up generation done in {time.time() - t0:.1f}s")
         except Exception as exc:
@@ -104,7 +104,8 @@ class GpuRunner:
         url_prefix = payload["url_prefix"]
         apply_denoising = bool(payload.get("apply_denoising", False))
         trim_silence = bool(payload.get("trim_silence", False))
-        audio_model = payload.get("audio_model", DEFAULT_AUDIO_MODEL)
+        # The GPU lane only ever handles TangoFlux jobs (SA3 has its own queue).
+        audio_model = payload.get("audio_model", AUDIO_MODEL_TANGOFLUX)
 
         os.makedirs(output_dir, exist_ok=True)
 

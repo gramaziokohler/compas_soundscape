@@ -80,6 +80,11 @@ export function getAudioPeaks(cacheKey: string, resolvedUrl: string): Promise<Au
   return promise;
 }
 
+/** Clear a single cache entry so a bounced FX WAV is re-decoded. */
+export function invalidatePeaks(cacheKey: string): void {
+  cache.delete(cacheKey);
+}
+
 /** Clear the cache (rarely needed — mainly for tests or explicit memory reclamation). */
 export function clearAudioPeaksCache(): void {
   cache.clear();

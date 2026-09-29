@@ -1,10 +1,11 @@
 'use client';
 
 import type { SoundGenerationConfig } from '@/types';
-import { pauseStore, commitStore, globalUndo, globalRedo } from '@/store';
+import { pauseStore, commitStore, globalUndo, globalRedo, useAudioControlsStore, useUIStore } from '@/store';
 import { TTS_VOICES, TTS_DEFAULT_VOICE } from '@/utils/constants';
 import { useTtsSpeechLines } from '@/hooks/useTtsSpeechLines';
 import { CardSelect } from '@/components/ui/CardSelect';
+import { Settings2 } from 'lucide-react';
 
 export interface TextToSpeechModeProps {
   config: SoundGenerationConfig;
@@ -14,6 +15,8 @@ export interface TextToSpeechModeProps {
 
 export function TextToSpeechMode({ config, index, onUpdateConfig }: TextToSpeechModeProps) {
   const { onPromptChange } = useTtsSpeechLines(config, index, onUpdateConfig);
+  const ttsLanguage = useAudioControlsStore((s) => s.ttsLanguage);
+  const openAdvancedSettingsAt = useUIStore((s) => s.openAdvancedSettingsAt);
 
   return (
     <div className="card-stack--md">
@@ -54,6 +57,19 @@ export function TextToSpeechMode({ config, index, onUpdateConfig }: TextToSpeech
             label: voice.label,
           }))}
         />
+      </div>
+
+      <div className="flex items-center gap-2">
+        <label className="text-xs text-foreground/70 whitespace-nowrap">Language:</label>
+        <span className="flex-1 truncate text-xs text-foreground">{ttsLanguage || '—'}</span>
+        <button
+          type="button"
+          onClick={() => openAdvancedSettingsAt('tts-language')}
+          className="shrink-0 flex items-center justify-center text-secondary-hover hover:text-foreground transition-colors"
+          title="Edit TTS language in settings"
+        >
+          <Settings2 size={12} />
+        </button>
       </div>
     </div>
   );

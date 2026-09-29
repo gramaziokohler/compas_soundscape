@@ -120,6 +120,12 @@ export interface SoundEvent {
    * placement — including a legitimate [0,0,0] origin.
    */
   pinned?: boolean;
+  /** Foley FX chain authored in the sound editor. */
+  fx?: import('@/lib/audio/fx/fx-types').FxChain;
+  /** Bounced WAV produced by the last Save in the sound editor. */
+  fx_url?: string;
+  /** When true, playback / waveforms / export use `fx_url` instead of `url`. */
+  fx_enabled?: boolean;
 }
 
 export interface UIOverlay {

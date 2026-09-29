@@ -433,7 +433,7 @@ export const DEFAULT_LISTENER_ORIENTATION = { x: 0, y: 1, z: 0 } as const;
 
 export const DEFAULT_DURATION_SECONDS = 5;
 export const DEFAULT_GUIDANCE_SCALE = 4.5;
-export const DEFAULT_DIFFUSION_STEPS = 25;
+export const DEFAULT_DIFFUSION_STEPS = 50;
 export const DEFAULT_SEED_COPIES = 1;
 /** Maximum number of audio variants generated per sound card (matches the Variants slider). */
 export const MAX_SEED_COPIES = 5;
@@ -470,8 +470,31 @@ export const SPIRAL_PLACEMENT = {
 export const AUDIO_MODEL_TANGOFLUX = "tangoflux";
 export const AUDIO_MODEL_AUDIOLDM2 = "audioldm2";
 export const AUDIO_MODEL_ELEVENLABS = "elevenlabs";
+export const AUDIO_MODEL_SA3 = "stable-audio-3";
 export const AUDIO_MODEL_TTS = "gemini-tts";
-export const DEFAULT_AUDIO_MODEL = AUDIO_MODEL_TANGOFLUX;
+export const DEFAULT_AUDIO_MODEL = AUDIO_MODEL_SA3;
+
+// Stable Audio 3 (small-sfx) — text-to-audio plus the FX restyle/inpaint effect.
+export const STABLE_AUDIO_MODES = {
+  RESTYLE: "restyle",
+  INPAINT: "inpaint",
+  EXTEND: "extend",
+} as const;
+export type StableAudioMode = (typeof STABLE_AUDIO_MODES)[keyof typeof STABLE_AUDIO_MODES];
+export const STABLE_AUDIO_MODE_LABELS: Record<StableAudioMode, string> = {
+  [STABLE_AUDIO_MODES.RESTYLE]: "Restyle",
+  [STABLE_AUDIO_MODES.INPAINT]: "Inpaint",
+  [STABLE_AUDIO_MODES.EXTEND]: "Extend",
+};
+export const STABLE_AUDIO_DEFAULT_STEPS = 50;
+export const STABLE_AUDIO_DEFAULT_CFG_SCALE = 3;
+export const STABLE_AUDIO_DEFAULT_STRENGTH = 0.5;
+export const STABLE_AUDIO_DEFAULT_DURATION_PADDING_SEC = 6;
+export const STABLE_AUDIO_DEFAULT_SAMPLER = "pingpong";
+export const STABLE_AUDIO_SAMPLERS = ["pingpong", "euler", "rk4", "dpmpp"] as const;
+export const STABLE_AUDIO_MAX_INPAINT_REGIONS = 8;
+export const STABLE_AUDIO_EXTEND_DEFAULT_SECONDS = 10;
+export const STABLE_AUDIO_EXTEND_MAX_SECONDS = 380;
 
 // ElevenLabs Sound Effects
 // Duration is intentionally left to the model (duration_seconds = None): the
@@ -508,13 +531,15 @@ export const AUDIO_MODEL_NAMES: Record<string, string> = {
   [AUDIO_MODEL_TANGOFLUX]: "TangoFlux",
   [AUDIO_MODEL_AUDIOLDM2]: "AudioLDM2",
   [AUDIO_MODEL_ELEVENLABS]: "ElevenLabs",
+  [AUDIO_MODEL_SA3]: "Stable Audio 3 (SFX)",
   [AUDIO_MODEL_TTS]: "Gemini TTS",
 };
 
 export const AUDIO_MODEL_DESCRIPTIONS: Record<string, string> = {
-  [AUDIO_MODEL_TANGOFLUX]: "Fast, high-quality text-to-audio generation (default)",
+  [AUDIO_MODEL_TANGOFLUX]: "Fast, high-quality text-to-audio generation",
   [AUDIO_MODEL_AUDIOLDM2]: "Alternative model with different characteristics",
   [AUDIO_MODEL_ELEVENLABS]: "Cloud-based sound effects via ElevenLabs — requires NEXT_PUBLIC_ELEVENLABS_API_KEY",
+  [AUDIO_MODEL_SA3]: "Stable Audio 3 small-sfx (default) — also powers the Restyle / Inpaint FX effect",
 };
 
 // Gemini TTS models — keys must match backend TTS_MODEL_* constants.
@@ -1027,6 +1052,28 @@ export const AUDIO_CONTROL = {
     MUTED_GAIN: 0.0,       // Fully muted
     UNMUTED_GAIN: 1.0,     // Unmuted state
   }
+} as const;
+
+// ============================================================================
+// Foley FX Editor
+// ============================================================================
+export const SOUND_FX = {
+  BYPASS_RAMP_SEC: 0.025,
+  REBUILD_DUCK_SEC: 0.02,
+  /** Fade used when swapping the previewed source (original ↔ processed) while playing. */
+  SWITCH_XFADE_SEC: 0.14,
+  /** Web Audio feedback loops have a 128-sample floor. */
+  MIN_DELAY_SAMPLES: 128,
+  DISPLAY_RENDER_SAMPLE_RATE: 8000,
+  DISPLAY_RENDER_DEBOUNCE_MS: 200,
+  WORKLET_URL: '/worklets/fx-dynamics-processor.js',
+  PITCH_WORKLET_URL: '/worklets/fx-pitch-processor.js',
+  PITCH_GRAIN_SEC: 0.03,
+  EQ_FFT_BINS: 1024,
+  /** Output meter scale (dBFS) and clip detection. */
+  METER_MIN_DB: -60,
+  METER_MAX_DB: 6,
+  METER_CLIP_LINEAR: 0.999,
 } as const;
 
 // ============================================================================
