@@ -21,7 +21,7 @@ import { apiService } from "@/services/api";
 import type { TokenStatus, LLMProviders } from "@/services/api";
 import type { SoundscapeStats } from "@/types/soundscape";
 import { useTextGenerationStore } from "@/store/textGenerationStore";
-import { useSoundscapeStore } from "@/store";
+import { useSceneWorkflowStore, useSoundscapeStore } from "@/store";
 import { setElevenLabsApiKey, isElevenLabsKeySet } from "@/services/elevenlabs";
 import { useServiceVersions } from "@/hooks/useServiceVersions";
 import { useAudioControlsStore } from "@/store/audioControlsStore";
@@ -29,6 +29,7 @@ import { useUIStore, type AdvancedSettingsFocusTarget } from "@/store/uiStore";
 import { CollaborationPanel } from "@/components/layout/CollaborationPanel";
 import { OutputDeviceSelector } from "@/components/audio/OutputDeviceSelector";
 import type { ColorThemePreference } from "@/utils/color-theme";
+import type { UIMode } from "@/types/sceneWorkflow";
 import {
   UI_BORDER_RADIUS,
   AUDIO_MODEL_TANGOFLUX,
@@ -127,7 +128,7 @@ const SECTION_KEYS: SectionKey[] = ['display', 'acoustic', 'tokens', 'llm', 'ren
 
 type SettingKey =
   | 'label-sprites' | 'hovering-highlight' | 'sound-spheres' | 'playing-highlight' | 'listeners' | 'ground-grid'
-  | 'appearance'
+  | 'interface-mode' | 'appearance'
   | 'grid-spacing' | 'grid-color' | 'grid-labels'
   | 'sound-speed' | 'mesh-length'
   | 'tokens'
@@ -145,6 +146,7 @@ interface SettingEntry {
 }
 
 const SETTINGS: SettingEntry[] = [
+  { section: 'display', key: 'interface-mode', terms: ['interface', 'simple', 'expert', 'advanced', 'mode', 'ui'] },
   { section: 'display', key: 'appearance', terms: ['appearance', 'theme', 'light', 'dark', 'color scheme', 'mode'] },
   { section: 'display', key: 'label-sprites', terms: ['label sprites', 'label', 'sprite'] },
   { section: 'display', key: 'hovering-highlight', terms: ['hovering highlight', 'hover', 'highlight'] },
@@ -631,9 +633,13 @@ export function AdvancedSettingsSection({
   const showSpectrograms = useUIStore((s) => s.showSpectrograms);
   const setShowSpectrograms = useUIStore((s) => s.setShowSpectrograms);
   const enableAutoSave = useUIStore((s) => s.enableAutoSave);
+  // Autosave only applies to an opened model — the Home page always saves manually.
+  const hasModel = useUIStore((s) => !!s.globalSpeckleData);
   const setEnableAutoSave = useUIStore((s) => s.setEnableAutoSave);
   const colorTheme = useUIStore((s) => s.colorTheme);
   const setColorTheme = useUIStore((s) => s.setColorTheme);
+  const uiMode = useUIStore((s) => s.uiMode);
+  const switchUIMode = useSceneWorkflowStore((s) => s.switchUIMode);
   const showGroundGridLabels = useUIStore((s) => s.showGroundGridLabels);
   const setShowGroundGridLabels = useUIStore((s) => s.setShowGroundGridLabels);
   const resolvedGridColor = groundGridColor || getCssColorString('--color-primary');
@@ -701,6 +707,20 @@ export function AdvancedSettingsSection({
         <div className="flex-1 min-w-0">
           {activeSection === 'display' && (
             <div className="flex flex-col gap-1">
+              {isVisible('interface-mode') && (
+                <div className="flex flex-col gap-2 py-0.5">
+                  <span className="text-[10px] whitespace-nowrap tracking-wider text-secondary-hover">Interface</span>
+                  <CardSelect
+                    compact
+                    value={uiMode}
+                    onChange={(v) => { if (v !== uiMode) switchUIMode(v as UIMode); }}
+                    options={[
+                      { value: 'simple', label: 'Simple' },
+                      { value: 'expert', label: 'Expert' },
+                    ]}
+                  />
+                </div>
+              )}
               {isVisible('appearance') && (
                 <div className="flex flex-col gap-2 py-0.5">
                   <span className="text-[10px] whitespace-nowrap tracking-wider text-secondary-hover">View mode</span>
@@ -1009,9 +1029,10 @@ export function AdvancedSettingsSection({
             <div className="flex flex-col gap-2">
               {isVisible('auto-save') && (
                 <ToggleField
-                  checked={enableAutoSave}
+                  checked={enableAutoSave && hasModel}
                   onChange={setEnableAutoSave}
-                  label="Autosave"
+                  disabled={!hasModel}
+                  label={hasModel ? 'Autosave' : 'Autosave (off on the Home page)'}
                 />
               )}
               {isVisible('delete-history') && (

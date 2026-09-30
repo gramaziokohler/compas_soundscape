@@ -101,6 +101,14 @@ sandbox room with the same sidebars as a Speckle project. Persisted panel states
 (`isLeftSidebarExpanded`, `showTimeline`, right-sidebar expand) are restored on
 both homepage and project pages. Do **not** force-collapse panels on `/`.
 
+The fresh Home stage is rebuilt **empty** on every load (`startEmptyHomeStage` in `page.tsx`);
+Home work survives only as a named Homepage project (`?home=<id>`) or by importing it into a model.
+Autosave never runs on the Home page (fresh stage or Homepage project — Save is manual there);
+Effective autosave = `enableAutoSave && globalSpeckleData`; opening a model sets `enableAutoSave`
+to true. Never write `enableAutoSave = false` for the Home page — the value is restored afterwards
+from localStorage / server user preferences (which would override it) and is synced back as the
+user's preference.
+
 Sandbox domain state persists under reserved model id `local`
 (`data/soundscapes/<session>/local/soundscape.json`) and is **not** put in the URL.
 A real `?model_id=` still bootstraps Speckle geometry + that model's soundscape.

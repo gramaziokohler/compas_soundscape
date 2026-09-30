@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { UI_BORDER_RADIUS } from '@/utils/constants';
 
 export interface ImportSandboxSummary {
@@ -14,7 +14,11 @@ interface ImportSandboxModalProps {
   modelName: string;
   summary: ImportSandboxSummary;
   busy?: boolean;
+  /** Name of the Homepage project the Home stage was loaded from, if any. */
+  activeProjectName?: string;
   onImport: () => void;
+  /** Save the Home work as a Homepage project (`name` for a new one), then open the model. */
+  onSaveAndOpen: (name: string) => void;
   onStartFresh: () => void;
   onCancel: () => void;
 }
@@ -22,9 +26,9 @@ interface ImportSandboxModalProps {
 /**
  * ImportSandboxModal
  *
- * Shown when a model is opened from the Home stage while it still holds
- * elements. Lets the user non-destructively import those elements into the
- * model, start fresh, or cancel the switch.
+ * Shown when a model is uploaded or opened from the Home stage while it still
+ * holds work. Lets the user import that work into the model, save it as a
+ * Homepage project (then open the model), start fresh, or cancel the switch.
  *
  * Usage:
  * ```tsx
@@ -37,10 +41,19 @@ export function ImportSandboxModal({
   modelName,
   summary,
   busy = false,
+  activeProjectName,
   onImport,
+  onSaveAndOpen,
   onStartFresh,
   onCancel,
 }: ImportSandboxModalProps) {
+  // Naming step for a new Homepage project (skipped when one is already active).
+  const [naming, setNaming] = useState(false);
+  const [projectName, setProjectName] = useState('');
+  useEffect(() => {
+    if (!open) { setNaming(false); setProjectName(''); }
+  }, [open]);
+
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -76,7 +89,10 @@ export function ImportSandboxModal({
       >
         <p className="text-sm font-semibold text-foreground">Open “{modelName}”</p>
         <p className="text-xs mt-2 text-secondary-hover">
-          Your Home stage still contains {parts.join(', ')}. Import them into this model, or start fresh.
+          {parts.length > 0
+            ? `Your Home stage contains ${parts.join(', ')}.`
+            : 'Your Home stage has unsaved work.'}{' '}
+          Import it into this model, or save it as a Homepage project to reopen later.
         </p>
         <p className="text-[11px] mt-1 text-secondary-hover opacity-80">
           Only sounds and listeners are imported (simulations and analysis stay on the Home stage).
@@ -92,6 +108,44 @@ export function ImportSandboxModal({
           >
             Import elements into the model
           </button>
+          {naming ? (
+            <form
+              className="flex gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (projectName.trim()) onSaveAndOpen(projectName.trim());
+              }}
+            >
+              <input
+                autoFocus
+                type="text"
+                value={projectName}
+                onChange={(e) => setProjectName(e.target.value)}
+                placeholder="Project name"
+                aria-label="Homepage project name"
+                className="flex-1 min-w-0 px-2 py-1 text-xs bg-transparent text-foreground outline-none"
+                style={{ border: '1px solid var(--color-border-strong)', borderRadius: `${UI_BORDER_RADIUS.SM}px` }}
+              />
+              <button
+                type="submit"
+                disabled={busy || !projectName.trim()}
+                className="px-3 py-1.5 text-xs font-medium rounded transition-colors disabled:opacity-40"
+                style={{ background: 'var(--color-primary)', color: 'var(--color-on-blue)', borderRadius: `${UI_BORDER_RADIUS.SM}px` }}
+              >
+                Save &amp; open
+              </button>
+            </form>
+          ) : (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => (activeProjectName ? onSaveAndOpen(activeProjectName) : setNaming(true))}
+              className="w-full py-1.5 text-xs font-medium rounded transition-colors disabled:opacity-40"
+              style={{ background: 'var(--color-secondary-lighter)', color: 'var(--foreground)', borderRadius: `${UI_BORDER_RADIUS.SM}px` }}
+            >
+              {activeProjectName ? `Save progress to “${activeProjectName}”, then open` : 'Save as a Homepage project, then open'}
+            </button>
+          )}
           <div className="flex gap-2">
             <button
               type="button"
@@ -100,7 +154,7 @@ export function ImportSandboxModal({
               className="flex-1 py-1.5 text-xs font-medium rounded transition-colors disabled:opacity-40"
               style={{ background: 'var(--color-secondary-lighter)', color: 'var(--foreground)', borderRadius: `${UI_BORDER_RADIUS.SM}px` }}
             >
-              Start fresh
+              Discard &amp; open
             </button>
             <button
               type="button"

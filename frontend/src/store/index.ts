@@ -134,7 +134,10 @@ export {
 } from './acousticLayerStore';
 
 export { useUIStore } from './uiStore';
-export type { UIStoreState } from './uiStore';
+export type { UIStoreState, SidebarNavCommand } from './uiStore';
+
+export { useSceneWorkflowStore, registerSendToSoundGeneration, defaultSceneOptions } from './sceneWorkflowStore';
+export type { SceneWorkflowStoreState } from './sceneWorkflowStore';
 
 export { useFileUploadStore } from './fileUploadStore';
 export type { FileUploadStoreState } from './fileUploadStore';

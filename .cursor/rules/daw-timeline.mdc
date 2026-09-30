@@ -15,11 +15,12 @@ DAWDock.tsx                  ← bottom-docked shell: state, gestures, context m
   ├─ DAWLane.tsx             ← per-track clip lane (grid background, overlap detection)
   │    └─ DAWClip.tsx        ← one clip block (cached-peaks canvas, name label, badges)
   ├─ DAWClipMenu.tsx         ← right-click context menu (variant / linked-entity override)
-  └─ DAWStatusBar.tsx        ← duration, track/clip/selection counts, zoom %, snap mode, sample rate
+  └─ DAWStatusBar.tsx        ← top strip: duration, counts, snap, zoom %, export, sample rate
+                                (no transport — play/stop live in the scene bottom bar)
 ```
 
 Supporting hooks/utils, all in `frontend/src/components/audio/daw/`:
-`useDawView.ts` (zoom / snap mode / dock height), `useClipSelection.ts` (click / ctrl / shift / marquee
+`useDawView.ts` (zoom / snap mode / dock height — see "Zoom Auto-Fit" below), `useClipSelection.ts` (click / ctrl / shift / marquee
 selection), `useClipGesture.ts` (drag, group drag, duplicate — one store commit per gesture),
 `daw-snap.ts` (pure snap resolution: off / 0.1 / 0.5 / 1 / smart + edge magnetism).
 
@@ -28,6 +29,19 @@ Kept unchanged: `DAWMiniTransport.tsx` (compact bar shown when the dock is colla
 
 A clip's identity is `clipKey = ${soundId}-${originalIterationIndex}` — do not parse it, only
 construct/compare it.
+
+## Zoom Auto-Fit (first open) vs. Manual Zoom
+
+`DAWDock` unmounts when collapsed, so zoom cannot live in component state. `useDawView` derives it:
+`pxPerSecond = uiStore.timelineView.pxPerSecond ?? fit`, `trackHeight = timelineView.trackHeight ?? fit`.
+
+- **Horizontal fit** = `(viewport − left/right insets − HEAD_WIDTH − FIT_SCROLLBAR_ALLOWANCE) / duration`, so the
+  whole timeline fills the dock width. Derived from `window.innerWidth` + the dock insets — never from a DOM
+  measurement (the dock's `transition-all` animates its width, which would make a measured fit lag/jitter).
+- **Vertical fit** = `TRACK_HEIGHT` lowered by `FIT_TRACK_HEIGHT_NOTCHES` (2) wheel-out notches (`WHEEL_ZOOM_OUT`).
+- Any manual change (Ctrl/Alt+wheel, status-bar ±) writes `timelineView` (per axis), which then wins over the
+  fit — collapsing and re-expanding restores the user's zoom. `null` on an axis = auto-fit again.
+- `timelineView` is session-local (excluded from `partialize`); dock height/`autoFit` are persisted separately.
 
 ## No Lock Toggle — Every Track Is Draggable
 

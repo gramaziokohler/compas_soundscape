@@ -28,6 +28,11 @@ import { Power, ChevronDown, ChevronRight } from 'lucide-react';
 import { CardSection, type CardTypeOption } from '@/components/ui/CardSection';
 import { Card } from '@/components/ui/Card';
 import { Notice } from '@/components/ui/Notice';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { Bubble, BubbleAddButton, BubbleHeading } from '@/components/ui/Bubble';
+import { SimulationTypeIcon } from '@/components/ui/BubbleIcons';
+import { ContextMenu } from '@/components/ui/ContextMenu';
+import { useDismissOnSceneClick } from '@/hooks/useDismissOnSceneClick';
 import { RangeSlider } from '@/components/ui/RangeSlider';
 import { ToggleField } from '@/components/ui/ToggleField';
 import { apiService } from '@/services/api';
@@ -88,7 +93,8 @@ import {
   MAX_FACES_FOR_LAYER_AUTO_EXCLUDE,
   IMPULSE_RESPONSE,
   SIMULATION_POSITION_MATCH_THRESHOLD,
-  RESONANCE_AUDIO
+  RESONANCE_AUDIO,
+  SIMPLE_MODE,
 } from '@/utils/constants';
 import { groupSoundsByPosition, collapseVariantsToOne } from '@/utils/positionKey';
 import { useServiceVersions } from '@/hooks/useServiceVersions';
@@ -162,7 +168,17 @@ interface AcousticsSectionProps {
   // Import-IRs advanced settings
   onIRGainChange?: (index: number, gainOffset: number) => void;
   onIRNormalizeChange?: (index: number, enabled: boolean) => void;
+
+  /**
+   * `section` (default) = card list in the right sidebar. `bubbles` = Simple-mode
+   * floating column of simulation bubbles + one floating card panel. Same
+   * component instance either way, so polling / auralization logic never remounts.
+   */
+  presentation?: 'section' | 'bubbles';
 }
+
+/** Column label row height above the first simulation bubble (px). */
+const BUBBLE_LABEL_HEIGHT = 24;
 
 /**
  * Snapshot the active (non-hidden) grid listener configs exactly as they are at
@@ -261,6 +277,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     forcedActiveGroupId,
     onIRGainChange,
     onIRNormalizeChange,
+    presentation = 'section',
   } = props;
 
   // ==========================================================================
@@ -1314,6 +1331,9 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   // collapsed — opening a model / refreshing a page never restores an expanded
   // simulation card.
   const [expandedCardIndex, setExpandedCardIndex] = useState<number | null>(null);
+  // Generated (completed) simulation awaiting a remove confirmation — same
+  // inline danger dialog as removing a sound scene.
+  const [confirmRemoveIndex, setConfirmRemoveIndex] = useState<number | null>(null);
 
   // Baselines for the auto-expand effects below.
   const prevSimCount = useRef(simulationConfigs.length);
@@ -1499,7 +1519,13 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   </div>
     );
 
-  const renderCard = (config: SimulationConfig, index: number, isExpanded: boolean, onToggleExpand: (index: number) => void) => {
+  const renderCard = (
+    config: SimulationConfig,
+    index: number,
+    isExpanded: boolean,
+    onToggleExpand: (index: number) => void,
+    floating?: FloatingCardOptions,
+  ) => {
     const isCompleted = config.state === 'completed';
     const isRunning = config.type !== 'resonance' && (config as any).isRunning;
     const hasResult = isCompleted;
@@ -2052,6 +2078,18 @@ export function AcousticsSection(props: AcousticsSectionProps) {
 
     const afterContent = isCompleted ? (
         <>
+          {confirmRemoveIndex === index && (
+            <ConfirmDialog
+              message="Remove this simulation and its results?"
+              variant="danger"
+              confirmLabel="Remove"
+              onConfirm={() => {
+                setConfirmRemoveIndex(null);
+                onRemoveSimulationConfig?.(index);
+              }}
+              onCancel={() => setConfirmRemoveIndex(null)}
+            />
+          )}
           {soundSectionMismatchWarning}
           {/* FPS mode warning: shown when this card is active, audio is actually playing, and user is not in listener view */}
           {/* {index === activeSimulationIndex && isExpanded && isAudioActuallyPlaying && !isFPSModeActive && (
@@ -2086,6 +2124,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         onClick: (e) => { e.stopPropagation(); handleDuplicateSimulation(index); },
       });
     }
+    if (floating?.extraMenu) customButtons.push(...floating.extraMenu);
 
     // Derive the service version for this card type
     const cardVersion = (() => {
@@ -2123,11 +2162,23 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             error={(config as any).error}
             onToggleExpand={() => onToggleExpand(index)}
             onUpdateConfig={(idx, updates) => handleUpdateConfig(idx, updates)}
-            onRemove={() => onRemoveSimulationConfig && onRemoveSimulationConfig(index)}
+            onRemove={() => {
+              if (!onRemoveSimulationConfig) return;
+              if (!isCompleted) { onRemoveSimulationConfig(index); return; }
+              // Generated results are costly to recompute — confirm inside the (expanded) card.
+              setConfirmRemoveIndex(index);
+              if (!isExpanded) setExpandedCardIndex(index);
+            }}
             onReset={() => resetSimulation(index)}
             onDismissError={(idx) => handleUpdateConfig(idx, { error: null } as any)}
             beforeContent={beforeContent}
             afterContent={afterContent}
+            onReduce={floating?.onReduce}
+            // Power: ready cards (completed / resonance) switch their auralization on/off
+            onTogglePower={(isCompleted || config.type === 'resonance') && onSetActiveSimulation
+              ? () => onSetActiveSimulation(activeSimulationIndex === index ? null : index)
+              : undefined}
+            isPoweredOn={activeSimulationIndex === index}
             closeButtonTitle="Remove simulation"
             resetButtonTitle="Reset simulation"
             customButtons={customButtons.length > 0 ? customButtons : undefined}
@@ -2145,6 +2196,31 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         />
     );
   };
+
+  if (presentation === 'bubbles') {
+    return (
+      <AcousticsBubbles
+        simulationConfigs={simulationConfigs}
+        activeSimulationIndex={activeSimulationIndex}
+        openIndex={expandedCardIndex}
+        availableTypes={AVAILABLE_TYPES}
+        onAddItem={handleAddItem}
+        onSetActiveSimulation={onSetActiveSimulation}
+        onOpen={(index) => {
+          setExpandedCardIndex(index);
+          useUIStore.getState().setExpandedSimulationTabIndex(index);
+          // Same view switch as expanding a card in the sidebar (layer isolation + colors).
+          if (simulationConfigs[index]?.type !== 'resonance' && viewMode !== 'dark') setViewMode('acoustic');
+        }}
+        onReduce={() => {
+          // Reduce is not deactivate: the auralization keeps running with the panel closed.
+          setExpandedCardIndex(null);
+          useUIStore.getState().setExpandedSimulationTabIndex(null);
+        }}
+        renderCard={renderCard}
+      />
+    );
+  }
 
   return (
     <div className="flex flex-col min-h-0 gap-4">
@@ -2171,5 +2247,163 @@ export function AcousticsSection(props: AcousticsSectionProps) {
      <div className="flex-1" />
 
     </div>
+  );
+}
+
+// ============================================================================
+// Simple-mode presentation
+// ============================================================================
+
+/** Extra Card props used when a card floats beside its bubble (Simple mode). */
+export interface FloatingCardOptions {
+  onReduce: () => void;
+  extraMenu?: CustomMenuItem[];
+}
+
+interface AcousticsBubblesProps {
+  simulationConfigs: SimulationConfig[];
+  activeSimulationIndex: number | null;
+  openIndex: number | null;
+  availableTypes: CardTypeOption[];
+  onAddItem: (type: CardType) => void;
+  onSetActiveSimulation?: (index: number | null) => void;
+  onOpen: (index: number) => void;
+  onReduce: () => void;
+  renderCard: (
+    config: SimulationConfig,
+    index: number,
+    isExpanded: boolean,
+    onToggleExpand: (index: number) => void,
+    floating?: FloatingCardOptions,
+  ) => React.ReactNode;
+}
+
+/** Runtime execution fields shared by choras / pyroom / import cards (absent on resonance). */
+function simRuntime(config: SimulationConfig): { isRunning: boolean; progress: number; status?: string; error?: string | null } {
+  const c = config as Partial<{ isRunning: boolean; progress: number; status: string; error: string | null }>;
+  return {
+    isRunning: config.type !== 'resonance' && !!c.isRunning,
+    progress: c.progress ?? 0,
+    status: c.status,
+    error: c.error,
+  };
+}
+
+/**
+ * Top-right column of simulation bubbles.
+ * Click: a ready (completed / resonance) card that isn't active → activate only;
+ * the active card, or a card that still needs configuring → open / reduce its
+ * card. The card itself floats beside the column (no wrapper) with a "−" and a
+ * power button (auralization off / on) in its header.
+ */
+function AcousticsBubbles({
+  simulationConfigs,
+  activeSimulationIndex,
+  openIndex,
+  availableTypes,
+  onAddItem,
+  onSetActiveSimulation,
+  onOpen,
+  onReduce,
+  renderCard,
+}: AcousticsBubblesProps) {
+  const [addMenu, setAddMenu] = useState<{ x: number; y: number } | null>(null);
+
+  useDismissOnSceneClick(onReduce, openIndex !== null);
+
+  const isReady = (config: SimulationConfig) => config.state === 'completed' || config.type === 'resonance';
+
+  const handleClick = (index: number) => {
+    const config = simulationConfigs[index];
+    if (!config) return;
+    if (isReady(config) && activeSimulationIndex !== index) {
+      onSetActiveSimulation?.(index);
+    } else if (openIndex === index) {
+      onReduce();
+    } else {
+      onOpen(index);
+    }
+  };
+
+  const openConfig = openIndex !== null ? simulationConfigs[openIndex] : undefined;
+  const columnTop = SIMPLE_MODE.RIGHT_TOP_OFFSET + BUBBLE_LABEL_HEIGHT;
+
+  return (
+    <>
+      <BubbleHeading style={{ right: SIMPLE_MODE.EDGE_MARGIN, top: SIMPLE_MODE.RIGHT_TOP_OFFSET }}>
+        Acoustics
+      </BubbleHeading>
+      <div
+        className="bubble-column"
+        style={{
+          right: SIMPLE_MODE.EDGE_MARGIN,
+          top: columnTop,
+          gap: SIMPLE_MODE.BUBBLE_GAP,
+          alignItems: 'flex-end',
+          zIndex: SIMPLE_MODE.Z_INDEX,
+        }}
+      >
+        {simulationConfigs.map((config, index) => {
+          const rt = simRuntime(config);
+          const label = config.display_name || CARD_TYPE_LABELS[config.type] || 'Simulation';
+          const isActive = activeSimulationIndex === index;
+          const detail = rt.isRunning
+            ? rt.status || 'Running…'
+            : isActive
+              ? 'Active — click to open'
+              : isReady(config) ? 'Click to activate' : 'Not simulated yet — click to set up';
+          return (
+            <Bubble
+              key={config.id ?? index}
+              label={label}
+              detail={detail}
+              icon={<SimulationTypeIcon type={config.type} size={SIMPLE_MODE.BUBBLE_SIZE / 2} />}
+              labelSide="left"
+              ready={isReady(config)}
+              selected={isActive}
+              status={rt.isRunning ? 'running' : rt.error ? 'error' : 'idle'}
+              progress={rt.progress / 100}
+              onClick={() => handleClick(index)}
+            />
+          );
+        })}
+        <BubbleAddButton
+          label="Add acoustic simulation"
+          labelSide="left"
+          active={addMenu !== null}
+          onClick={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            setAddMenu({ x: rect.left, y: rect.bottom + SIMPLE_MODE.BUBBLE_GAP });
+          }}
+        />
+      </div>
+
+      {addMenu && (
+        <ContextMenu
+          x={addMenu.x}
+          y={addMenu.y}
+          title="Add simulation"
+          items={availableTypes
+            .filter((t) => t.enabled !== false)
+            .map((t) => ({ key: t.type, label: t.label, onClick: () => onAddItem(t.type) }))}
+          onClose={() => setAddMenu(null)}
+        />
+      )}
+
+      {openConfig && openIndex !== null && (
+        <div
+          className="bubble-card-host"
+          style={{
+            right: SIMPLE_MODE.EDGE_MARGIN + SIMPLE_MODE.BUBBLE_SIZE + SIMPLE_MODE.PANEL_GAP,
+            top: columnTop,
+            width: SIMPLE_MODE.PANEL_WIDTH,
+            maxHeight: SIMPLE_MODE.PANEL_MAX_HEIGHT,
+            zIndex: SIMPLE_MODE.Z_INDEX,
+          }}
+        >
+          {renderCard(openConfig, openIndex, true, onReduce, { onReduce })}
+        </div>
+      )}
+    </>
   );
 }

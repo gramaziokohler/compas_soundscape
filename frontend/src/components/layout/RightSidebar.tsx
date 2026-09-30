@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback, useEffect, useLayoutEffect, useRef } from 'react';
-import { UI_RIGHT_SIDEBAR, UI_SIDEBAR_RESIZE, UI_SIDEBAR_TOGGLE } from '@/utils/constants';
+import { UI_RIGHT_SIDEBAR, UI_SIDEBAR_RESIZE, UI_SIDEBAR_TOGGLE, SCENE_BOTTOM_BAR } from '@/utils/constants';
 import { readCssPx, clampToViewportWidth } from '@/utils/scale';
 import { buildSidebarEdgeNotchClipPath } from '@/utils/sidebarEdgeNotch';
 import { useRightSidebarStore } from '@/store';
@@ -17,6 +17,7 @@ import type { CompasGeometry, EntityData, SoundEvent } from '@/types';
 import type { SimulationConfig, AcousticSimulationMode } from '@/types/acoustics';
 import type { AudioRenderingMode } from '@/components/audio/AudioRenderingModeSelector';
 import type { RoomScale } from '@/components/layout/sidebar/acoustics/ResonanceAudioControls';
+import type { UIMode } from '@/types/sceneWorkflow';
 
 /**
  * RightSidebar Component
@@ -24,10 +25,17 @@ import type { RoomScale } from '@/components/layout/sidebar/acoustics/ResonanceA
  * Fixed sidebar on the right side of the screen.
  * Contains AcousticsSection (top 65%) and ListenersSection (bottom 35%).
  * Toggled via a floating button on the mid-right edge of the screen.
+ *
+ * In Simple mode (`uiMode="simple"`) the sidebar chrome disappears and both
+ * sections render as floating bubbles. The element tree is kept identical
+ * (only conditional slots change) so the two sections never remount: their
+ * simulation polling and auralization effects survive a mode switch.
  */
 
 interface RightSidebarProps {
   isVisible: boolean;
+  /** `simple` = bubble presentation, `expert` = classic sidebar. */
+  uiMode?: UIMode;
   /** Fired during resize drag so parent can sync layout-sensitive children. */
   onWidthChange?: (width: number) => void;
 
@@ -95,6 +103,7 @@ interface RightSidebarProps {
 
 export function RightSidebar({
   isVisible,
+  uiMode = 'expert',
   onWidthChange,
   // Acoustics
   onSelectIRFromLibrary,
@@ -225,6 +234,8 @@ export function RightSidebar({
 
   if (!isVisible) return null;
 
+  const bubbles = uiMode === 'simple';
+
   // Toggle handle geometry (mirrored from Sidebar.tsx) — the button always
   // sits a fixed margin to the left of the sidebar's edge, in both states
   // (never flush on top of it). When expanded, the sidebar's own edge gets
@@ -235,7 +246,7 @@ export function RightSidebar({
   const sidebarEdgeClipPath = isExpanded
     ? buildSidebarEdgeNotchClipPath(
         sidebarWidth,
-        scale.viewport.height,
+        scale.viewport.height - SCENE_BOTTOM_BAR.HEIGHT,
         'left',
         scale.viewport.height / 2,
         UI_SIDEBAR_TOGGLE.NOTCH_HEIGHT,
@@ -246,7 +257,7 @@ export function RightSidebar({
   return (
     <>
       {/* Toggle handle — a soft circular button offset from the sidebar edge */}
-      <div
+      {!bubbles && (<div
         className="group"
         style={{
           position: 'fixed',
@@ -279,30 +290,39 @@ export function RightSidebar({
             {showConvolutionHint ? UI_SIDEBAR_TOGGLE.CONVOLUTION_HINT : 'Acoustics'}
           </span>
         )}
-      </div>
+      </div>)}
 
       <aside
-        data-sidebar="right"
-        className="fixed top-0 right-0 h-screen flex flex-col transition-all duration-300 ease-in-out"
-        style={{
-          width: isExpanded ? `${sidebarWidth}px` : '0px',
-          opacity: isExpanded ? 1 : 0,
-          zIndex: 10,
-          userSelect: (isResizing || isSplitResizing) ? 'none' : undefined,
-        }}
+        // No data-sidebar in bubble mode: the docked DAW measures sidebars by this attribute.
+        data-sidebar={bubbles ? undefined : 'right'}
+        // Bubble mode: `display: contents` — no box and no stacking context, so the
+        // bubbles' fixed positioning and the headings' difference blend reach the viewer.
+        className={bubbles ? undefined : 'fixed top-0 right-0 flex flex-col transition-all duration-300 ease-in-out'}
+        style={bubbles
+          ? { display: 'contents' }
+          : {
+              // Stops above the full-width scene bottom bar.
+              height: 'calc(var(--ui-dvh) - var(--scene-bottom-bar-height))',
+              width: isExpanded ? `${sidebarWidth}px` : '0px',
+              opacity: isExpanded ? 1 : 0,
+              zIndex: 10,
+              userSelect: (isResizing || isSplitResizing) ? 'none' : undefined,
+            }}
       >
         {/* clip-path lives on the blur layer itself, not the <aside> — a
             clip-path on an ancestor of a backdrop-filter element breaks the
             backdrop blur in Chromium, so the notch shape must be applied
             directly to the element that carries the blur. */}
-        <div
-          className="sidebar-glass backdrop-blur-lg backdrop-saturate-150"
-          style={{ clipPath: sidebarEdgeClipPath }}
-          aria-hidden="true"
-        />
-        <div className="relative z-[1] flex flex-col flex-1 min-h-0 min-w-0 overflow-hidden">
+        {!bubbles && (
+          <div
+            className="sidebar-glass backdrop-blur-lg backdrop-saturate-150"
+            style={{ clipPath: sidebarEdgeClipPath }}
+            aria-hidden="true"
+          />
+        )}
+        <div className={bubbles ? undefined : 'relative z-[1] flex flex-col flex-1 min-h-0 min-w-0 overflow-hidden'}>
         {/* Resize handle — left edge */}
-        {isExpanded && (
+        {isExpanded && !bubbles && (
           <div
             onMouseDown={handleResizeMouseDown}
             onMouseEnter={() => setIsHandleHovered(true)}
@@ -334,10 +354,11 @@ export function RightSidebar({
 
         {/* ===== Acoustics Section (top, resizable) ===== */}
         <div
-          className="overflow-y-auto"
-          style={{ flexGrow: acousticsRatio, flexBasis: 0, minHeight: 0, padding: `${UI_RIGHT_SIDEBAR.PADDING}px`, paddingBottom: '0.5rem' }}
+          className={bubbles ? undefined : 'overflow-y-auto'}
+          style={bubbles ? undefined : { flexGrow: acousticsRatio, flexBasis: 0, minHeight: 0, padding: `${UI_RIGHT_SIDEBAR.PADDING}px`, paddingBottom: '0.5rem' }}
         >
           <AcousticsSection
+            presentation={bubbles ? 'bubbles' : 'section'}
             onSelectIRFromLibrary={onSelectIRFromLibrary}
             onClearIR={onClearIR}
             selectedIRId={selectedIRId}
@@ -383,7 +404,7 @@ export function RightSidebar({
         </div>
 
         {/* Vertical resize handle — split between Acoustics (top) and Listeners (bottom) */}
-        <div
+        {!bubbles && (<div
           onMouseDown={handleSplitResizeMouseDown}
           onMouseEnter={() => setIsSplitHandleHovered(true)}
           onMouseLeave={() => setIsSplitHandleHovered(false)}
@@ -407,14 +428,15 @@ export function RightSidebar({
               borderRadius: '2px',
             }}
           />
-        </div>
+        </div>)}
 
         {/* ===== Listeners Section (bottom, resizable) ===== */}
         <div
-          className="overflow-y-auto"
-          style={{ flexGrow: listenersRatio, flexBasis: 0, minHeight: 0, padding: `${UI_RIGHT_SIDEBAR.PADDING}px`, paddingTop: '0.5rem' }}
+          className={bubbles ? undefined : 'overflow-y-auto'}
+          style={bubbles ? undefined : { flexGrow: listenersRatio, flexBasis: 0, minHeight: 0, padding: `${UI_RIGHT_SIDEBAR.PADDING}px`, paddingTop: '0.5rem' }}
         >
           <ListenersSection
+            presentation={bubbles ? 'bubbles' : 'section'}
             receivers={receivers}
             gridListeners={gridListeners}
             onAddReceiver={onAddReceiver}

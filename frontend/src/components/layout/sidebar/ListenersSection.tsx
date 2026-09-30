@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef, type ReactNode } from 'react';
 import type { ReceiverData, GridListenerData } from '@/types/receiver';
 import type { CardType, CustomMenuItem } from '@/types/card';
 import type { CardTypeOption } from '@/components/ui/CardSection';
@@ -10,7 +10,12 @@ import { SingleListenerContent } from './listeners/SingleListenerContent';
 import { GridListenerContent } from './listeners/GridListenerContent';
 import { useGridListenersStore } from '@/store/gridListenersStore';
 import { useReceiversStore } from '@/store/receiversStore';
-import { usePositionClipboardStore } from '@/store';
+import { usePositionClipboardStore, useUIStore } from '@/store';
+import { Bubble, BubbleAddButton, BubbleExitButton, BubbleHeading } from '@/components/ui/Bubble';
+import { ListenerIcon, ListenerGridIcon } from '@/components/ui/BubbleIcons';
+import { ContextMenu } from '@/components/ui/ContextMenu';
+import { useDismissOnSceneClick } from '@/hooks/useDismissOnSceneClick';
+import { SCENE_BOTTOM_BAR, SIMPLE_MODE } from '@/utils/constants';
 
 // Unified item type satisfying CardBaseConfig
 type SingleListenerConfig = ReceiverData & { type: 'listener'; display_name?: string };
@@ -35,6 +40,11 @@ interface ListenersSectionProps {
   forcedExpandedId?: string | null;
   collapseAllTrigger?: number;
   listenerOrientation: { x: number; y: number; z: number };
+  /**
+   * `section` (default) = card list in the right sidebar. `bubbles` = Simple-mode
+   * bottom-right stack of listener bubbles + one floating card panel.
+   */
+  presentation?: 'section' | 'bubbles';
 }
 
 const LISTENER_COLOR = 'var(--color-receiver)';
@@ -62,6 +72,7 @@ export function ListenersSection({
   forcedExpandedId,
   collapseAllTrigger,
   listenerOrientation,
+  presentation = 'section',
 }: ListenersSectionProps) {
   const { updateGridListener, toggleGridListenerHiddenForSimulation, reorderGridListeners, duplicateGridListenerAt } = useGridListenersStore();
   const reorderReceivers = useReceiversStore((s) => s.reorderReceivers);
@@ -227,6 +238,7 @@ export function ListenersSection({
     index: number,
     isExpanded: boolean,
     onToggleExpand: (i: number) => void,
+    floating?: FloatingCardOptions,
   ) => {
     const isHidden = item.hiddenForSimulation ?? false;
 
@@ -316,7 +328,8 @@ export function ListenersSection({
           showIndex={true}
           canRemove={true}
           closeButtonTitle="Delete listener"
-          customButtons={[...clipboardButtons, hideButton]}
+          customButtons={[...clipboardButtons, hideButton, ...(floating?.extraMenu ?? [])]}
+          onReduce={floating?.onReduce}
           onToggleExpand={onToggleExpand}
           onUpdateConfig={handleUpdateConfig as (index: number, updates: Partial<typeof item>) => void}
           onRemove={handleRemove}
@@ -336,6 +349,18 @@ export function ListenersSection({
     copiedPosition,
   ]);
 
+  if (presentation === 'bubbles') {
+    return (
+      <ListenerBubbles
+        items={items}
+        expandedIndex={expandedIndex}
+        onToggle={handleExpandedIndexChange}
+        onAddItem={handleAddItem}
+        renderCard={renderCard}
+      />
+    );
+  }
+
   return (
     <div id="listeners-section">
       <CardSection
@@ -354,5 +379,158 @@ export function ListenersSection({
         onDuplicate={handleDuplicate}
       />
     </div>
+  );
+}
+
+// ============================================================================
+// Simple-mode presentation
+// ============================================================================
+
+/** Extra Card props used when a card floats beside its bubble (Simple mode). */
+interface FloatingCardOptions {
+  onReduce: () => void;
+  extraMenu?: CustomMenuItem[];
+}
+
+interface ListenerBubblesProps {
+  items: ListenerItemConfig[];
+  expandedIndex: number | null;
+  onToggle: (index: number | null) => void;
+  onAddItem: (type: CardType) => void;
+  renderCard: (
+    item: ListenerItemConfig,
+    index: number,
+    isExpanded: boolean,
+    onToggleExpand: (i: number) => void,
+    floating?: FloatingCardOptions,
+  ) => ReactNode;
+}
+
+/** A listener is "ready" once it takes part in simulations (grids also need points). */
+function isListenerReady(item: ListenerItemConfig): boolean {
+  if (item.hiddenForSimulation) return false;
+  return item.type === 'listener' || item.points.length > 0;
+}
+
+/**
+ * Bottom-right stack of listener bubbles, growing upward from the corner ("+"
+ * nearest the corner), just above the scene bottom bar (and the docked DAW).
+ * Click an inactive listener → activate it (first-person for a single listener,
+ * show a grid's points); click the active one → open / reduce its card, which
+ * floats beside the stack (no wrapper). Its ⋮ menu has "Stop listening"; while
+ * a single listener is active with its card reduced, a warning exit button to
+ * its left leaves the first-person view.
+ */
+function ListenerBubbles({ items, expandedIndex, onToggle, onAddItem, renderCard }: ListenerBubblesProps) {
+  const [addMenu, setAddMenu] = useState<{ x: number; y: number } | null>(null);
+  const [panelOpen, setPanelOpen] = useState(false);
+  const dockLift = useUIStore((s) => s.dawDockBottomSpace);
+
+  // The card belongs to the active listener — close it when that changes.
+  useEffect(() => {
+    setPanelOpen(false);
+  }, [expandedIndex]);
+
+  useDismissOnSceneClick(() => setPanelOpen(false), panelOpen);
+
+  const size = SIMPLE_MODE.BUBBLE_SIZE;
+  const bottom = SCENE_BOTTOM_BAR.HEIGHT + SIMPLE_MODE.LISTENERS_BOTTOM_GAP + dockLift;
+  const stackCount = items.length + 1; // + the add button
+  const headingBottom = bottom + stackCount * (size + SIMPLE_MODE.BUBBLE_GAP);
+  const openItem = panelOpen && expandedIndex !== null ? items[expandedIndex] : undefined;
+
+  const handleClick = (index: number) => {
+    if (expandedIndex !== index) onToggle(index);
+    else setPanelOpen((open) => !open);
+  };
+
+  return (
+    <>
+      <BubbleHeading style={{ right: SIMPLE_MODE.EDGE_MARGIN, bottom: headingBottom }}>Listeners</BubbleHeading>
+      <div
+        className="bubble-column transition-all duration-300"
+        style={{
+          right: SIMPLE_MODE.EDGE_MARGIN,
+          bottom,
+          gap: SIMPLE_MODE.BUBBLE_GAP,
+          flexDirection: 'column-reverse',
+          alignItems: 'flex-end',
+          zIndex: SIMPLE_MODE.Z_INDEX,
+        }}
+      >
+        <BubbleAddButton
+          label="Add listener"
+          labelSide="left"
+          tone="listener"
+          size={size}
+          active={addMenu !== null}
+          onClick={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            // Opens up-left of the corner; ContextMenu clamps into the viewport.
+            setAddMenu({ x: rect.left, y: rect.top });
+          }}
+        />
+        {items.map((item, index) => {
+          const active = expandedIndex === index;
+          const showExit = active && !panelOpen && item.type === 'listener';
+          return (
+            <div key={item.id} className="flex items-center" style={{ gap: SIMPLE_MODE.BUBBLE_GAP }}>
+            {showExit && <BubbleExitButton label="Leave FPS view" labelSide="left" onClick={() => onToggle(null)} />}
+            <Bubble
+              label={item.name}
+              detail={
+                active
+                  ? 'Active — click to open'
+                  : item.type === 'grid-listener' ? 'Grid listener — click to show' : 'Listener — click to listen here'
+              }
+              icon={item.type === 'grid-listener' ? <ListenerGridIcon size={size / 2} /> : <ListenerIcon size={size / 2} />}
+              size={size}
+              labelSide="left"
+              ready={isListenerReady(item)}
+              selected={active}
+              tone="listener"
+              onClick={() => handleClick(index)}
+            />
+            </div>
+          );
+        })}
+      </div>
+
+      {addMenu && (
+        <ContextMenu
+          x={addMenu.x}
+          y={addMenu.y}
+          title="Add listener"
+          items={AVAILABLE_TYPES.map((t) => ({ key: t.type, label: t.label, onClick: () => onAddItem(t.type) }))}
+          onClose={() => setAddMenu(null)}
+        />
+      )}
+
+      {openItem && expandedIndex !== null && (
+        <div
+          className="bubble-card-host"
+          style={{
+            right: SIMPLE_MODE.EDGE_MARGIN + size + SIMPLE_MODE.PANEL_GAP,
+            bottom,
+            width: SIMPLE_MODE.PANEL_WIDTH,
+            maxHeight: SIMPLE_MODE.PANEL_MAX_HEIGHT,
+            zIndex: SIMPLE_MODE.Z_INDEX,
+          }}
+        >
+          {renderCard(openItem, expandedIndex, true, () => setPanelOpen(false), {
+            onReduce: () => setPanelOpen(false),
+            extraMenu: [{
+              key: 'stop-listening',
+              icon: <ListenerIcon size={12} />,
+              label: openItem.type === 'listener' ? 'Stop listening here' : 'Hide grid points',
+              onClick: (e) => {
+                e.stopPropagation();
+                onToggle(null);
+              },
+            }],
+          })}
+        </div>
+      )}
+    </>
   );
 }

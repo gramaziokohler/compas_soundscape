@@ -303,6 +303,12 @@ export interface CardProps<TConfig extends CardBaseConfig = CardBaseConfig, TRes
   onDismissError?: (index: number) => void;
   /** Called when the card header is double-clicked (e.g. zoom to associated 3D object) */
   onDoubleClickCard?: (index: number) => void;
+  /** When set, a "−" header button folds the card back (Simple-mode floating cards). */
+  onReduce?: () => void;
+  /** When set, a power header button toggles the card on/off (e.g. a simulation's auralization). */
+  onTogglePower?: () => void;
+  /** Current power state shown by the power button (on = primary-colored). */
+  isPoweredOn?: boolean;
 
   /** Library/service version string(s) shown under the title in after-generation state. Pass an array for multiple lines. */
   version?: string | string[];

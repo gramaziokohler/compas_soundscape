@@ -55,14 +55,13 @@ export interface DAWDockProps {
   isAnyPlaying?: boolean;
   onSeek: (timeMs: number) => void;
   onDownload?: (format: import('@/lib/audio/SoundscapeExporter').ExportFormat) => Promise<void>;
-  onPlay: () => void;
-  onPause: () => void;
-  onStop: () => void;
   onClose: () => void;
   onSelectSoundCard?: (promptIndex: number) => void;
   originalIRChannelCount?: number;
   leftOffset: number;
   rightOffset: number;
+  /** Distance from the screen bottom (px) — the dock sits on top of the scene bottom bar. */
+  bottomOffset?: number;
   sampleRate?: number;
   playbackSchedulerRef?: React.RefObject<PlaybackSchedulerService | null>;
 }
@@ -73,14 +72,12 @@ export function DAWDock({
   isPlaying,
   onSeek,
   onDownload,
-  onPlay,
-  onPause,
-  onStop,
   onClose,
   onSelectSoundCard,
   originalIRChannelCount,
   leftOffset,
   rightOffset,
+  bottomOffset = 0,
   sampleRate,
 }: DAWDockProps) {
   const timelineDurationMs = useAudioControlsStore((s) => s.timelineDurationMs);
@@ -109,7 +106,9 @@ export function DAWDock({
   const soundConfigs = useSoundscapeStore((s) => s.soundConfigs);
   const objectSoundLinks = useSpeckleStore((s) => s.objectSoundLinks);
 
-  const { pxPerSecond, setPxPerSecond, snapMode, setSnapMode, dockHeight, setDockHeight, dockAutoFit, setDockAutoFit, trackHeight, setTrackHeight } = useDawView();
+  const { pxPerSecond, setPxPerSecond, snapMode, setSnapMode, dockHeight, setDockHeight, dockAutoFit, setDockAutoFit, trackHeight, setTrackHeight } = useDawView({
+    durationMs: timelineDurationMs, leftOffset, rightOffset,
+  });
   const selection = useClipSelection();
 
   // Track's default interval (from its generated SoundEvent) — seeds the
@@ -567,7 +566,7 @@ export function DAWDock({
     const startHeight = dockHeight;
     const move = (ev: PointerEvent) => {
       const delta = startY - ev.clientY;
-      const maxH = window.innerHeight - DAW.MAX_DOCK_HEIGHT_MARGIN;
+      const maxH = window.innerHeight - bottomOffset - DAW.MAX_DOCK_HEIGHT_MARGIN;
       setDockHeight(Math.max(DAW.MIN_DOCK_HEIGHT, Math.min(maxH, startHeight + delta)));
     };
     const up = () => {
@@ -584,7 +583,7 @@ export function DAWDock({
        when tracks are added and shrinks when they're removed. ---- */
   useEffect(() => {
     if (!dockAutoFit) return;
-    const maxH = window.innerHeight - DAW.MAX_DOCK_HEIGHT_MARGIN;
+    const maxH = window.innerHeight - bottomOffset - DAW.MAX_DOCK_HEIGHT_MARGIN;
     const needed = DAW.RULER_HEIGHT + rows.length * trackHeight + DAW.STATUS_HEIGHT;
     const target = Math.max(DAW.MIN_DOCK_HEIGHT, Math.min(maxH, needed));
     if (dockHeight !== target) setDockHeight(target);
@@ -596,7 +595,7 @@ export function DAWDock({
     const handleWheel = (e: WheelEvent) => {
       const dock = dockRef.current;
       if (!dock || !dock.contains(e.target as Node)) return;
-      const factor = e.deltaY < 0 ? 1.1 : 0.9;
+      const factor = e.deltaY < 0 ? DAW.WHEEL_ZOOM_IN : DAW.WHEEL_ZOOM_OUT;
       if (e.altKey) {
         e.preventDefault();
         setPxPerSecond((prev) => prev * factor);
@@ -698,7 +697,7 @@ export function DAWDock({
       onKeyDown={handleKeyDown}
       className="transition-all duration-300 ease-in-out"
       style={{
-        position: 'fixed', bottom: 0, left: `${leftOffset}px`, right: `${rightOffset}px`, height: `${dockHeight}px`,
+        position: 'fixed', bottom: `${bottomOffset}px`, left: `${leftOffset}px`, right: `${rightOffset}px`, height: `${dockHeight}px`,
         display: 'flex', flexDirection: 'column',
         zIndex: 200, overflow: 'visible', userSelect: 'none', outline: 'none',
       }}
@@ -713,9 +712,29 @@ export function DAWDock({
       />
 
       <div className="relative z-[1] flex flex-col flex-1 min-h-0">
-        {/* Ruler sits flush against the dock's top edge — no empty strip and no
-            top border. The floating reduce knob and the sidebar-style resize
-            grip are overlays (see below), so they reserve no vertical space. */}
+        {/* Status strip on top (duration, counts, snap, zoom, export), then the
+            ruler and tracks. The floating reduce knob and the sidebar-style
+            resize grip are overlays (see below), so they reserve no space. */}
+        <DAWStatusBar
+          durationMs={timelineDurationMs}
+          onDurationChange={setTimelineDurationMs}
+          isEditingDuration={isEditingDuration}
+          onStartEditDuration={() => setIsEditingDuration(true)}
+          onStopEditDuration={() => setIsEditingDuration(false)}
+          timelineOverrun={timelineOverrun}
+          onExtendTimeline={handleExtendTimelineToFit}
+          trackCount={rows.length}
+          clipCount={totalClipCount}
+          selectionCount={selection.selectedClipKeys.size}
+          pxPerSecond={pxPerSecond}
+          onZoomChange={setPxPerSecond}
+          snapMode={snapMode}
+          onSnapModeChange={setSnapMode}
+          onDownload={onDownload}
+          originalIRChannelCount={originalIRChannelCount}
+          isBakingSchedule={isBakingSchedule}
+          sampleRate={sampleRate}
+        />
         <div ref={scrollContainerRef} style={{ flex: 1, overflow: 'auto', position: 'relative' }}>
           <div
             onPointerDown={handleTracksPointerDown}
@@ -842,31 +861,6 @@ export function DAWDock({
           </div>
         </div>
 
-        <DAWStatusBar
-          isPlaying={isPlaying}
-          onPlay={onPlay}
-          onPause={onPause}
-          onStop={onStop}
-          currentTimeMs={currentTime}
-          durationMs={timelineDurationMs}
-          onDurationChange={setTimelineDurationMs}
-          isEditingDuration={isEditingDuration}
-          onStartEditDuration={() => setIsEditingDuration(true)}
-          onStopEditDuration={() => setIsEditingDuration(false)}
-          timelineOverrun={timelineOverrun}
-          onExtendTimeline={handleExtendTimelineToFit}
-          trackCount={rows.length}
-          clipCount={totalClipCount}
-          selectionCount={selection.selectedClipKeys.size}
-          pxPerSecond={pxPerSecond}
-          onZoomChange={setPxPerSecond}
-          snapMode={snapMode}
-          onSnapModeChange={setSnapMode}
-          onDownload={onDownload}
-          originalIRChannelCount={originalIRChannelCount}
-          isBakingSchedule={isBakingSchedule}
-          sampleRate={sampleRate}
-        />
       </div>
 
       {/* Reduce (collapse) handle — mirrors the sidebar collapse toggles: a

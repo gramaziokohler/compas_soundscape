@@ -53,6 +53,15 @@ import { useAudioControlsStore } from './audioControlsStore';
 import { useSpeckleStore } from './speckleStore';
 import { useUIStore } from './uiStore';
 import { useFileUploadStore } from './fileUploadStore';
+import { remapLinkedCardIndices } from './cardIndexLinks';
+import type { IndexMapper } from '@/utils/cardIndexRemap';
+import {
+  createInsertionIndexMapper,
+  createRemovalIndexMapper,
+  remapIndexSet,
+  remapNullableIndex,
+  remapOptionalIndex,
+} from '@/utils/cardIndexRemap';
 
 // ─── Module-level refs ────────────────────────────────────────────────────────
 
@@ -197,7 +206,7 @@ export const analysisPartialize = (state: AnalysisStoreState) => ({
     }
     if (config.type === 'scenario') {
       // Don't persist streaming state in undo history
-      return { ...config, scenarioRawText: '', speechResult: null, speechId: null, orchestrateResult: null, orchestrateId: null };
+      return { ...config, scenarioRawText: '', speechResult: null, speechId: null, orchestrateResult: null, orchestrateId: null, referenceImages: undefined };
     }
     return config;
   }),
@@ -404,6 +413,41 @@ function getScenarioBounds():
   const { globalSpeckleData, speckleBounds } = useUIStore.getState();
   if (globalSpeckleData && speckleBounds) return speckleBounds;
   return useFileUploadStore.getState().geometryBounds ?? undefined;
+}
+
+/** Remap the index links carried by the cards themselves (usage → context, drawn area slot). */
+function remapCardLinks(configs: AnalysisConfig[], mapIndex: IndexMapper): AnalysisConfig[] {
+  return configs.map((config) => {
+    let next = config;
+    const parent = (config as AnalysisBaseConfig).parentContextOriginalIndex;
+    const nextParent = remapOptionalIndex(parent, mapIndex);
+    if (nextParent !== parent) {
+      next = { ...next, parentContextOriginalIndex: nextParent } as AnalysisConfig;
+    }
+    if (next.type === 'text' && next.drawnArea) {
+      const cardIndex = mapIndex(next.drawnArea.cardIndex);
+      if (cardIndex !== null && cardIndex !== next.drawnArea.cardIndex) {
+        next = { ...next, drawnArea: { ...next.drawnArea, cardIndex } };
+      }
+    }
+    return next;
+  });
+}
+
+/** Remap the per-card-index bookkeeping held in this store. */
+function remapConfigIndexState(
+  state: Pick<
+    AnalysisStoreState,
+    'uploadingConfigs' | 'rehydratingAudioConfigs' | 'audioRehydrateFailedConfigs' | 'analyzingConfigIndex'
+  >,
+  mapIndex: IndexMapper,
+) {
+  return {
+    uploadingConfigs: remapIndexSet(state.uploadingConfigs, mapIndex),
+    rehydratingAudioConfigs: remapIndexSet(state.rehydratingAudioConfigs, mapIndex),
+    audioRehydrateFailedConfigs: remapIndexSet(state.audioRehydrateFailedConfigs, mapIndex),
+    analyzingConfigIndex: remapNullableIndex(state.analyzingConfigIndex, mapIndex),
+  };
 }
 
 // ─── State ────────────────────────────────────────────────────────────────────
@@ -616,7 +660,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           const soundscape = useSoundscapeStore.getState();
           const soundIndicesToRemove: number[] = [];
           soundscape.soundConfigs.forEach((sc, i) => {
-            const pui = (sc as any).parentUsageOriginalIndex;
+            const pui = sc.parentUsageOriginalIndex;
             if (pui === undefined || pui === null) return;
             if (removeSet.has(pui)) {
               soundIndicesToRemove.push(i);
@@ -628,21 +672,32 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             soundscape.handleRemoveConfigs(soundIndicesToRemove);
           }
 
-          const newConfigs = analysisConfigs.filter((_, i) => !removeSet.has(i));
-          const newResults = analysisResults.filter((r) => !removeSet.has(r.configIndex));
+          // Every card after a removed one shifts down — remap all index links
+          // (links *to* removed cards were cascade-deleted above).
+          const mapIndex = createRemovalIndexMapper(removeSet);
+          const newConfigs = remapCardLinks(
+            analysisConfigs.filter((_, i) => !removeSet.has(i)),
+            mapIndex,
+          );
+          const newResults = analysisResults.flatMap((r) => {
+            const configIndex = mapIndex(r.configIndex);
+            return configIndex === null ? [] : [{ ...r, configIndex }];
+          });
           const remainingIndices = analysisConfigs.map((_, i) => i).filter((i) => !removeSet.has(i));
-          let newTab = activeAnalysisTab;
-          if (removeSet.has(newTab)) {
-            newTab = remainingIndices.length > 0 ? remainingIndices[remainingIndices.length - 1] : 0;
-          } else {
-            const below = [...removeSet].filter((i) => i < newTab).length;
-            newTab = newTab - below;
-          }
+          const newTab = removeSet.has(activeAnalysisTab)
+            ? (remainingIndices.length > 0 ? remainingIndices.length - 1 : 0)
+            : (mapIndex(activeAnalysisTab) ?? 0);
           set(
-            { analysisConfigs: newConfigs, analysisResults: newResults, activeAnalysisTab: newTab },
+            {
+              analysisConfigs: newConfigs,
+              analysisResults: newResults,
+              activeAnalysisTab: newTab,
+              ...remapConfigIndexState(get(), mapIndex),
+            },
             false,
             'analysis/removeConfig',
           );
+          remapLinkedCardIndices(mapIndex);
         },
 
         handleUpdateConfig: (index, updates) =>
@@ -707,53 +762,37 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           // Insert the clone — toInsertion is the gap index (0 = before first, n = after last).
           // If the clone lands at or after the source, shift by -1 since the clone is inserted
           // before the source shifts.
-          const newConfigs = [...analysisConfigs];
+          // Remap index links (parent context, drawn areas, sound children, selections)
+          // so each card keeps following its parent across the insertion (the fresh clone
+          // has no children of its own). Without this, a clone inserted at or before the
+          // source shifts the source's index and silently orphans its children onto the clone.
           const insertAt = toInsertion > from ? toInsertion - 1 : toInsertion;
-          newConfigs.splice(insertAt, 0, cloned);
-
-          // Remap sound-children linkage so each sound card keeps following its parent
-          // usage/context card across the insertion (the fresh clone has no children of its
-          // own). Without this, a clone inserted at or before the source shifts the source's
-          // index and silently orphans its children onto the clone.
-          const soundStore = useSoundscapeStore.getState();
-          const remapParentUsageIndex = (pui: number | undefined): number | undefined => {
-            if (pui === undefined) return pui;
-            if (pui >= 0) return pui >= insertAt ? pui + 1 : pui;
-            // Negative namespace: -(contextIndex + 1) for audio-context bypass cards.
-            const ctxIndex = -pui - 1;
-            const newCtxIndex = ctxIndex >= insertAt ? ctxIndex + 1 : ctxIndex;
-            return -(newCtxIndex + 1);
-          };
-          let soundLinkageChanged = false;
-          const remappedSoundConfigs = soundStore.soundConfigs.map((sc) => {
-            const pui = (sc as any).parentUsageOriginalIndex as number | undefined;
-            const next = remapParentUsageIndex(pui);
-            if (next !== pui) {
-              soundLinkageChanged = true;
-              return { ...sc, parentUsageOriginalIndex: next };
-            }
-            return sc;
-          });
-          if (soundLinkageChanged) {
-            useSoundscapeStore.setState({ soundConfigs: remappedSoundConfigs });
+          const mapIndex = createInsertionIndexMapper(insertAt);
+          const newConfigs = remapCardLinks(analysisConfigs, mapIndex);
+          const clonedParent = (cloned as AnalysisBaseConfig).parentContextOriginalIndex;
+          if (clonedParent !== undefined) {
+            (cloned as AnalysisBaseConfig).parentContextOriginalIndex = mapIndex(clonedParent) ?? undefined;
           }
+          // The clone's drawn area (if any) belongs to the clone's own slot.
+          if ('drawnArea' in cloned && cloned.drawnArea) {
+            cloned.drawnArea = { ...cloned.drawnArea, cardIndex: insertAt };
+          }
+          newConfigs.splice(insertAt, 0, cloned);
+          remapLinkedCardIndices(mapIndex);
 
-          // Duplicate the linked analysis result if one exists for this config
-          const newResults = [...analysisResults];
+          // Shift every result past the insertion, then duplicate the source's result
+          // (if any) onto the clone.
+          const newResults = analysisResults.map((r) => ({
+            ...r,
+            configIndex: mapIndex(r.configIndex) ?? r.configIndex,
+          }));
           const existingResult = analysisResults.find((r) => r.configIndex === from);
           if (existingResult) {
-            // Shift result config indices: all results with index >= insertAt get +1
-            const shifted = newResults.map((r) => ({
-              ...r,
-              configIndex: r.configIndex >= insertAt ? r.configIndex + 1 : r.configIndex,
-            }));
-            shifted.push({
+            newResults.push({
               configIndex: insertAt,
               prompts: structuredClone(existingResult.prompts),
               generatedAt: existingResult.generatedAt,
             });
-            newResults.length = 0;
-            newResults.push(...shifted);
           }
 
           // Adjust active tab
@@ -761,7 +800,12 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           if (newTab >= insertAt && from !== newTab) newTab++;
           else if (insertAt <= newTab && from > newTab) { /* no shift needed */ }
           set(
-            { analysisConfigs: newConfigs, analysisResults: newResults, activeAnalysisTab: newTab },
+            {
+              analysisConfigs: newConfigs,
+              analysisResults: newResults,
+              activeAnalysisTab: newTab,
+              ...remapConfigIndexState(get(), mapIndex),
+            },
             false,
             'analysis/duplicateConfigAt',
           );
@@ -944,7 +988,8 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
               return;
             } else if (config.type === 'scenario') {
               const sc = config as ScenarioConfig;
-              if (sc.foleyResult && (sc.speechResult?.speeches?.length ?? 0) > 0) {
+              const speechDone = sc.includeSpeech === false || (sc.speechResult?.speeches?.length ?? 0) > 0;
+              if (sc.foleyResult && speechDone) {
                 // Foley + speech done → (re-)send the incomplete cards to generation
                 get().handleSendToSoundGeneration(undefined, index);
                 return;
@@ -1826,7 +1871,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                 entities: visibleEntitiesForAnalysis,
                 screenshots: config.liveScreenshots,
                 user_context: config.userContext,
-                llm_model: useSoundscapeStore.getState().llmModel,
+                llm_model: config.llmModel ?? useSoundscapeStore.getState().llmModel,
               },
               index,
               'analyze_3dmodel',
@@ -2090,12 +2135,13 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
 
           const body = {
             user_context: config.userContext || undefined,
-            llm_model: DEFAULT_LLM_MODEL,
+            llm_model: config.llmModel ?? DEFAULT_LLM_MODEL,
             analysis_id: analysisId,
             people_count: config.peopleCount,
             likeliness: config.likeliness,
             duration: Math.round(scenarioDurationMs / 1000),
             bounding_box: getScenarioBounds(),
+            screenshots: config.referenceImages?.length ? config.referenceImages : undefined,
           };
 
           let workingScenarios: ScenarioResult['scenarios'] = [];
@@ -2186,20 +2232,21 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           // If speech already done and foley is missing, only run foley.
           // If both done, skip to step 2 (orchestrate).
           const hasFoley = !!config.foleyResult;
-          const hasSpeech = (config.speechResult?.speeches?.length ?? 0) > 0;
+          // `includeSpeech === false` (Simple-mode "Speech" chip off) skips the speech agent.
+          const hasSpeech = config.includeSpeech === false || (config.speechResult?.speeches?.length ?? 0) > 0;
 
           if (!hasFoley || !hasSpeech) {
             const foleyBody = {
               scenario_id: config.scenarioId,
               analysis_id: analysisId,
-              llm_model: DEFAULT_LLM_MODEL,
+              llm_model: config.llmModel ?? DEFAULT_LLM_MODEL,
               maximum_sounds: maximumFoleySounds,
               bounding_box: getScenarioBounds(),
             };
             const speechBody = {
               scenario_id: config.scenarioId,
               analysis_id: analysisId,
-              llm_model: DEFAULT_LLM_MODEL,
+              llm_model: config.llmModel ?? DEFAULT_LLM_MODEL,
               language: (await import('@/store/audioControlsStore')).useAudioControlsStore.getState().ttsLanguage,
               bounding_box: getScenarioBounds(),
             };

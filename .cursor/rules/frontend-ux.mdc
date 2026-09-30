@@ -1,9 +1,73 @@
 ---
 description: Sidebar wizard flow, card linkage system, generation states, page.tsx orchestration
-globs: frontend/src/components/layout/**,frontend/src/store/cardFlowStore.ts,frontend/src/store/uiStore.ts,frontend/src/app/page.tsx
+globs: frontend/src/components/layout/**,frontend/src/components/simple/**,frontend/src/store/cardFlowStore.ts,frontend/src/store/uiStore.ts,frontend/src/store/sceneWorkflowStore.ts,frontend/src/app/page.tsx
 ---
 
 # Frontend UX Rules
+
+## Simple vs Expert Mode
+
+`uiStore.uiMode` (`'simple' | 'expert'`, persisted, default `simple`). Switch only through
+`sceneWorkflowStore.switchUIMode(mode, focusUsageIndex?)` — it points the expert sidebar at the
+running / selected scene before `Sidebar` mounts. Toggle: Settings › Display › Interface
+(`AdvancedSettingsSection`).
+
+| Area | Expert | Simple |
+| ---- | ------ | ------ |
+| Left | `Sidebar` (wizard) | `components/simple/SimpleSoundscapes` — one bubble per scene (usage card) |
+| Right | `RightSidebar` chrome | same `RightSidebar`, `AcousticsSection`/`ListenersSection` with `presentation="bubbles"` |
+
+Rules:
+1. **Never remount `AcousticsSection` on a mode switch** — it owns simulation poll intervals and the
+   IR → `audioRenderingMode` effect. `RightSidebar` keeps an identical element tree in both modes;
+   only conditional slots (`{!bubbles && …}`) and styles change. Keep it that way.
+2. In Simple mode the left `Sidebar` is unmounted, so `SimpleSoundscapes` owns
+   `activeSoundParentIndex` / `isInSoundsStep` (auto-selects a generated scene).
+3. The scene pipeline lives in `sceneWorkflowStore` and only **sequences existing store actions**
+   (`handleAnalyze`, `handleScenarioAnalyze`, page's `handleSendAnalysisToGeneration`,
+   `handleGenerateFiltered`). Add pipeline behaviour to those actions, not to the workflow store.
+   Steps are idempotent (skip when the card already has the result) — that is what makes Resume work.
+4. One run at a time (analysisStore is single-run); further prompts queue.
+5. Expert Sidebar follows a running pipeline via `uiStore.sidebarNavCommand` (seq-based, not persisted).
+6. Scene panel body = the real `SoundGenerationSection`; build its props with
+   `buildSoundGenerationSectionProps` (`components/layout/sidebar/soundSectionProps.ts`), shared
+   with `Sidebar`.
+7. **Circle clicks:** an inactive circle → activate only (select the scene for the DAW, enable the
+   auralization, go to the listener); the active circle → open / reduce its card. Unfinished scenes
+   open their workflow view. Acoustics / listener cards float directly (no wrapper panel) with a `−`
+   in the Card header (`Card.onReduce`). Simulation cards switch their auralization off / on with the
+   header power button (`Card.onTogglePower`, both modes); listeners stop via the ⋮ menu, and an
+   active single listener with its card reduced shows a warning `BubbleExitButton` ("Leave FPS view").
+8. **Circle states** (`components/ui/Bubble.tsx`, all circles): pending = frosted + muted icon;
+   `ready` = primary border + icon; `ready` + `selected` = solid primary, inverted icon.
+   Listener circles use `tone="listener"` (the listener card's warning color, headphones icon).
+9. **Headings** ("Soundscapes", "Acoustics", "Listeners") use a difference
+   blend. They must be standalone fixed elements (`BubbleHeading`) — never inside a stacking
+   context (a fixed/z-indexed parent blends them against nothing). That is why `RightSidebar`'s
+   `<aside>` is `display: contents` in bubble mode.
+10. Panels reduce on a plain click on the 3D scene (`useDismissOnSceneClick`) — not on drags, UI
+    clicks, active viewer modes, or clicks that selected something.
+11. Mode switch → Expert expands the left sidebar on the selected scene's Sounds step; → Simple
+    reopens the panel of the scene the expert sidebar showed (`pendingSimpleFocus`).
+
+## Scene Bottom Bar
+
+`components/scene/SceneBottomBar.tsx` — full-width frosted strip (`--scene-bottom-bar-height`,
+`SCENE_BOTTOM_BAR`) holding every scene-level control: left = "Sound is blue" home (always shown),
+a "Simple" button (Expert mode only), undo/redo, save; center = playback (the only transport — the DAW's top status strip has none; the
+DAW panel opens above the bar); right = volume, reset
+view, refresh, Object Explorer / load model, then shortcuts, notifications, settings. Sidebars stop at
+its top edge. Add new scene-level controls here as `BarButton`s — do not reintroduce floating corner
+buttons.
+
+## Home Stage (no model)
+
+Every fresh load of `/` starts **empty** (no seeded cards or sounds) on a small fixed grid
+(`HOME_STAGE`: 6 × 6 m, 0.5 m cells, nothing drawn on it). `HomeUploadPrompt` ("Upload a 3D model
+or start below" — "Upload" opens the load-model dialog via `uiStore.showLoadModelPanel`) sits above
+the centred new-scene panel that `SimpleSoundscapes` opens once per page load; in Expert mode the
+prompt shows alone above the bottom bar. Opening / uploading a model while Home holds work shows
+`ImportSandboxModal`: import into the model, save as a Homepage project then open, discard, or cancel.
 
 ## Sidebar 3-Step Wizard
 

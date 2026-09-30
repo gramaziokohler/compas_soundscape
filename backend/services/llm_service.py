@@ -2018,6 +2018,7 @@ For the duration estimation (in seconds with 0.1 precision):
         duration: int = 150,
         people_count: int = 5,
         likeliness: int = 9,
+        screenshots: list[str] | None = None,
         on_progress=None,
     ):
         """Async generator yielding formatted scenario events one by one.
@@ -2038,6 +2039,11 @@ For the duration estimation (in seconds with 0.1 precision):
             user_context, furniture_context, duration, people_count, likeliness,
             has_furniture=has_furniture, room_bounds=room_bounds,
         )
+        if screenshots:
+            user_prompt += (
+                "\n\nA reference image of the space is attached. Ground the scenario "
+                "in what it shows: the type of place, its materials, its occupants and activities."
+            )
 
         import uuid as _uuid
         scenario_id = str(_uuid.uuid4())
@@ -2047,6 +2053,7 @@ For the duration estimation (in seconds with 0.1 precision):
             result = await self._call_llm(
                 user_prompt, system_prompt,
                 response_schema=_ScenarioResponse,
+                screenshots=screenshots,
                 operation_name="Scenarist",
                 llm_model=llm_model,
                 on_progress=on_progress,

@@ -138,6 +138,15 @@ export function useSpeckleAreaDrawing({
       }
     }
 
+    // Add visuals for areas the scene lacks (re-keyed after a card was removed
+    // or inserted before them, or restored from a soundscape).
+    const managed = manager.managedCardIndices;
+    for (const [cardIndex, area] of areaDrawingCtx.drawnAreas) {
+      if (!managed.has(cardIndex)) {
+        manager.addCompletedArea(area, areaDrawingCtx.areaVisualStates.get(cardIndex) ?? 'default');
+      }
+    }
+
     // Update visual states for all remaining areas
     for (const [cardIndex, state] of areaDrawingCtx.areaVisualStates) {
       manager.updateAreaVisualState(cardIndex, state);

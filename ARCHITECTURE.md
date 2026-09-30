@@ -403,6 +403,55 @@ ErrorProvider
                           └── App Components
 ```
 
+### UI Modes — Simple (bubbles) vs Expert (sidebars)
+
+`uiStore.uiMode` (persisted, default `simple`) picks the presentation; it is switched in
+Settings › Display › Interface (`AdvancedSettingsSection` → `sceneWorkflowStore.switchUIMode`).
+
+```
+page.tsx
+  ├── expert → <Sidebar {...sidebarProps}/>          (Context → Usage → Sounds wizard)
+  │   simple → <SimpleSoundscapes sidebarProps/>     (components/simple/)
+  │              ├── scene bubbles (useSoundScenes + useSceneProgress)
+  │              ├── "+" → ScenePromptComposer ──► sceneWorkflowStore.startScene
+  │              ├── running bubble → SceneWorkflowDetail (live step detail, Stop/Resume)
+  │              └── done bubble → select for DAW/3D + SoundGenerationSection panel
+  └── <RightSidebar uiMode>  — same element tree in both modes (no remount):
+        ├── AcousticsSection  presentation='section' | 'bubbles' (top-right column)
+        └── ListenersSection  presentation='section' | 'bubbles' (bottom-right, grows upward)
+
+sceneWorkflowStore (one run at a time, FIFO queue, keyed by scenario card index)
+  analyze   → analysisStore.handleAnalyze(context)        (skipped/reused if analyzed)
+  scenario  → analysisStore.handleScenarioAnalyze(usage)
+  foley     → analysisStore.handleAnalyze(usage)          (foley + speech; ScenarioConfig.includeSpeech)
+  generate  → page.handleSendAnalysisToGeneration (registered) → soundscapeStore.handleGenerateFiltered
+  Composer reference image → ScenarioConfig.referenceImages → /api/scenarist `screenshots`
+  (always), plus a fresh model-analysis card when a model is loaded and "Re-run model analysis" is on.
+  Each step is idempotent (skipped when its result exists) → same runner powers Resume.
+  Each step writes sidebarWizardStep / cardFlowStore + uiStore.sidebarNavCommand so a
+  mounted expert Sidebar follows the pipeline live.
+
+SpeckleScene
+  └── SceneBottomBar (full width, both modes): home · undo/redo · save
+        | transport (play/stop/time/timeline) | volume · view · explorer · shortcuts · notifications · settings
+```
+
+### Analysis Card Index Links
+
+Context/usage cards are addressed by array index, so inserting or removing one shifts every
+later card. `analysisStore.handleRemoveConfig` / `duplicateConfigAt` build an `IndexMapper`
+(`utils/cardIndexRemap.ts`: old index → new index, `null` = removed) and pass every link through it:
+
+```
+analysisStore (own state)   parentContextOriginalIndex, drawnArea.cardIndex, analysisResults[].configIndex,
+                            activeAnalysisTab, uploading/rehydrating sets, analyzingConfigIndex
+store/cardIndexLinks.ts     soundscapeStore parentUsageOriginalIndex (incl. -(contextIndex + 1) namespace),
+  remapLinkedCardIndices    uiStore.activeSoundParentIndex, cardFlowStore (active indices, advance sets/maps),
+                            areaDrawingStore, analysisPreviewStore, sceneWorkflowStore.remapUsageIndices
+```
+
+Any new state keyed by an analysis card index must be added to `remapLinkedCardIndices`.
+
 ### Speckle Integration Architecture
 
 ```

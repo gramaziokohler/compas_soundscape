@@ -180,9 +180,6 @@ export function buildSoundscapeSavePayload(
       category: (config as any).category || undefined,
       // Scenario pipeline reference for "incomplete" (pre-orchestrate) cards.
       scenario_source: (config as any).scenarioSource || undefined,
-      // Explicit-position pin (deterministic Home Sample). Persisted so the
-      // sample stays at SANDBOX_SAMPLE_SPHERE_POSITION after a save/load.
-      pinned: config.pinned || undefined,
       // Manual override for a pending (not-yet-generated) non-entity sphere.
       // Persisted so the sphere keeps its authored position on save/load instead
       // of falling back to camera-front spiral placement.
@@ -254,7 +251,6 @@ export function buildSoundscapeSavePayload(
         timestamps: trackTimestamps,
         category: (event as any).category || undefined,
         copy_index: (event as any).copy_index ?? undefined,
-        pinned: event.pinned || undefined,
         fx: event.fx || undefined,
         fx_audio_filename: event.fx_url ? extractFilename(event.fx_url) : undefined,
         fx_enabled: event.fx_enabled || undefined,
@@ -590,9 +586,6 @@ export function restoreSoundscapeState(
       orchestrateMeta: saved.orchestrate_meta as SoundGenerationConfig['orchestrateMeta'],
       category: saved.category,
       scenarioSource: (saved as any).scenario_source as SoundGenerationConfig['scenarioSource'],
-      // Explicit-position pin (deterministic Home Sample) — keeps the sphere at
-      // SANDBOX_SAMPLE_SPHERE_POSITION after a refresh instead of camera-front.
-      pinned: saved.pinned || undefined,
       // Manual override for a pending (not-yet-generated) non-entity sphere —
       // keeps its authored position after a refresh instead of camera-front.
       position: Array.isArray(saved.position) && saved.position.length >= 3
@@ -690,7 +683,6 @@ export function restoreSoundscapeState(
       category: (saved as any).category || undefined,
     };
     (event as any).copy_index = saved.copy_index ?? undefined;
-    if (saved.pinned) event.pinned = true;
     if (saved.fx) event.fx = saved.fx;
     if (saved.fx_enabled) event.fx_enabled = true;
     if (saved.fx_audio_filename) {

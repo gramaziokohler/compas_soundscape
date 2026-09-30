@@ -1,6 +1,6 @@
 ﻿'use client';
 
-import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { SpeckleAudioCoordinator } from '@/lib/three/speckle-audio-coordinator';
 import { PlaybackSchedulerService } from '@/lib/audio/playback-scheduler-service';
 import { BoundingBoxManager } from '@/lib/three/BoundingBoxManager';
@@ -40,24 +40,20 @@ import { useSpeckleObjectOverlay } from '@/components/scene/hooks/useSpeckleObje
 import { useSpeckleCoordinatorCallbacks } from '@/components/scene/hooks/useSpeckleCoordinatorCallbacks';
 import { useSpeckleBoundingBoxGumball } from '@/components/scene/hooks/useSpeckleBoundingBoxGumball';
 import { useSpeckleGroundGrid } from '@/components/scene/hooks/useSpeckleGroundGrid';
-import { useSpeckleHomeSphereBounce } from '@/components/scene/hooks/useSpeckleHomeSphereBounce';
-import { usePlaceholderRoom, getSandboxStageBounds, fitCameraToBounds } from '@/components/scene/hooks/usePlaceholderRoom';
+import { usePlaceholderRoom, getSandboxFramingBounds, getSandboxStageBounds, fitCameraToBounds } from '@/components/scene/hooks/usePlaceholderRoom';
+import { useSpeckleHomeAutoRotate } from '@/components/scene/hooks/useSpeckleHomeAutoRotate';
 import { useAcousticLayerIsolation } from '@/hooks/useAcousticLayerIsolation';
 // Phase 5 JSX sub-components
 import { SceneViewModeToolbar } from '@/components/scene/SceneViewModeToolbar';
-import { SceneControlsHint } from '@/components/scene/SceneControlsHint';
+import { SceneBottomBar } from '@/components/scene/SceneBottomBar';
 import { SceneContextMenu } from '@/components/scene/SceneContextMenu';
 import { SceneHoverPreview } from '@/components/scene/SceneHoverPreview';
-import { HomeStageHint } from '@/components/scene/HomeStageHint';
+import { HomeUploadPrompt } from '@/components/scene/HomeUploadPrompt';
 import { SpeckleModelModal } from '@/components/scene/SpeckleModelModal';
 import { SceneTimeline } from '@/components/scene/SceneTimeline';
-import { SceneControlButtons } from '@/components/scene/SceneControlButtons';
 import { ObjectExplorerPanel } from '@/components/scene/ObjectExplorerPanel';
-import { SceneControlButton } from '@/components/ui/SceneControlButton';
-import { NotificationCenter } from '@/components/ui/NotificationCenter';
-import { UndoRedoToolbar } from '@/components/ui/UndoRedoToolbar';
 import { Spinner } from '@/components/ui/Spinner';
-import { UI_RIGHT_SIDEBAR, UI_SCENE_BUTTON } from '@/utils/constants';
+import { HOME_STAGE, SCENE_BOTTOM_BAR, UI_RIGHT_SIDEBAR } from '@/utils/constants';
 import type { SoundEvent, ReceiverData } from '@/types';
 import type { AuralizationConfig } from '@/types/audio';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
@@ -279,7 +275,6 @@ export function SpeckleScene({
   // Gradient map overlay
   const activeGradientMap = useUIStore((s) => s.activeGradientMap);
   // Active local "No-model" project (enables the Home button on the sandbox).
-  const homeProject = useUIStore((s) => s.homeProject);
 
   // Viewer display toggles
   const showLabelSprites = useUIStore((s) => s.showLabelSprites);
@@ -292,7 +287,8 @@ export function SpeckleScene({
   const setShowAdvancedSettings = useUIStore((s) => s.setShowAdvancedSettings);
   const timelineDockHeight = useUIStore((s) => s.timelineDock.height);
   const hoveredSoundCardIndex = useUIStore((s) => s.hoveredSoundCardIndex);
-  const enableAutoSave = useUIStore((s) => s.enableAutoSave);
+  // Effective autosave: only with an opened model — the Home page always saves manually.
+  const enableAutoSave = useUIStore((s) => s.enableAutoSave && !!s.globalSpeckleData);
   const gradientMapManagerRef = useRef<GradientMapManager | null>(null);
 
   // Local refs synced from engine store — remaining effects use .current pattern unchanged
@@ -381,14 +377,13 @@ export function SpeckleScene({
 
   // File upload drag state (for empty state)
   const [isDragging, setIsDragging] = useState(false);
-  // True while a file is dragged over the whole Home window (brightens the grid,
-  // shows the landing-pad ring, and swaps the hint text).
+  // True while a file is dragged over the whole Home window (brightens the grid).
   const [isDragOver, setIsDragOver] = useState(false);
-  // True once the Home stage hint has been dismissed (it shrinks toward the
-  // "Load a Speckle model" control button, which stays as the affordance).
-  const [isHintDismissed, setIsHintDismissed] = useState(false);
   const [speckleTokenSet, setSpeckleTokenSet] = useState<boolean | null>(null);
-  const [showLoadModelPanel, setShowLoadModelPanel] = useState(false);
+  // Load-model dialog lives in uiStore so the Home prompt's "Upload" link can open it.
+  const showLoadModelPanel = useUIStore((s) => s.showLoadModelPanel);
+  const setShowLoadModelPanel = useUIStore((s) => s.setShowLoadModelPanel);
+  const uiMode = useUIStore((s) => s.uiMode);
 
   // Instant loading feedback: set synchronously the moment a file is selected, before the
   // parent kicks off upload/conversion. Cleared once the parent's upload flag takes over,
@@ -419,6 +414,7 @@ export function SpeckleScene({
 
   const isSandbox = !modelUrl;
   usePlaceholderRoom({ isViewerReady, enabled: isSandbox });
+  useSpeckleHomeAutoRotate({ isViewerReady, enabled: isSandbox });
 
   // Model load failures surface as a transient toast (replaces the old full-screen overlay)
   useEffect(() => {
@@ -865,18 +861,13 @@ export function SpeckleScene({
   });
 
   // ── Timeline ──
-  // Home stage sounds (the pinned Sample) are not part of the DAW timeline.
-  const timelineSoundscapeData = useMemo(
-    () => (isSandbox && soundscapeData ? soundscapeData.filter((s) => !(s as { pinned?: boolean }).pinned) : soundscapeData),
-    [isSandbox, soundscapeData],
-  );
   const {
     timelineSounds, soundMetadataReady, showTimeline,
     handleDownloadTimeline,
     handleCloseTimeline, handleToggleTimeline,
   } = useSpeckleTimeline({
     isViewerReady,
-    soundscapeData: timelineSoundscapeData,
+    soundscapeData,
     selectedVariants,
     soundTrims,
     timelineDurationMs,
@@ -1029,9 +1020,6 @@ export function SpeckleScene({
 
   // ── Ground Grid ──
   useSpeckleGroundGrid({ isViewerReady, isSandbox, isDragOver });
-
-  // ── Home Sample sphere bounce ──
-  useSpeckleHomeSphereBounce({ isViewerReady, enabled: isSandbox });
 
   // Loading a Speckle model disables the ground grid by default (it can be
   // re-enabled from Advanced Settings → Display).
@@ -1391,7 +1379,7 @@ export function SpeckleScene({
     try {
       if (isSandbox) {
         // Frame the whole Home grid, not just the placeholder room AABB.
-        fitCameraToBounds(cameraControllerRef.current, getSandboxStageBounds());
+        fitCameraToBounds(cameraControllerRef.current, getSandboxFramingBounds(), getSandboxStageBounds());
       } else {
         cameraControllerRef.current.setCameraView([], true);
       }
@@ -1498,6 +1486,11 @@ export function SpeckleScene({
   // timeline is expanded — not merely because the "Show timeline" toggle is on.
   const dockBottomSpace = showTimeline && timelineSounds.length > 0 ? timelineDockHeight : 0;
 
+  // Publish for overlays owned elsewhere (Simple-mode listener bubbles lift with the DAW).
+  useEffect(() => {
+    useUIStore.getState().setDawDockBottomSpace(dockBottomSpace);
+  }, [dockBottomSpace]);
+
   return (
     <div
       className={`relative w-full h-full ${className || ''}`}
@@ -1511,16 +1504,7 @@ export function SpeckleScene({
       />
 
       {/* View Mode Toolbar — hidden on the Home sandbox stage */}
-      {isViewerReady && !isSandbox && (
-        <SceneViewModeToolbar />
-      )}
-
-      {/* Control hints — bottom-left of the viewer (swaps in first-person mode) */}
-      <SceneControlsHint
-        isViewerReady={isViewerReady}
-        isFirstPersonMode={isFirstPersonMode}
-        bottomOffset={dockBottomSpace}
-      />
+      {isViewerReady && !isSandbox && <SceneViewModeToolbar />}
 
       {/* Loading overlay */}
       {isModelLoading && (
@@ -1532,14 +1516,15 @@ export function SpeckleScene({
         </div>
       )}
 
-      {/* Home stage hint — the single evident affordance on the empty stage */}
-      {isSandbox && isViewerReady && !showLoadModelPanel && !isModelLoading && !isHintDismissed && (
-        <HomeStageHint
-          isDragOver={isDragOver}
-          onOpenSpeckle={() => setShowLoadModelPanel(true)}
-          targetButtonId="load-speckle-model-button"
-          onDismiss={() => setIsHintDismissed(true)}
-        />
+      {/* Home stage prompt (Expert mode) — in Simple mode it sits on top of the
+          centred new-scene panel instead (SimpleSoundscapes). */}
+      {isSandbox && isViewerReady && !isModelLoading && uiMode === 'expert' && (
+        <div
+          className="absolute left-0 right-0 flex justify-center pointer-events-none z-20"
+          style={{ bottom: SCENE_BOTTOM_BAR.HEIGHT + HOME_STAGE.PROMPT_BOTTOM_GAP }}
+        >
+          <HomeUploadPrompt />
+        </div>
       )}
 
       {/* Centered Speckle / upload pop-up with a dimmed backdrop */}
@@ -1572,11 +1557,7 @@ export function SpeckleScene({
           rightSidebarWidth={rightSidebarWidth}
           onSeek={handleSeek}
           onDownload={handleDownloadTimeline}
-          onPlay={handlePlayAll}
-          onPause={handlePauseAll}
-          onStop={handleStopAll}
           onClose={handleCloseTimeline}
-          onToggleTimeline={handleToggleTimeline}
           isAnyPlaying={playbackState.isPlaying}
           onSelectSoundCard={onSelectSoundCard}
           originalIRChannelCount={audioOrchestrator?.getIRState().channelCount ?? 0}
@@ -1586,91 +1567,34 @@ export function SpeckleScene({
       )}
 
 
-      {/* Advanced Settings toggle — top-right */}
-
-      <div
-        className="absolute pointer-events-auto z-20 transition-all duration-300 flex gap-2"
-        style={{
-          top: '16px',
-          right: isRightSidebarExpanded ? `${(rightSidebarWidth ?? UI_RIGHT_SIDEBAR.WIDTH) + 10}px` : '10px',
-        }}
-      >
-        <UndoRedoToolbar />
-        {isViewerReady && onSaveSoundscape && !enableAutoSave && (
-          <SceneControlButton
-            onClick={onSaveSoundscape}
-            isActive={isSavingSoundscape}
-            title={isSavingSoundscape ? 'Saving progress...' : 'Save progress'}
-            icon={
-              isSavingSoundscape ? (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="12" cy="12" r="10" strokeDasharray="31.4 31.4" strokeDashoffset="0">
-                    <animateTransform
-                      attributeName="transform"
-                      type="rotate"
-                      from="0 12 12"
-                      to="360 12 12"
-                      dur="1s"
-                      repeatCount="indefinite"
-                    />
-                  </circle>
-                </svg>
-              ) : (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
-                  <polyline points="17 21 17 13 7 13 7 21" />
-                  <polyline points="7 3 7 8 15 8" />
-                </svg>
-              )
-            }
-          />
-        )}
-        {isSandbox && isViewerReady && (
-          <SceneControlButton
-            buttonId="load-speckle-model-button"
-            onClick={() => {
-              setIsHintDismissed(true);
-              setShowLoadModelPanel((open) => !open);
-            }}
-            isActive={showLoadModelPanel}
-            title="Load a Speckle model"
-            icon={
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                <polyline points="17 8 12 3 7 8" />
-                <line x1="12" y1="3" x2="12" y2="15" />
-              </svg>
-            }
-          />
-        )}
-        <SceneControlButton
-          onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
-          isActive={showAdvancedSettings}
-          title={showAdvancedSettings ? 'Close Settings' : 'Open Settings'}
-          icon={
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="3" />
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-            </svg>
-          }
-        />
-        <NotificationCenter
-          isRightSidebarExpanded={isRightSidebarExpanded}
-          rightSidebarWidth={rightSidebarWidth}
-        />
-        {(modelUrl || homeProject) && (
-          <button
-            type="button"
-            onClick={() => { window.location.href = window.location.origin; }}
-            title="Home"
-            className="font-extrabold tracking-tight text-primary bg-transparent border-0 p-0 cursor-pointer whitespace-nowrap flex items-center text-sm leading-none"
-            style={{ height: UI_SCENE_BUTTON.SIZE }}
-          >
-            Sound is blue
-          </button>
-        )}
-      </div>
-
+      {/* Full-width bottom control bar — app / playback / view + system */}
+      <SceneBottomBar
+        isViewerReady={isViewerReady}
+        isSandbox={isSandbox}
+        isFirstPersonMode={isFirstPersonMode}
+        enableAutoSave={enableAutoSave}
+        isSavingSoundscape={!!isSavingSoundscape}
+        onSaveSoundscape={onSaveSoundscape}
+        hasTimeline={timelineSounds.length > 0}
+        isPlaying={playbackState.isPlaying}
+        currentTimeMs={playbackState.currentTime}
+        durationMs={playbackState.duration}
+        showTimeline={showTimeline}
+        onPlay={handlePlayAll}
+        onPause={handlePauseAll}
+        onStop={handleStopAll}
+        onToggleTimeline={handleToggleTimeline}
+        audioOrchestrator={audioOrchestrator}
+        onResetZoom={handleResetZoom}
+        onRefreshScene={handleRefreshScene}
+        showUpdateBadge={!!hasNewModelVersion}
+        showObjectExplorer={showObjectExplorer}
+        onToggleExplorer={handleToggleExplorer}
+        showLoadModelPanel={showLoadModelPanel}
+        onToggleLoadModel={() => setShowLoadModelPanel((open) => !open)}
+        showAdvancedSettings={showAdvancedSettings}
+        onToggleSettings={() => setShowAdvancedSettings(!showAdvancedSettings)}
+      />
 
       {/* Object Explorer floating panel — always mounted so ObjectExplorer initializes (auto-hides Acoustics layer) on load */}
       <ObjectExplorerPanel
@@ -1679,44 +1603,6 @@ export function SpeckleScene({
         isRightSidebarExpanded={isRightSidebarExpanded}
         rightSidebarWidth={rightSidebarWidth ?? UI_RIGHT_SIDEBAR.WIDTH}
       />
-
-      {/* Control Buttons */}
-      <SceneControlButtons
-        isViewerReady={isViewerReady}
-        isRightSidebarExpanded={isRightSidebarExpanded}
-        rightSidebarWidth={rightSidebarWidth}
-        audioOrchestrator={audioOrchestrator}
-        soundscapeData={soundscapeData}
-        onResetZoom={handleResetZoom}
-        onRefreshScene={handleRefreshScene}
-        showUpdateBadge={hasNewModelVersion}
-        bottomOffset={dockBottomSpace}
-      />
-
-      {/* Object Explorer toggle — bottom right; hidden in sandbox (empty world tree) */}
-      {isViewerReady && !isSandbox && (
-        <div
-          className="absolute flex flex-col items-center pointer-events-auto z-20 transition-all duration-300"
-          style={{
-            gap: UI_SCENE_BUTTON.GAP,
-            bottom: `${16 + dockBottomSpace}px`,
-            right: isRightSidebarExpanded ? `${(rightSidebarWidth ?? UI_RIGHT_SIDEBAR.WIDTH) + 10}px` : '10px',
-          }}
-        >
-          <SceneControlButton
-            onClick={handleToggleExplorer}
-            isActive={showObjectExplorer}
-            title={showObjectExplorer ? 'Close Object Explorer' : 'Open Object Explorer'}
-            icon={
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="3" y1="6" x2="21" y2="6" />
-                <line x1="3" y1="12" x2="21" y2="12" />
-                <line x1="3" y1="18" x2="21" y2="18" />
-              </svg>
-            }
-          />
-        </div>
-      )}
 
       {/* Hover preview — shown after 2 s dwell, dismissed on right-click */}
       {hoverPreview && !contextMenuPos && (

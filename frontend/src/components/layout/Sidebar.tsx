@@ -5,19 +5,18 @@ import type { MouseEvent as ReactMouseEvent } from "react";
 import { ContextSection } from "./sidebar/ContextSection";
 import { UsageSection } from "./sidebar/UsageSection";
 import { SoundGenerationSection } from "./sidebar/SoundGenerationSection";
+import { buildSoundGenerationSectionProps } from "./sidebar/soundSectionProps";
 import { ContextMenu } from "@/components/ui/ContextMenu";
 import type { ContextMenuItem } from "@/components/ui/ContextMenu";
-import { UI_SIDEBAR_RESIZE, UI_SIDEBAR_TOGGLE } from "@/utils/constants";
+import { UI_SIDEBAR_RESIZE, UI_SIDEBAR_TOGGLE, SCENE_BOTTOM_BAR } from "@/utils/constants";
 import { readCssPx, clampToViewportWidth } from "@/utils/scale";
 import { buildSidebarEdgeNotchClipPath } from "@/utils/sidebarEdgeNotch";
 import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { useViewportScale } from "@/hooks/useViewportScale";
-import { useIsMac } from "@/hooks/useIsMac";
-import { formatShortcutKeys } from "@/utils/platform";
 import { useTextGenerationStore } from "@/store/textGenerationStore";
 import { useCardFlowStore } from "@/store/cardFlowStore";
 import { useUIStore } from "@/store/uiStore";
-import { useAnalysisStore, useSpeckleStore } from "@/store";
+import { useAnalysisStore, useSpeckleStore, useSceneWorkflowStore } from "@/store";
 import { useAudioControlsStore } from "@/store/audioControlsStore";
 import type { SidebarProps } from "@/types/components";
 import type { AnalysisConfig } from "@/types/analysis";
@@ -50,29 +49,6 @@ export function Sidebar(props: SidebarProps) {
   const [activeContextOriginalIndex, setActiveContextOriginalIndex] = useState<number | null>(null);
   const [activeUsageOriginalIndex, setActiveUsageOriginalIndex] = useState<number | null>(null);
   const [breadcrumbMenu, setBreadcrumbMenu] = useState<{ level: 'context' | 'usage'; x: number; y: number } | null>(null);
-  const [shortcutsOpen, setShortcutsOpen] = useState(true);
-  const [shortcutsHovered, setShortcutsHovered] = useState(false);
-  const isMac = useIsMac();
-
-  // Restore the shortcuts-hints open/closed preference.
-  useEffect(() => {
-    try {
-      const v = window.localStorage.getItem('compas-sidebar-shortcuts-open');
-      setShortcutsOpen(v === null ? true : v === 'true');
-    } catch {
-      /* ignore unavailable storage */
-    }
-  }, []);
-
-  const setShortcutsOpenPersist = useCallback((open: boolean) => {
-    setShortcutsOpen(open);
-    try {
-      window.localStorage.setItem('compas-sidebar-shortcuts-open', String(open));
-    } catch {
-      /* ignore unavailable storage */
-    }
-  }, []);
-
   // Guard ref that prevents advanceToUsage/advanceToSounds from firing
   // during initial load. ContextSection auto-advances when analysis configs
   // load asynchronously after mount, which would clobber the persisted step.
@@ -130,6 +106,13 @@ export function Sidebar(props: SidebarProps) {
       } else {
         useUIStore.getState().setIsInSoundsStep(true);
       }
+    }
+
+    // A Simple-mode scene workflow is mid-run (user just switched to Expert):
+    // the persisted step/indices were written by the workflow — don't let the
+    // content-based load guard override them.
+    if (useSceneWorkflowStore.getState().activeUsageIndex !== null) {
+      hasInteractedRef.current = true;
     }
 
     // Clear the initializing guard after a delay so ContextSection's
@@ -347,6 +330,42 @@ export function Sidebar(props: SidebarProps) {
       setIsExpanded(true);
     }
   }, [soundsNavTrigger]);
+
+  // Programmatic navigation from the Simple-mode scene workflow (sceneWorkflowStore):
+  // follow the pipeline live (analysis card → scenario card → its sounds). Seeded
+  // with the current seq so a stale command is never replayed on mount.
+  const sidebarNavCommand = useUIStore((s) => s.sidebarNavCommand);
+  const lastNavSeqRef = useRef(useUIStore.getState().sidebarNavCommand?.seq ?? 0);
+  useEffect(() => {
+    if (!sidebarNavCommand || sidebarNavCommand.seq === lastNavSeqRef.current) return;
+    lastNavSeqRef.current = sidebarNavCommand.seq;
+    hasInteractedRef.current = true;
+    const { step, contextIndex, usageIndex } = sidebarNavCommand;
+    const ui = useUIStore.getState();
+    setBypassedUsage(false);
+    setActiveContextOriginalIndex(contextIndex);
+    if (step === 0) {
+      setUsageExpandedOriginalIndex(null);
+      setContextExpandedOriginalIndex(contextIndex);
+      ui.setActiveSoundParentIndex(null);
+      ui.setIsInSoundsStep(false);
+    } else if (step === 1) {
+      setContextExpandedOriginalIndex(null);
+      setActiveUsageOriginalIndex(usageIndex);
+      setUsageExpandedOriginalIndex(usageIndex);
+      ui.setActiveSoundParentIndex(null);
+      ui.setIsInSoundsStep(false);
+    } else {
+      setContextExpandedOriginalIndex(null);
+      setUsageExpandedOriginalIndex(null);
+      setActiveUsageOriginalIndex(usageIndex);
+      if (usageIndex !== null) ui.setActiveSoundParentIndex(usageIndex);
+      else ui.setIsInSoundsStep(true);
+    }
+    setCurrentStep(step);
+    setIsExpanded(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sidebarNavCommand?.seq]);
 
   // Programmatic collapse/expand command (e.g. collapse everything on Home load).
   // The mounted Sidebar owns a local `isExpanded`, so it must observe this
@@ -919,7 +938,7 @@ export function Sidebar(props: SidebarProps) {
   const sidebarEdgeClipPath = isExpanded
     ? buildSidebarEdgeNotchClipPath(
         contentWidth,
-        scale.viewport.height,
+        scale.viewport.height - SCENE_BOTTOM_BAR.HEIGHT,
         'right',
         scale.viewport.height / 2,
         UI_SIDEBAR_TOGGLE.NOTCH_HEIGHT,
@@ -968,8 +987,10 @@ export function Sidebar(props: SidebarProps) {
       {/* Sidebar content panel */}
       <aside
         data-sidebar="left"
-        className="fixed top-0 left-0 h-screen flex flex-col transition-all duration-300 ease-in-out"
+        className="fixed top-0 left-0 flex flex-col transition-all duration-300 ease-in-out"
         style={{
+          // Stops above the full-width scene bottom bar.
+          height: 'calc(var(--ui-dvh) - var(--scene-bottom-bar-height))',
           width: isExpanded ? `${contentWidth}px` : '0px',
           opacity: isExpanded ? 1 : 0,
           zIndex: 10,
@@ -1166,103 +1187,10 @@ export function Sidebar(props: SidebarProps) {
           )}
 
           {currentStep === 2 && (
-            <SoundGenerationSection
-              soundConfigs={props.soundConfigs}
-              activeSoundConfigTab={props.activeSoundConfigTab}
-              isSoundGenerating={props.isSoundGenerating}
-              generatedSounds={props.generatedSounds}
-              globalDuration={props.globalDuration}
-              globalSteps={props.globalSteps}
-              globalNegativePrompt={props.globalNegativePrompt}
-              applyDenoising={props.applyDenoising}
-              trimSilence={props.trimSilence}
-              applyNoiseReduction={props.applyNoiseReduction}
-              audioModel={props.audioModel}
-              onSetActiveTab={props.setActiveSoundConfigTab}
-              onAddConfig={props.onAddSoundConfig}
-              onBatchAddConfigs={props.onBatchAddSoundConfigs}
-              onRemoveConfig={props.onRemoveSoundConfig}
-              onUpdateConfig={props.onUpdateSoundConfig}
-              onTypeChange={props.onSoundTypeChange}
-              onGenerate={props.onGenerateSounds}
-              onGenerateSingle={props.onGenerateSingleSound}
-              onGenerateFiltered={props.onGenerateFilteredSounds}
-              onStopGeneration={props.onStopSoundGeneration}
-              onGlobalDurationChange={props.onGlobalDurationChange}
-              onGlobalStepsChange={props.onGlobalStepsChange}
-              onGlobalNegativePromptChange={props.onGlobalNegativePromptChange}
-              onApplyDenoisingChange={props.onApplyDenoisingChange}
-              onTrimSilenceChange={props.onTrimSilenceChange}
-              onApplyNoiseReductionChange={props.onApplyNoiseReductionChange}
-              onAudioModelChange={props.onAudioModelChange}
-              onReprocessSounds={props.onReprocessSounds}
-              onUploadAudio={props.onUploadAudio}
-              onClearUploadedAudio={props.onClearUploadedAudio}
-              onLibrarySearch={props.onLibrarySearch}
-              onLibrarySoundSelect={props.onLibrarySoundSelect}
-              modelEntities={props.modelEntities}
-              onStartLinkingEntity={props.onStartLinkingEntity}
-              onCancelLinkingEntity={props.onCancelLinkingEntity}
-              onFinishLinkingEntity={props.onFinishLinkingEntity}
-              onSelectLinkedEntity={props.onSelectLinkedEntity}
-              onClearLinkedEntities={props.onClearLinkedEntities}
-              isLinkingEntity={props.isLinkingEntity}
-              linkingConfigIndex={props.linkingConfigIndex}
-              useSpeckleViewer={props.useSpeckleViewer}
-              onResetSound={props.onResetSound}
-              onDuplicateConfig={props.onDuplicateConfig}
-              onRegenerateSingle={props.onRegenerateSingle}
-              onDeleteVariant={props.onDeleteVariant}
-              onSelectSoundCard={props.onSelectSoundCard}
-              selectedCardIndex={props.selectedCardIndex}
-              onSoundCardCollapsed={props.onSoundCardCollapsed}
-              onCatalogSoundSelect={props.onCatalogSoundSelect}
-              visibleParentUsageIndex={activeUsageOriginalIndex}
-            />
+            <SoundGenerationSection {...buildSoundGenerationSectionProps(props, activeUsageOriginalIndex)} />
           )}
         </div>
 
-        {/* Shortcut hints — very bottom of the sidebar (collapsible) */}
-        <div className="flex-shrink-0 px-4 pt-2 pb-3 border-t border-secondary-light">
-          {shortcutsOpen ? (
-            <div
-              onMouseEnter={() => setShortcutsHovered(true)}
-              onMouseLeave={() => setShortcutsHovered(false)}
-              className="flex flex-col gap-0.5"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-[9px] uppercase tracking-wider text-secondary-hover">Shortcuts</span>
-                {shortcutsHovered && (
-                  <button
-                    onClick={() => setShortcutsOpenPersist(false)}
-                    aria-label="Hide shortcuts"
-                    title="Hide shortcuts"
-                    className="flex h-3.5 w-3.5 items-center justify-center rounded-full text-[10px] leading-none text-secondary-hover hover:text-foreground transition-colors"
-                  >
-                    ×
-                  </button>
-                )}
-              </div>
-              {[
-                { label: 'Duplicate', command: 'Ctrl + drag' },
-                { label: 'Card options', command: 'Right-click' },
-                ...(currentStep === 2 ? [{ label: 'Zoom into sound sphere', command: 'Double-click' }] : []),
-              ].map((row) => (
-                <div key={row.label} className="flex items-baseline gap-1.5 text-[9px] leading-tight">
-                  <span className="font-medium text-foreground">{row.label}</span>
-                  <span className="text-secondary-hover">{formatShortcutKeys(row.command, isMac)}</span>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <button
-              onClick={() => setShortcutsOpenPersist(true)}
-              className="text-[9px] text-secondary-hover hover:text-foreground transition-colors cursor-pointer"
-            >
-              Shortcuts
-            </button>
-          )}
-        </div>
         </div>
       </aside>
 

@@ -2,7 +2,7 @@
 
 import { useState, useLayoutEffect, useEffect } from 'react';
 import { DAWDock } from '@/components/audio/daw/DAWDock';
-import { DAWMiniTransport } from '@/components/audio/daw/DAWMiniTransport';
+import { SCENE_BOTTOM_BAR } from '@/utils/constants';
 import type { TimelinePlaybackState } from '@/types/audio';
 import type { PlaybackSchedulerService } from '@/lib/audio/playback-scheduler-service';
 
@@ -11,7 +11,7 @@ const SIDEBAR_SELECTOR = '[data-sidebar="left"], [data-sidebar="right"]';
 interface SceneTimelineProps {
   sounds: any[];
   playbackState: TimelinePlaybackState;
-  /** When true, hide the DAW panel and show the compact bottom-center play/pause bar. */
+  /** When true, hide the DAW panel (the scene bottom bar keeps the transport). */
   collapsed?: boolean;
   isLeftSidebarExpanded?: boolean;
   isRightSidebarExpanded?: boolean;
@@ -19,12 +19,7 @@ interface SceneTimelineProps {
   rightSidebarWidth?: number;
   onSeek: (timeMs: number) => void;
   onDownload?: (format: import('@/lib/audio/SoundscapeExporter').ExportFormat) => Promise<void>;
-  onPlay: () => void;
-  onPause: () => void;
-  onStop: () => void;
   onClose: () => void;
-  /** Reveals the full DAW timeline from the compact transport (same as "Show timeline"). */
-  onToggleTimeline: () => void;
   isAnyPlaying?: boolean;
   onSelectSoundCard?: (promptIndex: number) => void;
   originalIRChannelCount?: number;
@@ -42,11 +37,7 @@ export function SceneTimeline({
   rightSidebarWidth,
   onSeek,
   onDownload,
-  onPlay,
-  onPause,
-  onStop,
   onClose,
-  onToggleTimeline,
   isAnyPlaying,
   onSelectSoundCard,
   originalIRChannelCount,
@@ -99,19 +90,8 @@ export function SceneTimeline({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [collapsed]);
 
-  if (collapsed) {
-    return (
-      <DAWMiniTransport
-        currentTime={playbackState.currentTime}
-        duration={playbackState.duration}
-        isPlaying={playbackState.isPlaying}
-        onPlay={onPlay}
-        onPause={onPause}
-        onStop={onStop}
-        onExpand={onToggleTimeline}
-      />
-    );
-  }
+  // Collapsed: the transport lives in the scene bottom bar (SceneBottomBar).
+  if (collapsed) return null;
 
   return (
     <DAWDock
@@ -121,14 +101,12 @@ export function SceneTimeline({
       isAnyPlaying={isAnyPlaying}
       onSeek={onSeek}
       onDownload={onDownload}
-      onPlay={onPlay}
-      onPause={onPause}
-      onStop={onStop}
       onClose={onClose}
       onSelectSoundCard={onSelectSoundCard}
       originalIRChannelCount={originalIRChannelCount}
       leftOffset={insets.left}
       rightOffset={insets.right}
+      bottomOffset={SCENE_BOTTOM_BAR.HEIGHT}
       sampleRate={sampleRate}
       playbackSchedulerRef={playbackSchedulerRef}
     />

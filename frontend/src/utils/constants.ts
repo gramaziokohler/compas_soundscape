@@ -309,17 +309,6 @@ export const UI_HELPER_HINT = {
 // Compact play/pause/stop control shown at the bottom-center of the 3D scene
 // when the DAW timeline panel is hidden. Replaced by DAWTimeline when shown.
 // Chrome mirrors the top-center SceneViewModeToolbar so both read as one system.
-export const DAW_MINI_TRANSPORT = {
-  BOTTOM: 48,                 // px — aligns with SceneControlButtons (bottom-12)
-  Z_INDEX: 20,                // same stacking as scene control buttons
-  GAP: 6,                     // px — matches DAWTimeline transport row
-  PADDING: UI_SPACING.XS,     // container inner padding (matches ViewMode toolbar rhythm)
-  BORDER_RADIUS: UI_BORDER_RADIUS.MD,
-  TIME_BORDER_RADIUS: UI_BORDER_RADIUS.SM,
-  TIME_PADDING_X: 8,          // px — horizontal padding of the time readout chip
-  TIME_PADDING_Y: 4,          // px — vertical padding of the time readout chip
-  TIME_FONT_SIZE: UI_FONT_SIZE.XS,
-} as const;
 
 // Material Assignment UI
 export const MAX_FACES_FOR_EXPANSION = 10; // Maximum number of faces before disabling entity expansion
@@ -1291,19 +1280,28 @@ export const SCENE_GRID = {
 /** Reserved soundscape id for homepage work that has no Speckle model. Not a URL param. */
 export const SANDBOX_MODEL_ID = 'local';
 
-/** Minimum world extent (m) of the Home stage ground grid, before the ×0.75 fraction. */
-export const SANDBOX_GRID_MIN_EXTENT = 10;
-/** Home stage grid half-extent = max(modelWidth, modelDepth, MIN_EXTENT) × this. */
-export const SANDBOX_GRID_EXTENT_FRACTION = 0.5;
-/** Extra framing margin so the default/reset camera shows the whole grid. */
-export const SANDBOX_GRID_CAMERA_MARGIN = 3.5;
-/** Fixed world position of the Home Sample sphere (the dot of the title's "i"). */
-export const SANDBOX_SAMPLE_SPHERE_POSITION: [number, number, number] = [0, -2, 1.5];
-/** Vertical bounce for the Home Sample sphere — rhythm mirrors the sidebar
- *  expand handle's "dropped ball" animation (one large + one small bounce). */
-export const SANDBOX_SPHERE_BOUNCE = {
-  PERIOD_MS: 2000,
-  AMPLITUDE_M: 0.6,
+/** Minimum world extent (m) of a model's ground grid, before the extent fraction. */
+export const GROUND_GRID_MIN_EXTENT = 10;
+/** Model ground grid half-extent = max(modelWidth, modelDepth, MIN_EXTENT) × this. */
+export const GROUND_GRID_EXTENT_FRACTION = 0.5;
+/** Home stage (no model loaded): a small, empty ground grid to start from. */
+export const HOME_STAGE = {
+  /** The grid is GRID_SIZE_M × GRID_SIZE_M, centred on the origin. */
+  GRID_SIZE_M: 6,
+  GRID_SPACING_M: 0.5,
+  /** Default / reset camera frames the grid scaled by this margin. */
+  CAMERA_MARGIN: 1.4,
+  /** px between the scene bottom bar and the home start prompt / panel. */
+  PROMPT_BOTTOM_GAP: 28,
+  /** Slow idle spin of the camera around the grid centre; stops for good on a manual orbit. */
+  AUTO_ROTATE: {
+    /** Azimuth speed in rad/s (0.05 ≈ 3°/s, one turn every ~2 min). */
+    SPEED_RAD_PER_S: 0.05,
+    /** Pointer travel (px) after pointerdown on the canvas that counts as a manual orbit. */
+    ORBIT_DRAG_THRESHOLD_PX: 4,
+    /** Longest frame gap (ms) integrated in one step, so a background-tab resume doesn't jump. */
+    MAX_FRAME_DELTA_MS: 100,
+  },
 } as const;
 
 // Arctic Theme
@@ -1754,6 +1752,15 @@ export const DAW = {
   MAX_DOCK_HEIGHT_MARGIN: 120, // keep this much viewport above the dock
   MIN_PX_PER_SECOND: 1,
   MAX_PX_PER_SECOND: 200,
+  /** Zoom factor of one wheel notch (Ctrl+wheel = track height, Alt+wheel = px/sec). */
+  WHEEL_ZOOM_IN: 1.1,
+  WHEEL_ZOOM_OUT: 0.9,
+  /** Auto-fit track height = default track height lowered by this many wheel-out notches. */
+  FIT_TRACK_HEIGHT_NOTCHES: 2,
+  /** Right-edge slack (px) so the auto-fitted timeline never triggers a horizontal scrollbar. */
+  FIT_SCROLLBAR_ALLOWANCE: 12,
+  /** px/sec used until the viewport width is known (matches the 100% zoom reading). */
+  FALLBACK_PX_PER_SECOND: 10,
 } as const;
 
 
@@ -2002,3 +2009,94 @@ export function normalizeSoundCategory(category?: string | null): SoundCategoryK
   if (cat === 'speech') return 'speech';
   return undefined;
 }
+
+// ============================================================================
+// Simple (bubble) UI mode
+// ============================================================================
+// Floating-circle presentation that replaces the sidebars (see
+// components/simple/**, store/sceneWorkflowStore.ts). Sizes are `physical`
+// (constant CSS px); panel heights are clamped-fluid via dvh.
+export const SIMPLE_MODE = {
+  /** Default UI mode for a browser with no persisted choice. */
+  DEFAULT_UI_MODE: 'simple' as const,
+  BUBBLE_SIZE: 36,              // px — scene / simulation bubble diameter
+  EXIT_BUTTON_SIZE: 26,         // px — "Leave FPS view" button beside the active listener
+  BUBBLE_GAP: 10,               // px — vertical gap between bubbles
+  RING_STROKE: 2,               // px — progress ring stroke width
+  EDGE_MARGIN: 16,              // px — column distance from the screen edge
+  TOP_OFFSET: 16,               // px — left column label top
+  RIGHT_TOP_OFFSET: 16,         // px — right column label top
+  LISTENERS_BOTTOM_GAP: 12,     // px — gap between the bottom bar (or docked DAW) and the listener stack
+  PANEL_GAP: 12,                // px — gap between a bubble column and its panel
+  PANEL_WIDTH: 'var(--sidebar-default-width)',
+  PANEL_MAX_HEIGHT: 'min(720px, calc(var(--ui-dvh) - var(--scene-bottom-bar-height) - 80px))',
+  COMPOSER_WIDTH: 360,          // px — prompt composer panel width
+  COMPOSER_MAX_PROMPT: 600,     // chars
+  Z_INDEX: 25,                  // above scene overlays, below modals/toasts
+  /** Relative weight of each pipeline step in the global progress ring. */
+  STEP_WEIGHTS: { analyze: 0.2, scenario: 0.2, foley: 0.2, generate: 0.4 },
+  STEP_LABELS: {
+    analyze: 'Analyze model',
+    scenario: 'Scenario',
+    foley: 'Foley and speech',
+    generate: 'Generate sounds',
+  },
+  /** Speed/precision presets → diffusion steps applied to the scene's own sound cards. */
+  QUALITY_PRESETS: {
+    fast: { label: 'Fast', steps: 20 },
+    precise: { label: 'Precise', steps: DEFAULT_DIFFUSION_STEPS },
+  },
+  DEFAULT_QUALITY: 'precise' as const,
+  DURATION_OPTIONS_MS: [30_000, 60_000, 120_000],
+  DEFAULT_DURATION_MS: AUDIO_PLAYBACK.TIMELINE_FIXED_DURATION_MS,
+  /** Text-to-audio models offered in the composer. */
+  AUDIO_MODEL_OPTIONS: [AUDIO_MODEL_SA3, AUDIO_MODEL_TANGOFLUX, AUDIO_MODEL_ELEVENLABS],
+  /** LLMs offered in the composer. */
+  LLM_MODEL_OPTIONS: [LLM_MODEL_GEMINI_FLASH, LLM_MODEL_GEMINI_PRO, LLM_MODEL_OPENAI, LLM_MODEL_ANTHROPIC],
+  /** Example shown in the composer's free-text speech-language field. */
+  SPEECH_LANGUAGE_PLACEHOLDER: 'Swiss German',
+  /** Scenario card defaults / bounds for composer-created scenes. */
+  SCENARIO_PEOPLE_COUNT: 5,
+  SCENARIO_PEOPLE_MIN: 0,
+  SCENARIO_PEOPLE_MAX: 50,
+  SCENARIO_LIKELINESS: 9,
+  SCENARIO_LIKELINESS_MIN: 1,
+  SCENARIO_LIKELINESS_MAX: 10,
+  /** Max screenshots model analysis accepts (backend keeps the first 3). */
+  MAX_ANALYSIS_SCREENSHOTS: 3,
+  IMAGE_ACCEPT: 'image/png,image/jpeg,image/webp',
+  TITLE_MAX_CHARS: 32,
+  /** Waveform-ring bubble icon (scene loudness over its timeline). */
+  WAVEFORM_BINS: 40,
+  WAVEFORM_INNER_RATIO: 0.36,   // inner radius as a fraction of the bubble radius
+  WAVEFORM_MAX_RATIO: 0.40,     // max bar length as a fraction of the bubble radius
+  /** Click-vs-drag threshold for click-outside dismissal (px). */
+  DISMISS_DRAG_TOLERANCE: 4,
+} as const;
+
+// Full-width bottom control bar (components/scene/SceneBottomBar.tsx)
+export const SCENE_BOTTOM_BAR = {
+  HEIGHT: 40,              // px — mirrored by --scene-bottom-bar-height in globals.css
+  BUTTON_SIZE: 28,         // px
+  ICON_SIZE: 14,           // px
+  GROUP_GAP: 4,            // px — between buttons of a group
+  PADDING_X: 10,           // px
+  Z_INDEX: 210,            // above the docked DAW (200) so popovers from the bar overlay it
+  POPOVER_OFFSET: 8,       // px — gap between the bar and its upward popovers
+  POPOVER_WIDTH: 260,      // px — shortcuts popover
+} as const;
+
+// Multi-level dropdown (components/ui/NestedMenu.tsx)
+export const NESTED_MENU = {
+  WIDTH: 200,              // px — panel min width (styled in globals.css .nested-menu)
+  VIEWPORT_MARGIN: 8,      // px — clamp margin
+  SUBMENU_GAP: 2,          // px — gap between a row and its submenu
+  PADDING_Y: 4,            // px — panel vertical padding (aligns a submenu's first row)
+  Z_INDEX: 10000,
+} as const;
+
+// Acoustic materials summary row (components/layout/sidebar/acoustics/AcousticMaterialsSummary.tsx)
+export const ACOUSTIC_MATERIALS_SUMMARY = {
+  NAME_SEPARATOR: ', ',
+  TOOLTIP_SEPARATOR: '\n',
+} as const;

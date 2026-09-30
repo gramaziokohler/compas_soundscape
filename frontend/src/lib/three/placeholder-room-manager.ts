@@ -1,9 +1,7 @@
 /**
- * PlaceholderRoomManager
- *
- * Overlay shoebox drawn into the Speckle viewer's Three.js scene when no
- * Speckle model is loaded. Speckle Z-up: width → X, depth → Y, height → Z,
- * floor at z = 0.
+ * Home stage (no Speckle model) helpers: stage / resonance bounds, camera
+ * framing and a finite far plane. Speckle Z-up: width → X, depth → Y,
+ * height → Z, floor at z = 0.
  *
  * Speckle's CameraController.updateFarCameraPlane() reads renderer.sceneBox,
  * which is empty without loadObject. That sets camera.far = Infinity and
@@ -13,16 +11,8 @@
 
 import * as THREE from 'three';
 import type { CameraController, Viewer } from '@speckle/viewer';
-import {
-  RESONANCE_AUDIO,
-  SANDBOX_GRID_MIN_EXTENT,
-  SANDBOX_GRID_EXTENT_FRACTION,
-  SANDBOX_GRID_CAMERA_MARGIN,
-} from '@/utils/constants';
-import { getCssColorHex } from '@/utils/utils';
+import { HOME_STAGE, RESONANCE_AUDIO } from '@/utils/constants';
 import type { BoundingBoxBounds } from '@/lib/three/BoundingBoxManager';
-
-const SPECKLE_OVERLAY_LAYER = 4;
 
 type CameraPlanesController = CameraController & {
   updateFarCameraPlane: () => void;
@@ -98,19 +88,30 @@ export function getSandboxResonanceBounds(soundPositions: THREE.Vector3[]): Boun
 }
 
 /**
- * Bounds covering the whole Home ground grid. The camera default view and the
- * reset-zoom button frame this (not the tighter placeholder room AABB), so the
- * entire "SOUND IS BLUE" stage is visible.
+ * Bounds covering the Home ground grid (HOME_STAGE.GRID_SIZE_M, centred on the
+ * origin) plus a framing margin. The default camera view and the reset-zoom
+ * button frame this, so the whole grid is visible.
  */
 export function getSandboxStageBounds(): BoundingBoxBounds {
-  const { width, height, depth } = RESONANCE_AUDIO.DEFAULT_ROOM_DIMENSIONS;
-  const half =
-    Math.max(width, depth, SANDBOX_GRID_MIN_EXTENT) *
-    SANDBOX_GRID_EXTENT_FRACTION *
-    SANDBOX_GRID_CAMERA_MARGIN;
+  const { height } = RESONANCE_AUDIO.DEFAULT_ROOM_DIMENSIONS;
+  const half = (HOME_STAGE.GRID_SIZE_M / 2) * HOME_STAGE.CAMERA_MARGIN;
   return {
     min: [-half, -half, 0],
     max: [half, half, height],
+  };
+}
+
+/**
+ * Flat (zero-height) bounds on the Home ground plane, same footprint as
+ * `getSandboxStageBounds`. Framing the camera on this box makes its target the
+ * grid centre, so the grid sits at the middle of the page. The taller stage box
+ * would target 1.5 m above the floor and push the grid below the page centre.
+ */
+export function getSandboxFramingBounds(): BoundingBoxBounds {
+  const half = (HOME_STAGE.GRID_SIZE_M / 2) * HOME_STAGE.CAMERA_MARGIN;
+  return {
+    min: [-half, -half, 0],
+    max: [half, half, 0],
   };
 }
 
@@ -182,133 +183,38 @@ export function installSandboxCameraFarPlane(
   };
 }
 
+/**
+ * Frame `bounds`; near/far planes are computed from `planesBounds` (defaults to
+ * `bounds`) so a flat framing box doesn't degrade the clip planes.
+ */
 export function fitCameraToBounds(
   cameraController: CameraController | null | undefined,
   bounds: BoundingBoxBounds,
+  planesBounds: BoundingBoxBounds = bounds,
 ): boolean {
   if (!cameraController?.setCameraView) return false;
-  const box = boundsToBox3(bounds);
   // Jump immediately — empty-scene damping otherwise settles on a clipped view.
-  cameraController.setCameraView(box, false);
+  cameraController.setCameraView(boundsToBox3(bounds), false);
   const cc = cameraController as CameraPlanesController;
-  cc.updateCameraPlanes?.(box);
+  cc.updateCameraPlanes?.(boundsToBox3(planesBounds));
   return true;
 }
 
-function enableOverlayLayers(obj: THREE.Object3D): void {
-  obj.layers.enable(0);
-  obj.layers.enable(SPECKLE_OVERLAY_LAYER);
-  obj.traverse((child) => {
-    child.layers.enable(0);
-    child.layers.enable(SPECKLE_OVERLAY_LAYER);
-  });
+/** Minimal structural view of Speckle's SmoothOrbitControls (not exported by the package). */
+interface OrbitAdjustable {
+  adjustOrbit: (deltaTheta: number, deltaPhi: number, deltaZoom: number) => void;
 }
 
-function makeFaceMaterial(hex: number, opacity: number): THREE.MeshBasicMaterial {
-  return new THREE.MeshBasicMaterial({
-    color: hex,
-    transparent: opacity < 1,
-    opacity,
-    side: THREE.DoubleSide,
-    depthTest: true,
-    depthWrite: opacity >= 1,
-  });
-}
-
-export class PlaceholderRoomManager {
-  private scene: THREE.Scene;
-  private requestRender: () => void;
-  private group: THREE.Group | null = null;
-
-  constructor(scene: THREE.Scene, requestRender: () => void) {
-    this.scene = scene;
-    this.requestRender = requestRender;
-  }
-
-  public add(): BoundingBoxBounds {
-    this.dispose();
-    const bounds = getPlaceholderRoomBounds();
-    const [minX, minY, minZ] = bounds.min;
-    const [maxX, maxY, maxZ] = bounds.max;
-    // Speckle AABB: X = width, Y = depth, Z = height (Z-up)
-    const width = maxX - minX;
-    const height = maxY - minY;
-    const depth = maxZ - minZ;
-    const cx = (minX + maxX) / 2;
-    const cy = (minY + maxY) / 2;
-    const cz = (minZ + maxZ) / 2;
-
-    const group = new THREE.Group();
-    group.name = 'PlaceholderRoom';
-    group.position.set(cx, cy, cz);
-    group.visible = true;
-    group.frustumCulled = false;
-    group.layers.enableAll();
-
-    const floorHex = getCssColorHex('--color-surface');
-    const wallHex = getCssColorHex('--color-secondary-light');
-    const edgeHex = getCssColorHex('--color-secondary-hover');
-
-    const floor = new THREE.Mesh(
-      new THREE.PlaneGeometry(width, height),
-      makeFaceMaterial(floorHex, 1),
-    );
-    floor.position.set(0, 0, -depth / 2);
-    floor.rotation.set(0, Math.PI, 0);
-    floor.renderOrder = 1;
-    floor.frustumCulled = false;
-    group.add(floor);
-
-    const wallMat = makeFaceMaterial(wallHex, 0.55);
-    const walls: Array<{ size: [number, number]; pos: THREE.Vector3; rot: [number, number, number] }> = [
-      { size: [depth, height], pos: new THREE.Vector3(-width / 2, 0, 0), rot: [0, Math.PI / 2, 0] },
-      { size: [depth, height], pos: new THREE.Vector3(width / 2, 0, 0), rot: [0, -Math.PI / 2, 0] },
-      { size: [width, depth], pos: new THREE.Vector3(0, -height / 2, 0), rot: [Math.PI / 2, 0, 0] },
-      { size: [width, depth], pos: new THREE.Vector3(0, height / 2, 0), rot: [-Math.PI / 2, 0, 0] },
-    ];
-    for (const wall of walls) {
-      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(wall.size[0], wall.size[1]), wallMat);
-      mesh.position.copy(wall.pos);
-      mesh.rotation.set(...wall.rot);
-      mesh.renderOrder = 2;
-      mesh.frustumCulled = false;
-      group.add(mesh);
-    }
-
-    const boxGeom = new THREE.BoxGeometry(width, height, depth);
-    const edgesGeom = new THREE.EdgesGeometry(boxGeom);
-    boxGeom.dispose();
-    const edges = new THREE.LineSegments(
-      edgesGeom,
-      new THREE.LineBasicMaterial({ color: edgeHex, depthTest: false, depthWrite: false }),
-    );
-    edges.renderOrder = 3;
-    edges.frustumCulled = false;
-    group.add(edges);
-
-    enableOverlayLayers(group);
-    this.scene.add(group);
-    this.group = group;
-    this.requestRender();
-    return bounds;
-  }
-
-  public dispose(): void {
-    if (!this.group) return;
-    try {
-      this.scene.remove(this.group);
-    } catch {
-      /* scene may already be disposed during viewer teardown */
-    }
-    this.group.traverse((obj) => {
-      const mesh = obj as THREE.Mesh;
-      mesh.geometry?.dispose();
-      const mat = mesh.material;
-      if (!mat) return;
-      const mats = Array.isArray(mat) ? mat : [mat];
-      mats.forEach((m) => m.dispose());
-    });
-    this.group = null;
-    this.requestRender();
-  }
+/**
+ * Rotate the camera around its orbit target by `deltaAzimuth` radians (about the
+ * world up axis). Returns false if the active controls can't be orbited.
+ */
+export function rotateCameraAzimuth(
+  cameraController: CameraController | null | undefined,
+  deltaAzimuth: number,
+): boolean {
+  const controls = cameraController?.controls as Partial<OrbitAdjustable> | undefined;
+  if (typeof controls?.adjustOrbit !== 'function') return false;
+  controls.adjustOrbit(deltaAzimuth, 0, 0);
+  return true;
 }

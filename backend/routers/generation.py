@@ -485,6 +485,7 @@ async def scenarist(request: ScenaristStreamRequest, req: Request):
     duration = request.duration
     people_count = request.people_count
     likeliness = request.likeliness
+    screenshots = list(request.screenshots or [])
 
     async def _run(job_id: str) -> None:
         partial: dict = {"kind": "scenarist", "thinking": "", "phase": "thinking", "items": []}
@@ -499,6 +500,7 @@ async def scenarist(request: ScenaristStreamRequest, req: Request):
                 duration=duration,
                 people_count=people_count,
                 likeliness=likeliness,
+                screenshots=screenshots or None,
                 on_progress=on_progress,
             )
             async for event in stream:

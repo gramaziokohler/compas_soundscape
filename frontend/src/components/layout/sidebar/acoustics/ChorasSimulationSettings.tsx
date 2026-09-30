@@ -25,6 +25,7 @@ import {
 import type { ChorasSimulationConfig } from '@/types/acoustics';
 import { RangeSlider } from '@/components/ui/RangeSlider';
 import { CardSelect } from '@/components/ui/CardSelect';
+import { AcousticMaterialsSummary } from './AcousticMaterialsSummary';
 
 interface ChorasSimulationSettingsProps {
   config: ChorasSimulationConfig;
@@ -126,6 +127,8 @@ export function ChorasSimulationSettings({
           />
         </>
       )}
+
+      <AcousticMaterialsSummary />
     </div>
   );
 }

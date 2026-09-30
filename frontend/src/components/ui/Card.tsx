@@ -117,6 +117,9 @@ export function Card<TConfig extends CardBaseConfig>({
   onReset,
   onDismissError,
   onDoubleClickCard,
+  onReduce,
+  onTogglePower,
+  isPoweredOn = false,
   beforeContent,
   afterContent,
   loadingContent,
@@ -344,6 +347,20 @@ export function Card<TConfig extends CardBaseConfig>({
           </div>
         )}
 
+        {/* Power button — always visible, left of the title: turns the card's
+            effect (e.g. a simulation's auralization) on / off */}
+        {onTogglePower && (
+          <div className="flex-shrink-0 self-start">
+            <CardButton
+              icon={<PowerIcon />}
+              title={isPoweredOn ? 'Disable simulation' : 'Enable simulation'}
+              onClick={(e) => { e.stopPropagation(); onTogglePower(); }}
+              variant={isPoweredOn ? 'primary' : 'default'}
+              onBlueBackground={isGeneratedActive}
+            />
+          </div>
+        )}
+
         {/* Title + pen */}
         <div className="flex items-center gap-2 flex-1 min-w-0">
           {/* Title / edit input */}
@@ -415,6 +432,17 @@ export function Card<TConfig extends CardBaseConfig>({
             self-start keeps them aligned with the title row (higher) instead of
             centered against the taller title+version block. */}
         <div className="flex items-center gap-1 flex-shrink-0 w-0 overflow-hidden opacity-0 pointer-events-none self-start group-hover:w-auto group-hover:opacity-100 group-hover:pointer-events-auto focus-within:w-auto focus-within:opacity-100 focus-within:pointer-events-auto">
+          {/* Reduce button — floating (Simple-mode) cards fold back into their bubble */}
+          {onReduce && (
+            <CardButton
+              icon={<ReduceIcon />}
+              title="Reduce"
+              onClick={(e) => { e.stopPropagation(); onReduce(); }}
+              variant="default"
+              onBlueBackground={isGeneratedActive}
+            />
+          )}
+
           {/* Reset button - only show if result exists */}
           {hasResult && (
             <CardButton
@@ -702,6 +730,23 @@ function ResetIcon() {
         strokeWidth={4}
         d="M10 19l-7-7m0 0l7-7m-7 7h18"
       />
+    </svg>
+  );
+}
+
+function PowerIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round">
+      <path d="M12 2v10" />
+      <path d="M18.4 6.6a9 9 0 1 1-12.77.04" />
+    </svg>
+  );
+}
+
+function ReduceIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeWidth={2.5} d="M5 12h14" />
     </svg>
   );
 }

@@ -49,10 +49,6 @@ export interface SoundscapeSoundConfig {
   category?: string;
   /** Scenario pipeline reference for "incomplete" (pre-orchestrate) cards. */
   scenario_source?: Record<string, unknown>;
-  /** Explicit-position sound that must stay where authored (the deterministic
-   *  Home Sample at SANDBOX_SAMPLE_SPHERE_POSITION). Persisted so the pin
-   *  survives a refresh/save-load without inferring it from the card type. */
-  pinned?: boolean;
   /** Manual [x, y, z] override for a pending (not-yet-generated) non-entity
    *  sphere. Persisted so a pending sphere keeps its authored position after a
    *  refresh/save-load instead of falling back to camera-front spiral placement. */
@@ -107,8 +103,6 @@ export interface SoundscapeSoundEvent {
   category?: string;
   /** 0-based copy index for multi-variant sounds (distinguishes variants of the same prompt). */
   copy_index?: number;
-  /** Explicit-position sound that must stay where authored (Home Sample at origin). */
-  pinned?: boolean;
   /** Foley FX chain (ordered instances). */
   fx?: import('@/lib/audio/fx/fx-types').FxChain;
   /** Filename of the bounced FX WAV (sibling of audio_filename). */

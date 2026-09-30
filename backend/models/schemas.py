@@ -773,6 +773,9 @@ class ScenaristStreamRequest(BaseModel):
     # Optional {min:[x,y,z], max:[x,y,z]} spatial reference (model bounds) used
     # when no analysis result supplies extents. Falls back to VIRTUAL_ROOM_BOUNDS.
     bounding_box: dict | None = None
+    # Optional reference images of the space (base64 data URIs, max 3) — lets a
+    # scene be grounded in a picture when no 3D model / analysis is available.
+    screenshots: list[str] | None = None
 
 
 class FoleyArtistRequest(BaseModel):

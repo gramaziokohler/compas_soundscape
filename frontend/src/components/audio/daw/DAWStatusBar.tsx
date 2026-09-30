@@ -2,7 +2,6 @@
 
 import { useState, useCallback, useEffect, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { DAWTransportBtn, DAWPlayIcon, DAWPauseIcon, DAWStopIcon } from './DAWTransportBtn';
 import { NumberField } from '@/components/ui/NumberField';
 import { InfoPopover } from '@/components/ui/InfoPopover';
 import { useIsMac } from '@/hooks/useIsMac';
@@ -31,12 +30,12 @@ const TIMELINE_SHORTCUTS: Array<[string, string]> = [
   ['Ctrl + wheel', 'Track height zoom'],
 ];
 
+/**
+ * DAWStatusBar — header strip at the top of the docked DAW: duration, counts,
+ * shortcuts, snap, zoom and export. Play/pause/stop live in the scene bottom
+ * bar (SceneBottomBar), so the dock carries no transport of its own.
+ */
 interface DAWStatusBarProps {
-  isPlaying: boolean;
-  onPlay: () => void;
-  onPause: () => void;
-  onStop: () => void;
-  currentTimeMs: number;
   durationMs: number;
   onDurationChange: (ms: number) => void;
   isEditingDuration: boolean;
@@ -61,11 +60,6 @@ interface DAWStatusBarProps {
 }
 
 export function DAWStatusBar({
-  isPlaying,
-  onPlay,
-  onPause,
-  onStop,
-  currentTimeMs,
   durationMs,
   onDurationChange,
   isEditingDuration,
@@ -207,7 +201,7 @@ export function DAWStatusBar({
       style={{
         position: 'relative', display: 'flex', alignItems: 'center', gap: 'var(--card-space-lg)', height: `${DAW.STATUS_HEIGHT}px`,
         paddingLeft: 'var(--card-space-md)', paddingRight: 'var(--card-space-md)', flexShrink: 0,
-        backgroundColor: 'transparent', borderTop: '1px solid var(--color-border)',
+        backgroundColor: 'transparent', borderBottom: '1px solid var(--color-border)',
         fontSize: '9px', color: 'var(--color-secondary-hover)',
       }}
     >
@@ -268,30 +262,7 @@ export function DAWStatusBar({
         </span>
       )}
 
-      {/* Transport — the Play/Pause button is centred on the dock using the
-          exact same rule as the centred reduce/expand knob (left 50%, then a
-          fixed 14px back = half the 28px button), so its centre lines up under
-          the knob. Stop + timecode trail to the right. */}
-      <div
-        style={{
-          position: 'absolute', left: '50%', top: '50%',
-          transform: 'translate(-14px, -50%)',
-          display: 'flex', alignItems: 'center', gap: '6px',
-        }}
-      >
-        {isPlaying ? (
-          <DAWTransportBtn onClick={onPause} title="Pause" active><DAWPauseIcon /></DAWTransportBtn>
-        ) : (
-          <DAWTransportBtn onClick={onPlay} title="Play" active><DAWPlayIcon /></DAWTransportBtn>
-        )}
-        <DAWTransportBtn onClick={onStop} title="Stop"><DAWStopIcon /></DAWTransportBtn>
-        <span style={{ fontSize: '10px', fontFamily: 'monospace', minWidth: '36px' }}>
-          {formatTime(currentTimeMs / 1000)}
-        </span>
-      </div>
-
-      {/* Right: shortcuts, snap, zoom, export — pushed to the far edge (the
-          transport is absolutely centred above, so it stays out of the flex flow). */}
+      {/* Right: shortcuts, snap, zoom, export — pushed to the far edge. */}
       <InfoPopover
         title="Shortcuts"
         label="Timeline shortcuts"

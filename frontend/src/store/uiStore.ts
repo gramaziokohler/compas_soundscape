@@ -23,6 +23,16 @@ import {
   DEFAULT_LISTENER_ORIENTATION,
 } from '@/utils/constants';
 import { applyColorTheme, type ColorThemePreference } from '@/utils/color-theme';
+import { SIMPLE_MODE } from '@/utils/constants';
+import type { UIMode } from '@/types/sceneWorkflow';
+
+/** One-shot request for the expert left sidebar to jump to a wizard step/card. */
+export interface SidebarNavCommand {
+  seq: number;
+  step: 0 | 1 | 2;
+  contextIndex: number | null;
+  usageIndex: number | null;
+}
 
 /** Settings the Advanced Settings panel can be opened directly on. */
 export type AdvancedSettingsFocusTarget = 'tts-language' | 'text-to-audio';
@@ -216,6 +226,12 @@ export interface UIStoreState {
    * time the user drags the top edge, after which the height is fully manual. */
   timelineDock: { height: number; autoFit: boolean };
   setTimelineDock: (state: Partial<{ height: number; autoFit: boolean }>) => void;
+  /** The user's manual DAW zoom (horizontal px/sec, vertical track height). `null` on an
+   * axis = never touched → the dock auto-fits it each time it opens. Kept in the store
+   * (not the dock) so it survives collapsing/expanding the timeline; NOT persisted
+   * across refresh (zoom is model/duration-bound). */
+  timelineView: { pxPerSecond: number | null; trackHeight: number | null };
+  setTimelineView: (patch: Partial<{ pxPerSecond: number | null; trackHeight: number | null }>) => void;
 
   // ── Simulation cards expanded tab (survives refresh) ────────────────────────
   expandedSimulationTabIndex: number | null;
@@ -224,6 +240,19 @@ export interface UIStoreState {
   // ── Acoustic layer selection mode (NOT persisted — model-bound) ──────────────
   acousticLayerSelectionMode: boolean;
   setAcousticLayerSelectionMode: (v: boolean) => void;
+
+  // ── UI mode: Simple (bubbles) vs Expert (sidebars) — survives refresh ────────
+  uiMode: UIMode;
+  setUIMode: (mode: UIMode) => void;
+  /** Transient: tells a mounted expert Sidebar to navigate (NOT persisted). */
+  sidebarNavCommand: SidebarNavCommand | null;
+  navigateSidebar: (cmd: Omit<SidebarNavCommand, 'seq'>) => void;
+  /** Transient: px the docked DAW currently occupies at the bottom (published by SpeckleScene). */
+  dawDockBottomSpace: number;
+  setDawDockBottomSpace: (px: number) => void;
+  /** Transient: the Home stage "load a model" dialog (Speckle browser + upload) is open. */
+  showLoadModelPanel: boolean;
+  setShowLoadModelPanel: (open: boolean | ((open: boolean) => boolean)) => void;
 }
 
 export type GradientMetric = 'rt60' | 'edt' | 'd50' | 'c50' | 'spl';
@@ -456,6 +485,9 @@ export const useUIStore = create<UIStoreState>()(
       timelineDock: { height: 260, autoFit: true },
       setTimelineDock: (patch) =>
         set((s) => ({ timelineDock: { ...s.timelineDock, ...patch } }), false, 'ui/setTimelineDock'),
+      timelineView: { pxPerSecond: null, trackHeight: null },
+      setTimelineView: (patch) =>
+        set((s) => ({ timelineView: { ...s.timelineView, ...patch } }), false, 'ui/setTimelineView'),
 
       // ── Simulation cards expanded tab ──────────────────────────────────────
       expandedSimulationTabIndex: null,
@@ -464,6 +496,26 @@ export const useUIStore = create<UIStoreState>()(
       // ── Acoustic layer selection mode ─────────────────────────────────────
       acousticLayerSelectionMode: false,
       setAcousticLayerSelectionMode: (v) => set({ acousticLayerSelectionMode: v }, false, 'ui/setAcousticLayerSelectionMode'),
+
+      // ── UI mode ───────────────────────────────────────────────────────────
+      uiMode: SIMPLE_MODE.DEFAULT_UI_MODE as UIMode,
+      setUIMode: (mode) => set({ uiMode: mode }, false, 'ui/setUIMode'),
+      sidebarNavCommand: null,
+      navigateSidebar: (cmd) =>
+        set(
+          (s) => ({ sidebarNavCommand: { ...cmd, seq: (s.sidebarNavCommand?.seq ?? 0) + 1 } }),
+          false,
+          'ui/navigateSidebar',
+        ),
+      dawDockBottomSpace: 0,
+      setDawDockBottomSpace: (px) => set({ dawDockBottomSpace: px }, false, 'ui/setDawDockBottomSpace'),
+      showLoadModelPanel: false,
+      setShowLoadModelPanel: (open) =>
+        set(
+          (s) => ({ showLoadModelPanel: typeof open === 'function' ? open(s.showLoadModelPanel) : open }),
+          false,
+          'ui/setShowLoadModelPanel',
+        ),
     }),
     { name: 'uiStore' },
   ),
@@ -493,9 +545,11 @@ export const useUIStore = create<UIStoreState>()(
         isSavingSoundscape, zoomToSoundCardTrigger, hoveredSoundCardIndex,
         activeSoundParentIndex, isInSoundsStep, showBoundingBox,
         cameraPosition, cameraTarget, acousticLayerSelectionMode, soundsNavTrigger,
-        leftSidebarExpandCommand, homeProject,
+        leftSidebarExpandCommand, homeProject, sidebarNavCommand, dawDockBottomSpace, showLoadModelPanel,
         // Transient: a settings-shortcut request must not replay after a refresh.
         advancedSettingsFocus,
+        // Session-local: manual DAW zoom is duration-bound, so it must not outlive a refresh.
+        timelineView,
         // Model-bound: a card index from a previous model must not decide which
         // scene gizmo attaches after a refresh (the sidebar re-expands card 0).
         expandedSoundCardIndex, soundEditorSoundId, ...persistable } = state;

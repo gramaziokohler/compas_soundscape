@@ -4,21 +4,18 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useErrorsStore } from "@/store";
 import type { ErrorNotification } from "@/store";
-import { SceneControlButton } from "./SceneControlButton";
+import { BarButton } from "./BarButton";
 import {
   NOTIFICATIONS,
+  SCENE_BOTTOM_BAR,
   UI_BORDER_RADIUS,
   UI_FONT_SIZE,
-  UI_RIGHT_SIDEBAR,
   UI_SHADOWS,
   UI_SPACING,
 } from "@/utils/constants";
 
-interface NotificationCenterProps {
-  /** Mirrors the scene toolbar offset so the dropdown aligns under the button. */
-  isRightSidebarExpanded: boolean;
-  rightSidebarWidth?: number;
-}
+/** Dropdown distance from the right screen edge (px) — under the bar's right-hand group. */
+const DROPDOWN_RIGHT = 10;
 
 const TYPE_GLYPH: Record<ErrorNotification["type"], string> = {
   error: "⚠️",
@@ -42,16 +39,10 @@ const TYPE_COLOR: Record<ErrorNotification["type"], string> = {
  *
  * Usage:
  * ```tsx
- * <NotificationCenter
- *   isRightSidebarExpanded={isRightSidebarExpanded}
- *   rightSidebarWidth={rightSidebarWidth}
- * />
+ * <NotificationCenter />
  * ```
  */
-export function NotificationCenter({
-  isRightSidebarExpanded,
-  rightSidebarWidth,
-}: NotificationCenterProps) {
+export function NotificationCenter() {
   const notifications = useErrorsStore((s) => s.notifications);
   const removeNotification = useErrorsStore((s) => s.removeNotification);
   const clearNotifications = useErrorsStore((s) => s.clearNotifications);
@@ -65,16 +56,12 @@ export function NotificationCenter({
 
   if (notifications.length === 0) return null;
 
-  const right = isRightSidebarExpanded
-    ? `${(rightSidebarWidth ?? UI_RIGHT_SIDEBAR.WIDTH) + 10}px`
-    : '10px';
-
   return (
     <>
-      <SceneControlButton
-        buttonId="notification-center-button"
+      <BarButton
+        id="notification-center-button"
         onClick={() => setIsOpen((open) => !open)}
-        isActive={isOpen}
+        active={isOpen}
         badge={notifications.length}
         title={isOpen ? 'Close notifications' : 'Notifications'}
         icon={
@@ -91,8 +78,8 @@ export function NotificationCenter({
           aria-label="Notifications"
           className="fixed flex flex-col"
           style={{
-            top: '48px',
-            right,
+            bottom: SCENE_BOTTOM_BAR.HEIGHT + SCENE_BOTTOM_BAR.POPOVER_OFFSET,
+            right: DROPDOWN_RIGHT,
             width: NOTIFICATIONS.PANEL_WIDTH,
             maxHeight: NOTIFICATIONS.PANEL_MAX_HEIGHT,
             zIndex: 9999,

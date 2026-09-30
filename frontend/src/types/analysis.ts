@@ -24,6 +24,8 @@ export interface AnalysisBaseConfig extends CardBaseConfig {
   parentContextOriginalIndex?: number;
   /** Per-card config-validation error message, rendered as an inline Notice bar (not a toast) */
   error?: string | null;
+  /** LLM override for this card's agent calls (Simple-mode composer). Undefined = app default. */
+  llmModel?: string;
 }
 
 /**
@@ -264,6 +266,10 @@ export interface ScenarioConfig extends AnalysisBaseConfig {
   orchestrateResult: OrchestrateResult | null;
   /** UUID of the saved orchestrate file */
   orchestrateId: string | null;
+  /** When `false`, the speech agent is skipped (foley only). Undefined = include speech. */
+  includeSpeech?: boolean;
+  /** Reference images (data URIs) sent to the scenarist. Transient — not saved or kept in undo history. */
+  referenceImages?: string[];
 }
 
 // ============================================================================

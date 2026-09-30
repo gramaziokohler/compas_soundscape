@@ -35,16 +35,16 @@ import {
   useReceiversStore,
   useRightSidebarStore,
   useSoundscapeStore,
-  useSpeckleStore,
   useUIStore,
 } from '@/store';
 import { collapseVariantsToOne, groupSoundsByPosition } from '@/utils/positionKey';
 import { SectionHighlight } from '@/components/ui/SectionHighlight';
+import { OBJECT_EXPLORER_PANEL_ID, openMaterialsExplorer } from './openMaterialsExplorer';
 
 const HIGHLIGHT_TARGETS = {
   sources: 'sidebar-sounds-breadcrumb',
   listeners: 'listeners-section',
-  materials: 'object-explorer-panel',
+  materials: OBJECT_EXPLORER_PANEL_ID,
 } as const;
 
 type HighlightKey = keyof typeof HIGHLIGHT_TARGETS;
@@ -113,11 +113,7 @@ export function SimulationSummaryBar() {
     runHighlight('listeners');
   };
   const handleMaterials = () => {
-    const { viewMode, setViewMode } = useSpeckleStore.getState();
-    if (viewMode !== 'acoustic') {
-      setViewMode('acoustic');
-    }
-    useUIStore.getState().setShowObjectExplorer(true);
+    openMaterialsExplorer();
     runHighlight('materials');
   };
 

@@ -6,12 +6,14 @@ import { useUIStore } from '@/store';
 import {
   fitCameraToBounds,
   getPlaceholderRoomBounds,
+  getSandboxFramingBounds,
   getSandboxStageBounds,
   installSandboxCameraFarPlane,
 } from '@/lib/three/placeholder-room-manager';
 
 export {
   getPlaceholderRoomBounds,
+  getSandboxFramingBounds,
   getSandboxStageBounds,
   fitCameraToBounds,
 } from '@/lib/three/placeholder-room-manager';
@@ -45,7 +47,7 @@ export function usePlaceholderRoom({ isViewerReady, enabled }: UsePlaceholderRoo
     const stageBounds = getSandboxStageBounds();
     const restoreFarPlane = installSandboxCameraFarPlane(viewer, cameraController, stageBounds);
     useUIStore.getState().setSpeckleBounds(bounds);
-    fitCameraToBounds(cameraController, stageBounds);
+    fitCameraToBounds(cameraController, getSandboxFramingBounds(), stageBounds);
     viewer.requestRender(8);
     const t0 = window.setTimeout(() => viewer.requestRender(), 0);
     const t1 = window.setTimeout(() => viewer.requestRender(), 100);

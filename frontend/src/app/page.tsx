@@ -5,6 +5,9 @@ import { useRouter } from "next/navigation";
 import { SpeckleScene } from "@/components/scene/SpeckleScene";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { RightSidebar } from "@/components/layout/RightSidebar";
+import { SimpleSoundscapes } from "@/components/simple/SimpleSoundscapes";
+import { registerSendToSoundGeneration } from "@/store/sceneWorkflowStore";
+import type { SidebarProps } from "@/types/components";
 import { AdvancedSettingsPanel } from "@/components/scene/AdvancedSettingsPanel";
 import { SoundEditorWindow } from "@/components/audio/fx/SoundEditorWindow";
 import { ErrorToast } from "@/components/ui/ErrorToast";
@@ -47,8 +50,7 @@ import { useUndoRedo } from "@/hooks/useUndoRedo";
 import { useJobRecovery } from "@/hooks/useJobRecovery";
 import { useModelVersionWatcher } from "@/hooks/useModelVersionWatcher";
 import { apiService } from "@/services/api";
-import { API_BASE_URL, DEFAULT_DBFS, DEFAULT_NUM_SOUNDS, RECEIVER_CONFIG, SPIRAL_PLACEMENT, DEFAULT_LISTENER_ORIENTATION, TTS_DEFAULT_LANGUAGE, DEFAULT_MAXIMUM_FOLEY_SOUNDS, SANDBOX_MODEL_ID, SANDBOX_SAMPLE_SPHERE_POSITION, DEFAULT_DURATION_SECONDS, DEFAULT_DIFFUSION_STEPS, MODEL_VERSION_WATCH } from "@/utils/constants";
-import { loadAudioFile } from "@/lib/audio/utils/audio-upload";
+import { API_BASE_URL, DEFAULT_DBFS, DEFAULT_NUM_SOUNDS, RECEIVER_CONFIG, SPIRAL_PLACEMENT, DEFAULT_LISTENER_ORIENTATION, TTS_DEFAULT_LANGUAGE, DEFAULT_MAXIMUM_FOLEY_SOUNDS, SANDBOX_MODEL_ID, MODEL_VERSION_WATCH } from "@/utils/constants";
 import { parseAuthoredSeconds } from "@/lib/audio/utils/timeline-utils";
 import { getCameraFrontSpiralPosition } from "@/lib/three/spiral-placement";
 import type { LoadTab, SoundGenerationConfig, SoundEvent } from "@/types";
@@ -93,10 +95,11 @@ let _viewerLoadComplete = false;
 // model's bounding box instead of restoring a previously saved POV.
 let _fitCameraToBoundingBoxOnLoad = false;
 
-// Deterministic Home-stage placeholder card names (used by the seed and to
-// distinguish the untouched seed from real user work).
-const SANDBOX_CONTEXT_NAME = 'Placeholder context';
-const SANDBOX_USAGE_NAME = 'Placeholder usage';
+/** Saved "Homepage project" (no-model soundscape) id for a user-given name. */
+function homeProjectIdFromName(name: string): string {
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'project';
+  return `home-${slug}`;
+}
 
 /**
  * Collapse every floating panel — Settings, Object Explorer, and the DAW
@@ -272,96 +275,26 @@ function HomeContent() {
 
   // Loading the Home stage starts from a clean layout: sidebars collapsed and
   // every floating panel (settings, object explorer, timeline) hidden. Auto-save
-  // is disabled on Home so the sandbox is always rebuilt deterministically.
+  // is disabled on the fresh Home stage (it starts empty on every load).
   const resetHomeLayout = () => {
     const ui = useUIStore.getState();
     collapseFloatingPanels();
-    // Home is always conceptually in the Sounds step so the pending Sample
-    // sphere (and any restored sounds) render.
+    // Home is always conceptually in the Sounds step so restored / new sounds render.
     ui.setIsInSoundsStep(true);
     ui.setIsLeftSidebarExpanded(false);
     ui.setLeftSidebarExpandCommand(false);
-    ui.setEnableAutoSave(false);
     useRightSidebarStore.getState().requestCollapse();
   };
 
-  // Deterministic Home stage. Every load rebuilds the SAME scene from scratch:
-  // a placeholder Context card, a placeholder Usage card, and a pending Sample
-  // sound card parented to that usage. Because the parentage matches the active
-  // usage index, the sample's sphere and its sidebar card stay linked and stable
-  // across refreshes. The bundled clip loads in the background.
-  const seedSandboxSampleScene = () => {
-    const contextCard = { type: 'freeform', display_name: SANDBOX_CONTEXT_NAME } as unknown as AnalysisConfig;
-    const usageCard = {
-      type: 'freeform',
-      display_name: SANDBOX_USAGE_NAME,
-      parentContextOriginalIndex: 0,
-    } as unknown as AnalysisConfig;
-
-    useAnalysisStore.getState().restoreAnalysisState({
-      analysisConfigs: [contextCard, usageCard],
-      analysisResults: [],
-      activeTab: 1,
-    });
-
-    const sampleConfig: SoundGenerationConfig = {
-      prompt: 'Sample',
-      display_name: 'Sample',
-      duration: DEFAULT_DURATION_SECONDS,
-      negative_prompt: '',
-      seed_copies: 1,
-      steps: DEFAULT_DIFFUSION_STEPS,
-      type: 'sample-audio',
-      pinned: true,
-      position: [...SANDBOX_SAMPLE_SPHERE_POSITION] as [number, number, number],
-      parentUsageOriginalIndex: 1,
-    };
-    useSoundscapeStore.getState().restoreSoundscape([sampleConfig], [], {});
-
-    useCardFlowStore.setState({
-      contextAdvanced: new Set([0]),
-      usageAdvanced: new Set([1]),
-      contextToUsageMap: new Map([[0, [1]]]),
-      usageToSoundMap: new Map([[1, [0]]]),
-      activeContextOriginalIndex: 0,
-      activeUsageOriginalIndex: 1,
-    });
-
+  // Fresh Home stage: an empty domain on a small empty grid. Simple mode opens
+  // the new-scene panel over it (SimpleSoundscapes); nothing is pre-seeded.
+  const startEmptyHomeStage = () => {
+    resetDomainForFreshModel();
+    useCardFlowStore.getState().reset();
     const ui = useUIStore.getState();
-    ui.setIsInSoundsStep(true);
-    ui.setActiveSoundParentIndex(1);
-    ui.setEnableAutoSave(false);
+    ui.setActiveSoundParentIndex(null);
     // Fresh stage → no active No-model project.
     ui.setHomeProject(null);
-
-    void (async () => {
-      try {
-        const result = await loadAudioFile(await apiService.loadSampleAudio());
-        useSoundscapeStore.setState((s) => {
-          // The stage may have been replaced while the sample clip was loading
-          // (e.g. a saved model opened from Home) — only apply to the seed Sample
-          // config so the restored soundscape's first config is never clobbered.
-          const first = s.soundConfigs[0];
-          if (!first || first.type !== 'sample-audio' || first.display_name !== 'Sample') {
-            return {};
-          }
-          return {
-            soundConfigs: s.soundConfigs.map((c, i) =>
-              i === 0
-                ? {
-                    ...c,
-                    uploadedAudioBuffer: result.audioBuffer,
-                    uploadedAudioInfo: result.audioInfo,
-                    uploadedAudioUrl: result.audioUrl,
-                  }
-                : c,
-            ),
-          };
-        });
-      } catch (error) {
-        console.warn('[page:sandbox] Failed to load sample audio', error);
-      }
-    })();
   };
 
   useEffect(() => {
@@ -402,22 +335,15 @@ function HomeContent() {
           console.log('[page:bootstrap] Homepage project loaded:', homeProjectId);
         }).catch((err) => {
           console.warn('[page:bootstrap] Failed to load homepage project:', err);
-          resetDomainForFreshModel();
-          seedSandboxSampleScene();
+          startEmptyHomeStage();
           setIsBootstrappingModel(false);
         });
         return;
       }
-      // Fresh Home stage — rebuilt from scratch every load so it is always
-      // identical and the sphere/card link is stable.
-      resetDomainForFreshModel();
-      seedSandboxSampleScene();
-      // Sync the mounted Sidebar to the seeded usage parent, then keep it
-      // collapsed (resetHomeLayout already set the command; this re-applies it
-      // after the step-advance temporarily expands it).
-      setStepAdvanceTrigger((t) => t + 1);
+      // Fresh Home stage — empty on every load.
+      startEmptyHomeStage();
       useUIStore.getState().setLeftSidebarExpandCommand(false);
-      console.log('[page:bootstrap] Sandbox stage seeded');
+      console.log('[page:bootstrap] Empty Home stage');
       return;
     }
 
@@ -530,7 +456,7 @@ function HomeContent() {
 
   // 4. Autosave — debounced save on domain state mutations
   // Uses a ref for the save handler so it can be called before it's defined
-  const saveSoundscapeRef = useRef<(() => Promise<void>) | null>(null);
+  const saveSoundscapeRef = useRef<((overrides?: { modelId?: string; modelName?: string }) => Promise<void>) | null>(null);
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autosaveEnabledRef = useRef(true);
   const lastSaveSourceRef = useRef<string>('manual');
@@ -556,10 +482,10 @@ function HomeContent() {
       // runs once at mount (deps=[]), so a captured `globalSpeckleData` variable
       // would be frozen at its mount-time value (null on a cold refresh) forever.
       const liveModelId = useUIStore.getState().globalSpeckleData?.model_id ?? SANDBOX_MODEL_ID;
-      // Nothing to autosave on the fresh Home sandbox: no model and no loaded
-      // "No-model" project.
+      // Never autosave on the Home page (fresh stage or a loaded Homepage
+      // project) — saving there is manual (Save → Homepage project).
       const uiState = useUIStore.getState();
-      if (!uiState.globalSpeckleData && !uiState.homeProject) return;
+      if (!uiState.globalSpeckleData) return;
       if (!autosaveEnabledRef.current) return;
       // Viewers are read-only: never attempt a save (the backend would reject it).
       if (useWorkspaceStore.getState().workspace?.role === 'viewer') return;
@@ -1017,6 +943,9 @@ function HomeContent() {
   const roomScale = useAcousticsSimulationStore((s) => s.roomScale);
   const setRoomScale = useAcousticsSimulationStore((s) => s.setRoomScale);
   const { isExpanded: isRightSidebarExpanded } = useRightSidebarStore();
+  // Simple (bubbles) vs Expert (sidebars). In Simple mode no sidebar occupies the edges.
+  const uiMode = useUIStore((s) => s.uiMode);
+  const sidebarsShown = uiMode === 'expert';
 
   // Sidebar resize widths — kept in sync via callbacks from each sidebar
   const [leftSidebarContentWidth, setLeftSidebarContentWidth] = useState<number | undefined>(undefined);
@@ -1160,10 +1089,13 @@ function HomeContent() {
     if (globalSpeckleData) {
       setIsBootstrappingModel(false);
     }
-    // Auto-save is off on the fresh Home sandbox and on again once a model or a
-    // saved "No-model" project is open.
-    useUIStore.getState().setEnableAutoSave(globalSpeckleData !== null || homeProject !== null);
-  }, [globalSpeckleData, homeProject]);
+    // Autosave is effective only with a model (`enableAutoSave && globalSpeckleData`)
+    // — the Home page never autosaves. The preference itself is never switched
+    // off here: it is restored later from localStorage / server preferences, and
+    // writing `false` on Home would be synced back as the user's choice. Opening
+    // a model turns it on by itself.
+    if (globalSpeckleData) useUIStore.getState().setEnableAutoSave(true);
+  }, [globalSpeckleData]);
 
   // Callback when Speckle viewer is loaded
     const handleSpeckleViewerLoaded = useCallback((viewer: import('@speckle/viewer').Viewer) => {
@@ -1775,11 +1707,6 @@ function HomeContent() {
           prompt_index: index,
           isPending: true,
           entity_index,
-          // Only the deterministic Home Sample is pinned (it carries
-          // config.pinned + SANDBOX_SAMPLE_SPHERE_POSITION). Other sounds —
-          // including user-added sample-audio cards — must follow the normal
-          // camera-front placement, so pin by flag, never by card type.
-          ...(config.pinned ? { pinned: true } : {}),
         }];
       });
   }, [soundGen.soundConfigs, soundGen.generatedSounds, soundGen.soundscapeData, activeSoundParentIndex, isInSoundsStep, iterationLinks, soundTimestampsForCount]);
@@ -2033,6 +1960,13 @@ function HomeContent() {
     }, parentUsageIndex);
   }, [analysis, soundGen]);
 
+  // The Simple-mode scene workflow needs this handler (it resolves foley object ids
+  // through the live viewer) for its "send to sounds" step.
+  useEffect(() => {
+    registerSendToSoundGeneration(handleSendAnalysisToGeneration);
+    return () => registerSendToSoundGeneration(null);
+  }, [handleSendAnalysisToGeneration]);
+
   // Handler: Add analysis config with global model inheritance
   const handleAddAnalysisConfig = useCallback((type: import('@/types/card').CardType) => {
     // For model-analysis configs, pass globalSpeckleData so a new card inherits the loaded model
@@ -2098,42 +2032,28 @@ function HomeContent() {
   } | null>(null);
   const [isApplyingModelSwitch, setIsApplyingModelSwitch] = useState(false);
 
-  /** The bundled Sample card is the Home default — it is not "work to import". */
-  const isDefaultSampleConfig = (c: SoundGenerationConfig) =>
-    c.type === 'sample-audio' && c.display_name === 'Sample';
-
-  /** The two deterministic placeholder cards created on every fresh Home stage. */
-  const isSeedPlaceholderAnalysis = (c: AnalysisConfig) =>
-    c.type === 'freeform' &&
-    (c.display_name === SANDBOX_CONTEXT_NAME || c.display_name === SANDBOX_USAGE_NAME);
-
-  /** Snapshot the importable Home elements (excludes the default Sample). */
+  /** Snapshot the importable Home elements. */
   const captureHomeElements = (): HomeElementsSnapshot => {
     const sc = useSoundscapeStore.getState();
     return {
-      configs: sc.soundConfigs.filter((c) => !isDefaultSampleConfig(c)),
-      events: (sc.generatedSounds ?? []).filter((e: { pinned?: boolean }) => !e.pinned) as SoundEvent[],
+      configs: [...sc.soundConfigs],
+      events: [...(sc.generatedSounds ?? [])] as SoundEvent[],
       receivers: [...useReceiversStore.getState().receivers],
       gridListeners: [...useGridListenersStore.getState().gridListeners],
     };
   };
 
-  /**
-   * True when the Home stage holds something worth importing — i.e. anything
-   * beyond the deterministic seed (Sample card + placeholder context/usage).
-   */
+  /** True when the Home stage holds any work (it starts empty on every load). */
   const homeHasImportableWork = (): boolean => {
     const home = captureHomeElements();
-    const hasNonSeedAnalysis = useAnalysisStore
-      .getState()
-      .analysisConfigs.some((c) => !isSeedPlaceholderAnalysis(c));
+    const hasAnalysis = useAnalysisStore.getState().analysisConfigs.length > 0;
     return (
       home.configs.length > 0 ||
       home.events.length > 0 ||
       home.receivers.length > 0 ||
       home.gridListeners.length > 0 ||
       useAcousticsSimulationStore.getState().simulationConfigs.length > 0 ||
-      hasNonSeedAnalysis
+      hasAnalysis
     );
   };
 
@@ -2272,12 +2192,8 @@ function HomeContent() {
     // Persist model_id in URL so a page refresh can restore this session
     router.replace(`/?model_id=${encodeURIComponent(speckleData.model_id)}`, { scroll: false });
 
-    // Seed-aware: the deterministic Home stage (placeholder context/usage + the
-    // bundled Sample card) is NOT "work" — it must never be kept in place of the
-    // model's saved soundscape. Genuine Home work already short-circuited above
-    // via `homeHasImportableWork()`, so reaching here means only the seed remains.
-    // (Raw store counts would wrongly count the seed, leaving the Home sample
-    // scene loaded instead of the saved soundscape.)
+    // Home work already short-circuited above via `homeHasImportableWork()` (the
+    // import prompt), so this is normally false here.
     const sandboxHasWork = homeHasImportableWork();
 
     // Auto-load saved soundscape for this model unless the sandbox already has work
@@ -2510,8 +2426,11 @@ function HomeContent() {
     audioOrchestrator.setNoIRPreference,
   ]);
 
-  // Resolve the Home import prompt: import / start fresh / cancel.
-  const handleImportDecision = useCallback(async (choice: 'import' | 'fresh' | 'cancel') => {
+  // Resolve the Home import prompt: import / save as a Homepage project / start fresh / cancel.
+  const handleImportDecision = useCallback(async (
+    choice: 'import' | 'save' | 'fresh' | 'cancel',
+    projectName?: string,
+  ) => {
     const pending = pendingModelSwitch;
     if (!pending) return;
     if (choice === 'cancel') {
@@ -2532,6 +2451,15 @@ function HomeContent() {
         mergeHomeElements(home);
         lastSaveSourceRef.current = 'autosave';
         saveSoundscapeRef.current?.();
+      } else if (choice === 'save') {
+        // Keep the Home work as a Homepage project (the active one, or a new
+        // one named by the user), then open the model on its own soundscape.
+        const active = useUIStore.getState().homeProject;
+        const name = active?.name ?? (projectName?.trim() || 'Homepage project');
+        const modelId = active?.modelId ?? homeProjectIdFromName(name);
+        await saveSoundscapeRef.current?.({ modelId, modelName: name });
+        resetDomainForFreshModel();
+        await handleSpeckleModelSelect(pending.speckleData, pending.isUpload);
       } else {
         resetDomainForFreshModel();
         await handleSpeckleModelSelect(pending.speckleData, pending.isUpload);
@@ -2810,9 +2738,7 @@ function HomeContent() {
 
   // Save the Home sandbox as a named local "Homepage project" (home-<slug>).
   const handleSaveHomeProject = useCallback(async (name: string) => {
-    const slug =
-      name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'project';
-    const modelId = `home-${slug}`;
+    const modelId = homeProjectIdFromName(name);
     setIsSavingHomeProject(true);
     try {
       await handleSaveSoundscape({ modelId, modelName: name });
@@ -3754,6 +3680,129 @@ function HomeContent() {
     };
   }, [recoveryResolved, hasInflightJobs, recoveredSomething]);
 
+  // Props shared by the expert Sidebar and the Simple-mode scene panel
+  // (which renders the same SoundGenerationSection for one scene).
+  const sidebarProps: SidebarProps = {
+    // File upload props
+    audioFile: fileUpload.audioFile,
+    uploadError: fileUpload.uploadError,
+    isUploading: fileUpload.isUploading,
+    isDragging: fileUpload.isDragging,
+    modelEntities: fileUpload.modelEntities,
+    isAnalyzingModel: fileUpload.isAnalyzingModel,
+    analysisProgress: fileUpload.analysisProgress,
+    onFileChange: handleFileChangeWithSEDClear,
+    onDragOver: fileUpload.handleDragOver,
+    onDragLeave: fileUpload.handleDragLeave,
+    onDrop: fileUpload.handleDrop,
+    onUploadModel: fileUpload.handleUploadModel,
+    onLoadSampleIfc: () => {},
+    activeLoadTab: activeLoadTab,
+    setActiveLoadTab: setActiveLoadTab,
+    onWidthChange: setLeftSidebarContentWidth,
+    // SED props
+    isSEDAnalyzing: sed.isSEDAnalyzing,
+    sedAudioInfo: sed.sedAudioInfo,
+    sedAudioBuffer: sed.sedAudioBuffer,
+    sedDetectedSounds: sed.sedDetectedSounds,
+    sedError: sed.sedError,
+    sedAnalysisOptions: sed.sedAnalysisOptions,
+    onAnalyzeSoundEvents: handleAnalyzeSoundEvents,
+    onToggleSEDOption: sed.toggleSEDOption,
+    onLoadSoundsFromSED: handleLoadSoundsFromSED,
+    // Sound generation props
+    soundConfigs: soundGen.soundConfigs,
+    activeSoundConfigTab: soundGen.activeSoundConfigTab,
+    isSoundGenerating: soundGen.isSoundGenerating,
+    generatedSounds: soundGen.generatedSounds,
+    globalDuration: soundGen.globalDuration,
+    globalSteps: soundGen.globalSteps,
+    globalNegativePrompt: soundGen.globalNegativePrompt,
+    applyDenoising: soundGen.applyDenoising,
+    trimSilence: soundGen.trimSilence,
+    applyNoiseReduction: soundGen.applyNoiseReduction,
+    audioModel: soundGen.audioModel,
+    llmModel: soundGen.llmModel,
+    setActiveSoundConfigTab: soundGen.setActiveSoundConfigTab,
+    onAddSoundConfig: soundGen.handleAddConfig,
+    onBatchAddSoundConfigs: soundGen.handleBatchAddConfigs,
+    onRemoveSoundConfig: handleRemoveSoundConfig,
+    onUpdateSoundConfig: handleUpdateSoundConfig,
+    onSoundTypeChange: soundGen.handleTypeChange,
+    onGenerateSounds: soundGen.handleGenerate,
+    onGenerateSingleSound: soundGen.handleGenerateSingle,
+    onGenerateFilteredSounds: soundGen.handleGenerateFiltered,
+    onStopSoundGeneration: soundGen.handleStopGeneration,
+    onGlobalDurationChange: soundGen.handleGlobalDurationChange,
+    onGlobalStepsChange: soundGen.handleGlobalStepsChange,
+    onGlobalNegativePromptChange: soundGen.setGlobalNegativePrompt,
+    onApplyDenoisingChange: soundGen.setApplyDenoising,
+    onTrimSilenceChange: soundGen.setTrimSilence,
+    onApplyNoiseReductionChange: soundGen.setApplyNoiseReduction,
+    onAudioModelChange: soundGen.setAudioModel,
+    onLlmModelChange: soundGen.setLlmModel,
+    onReprocessSounds: soundGen.handleReprocessSounds,
+    onUploadAudio: soundGen.handleUploadAudio,
+    onClearUploadedAudio: soundGen.handleClearUploadedAudio,
+    onLibrarySearch: soundGen.handleLibrarySearch,
+    onLibrarySoundSelect: soundGen.handleLibrarySoundSelect,
+    onCatalogSoundSelect: soundGen.handleCatalogSoundSelect,
+    onStartLinkingEntity: handleStartLinkingEntity,
+    onCancelLinkingEntity: handleCancelLinkingEntity,
+    onFinishLinkingEntity: handleFinishLinkingEntity,
+    onSelectLinkedEntity: handleSelectLinkedEntity,
+    onClearLinkedEntities: handleClearLinkedEntities,
+    isLinkingEntity: isLinkingEntity,
+    linkingConfigIndex: linkingConfigIndex,
+    useSpeckleViewer: useSpeckleViewer,
+    onResetSound: handleResetSound,
+    onDuplicateConfig: soundGen.handleDuplicateConfig,
+    onRegenerateSingle: soundGen.handleRegenerateSingle,
+    onDeleteVariant: soundGen.handleDeleteVariant,
+    onSelectSoundCard: handleSelectSoundCard,
+    selectedCardIndex: selectedCardIndex,
+    onSoundCardCollapsed: () => setSelectedCardIndex(null),
+    // Analysis props
+    analysisConfigs: analysis.analysisConfigs,
+    stepAdvanceTrigger: stepAdvanceTrigger,
+    isAnalyzing: analysis.isAnalyzing,
+    analysisResult: analysis.analysisResults,
+    hasGlobalModelLoaded: globalSpeckleData !== null,
+    onAddAnalysisConfig: handleAddAnalysisConfig,
+    onRemoveAnalysisConfig: analysis.handleRemoveConfig,
+    onUpdateAnalysisConfig: analysis.handleUpdateConfig,
+    onAnalyze: analysis.handleAnalyze,
+    onStop: analysis.handleStopAnalysis,
+    onTogglePromptSelection: analysis.handleTogglePromptSelection,
+    onSendToSoundGeneration: handleSendAnalysisToGeneration,
+    onResetAnalysis: analysis.handleReset,
+    onAudioExtract: handleAudioExtract,
+    // Advanced settings props
+    normalizeImpulseResponses: auralizationConfig.normalize,
+    showAxesHelper: showAxesHelper,
+    onNormalizeImpulseResponsesChange: handleToggleNormalize,
+    onShowAxesHelperChange: setShowAxesHelper,
+    showLabelSprites: showLabelSprites,
+    onShowLabelSpritesChange: setShowLabelSprites,
+    showHoveringHighlight: showHoveringHighlight,
+    onShowHoveringHighlightChange: setShowHoveringHighlight,
+    showSoundSpheres: showSoundSpheres,
+    onShowSoundSpheresChange: setShowSoundSpheres,
+    showPlayingHighlight: showPlayingHighlight,
+    onShowPlayingHighlightChange: setShowPlayingHighlight,
+    showSceneListeners: showSceneListeners,
+    onShowSceneListenersChange: setShowSceneListeners,
+    showGroundGrid: showGroundGrid,
+    onShowGroundGridChange: setShowGroundGrid,
+    groundGridSpacing: groundGridSpacing,
+    onGroundGridSpacingChange: setGroundGridSpacing,
+    groundGridColor: groundGridColor,
+    onGroundGridColorChange: setGroundGridColor,
+    onResetAdvancedSettings: handleResetAdvancedSettings,
+    listenerOrientation: listenerOrientation,
+    onListenerOrientationChange: setListenerOrientation,
+  };
+
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-background">
       {/* Home stage → model import prompt */}
@@ -3770,7 +3819,9 @@ function HomeContent() {
           gridListeners: pendingModelSwitch?.home.gridListeners.length ?? 0,
         }}
         busy={isApplyingModelSwitch}
+        activeProjectName={homeProject?.name}
         onImport={() => { void handleImportDecision('import'); }}
+        onSaveAndOpen={(name) => { void handleImportDecision('save', name); }}
         onStartFresh={() => { void handleImportDecision('fresh'); }}
         onCancel={() => { void handleImportDecision('cancel'); }}
       />
@@ -3877,8 +3928,8 @@ function HomeContent() {
             // Callback when Speckle viewer computes model bounds (for sound sphere placement)
             onBoundsComputed={setSpeckleBounds}
             // Sidebar states for control button and timeline positioning
-            isLeftSidebarExpanded={isLeftSidebarExpanded}
-            isRightSidebarExpanded={isRightSidebarExpanded}
+            isLeftSidebarExpanded={sidebarsShown && isLeftSidebarExpanded}
+            isRightSidebarExpanded={sidebarsShown && isRightSidebarExpanded}
             leftSidebarContentWidth={leftSidebarContentWidth}
             rightSidebarWidth={rightSidebarWidth}
             // IR hover line (source-receiver pair)
@@ -3892,8 +3943,12 @@ function HomeContent() {
             // Load existing Speckle model (for empty state model browser)
             onSpeckleModelSelect={handleSpeckleModelSelect}
             // Soundscape persistence
+            // Model or an open Homepage project → save in place (resolveSaveTarget);
+            // fresh Home stage → name a new Homepage project.
             onSaveSoundscape={
-              globalSpeckleData ? handleSaveSoundscape : () => setShowHomeProjectModal(true)
+              globalSpeckleData || homeProject
+                ? () => { void handleSaveSoundscape(); }
+                : () => setShowHomeProjectModal(true)
             }
             isSavingSoundscape={isSavingSoundscape}
             // FPS mode programmatic exit
@@ -3913,130 +3968,12 @@ function HomeContent() {
             </div>
           </div>
         )}
-        {/* Left Sidebar - Overlays on top of scene */}
-        <Sidebar
-        // File upload props
-        audioFile={fileUpload.audioFile}
-        uploadError={fileUpload.uploadError}
-        isUploading={fileUpload.isUploading}
-        isDragging={fileUpload.isDragging}
-        modelEntities={fileUpload.modelEntities}
-        isAnalyzingModel={fileUpload.isAnalyzingModel}
-        analysisProgress={fileUpload.analysisProgress}
-        onFileChange={handleFileChangeWithSEDClear}
-        onDragOver={fileUpload.handleDragOver}
-        onDragLeave={fileUpload.handleDragLeave}
-        onDrop={fileUpload.handleDrop}
-        onUploadModel={fileUpload.handleUploadModel}
-        onLoadSampleIfc={() => {}}
-        activeLoadTab={activeLoadTab}
-        setActiveLoadTab={setActiveLoadTab}
-        onWidthChange={setLeftSidebarContentWidth}
-
-        // SED props
-        isSEDAnalyzing={sed.isSEDAnalyzing}
-        sedAudioInfo={sed.sedAudioInfo}
-        sedAudioBuffer={sed.sedAudioBuffer}
-        sedDetectedSounds={sed.sedDetectedSounds}
-        sedError={sed.sedError}
-        sedAnalysisOptions={sed.sedAnalysisOptions}
-        onAnalyzeSoundEvents={handleAnalyzeSoundEvents}
-        onToggleSEDOption={sed.toggleSEDOption}
-        onLoadSoundsFromSED={handleLoadSoundsFromSED}
-
-        // Sound generation props
-        soundConfigs={soundGen.soundConfigs}
-        activeSoundConfigTab={soundGen.activeSoundConfigTab}
-        isSoundGenerating={soundGen.isSoundGenerating}
-        generatedSounds={soundGen.generatedSounds}
-        globalDuration={soundGen.globalDuration}
-        globalSteps={soundGen.globalSteps}
-        globalNegativePrompt={soundGen.globalNegativePrompt}
-        applyDenoising={soundGen.applyDenoising}
-        trimSilence={soundGen.trimSilence}
-        applyNoiseReduction={soundGen.applyNoiseReduction}
-        audioModel={soundGen.audioModel}
-        llmModel={soundGen.llmModel}
-        setActiveSoundConfigTab={soundGen.setActiveSoundConfigTab}
-        onAddSoundConfig={soundGen.handleAddConfig}
-        onBatchAddSoundConfigs={soundGen.handleBatchAddConfigs}
-        onRemoveSoundConfig={handleRemoveSoundConfig}
-        onUpdateSoundConfig={handleUpdateSoundConfig}
-        onSoundTypeChange={soundGen.handleTypeChange}
-        onGenerateSounds={soundGen.handleGenerate}
-        onGenerateSingleSound={soundGen.handleGenerateSingle}
-        onGenerateFilteredSounds={soundGen.handleGenerateFiltered}
-        onStopSoundGeneration={soundGen.handleStopGeneration}
-        onGlobalDurationChange={soundGen.handleGlobalDurationChange}
-        onGlobalStepsChange={soundGen.handleGlobalStepsChange}
-        onGlobalNegativePromptChange={soundGen.setGlobalNegativePrompt}
-        onApplyDenoisingChange={soundGen.setApplyDenoising}
-        onTrimSilenceChange={soundGen.setTrimSilence}
-        onApplyNoiseReductionChange={soundGen.setApplyNoiseReduction}
-        onAudioModelChange={soundGen.setAudioModel}
-        onLlmModelChange={soundGen.setLlmModel}
-        onReprocessSounds={soundGen.handleReprocessSounds}
-        onUploadAudio={soundGen.handleUploadAudio}
-        onClearUploadedAudio={soundGen.handleClearUploadedAudio}
-        onLibrarySearch={soundGen.handleLibrarySearch}
-        onLibrarySoundSelect={soundGen.handleLibrarySoundSelect}
-        onCatalogSoundSelect={soundGen.handleCatalogSoundSelect}
-        onStartLinkingEntity={handleStartLinkingEntity}
-        onCancelLinkingEntity={handleCancelLinkingEntity}
-        onFinishLinkingEntity={handleFinishLinkingEntity}
-        onSelectLinkedEntity={handleSelectLinkedEntity}
-        onClearLinkedEntities={handleClearLinkedEntities}
-        isLinkingEntity={isLinkingEntity}
-        linkingConfigIndex={linkingConfigIndex}
-        useSpeckleViewer={useSpeckleViewer}
-        onResetSound={handleResetSound}
-        onDuplicateConfig={soundGen.handleDuplicateConfig}
-        onRegenerateSingle={soundGen.handleRegenerateSingle}
-        onDeleteVariant={soundGen.handleDeleteVariant}
-        onSelectSoundCard={handleSelectSoundCard}
-        selectedCardIndex={selectedCardIndex}
-        onSoundCardCollapsed={() => setSelectedCardIndex(null)}
-        // Analysis props
-        analysisConfigs={analysis.analysisConfigs}
-        stepAdvanceTrigger={stepAdvanceTrigger}
-        isAnalyzing={analysis.isAnalyzing}
-        analysisResult={analysis.analysisResults}
-        hasGlobalModelLoaded={globalSpeckleData !== null}
-        onAddAnalysisConfig={handleAddAnalysisConfig}
-        onRemoveAnalysisConfig={analysis.handleRemoveConfig}
-        onUpdateAnalysisConfig={analysis.handleUpdateConfig}
-        onAnalyze={analysis.handleAnalyze}
-        onStop={analysis.handleStopAnalysis}
-        onTogglePromptSelection={analysis.handleTogglePromptSelection}
-        onSendToSoundGeneration={handleSendAnalysisToGeneration}
-        onResetAnalysis={analysis.handleReset}
-        onAudioExtract={handleAudioExtract}
-        
-        // Advanced settings props
-        normalizeImpulseResponses={auralizationConfig.normalize}
-        showAxesHelper={showAxesHelper}
-        onNormalizeImpulseResponsesChange={handleToggleNormalize}
-        onShowAxesHelperChange={setShowAxesHelper}
-        showLabelSprites={showLabelSprites}
-        onShowLabelSpritesChange={setShowLabelSprites}
-        showHoveringHighlight={showHoveringHighlight}
-        onShowHoveringHighlightChange={setShowHoveringHighlight}
-        showSoundSpheres={showSoundSpheres}
-        onShowSoundSpheresChange={setShowSoundSpheres}
-        showPlayingHighlight={showPlayingHighlight}
-        onShowPlayingHighlightChange={setShowPlayingHighlight}
-        showSceneListeners={showSceneListeners}
-        onShowSceneListenersChange={setShowSceneListeners}
-        showGroundGrid={showGroundGrid}
-        onShowGroundGridChange={setShowGroundGrid}
-        groundGridSpacing={groundGridSpacing}
-        onGroundGridSpacingChange={setGroundGridSpacing}
-        groundGridColor={groundGridColor}
-        onGroundGridColorChange={setGroundGridColor}
-        onResetAdvancedSettings={handleResetAdvancedSettings}
-        listenerOrientation={listenerOrientation}
-        onListenerOrientationChange={setListenerOrientation}
-      />
+        {/* Left side (overlays the scene) — expert wizard sidebar, or Simple-mode scene bubbles */}
+        {uiMode === 'expert' ? (
+          <Sidebar {...sidebarProps} />
+        ) : (
+          <SimpleSoundscapes sidebarProps={sidebarProps} />
+        )}
 
       {/* Advanced Settings floating panel */}
       <AdvancedSettingsPanel
@@ -4087,6 +4024,7 @@ function HomeContent() {
       {/* Right Sidebar - Acoustics + Listeners */}
       <RightSidebar
         isVisible={useSpeckleViewer}
+        uiMode={uiMode}
         onWidthChange={setRightSidebarWidth}
         // IR Library props
         onSelectIRFromLibrary={handleSelectIRFromLibrary}

@@ -102,6 +102,9 @@
   /* Sidebar widths — fixed CSS px per resolution band, NOT a viewport fraction.
    * Crossing a breakpoint steps default/max; dragging the window inside a band
    * does not grow or shrink the panels. JS reads these via readCssPx(). */
+  /* Full-width scene bottom bar (SCENE_BOTTOM_BAR.HEIGHT in constants.ts) */
+  --scene-bottom-bar-height: 40px;
+
   --sidebar-min-width: 180px;
   --sidebar-default-width: 280px;
   --sidebar-max-width: 400px;
@@ -455,6 +458,596 @@ canvas {
   border-radius: 999px;
   background: var(--sidebar-bg);
   color: var(--color-toggle-label);
+}
+
+/* ==========================================================================
+   Simple mode — bubbles (components/ui/Bubble.tsx, BubblePanel.tsx, components/simple/**)
+   Frosted circles over the 3D viewer — same surface as the expert sidebar
+   (--sidebar-bg + Tailwind backdrop-blur-lg/backdrop-saturate-150 in JSX).
+   Shared state system for every circle:
+     pending            frosted, muted icon
+     --ready            frosted, primary border + primary icon  (generated / simulated)
+     --ready--selected  solid primary, inverted icon             (the one in use)
+   ========================================================================== */
+.bubble-column {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+}
+.bubble-column > * {
+  pointer-events: auto;
+}
+
+/* Column headings + scene captions — inverting (difference) text that stays
+ * readable over any 3D backdrop without a background. Must NOT be nested in an
+ * element that creates a stacking context (it would blend against nothing), so
+ * headings are standalone fixed elements. */
+.bubble-heading {
+  position: fixed;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  color: #ffffff;
+  mix-blend-mode: difference;
+  pointer-events: none;
+  user-select: none;
+}
+
+.bubble-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+.bubble {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  padding: 0;
+  cursor: pointer;
+  background: var(--sidebar-bg);
+  color: var(--color-secondary-hover);
+  border: 1px solid var(--color-overlay-border);
+  box-shadow: var(--shadow-md);
+  transition: transform 0.15s ease, border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
+}
+.bubble:hover {
+  transform: scale(1.06);
+  color: var(--foreground);
+}
+.bubble--ready {
+  border: 1.5px solid var(--color-primary);
+  color: var(--color-blue-text);
+}
+.bubble--ready:hover {
+  color: var(--color-blue-text);
+}
+.bubble--selected {
+  border: 2px solid var(--color-primary);
+  color: var(--color-blue-text);
+}
+.bubble--ready.bubble--selected {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-on-blue);
+}
+.bubble--error {
+  border-color: var(--color-error);
+  color: var(--color-error);
+}
+.bubble--add {
+  border-style: dashed;
+  border-color: var(--color-border-strong);
+}
+.bubble--running {
+  animation: bubble-breathe 2.4s ease-in-out infinite;
+}
+@keyframes bubble-breathe {
+  0%, 100% { box-shadow: var(--shadow-md), 0 0 0 0 var(--color-primary-lighter); }
+  50%      { box-shadow: var(--shadow-md), 0 0 0 6px var(--color-primary-lighter); }
+}
+
+.bubble-ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) rotate(-90deg);
+  pointer-events: none;
+  overflow: visible;
+}
+.bubble-ring__track {
+  fill: none;
+  stroke: var(--color-border-strong);
+}
+.bubble--queued .bubble-ring__track {
+  stroke-dasharray: 2 3;
+}
+.bubble-ring__value {
+  fill: none;
+  stroke: var(--color-primary);
+  transition: stroke-dashoffset 0.4s ease;
+}
+
+/* Listener tone — same state system in the listener card color */
+.bubble--listener:hover,
+.bubble--listener.bubble--ready,
+.bubble--listener.bubble--ready:hover,
+.bubble--listener.bubble--selected {
+  color: var(--color-warning-hover);
+}
+.bubble--listener.bubble--ready,
+.bubble--listener.bubble--selected {
+  border-color: var(--color-warning);
+}
+.bubble--listener.bubble--ready.bubble--selected {
+  background: var(--color-warning);
+  border-color: var(--color-warning);
+  color: var(--color-on-blue);
+}
+
+/* Home stage prompt — "Upload a 3D model or start below" (HomeUploadPrompt) */
+.home-prompt {
+  margin: 0;
+  font-size: 13px;
+  text-align: center;
+  color: var(--color-secondary-hover);
+  pointer-events: auto;
+}
+.home-prompt__link {
+  font-weight: 600;
+  color: var(--color-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.home-prompt__link:hover {
+  color: var(--color-primary-hover);
+}
+
+/* Exit (warning) circle beside an active bubble — e.g. "Leave FPS view" */
+.bubble--exit {
+  background: var(--sidebar-bg);
+  border: 1.5px solid var(--color-warning);
+  color: var(--color-warning);
+}
+.bubble--exit:hover {
+  background: var(--color-warning);
+  color: var(--color-on-blue);
+}
+
+/* Hover label — reuses .sidebar-toggle-label's pill surface */
+.bubble-label {
+  position: absolute;
+  top: 50%;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-width: 260px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%);
+  transition: opacity 0.15s ease;
+  z-index: 1;
+}
+.bubble-wrap:hover .bubble-label {
+  opacity: 1;
+}
+.bubble-label--right { left: calc(100% + 10px); }
+.bubble-label--left  { right: calc(100% + 10px); }
+.bubble-label__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bubble-label__detail {
+  font-size: 10px;
+  color: var(--color-secondary-hover);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Floating panel a scene bubble expands into (frosted, like the sidebar) */
+.bubble-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--sidebar-bg);
+  border: 1px solid var(--color-overlay-border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+.bubble-panel__header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 10px 6px 12px;
+  flex-shrink: 0;
+}
+.bubble-panel__title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+.bubble-panel__subtitle {
+  font-size: 10px;
+  color: var(--color-secondary-hover);
+}
+.bubble-panel__icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  color: var(--color-secondary-hover);
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.bubble-panel__icon-btn:hover:not(:disabled) {
+  background: var(--color-secondary-light);
+  color: var(--foreground);
+}
+.bubble-panel__icon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.bubble-panel__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 10px 10px;
+}
+
+/* A card shown directly (acoustics / listener bubbles) — no wrapper surface */
+.bubble-card-host {
+  position: fixed;
+  overflow-y: auto;
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+}
+
+/* Waveform-ring icon (scene bubbles) */
+.waveform-ring__bar {
+  stroke: currentColor;
+  stroke-linecap: round;
+}
+.waveform-ring__base {
+  fill: none;
+  stroke: currentColor;
+  opacity: 0.35;
+}
+
+/* Prompt composer (ScenePromptComposer) */
+.bubble-composer__input {
+  width: 100%;
+  resize: none;
+  background: transparent;
+  border: none;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--foreground);
+}
+.bubble-composer__input::placeholder {
+  color: var(--color-secondary-hover);
+}
+.bubble-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 500;
+  white-space: nowrap;
+  border: 1px solid var(--color-border-strong);
+  color: var(--color-secondary-hover);
+  background: transparent;
+  transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
+}
+.bubble-chip:hover {
+  color: var(--foreground);
+}
+.bubble-chip--on {
+  border-color: var(--color-primary);
+  color: var(--color-blue-text);
+  background: var(--color-blue-tint);
+}
+.bubble-chip--icon {
+  padding: 2px 5px;
+}
+.bubble-send {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  color: var(--color-on-blue);
+  transition: background-color 0.15s ease, opacity 0.15s ease;
+}
+.bubble-send:hover:not(:disabled) {
+  background: var(--color-primary-hover);
+}
+.bubble-send:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* Workflow step list (SceneWorkflowDetail) */
+.bubble-step {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 11px;
+  color: var(--foreground);
+}
+.bubble-step--pending { color: var(--color-secondary-hover); }
+.bubble-step__meta {
+  font-size: 10px;
+  color: var(--color-secondary-hover);
+}
+.bubble-progress {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--color-border-strong);
+  overflow: hidden;
+}
+.bubble-progress__value {
+  height: 100%;
+  background: var(--color-primary);
+  transition: width 0.4s ease;
+}
+
+/* Multi-level dropdown (NestedMenu) */
+.nested-menu {
+  position: fixed;
+  z-index: 10000;
+  min-width: 200px;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  padding: 4px 0;
+  font-size: 11px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg);
+  color: var(--foreground);
+}
+.nested-menu__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 10px;
+  text-align: left;
+  color: var(--foreground);
+  transition: background-color 0.1s ease;
+}
+.nested-menu__row:hover:not(.nested-menu__row--static),
+.nested-menu__row--open {
+  background: var(--color-secondary-light);
+}
+.nested-menu__hint {
+  color: var(--color-secondary-hover);
+  max-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nested-menu__separator {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--color-border);
+}
+.nested-menu__step {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  border: 1px solid var(--color-border-strong);
+  line-height: 1;
+  color: var(--foreground);
+}
+.nested-menu__step:disabled {
+  opacity: 0.35;
+}
+.nested-menu__value {
+  min-width: 18px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.nested-menu__input {
+  flex: 1;
+  min-width: 0;
+  width: 100px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--color-border-strong);
+  background: transparent;
+  color: var(--foreground);
+  font-size: 11px;
+  outline: none;
+}
+.nested-menu__input::placeholder {
+  color: var(--color-secondary-hover);
+  opacity: 0.7;
+}
+.nested-menu__input:focus {
+  border-color: var(--color-primary);
+}
+.nested-menu__ok {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--color-primary);
+  color: var(--color-on-blue);
+}
+.nested-menu__ok:hover {
+  background: var(--color-primary-hover);
+}
+
+/* ==========================================================================
+   Scene bottom bar (components/scene/SceneBottomBar.tsx) — full-width frosted
+   control strip: app + history (left), playback (center), view + help (right).
+   ========================================================================== */
+.scene-bottom-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: var(--scene-bottom-bar-height);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  background: var(--sidebar-bg);
+  border-top: 1px solid var(--color-overlay-border);
+}
+.scene-bottom-bar__group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.scene-bottom-bar__spacer {
+  flex: 1;
+}
+.scene-bottom-bar__sep {
+  width: 1px;
+  height: 18px;
+  background: var(--color-border-strong);
+  margin: 0 4px;
+}
+.scene-bottom-bar__brand {
+  display: flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 6px 0 2px;
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  line-height: 1;
+  color: var(--color-primary);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+.scene-bottom-bar__brand:hover {
+  opacity: 0.75;
+}
+.bar-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--foreground);
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.bar-btn:hover:not(:disabled) {
+  background: var(--color-secondary-light);
+}
+.bar-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.bar-btn--active {
+  color: var(--color-blue-text);
+  background: var(--color-blue-tint);
+}
+.bar-btn--warning {
+  color: var(--color-warning);
+}
+.bar-btn__badge {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  min-width: 13px;
+  height: 13px;
+  padding: 0 3px;
+  border-radius: 999px;
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 13px;
+  text-align: center;
+  background: var(--color-error);
+  color: var(--color-on-blue);
+  pointer-events: none;
+}
+.bar-btn__dot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-warning);
+  pointer-events: none;
+}
+.bar-play {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  color: var(--color-on-blue);
+  transition: background-color 0.15s ease;
+}
+.bar-play:hover {
+  background: var(--color-primary-hover);
+}
+.bar-time {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: var(--color-secondary-lighter);
+  border: 1px solid var(--color-border);
+  color: var(--foreground);
+  white-space: nowrap;
+}
+.bar-popover {
+  position: fixed;
+  bottom: calc(var(--scene-bottom-bar-height) + 8px);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 10px;
+  box-shadow: var(--shadow-lg);
+  color: var(--foreground);
+}
+.bar-shortcut-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11px;
+  padding: 2px 0;
+}
+.bar-shortcut-row kbd {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--color-secondary-hover);
+  white-space: nowrap;
+}
+.bar-popover__title {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-secondary-hover);
+  margin: 6px 0 2px;
 }
 
 /* ==========================================================================

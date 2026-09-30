@@ -25,6 +25,7 @@ import type { PyroomAcousticsSimulationConfig } from '@/types/acoustics';
 import { ToggleField } from '@/components/ui/ToggleField';
 import { RangeSlider } from '@/components/ui/RangeSlider';
 import { CardSelect } from '@/components/ui/CardSelect';
+import { AcousticMaterialsSummary } from './AcousticMaterialsSummary';
 
 interface PyroomAcousticsSimulationSettingsProps {
   config: PyroomAcousticsSimulationConfig;
@@ -113,6 +114,8 @@ export function PyroomAcousticsSimulationSettings({
           />
         )}
       </div>
+
+      <AcousticMaterialsSummary />
 
       {/* Note: Action button, progress bar, and stop button are rendered by Card component */}
     </div>
