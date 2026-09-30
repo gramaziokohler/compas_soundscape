@@ -45,4 +45,32 @@ describe('generateLoopTimestamps — background tiling', () => {
     });
     expect(ts).toEqual([0, 4, 8]);
   });
+
+  it('keeps a constant gap when iteration lengths differ (variant-aware spacing)', () => {
+    // Iterations use variants of 4s, 3s, 5s with a 1s gap between each.
+    const durs = [4, 3, 5];
+    const ts = generateLoopTimestamps({
+      soundId: 'multi-variant',
+      durationSecResolver: (idx) => durs[idx % durs.length],
+      fallbackDurationSec: 10,
+      intervalSec: 1,
+      jitterSec: 0,
+      timelineSec: 22,
+    });
+    // starts: 0, 0+4+1=5, 5+3+1=9, 9+5+1=15, 15+4+1=20
+    expect(ts).toEqual([0, 5, 9, 15, 20]);
+  });
+
+  it('prefers the explicit per-iteration array over the resolver', () => {
+    const ts = generateLoopTimestamps({
+      soundId: 'bg',
+      durationSecPerIteration: [2],
+      durationSecResolver: () => 99,
+      fallbackDurationSec: 10,
+      intervalSec: 0,
+      jitterSec: 0,
+      timelineSec: 5,
+    });
+    expect(ts).toEqual([0, 2, 4]);
+  });
 });

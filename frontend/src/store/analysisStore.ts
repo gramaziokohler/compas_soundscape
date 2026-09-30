@@ -389,6 +389,23 @@ function getModelBounds(): { min: [number, number, number]; max: [number, number
   return geometryBounds ?? null;
 }
 
+/**
+ * Spatial extents passed to the scenario agents (scenarist / foley / speech) so
+ * LLM-guessed [x, y, z] sound positions stay inside the model.
+ *
+ * Returns the live bounds of a loaded Speckle model or uploaded geometry. The
+ * sandbox placeholder room is intentionally NOT a model — when neither is
+ * present this returns `undefined` and the backend falls back to its virtual
+ * 6 x 10 x 3 m room.
+ */
+function getScenarioBounds():
+  | { min: [number, number, number]; max: [number, number, number] }
+  | undefined {
+  const { globalSpeckleData, speckleBounds } = useUIStore.getState();
+  if (globalSpeckleData && speckleBounds) return speckleBounds;
+  return useFileUploadStore.getState().geometryBounds ?? undefined;
+}
+
 // ─── State ────────────────────────────────────────────────────────────────────
 
 export interface AnalysisStoreState {
@@ -2078,6 +2095,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             people_count: config.peopleCount,
             likeliness: config.likeliness,
             duration: Math.round(scenarioDurationMs / 1000),
+            bounding_box: getScenarioBounds(),
           };
 
           let workingScenarios: ScenarioResult['scenarios'] = [];
@@ -2176,12 +2194,14 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
               analysis_id: analysisId,
               llm_model: DEFAULT_LLM_MODEL,
               maximum_sounds: maximumFoleySounds,
+              bounding_box: getScenarioBounds(),
             };
             const speechBody = {
               scenario_id: config.scenarioId,
               analysis_id: analysisId,
               llm_model: DEFAULT_LLM_MODEL,
               language: (await import('@/store/audioControlsStore')).useAudioControlsStore.getState().ttsLanguage,
+              bounding_box: getScenarioBounds(),
             };
 
             const foleyPromise = hasFoley ? null : (async () => {

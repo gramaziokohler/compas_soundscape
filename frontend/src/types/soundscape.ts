@@ -53,6 +53,10 @@ export interface SoundscapeSoundConfig {
    *  Home Sample at SANDBOX_SAMPLE_SPHERE_POSITION). Persisted so the pin
    *  survives a refresh/save-load without inferring it from the card type. */
   pinned?: boolean;
+  /** Manual [x, y, z] override for a pending (not-yet-generated) non-entity
+   *  sphere. Persisted so a pending sphere keeps its authored position after a
+   *  refresh/save-load instead of falling back to camera-front spiral placement. */
+  position?: number[];
 }
 
 /** Serializable orchestration metadata (parametric trigger links). */

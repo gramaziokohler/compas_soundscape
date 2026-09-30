@@ -38,7 +38,10 @@ function getIterationVariantInfo(
   }
   const eventOverride = soundEvents?.find((e) => e.id === variantId);
 
-  const trim = soundTrims?.[primarySoundId];
+  // Trim is PER-VARIANT: each copy has its own trim (set from the sound card), so
+  // use the resolved variant's trim. Reading the primary's trim here applied
+  // variant A's trim to every clip regardless of which variant the iteration plays.
+  const trim = soundTrims?.[variantId];
   let durationMs = fallbackDurationMs;
   if (variantMeta?.buffer) {
     const bufMs = variantMeta.buffer.duration * 1000;
@@ -125,9 +128,16 @@ export interface GenerateLoopTimestampsArgs {
   /**
    * Seconds of each consecutive iteration, used to advance to the next start
    * (start_{i+1} = start_i + dur_i + gap_i). Falls back to the last entry then to
-   * `fallbackDurationSec`. Absent/empty ⇒ every iteration uses `fallbackDurationSec`.
+   * `fallbackDurationSec`. Absent/empty ⇒ the resolver (if any) then `fallbackDurationSec`.
    */
   durationSecPerIteration?: number[];
+  /**
+   * Resolve the duration (seconds) for a given iteration index when no explicit
+   * `durationSecPerIteration` is available. Lets the caller drive spacing from the
+   * variant assigned to each iteration, so tracks whose iterations use variants of
+   * different lengths still advance by the correct per-iteration duration.
+   */
+  durationSecResolver?: (iterationIndex: number) => number | undefined;
   /** Duration to use when no per-iteration durations are provided. */
   fallbackDurationSec: number;
   /** Base gap (seconds) between the end of one clip and the start of the next. 0 = back-to-back. */
@@ -150,6 +160,7 @@ export interface GenerateLoopTimestampsArgs {
 export function generateLoopTimestamps({
   soundId,
   durationSecPerIteration,
+  durationSecResolver,
   fallbackDurationSec,
   intervalSec,
   jitterSec,
@@ -163,8 +174,11 @@ export function generateLoopTimestamps({
 
   while (tMs < timelineSec * 1000 && out.length < AUDIO_TIMELINE.MAX_ITERATIONS_TO_DISPLAY) {
     out.push(parseFloat((tMs / 1000).toFixed(3)));
-    const perIter = durationSecPerIteration?.[idx]
-      ?? durationSecPerIteration?.[durationSecPerIteration.length - 1];
+    // Advance by THIS iteration's own duration so iterations of different lengths
+    // (e.g. different variants) keep a constant gap instead of overlapping.
+    const perIter = durationSecPerIteration && durationSecPerIteration.length > 0
+      ? durationSecPerIteration[idx] ?? durationSecPerIteration[durationSecPerIteration.length - 1]
+      : durationSecResolver?.(idx);
     const durSec = perIter ?? fallbackDurationSec;
     const gapMs = Math.max(0, baseGapMs + computeIterationJitter(soundId, idx, jitterMs));
     tMs += Math.max(0, durSec) * 1000 + gapMs;
@@ -308,11 +322,10 @@ export function extractTimelineSoundsFromData(
     console.log(`[DEBUG-TIMELINE] soundId=${soundId} cat="${(eventOverride as any)?.category ?? (metadata.soundEvent as any).category ?? 'MISSING'}" promptIdx=${eventOverride?.prompt_index ?? metadata.soundEvent.prompt_index}`);
 
     // ── Resolve the track's source schedule (seconds) ────────────────────────
-    // Background tracks ALWAYS tile independently from 0 to fill the timeline —
-    // they are not parametrically placed and must never be reduced to a single
-    // authored timestamp. Other tracks: explicit store entries win; with no entry
-    // they are "auto" (authored timestamps if present, else a loop from
-    // interval_seconds, 0 = back-to-back pack).
+    // Explicit store schedules (DAW drag, "Distribute evenly", orchestration) win
+    // for EVERY category — including background. With no explicit entry a track is
+    // "auto": background tiles back-to-back from 0, other tracks use their authored
+    // timestamps or a loop from interval_seconds (0 = back-to-back pack).
     const rawEvent = metadata.soundEvent as any;
     const rawCategory = eventOverride?.category ?? (metadata.soundEvent as any).category;
     const isBackground = (() => {
@@ -325,23 +338,41 @@ export function extractTimelineSoundsFromData(
       : null;
     const fallbackDurationSec = soundDurationMs / 1000;
 
+    // Advance spacing by the duration of the variant actually assigned to each
+    // iteration (via `iterationLinks`), so a track mixing variants of different
+    // lengths still tiles / distributes without overlaps or gaps.
+    const resolveIterationDurationSec = (idx: number): number | undefined => {
+      const info = getIterationVariantInfo(
+        soundId,
+        idx,
+        soundMetadata,
+        metadata,
+        iterationLinks,
+        soundTrims,
+        soundDurationMs,
+        soundEvents,
+      );
+      return info.durationMs > 0 ? info.durationMs / 1000 : undefined;
+    };
+
     const explicitSec = soundTimestamps?.[soundId];
     let sourceSec: number[];
-    if (isBackground) {
+    if (explicitSec !== undefined) {
+      sourceSec = explicitSec;
+    } else if (isBackground) {
       sourceSec = generateLoopTimestamps({
         soundId,
-        durationSecPerIteration: rawDurs,
+        durationSecResolver: resolveIterationDurationSec,
         fallbackDurationSec,
         intervalSec: 0,
         jitterSec: 0,
         timelineSec: timelineDuration / 1000,
       });
-    } else if (explicitSec !== undefined) {
-      sourceSec = explicitSec;
     } else {
       sourceSec = authored ?? generateLoopTimestamps({
         soundId,
         durationSecPerIteration: rawDurs,
+        durationSecResolver: resolveIterationDurationSec,
         fallbackDurationSec,
         intervalSec: rawEvent.current_interval_seconds ?? rawEvent.interval_seconds ?? 30,
         jitterSec: 0,

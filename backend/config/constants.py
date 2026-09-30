@@ -96,6 +96,25 @@ DURATION_RANGE = (DURATION_MIN, DURATION_MAX)
 # Foley Artist Configuration
 DEFAULT_MAXIMUM_FOLEY_SOUNDS = 20  # Maximum total sound events across all scenarios
 
+# Virtual room extents used to anchor scenario sound positions when no context
+# model (3D layout analysis) is available. Speckle Z-up: X = width, Y = depth,
+# Z = height, floor at z = 0. Keeps LLM-guessed [x, y, z] positions inside a
+# plausible 6 x 10 x 3 m room instead of a tiny origin-centred cluster.
+VIRTUAL_ROOM_DIMENSIONS = {"width": 6.0, "depth": 10.0, "height": 3.0}
+VIRTUAL_ROOM_BOUNDS = {
+    "min": [
+        -VIRTUAL_ROOM_DIMENSIONS["width"] / 2,
+        -VIRTUAL_ROOM_DIMENSIONS["depth"] / 2,
+        0.0,
+    ],
+    "max": [
+        VIRTUAL_ROOM_DIMENSIONS["width"] / 2,
+        VIRTUAL_ROOM_DIMENSIONS["depth"] / 2,
+        VIRTUAL_ROOM_DIMENSIONS["height"],
+    ],
+    **VIRTUAL_ROOM_DIMENSIONS,
+}
+
 # ============================================================================
 # Audio Processing Configuration
 # ============================================================================

@@ -313,6 +313,10 @@ class SoundscapeSoundConfig(BaseModel):
     # Home Sample at SANDBOX_SAMPLE_SPHERE_POSITION). Persisted so the pin
     # survives a refresh/save-load without inferring it from the card type.
     pinned: bool = False
+    # Manual [x, y, z] override for a pending (not-yet-generated) non-entity
+    # sphere. Persisted so a pending sphere keeps its authored position after a
+    # refresh/save-load instead of falling back to camera-front spiral placement.
+    position: Optional[list[float]] = None
 
 
 class SoundscapeSoundEvent(BaseModel):
@@ -766,6 +770,9 @@ class ScenaristStreamRequest(BaseModel):
     people_count: int = 5
     likeliness: int = 9
     duration: int = 150
+    # Optional {min:[x,y,z], max:[x,y,z]} spatial reference (model bounds) used
+    # when no analysis result supplies extents. Falls back to VIRTUAL_ROOM_BOUNDS.
+    bounding_box: dict | None = None
 
 
 class FoleyArtistRequest(BaseModel):
@@ -773,6 +780,7 @@ class FoleyArtistRequest(BaseModel):
     analysis_id: str | None = None
     llm_model: str = DEFAULT_LLM_MODEL
     maximum_sounds: int = 20
+    bounding_box: dict | None = None
 
 
 # ============================================================================

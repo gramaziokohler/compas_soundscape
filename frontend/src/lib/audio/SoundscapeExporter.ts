@@ -341,7 +341,7 @@ async function buildAnechoicGraph(
     distNode.connect(encoder.in);
     encoder.out.connect(mixBus);
 
-    scheduleIterations(offlineCtx, resolveIterationBuffers(sound, sourceRegistry, config.iterationLinks, config.variantEvents), sound.scheduledIterations, gainNode, durationSecs(offlineCtx), config.soundTrims?.[sound.id], resolveClipFade(sound.soundGroup, !!config.soundLoopable?.[sound.id]));
+    scheduleIterations(offlineCtx, resolveIterationBuffers(sound, sourceRegistry, config.iterationLinks, config.variantEvents, config.soundTrims), sound.scheduledIterations, gainNode, durationSecs(offlineCtx), resolveClipFade(sound.soundGroup, !!config.soundLoopable?.[sound.id]));
   }
 }
 
@@ -454,7 +454,7 @@ async function buildAmbisonicIRGraph(
     gainNode.connect(convolver.in);
     convolver.out.connect(mixBus);
 
-    scheduleIterations(offlineCtx, resolveIterationBuffers(sound, sourceRegistry, config.iterationLinks, config.variantEvents), sound.scheduledIterations, gainNode, durationSecs(offlineCtx), config.soundTrims?.[sound.id], resolveClipFade(sound.soundGroup, !!config.soundLoopable?.[sound.id]));
+    scheduleIterations(offlineCtx, resolveIterationBuffers(sound, sourceRegistry, config.iterationLinks, config.variantEvents, config.soundTrims), sound.scheduledIterations, gainNode, durationSecs(offlineCtx), resolveClipFade(sound.soundGroup, !!config.soundLoopable?.[sound.id]));
   }
 }
 
@@ -571,7 +571,7 @@ async function buildResonanceGraph(
       gainNode.gain.value = soundGains.get(sound.id) ?? 1.0;
       gainNode.connect(resonanceSource.input);
 
-      scheduleIterations(offlineCtx, resolveIterationBuffers(sound, sourceRegistry, config.iterationLinks, config.variantEvents), sound.scheduledIterations, gainNode, durationSecs(offlineCtx), config.soundTrims?.[sound.id], resolveClipFade(sound.soundGroup, !!config.soundLoopable?.[sound.id]));
+      scheduleIterations(offlineCtx, resolveIterationBuffers(sound, sourceRegistry, config.iterationLinks, config.variantEvents, config.soundTrims), sound.scheduledIterations, gainNode, durationSecs(offlineCtx), resolveClipFade(sound.soundGroup, !!config.soundLoopable?.[sound.id]));
     }
 
     // Omnitone's HOARenderer.initialize() is async (Promise).  Yield to the
@@ -625,7 +625,7 @@ async function buildSimpleMixGraph(
     gainNode.gain.value = soundGains.get(sound.id) ?? 1.0;
     gainNode.connect(masterGain);
 
-    scheduleIterations(offlineCtx, resolveIterationBuffers(sound, sourceRegistry, config.iterationLinks, config.variantEvents), sound.scheduledIterations, gainNode, durationSecs(offlineCtx), config.soundTrims?.[sound.id], resolveClipFade(sound.soundGroup, !!config.soundLoopable?.[sound.id]));
+    scheduleIterations(offlineCtx, resolveIterationBuffers(sound, sourceRegistry, config.iterationLinks, config.variantEvents, config.soundTrims), sound.scheduledIterations, gainNode, durationSecs(offlineCtx), resolveClipFade(sound.soundGroup, !!config.soundLoopable?.[sound.id]));
   }
 }
 
@@ -738,19 +738,28 @@ function applyLinkedLimiter(
 // Scheduling & helpers
 // ============================================================================
 
+/** A scheduled iteration's resolved audio source: the variant buffer + that variant's trim. */
+interface IterationPlayback {
+  buffer?: AudioBuffer;
+  trim?: { start: number; end: number };
+}
+
 /**
- * Resolve per-iteration AudioBuffers using iterationLinks to pick the correct
- * variant for each scheduled iteration. Falls back to the primary source buffer.
+ * Resolve per-iteration AudioBuffers AND the matching per-variant trim using
+ * iterationLinks to pick the correct variant for each scheduled iteration.
+ * Falls back to the primary source buffer + primary trim when the variant's
+ * buffer isn't loaded.
  */
 function resolveIterationBuffers(
   sound: TimelineSound,
   sourceRegistry: Map<string, { buffer: AudioBuffer; position: Position }>,
   iterationLinks?: Record<string, IterationLink>,
   variantEvents?: ReadonlyArray<{ id: string; prompt_index?: number | null; copy_index?: number | null }>,
-): (AudioBuffer | undefined)[] {
+  soundTrims?: Record<string, { start: number; end: number }>,
+): IterationPlayback[] {
   const primaryEntry = sourceRegistry.get(sound.id);
   const fallbackBuffer = primaryEntry?.buffer;
-  const buffers: (AudioBuffer | undefined)[] = [];
+  const iterations: IterationPlayback[] = [];
 
   const scheduled = sound.scheduledIterations || [];
   const originalIndices = sound.scheduledIterationOriginalIndices || scheduled.map((_, i) => i);
@@ -766,31 +775,35 @@ function resolveIterationBuffers(
         variantEvents ?? [],
       );
       const variantEntry = sourceRegistry.get(variantId);
-      buffers.push(variantEntry?.buffer || fallbackBuffer);
+      // Trim is per-variant: apply the variant's own trim when its buffer is used,
+      // otherwise the primary trim matching the primary buffer fallback.
+      iterations.push({
+        buffer: variantEntry?.buffer || fallbackBuffer,
+        trim: variantEntry ? soundTrims?.[variantId] : soundTrims?.[sound.id],
+      });
     } else {
-      buffers.push(fallbackBuffer);
+      iterations.push({ buffer: fallbackBuffer, trim: soundTrims?.[sound.id] });
     }
   }
-  return buffers;
+  return iterations;
 }
 
 function scheduleIterations(
   offlineCtx: OfflineAudioContext,
-  buffers: (AudioBuffer | undefined)[],
+  iterations: IterationPlayback[],
   timestampsMs: number[],
   destination: AudioNode,
   maxDurationSecs: number,
-  trim?: { start: number; end: number },
   fade?: FadeOptions,
 ): void {
-  const count = Math.min(buffers.length, timestampsMs.length);
+  const count = Math.min(iterations.length, timestampsMs.length);
 
   for (let i = 0; i < count; i++) {
     const tsMs = timestampsMs[i];
     const startSec = tsMs / 1000;
     if (startSec >= maxDurationSecs) continue;
 
-    const buffer = buffers[i];
+    const { buffer, trim } = iterations[i];
     if (!buffer) continue;
 
     const bufferDuration = buffer.duration;

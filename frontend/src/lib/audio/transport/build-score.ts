@@ -30,9 +30,7 @@ export function buildScoreFromTimelineSounds(
   const soundConfigs = useSoundscapeStore.getState().soundConfigs;
 
   const tracks: ScoreTrack[] = timelineSounds.map((ts): ScoreTrack => {
-    const trim = soundTrims[ts.id];
     const loopable = !!soundLoopable[ts.id];
-    const trimStartFraction = trim?.start ?? 0;
     const fade = resolveClipFade(ts.soundGroup, loopable);
 
     const clips: ScoreClip[] = ts.scheduledIterations.map((startMs, i): ScoreClip => {
@@ -41,6 +39,9 @@ export function buildScoreFromTimelineSounds(
       const durationMs = ts.iterationDurationsMs?.[i] ?? ts.soundDurationMs;
       const variantIndex = link?.variantIndex ?? 0;
       const sourceId = resolveVariantSoundIdByPrompt(ts.id, variantIndex, ts.promptIndex, generatedSounds);
+      // Trim is per-variant: this clip plays `sourceId`'s buffer, so apply the trim
+      // stored for THAT variant — never the track/primary variant's trim.
+      const trim = soundTrims[sourceId];
 
       // Prefer the linked entity's live position over the persisted snapshot so a
       // clip whose object moved (new model version) plays from the new location.
@@ -61,7 +62,7 @@ export function buildScoreFromTimelineSounds(
         startMs,
         durationMs,
         sourceId,
-        trimStartFraction,
+        trimStartFraction: trim?.start ?? 0,
         fadeInMs: fade?.fadeInMs,
         fadeOutMs: fade?.fadeOutMs,
         position,

@@ -183,6 +183,10 @@ export function buildSoundscapeSavePayload(
       // Explicit-position pin (deterministic Home Sample). Persisted so the
       // sample stays at SANDBOX_SAMPLE_SPHERE_POSITION after a save/load.
       pinned: config.pinned || undefined,
+      // Manual override for a pending (not-yet-generated) non-entity sphere.
+      // Persisted so the sphere keeps its authored position on save/load instead
+      // of falling back to camera-front spiral placement.
+      position: config.position ? [...config.position] : undefined,
     };
   });
 
@@ -589,6 +593,11 @@ export function restoreSoundscapeState(
       // Explicit-position pin (deterministic Home Sample) — keeps the sphere at
       // SANDBOX_SAMPLE_SPHERE_POSITION after a refresh instead of camera-front.
       pinned: saved.pinned || undefined,
+      // Manual override for a pending (not-yet-generated) non-entity sphere —
+      // keeps its authored position after a refresh instead of camera-front.
+      position: Array.isArray(saved.position) && saved.position.length >= 3
+        ? [saved.position[0], saved.position[1], saved.position[2]] as [number, number, number]
+        : undefined,
       entity: undefined, // deprecated — use entities[] below
       entities: (() => {
         // New multi-entity format: entity_indices[] array

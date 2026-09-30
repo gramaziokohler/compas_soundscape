@@ -34,6 +34,7 @@ from config.constants import (
     LLM_PROGRESS_THINKING_MAX,
     LLM_PROGRESS_WRITING_MIN,
     LLM_PROGRESS_WRITING_MAX,
+    VIRTUAL_ROOM_BOUNDS,
 )
 from utils.llm_errors import llm_error_message
 
@@ -143,23 +144,65 @@ def _make_on_progress(job_id: str, partial: dict):
     return on_progress
 
 
-def _load_furniture_list(analysis_id: str | None) -> dict | None:
-    if not analysis_id or not _UUID_RE.match(analysis_id):
+def _normalize_total_bounds(bounds: dict | None) -> dict | None:
+    """Normalize a {min, max} bounds dict into the total_bounds shape used by
+    the scenario agents (adds width/depth/height when missing).
+
+    Returns None when the input does not carry a usable min/max pair.
+    """
+    if not isinstance(bounds, dict):
         return None
-    analysis_file = Path(TEMP_ANALYSIS_DIR) / f"analysis_{analysis_id}.json"
-    if not analysis_file.exists():
+    mn = bounds.get("min") or bounds.get("min_bounds")
+    mx = bounds.get("max") or bounds.get("max_bounds")
+    if not (isinstance(mn, (list, tuple)) and isinstance(mx, (list, tuple))):
+        return None
+    if len(mn) < 3 or len(mx) < 3:
         return None
     try:
-        with open(analysis_file, "r", encoding="utf-8") as f:
-            raw = json.load(f)
-        total_bounds = (raw.get("meta") or {}).get("total_bounds")
-        furniture_list: dict = {"architecturalObjects": raw.get("objects", [])}
-        if total_bounds:
-            furniture_list["meta"] = {"total_bounds": total_bounds}
-        return furniture_list
-    except Exception as load_err:
-        print(f"[generation] failed to load analysis {analysis_id}: {load_err}")
+        mn = [float(mn[0]), float(mn[1]), float(mn[2])]
+        mx = [float(mx[0]), float(mx[1]), float(mx[2])]
+    except (TypeError, ValueError):
         return None
+    return {
+        "min": [round(v, 3) for v in mn],
+        "max": [round(v, 3) for v in mx],
+        "width": round(mx[0] - mn[0], 3),
+        "depth": round(mx[1] - mn[1], 3),
+        "height": round(mx[2] - mn[2], 3),
+    }
+
+
+def _load_furniture_list(
+    analysis_id: str | None,
+    bounding_box: dict | None = None,
+) -> dict:
+    """Load the (optional) analysis result as a furniture list for the scenario
+    agents.
+
+    Always returns a dict. When no analysis result is available (no context
+    model) — or when it carries no ``meta.total_bounds`` — the room extents fall
+    back to the request-provided ``bounding_box`` and finally to the virtual
+    room so the LLM still has a spatial reference to place sounds in.
+    """
+    raw: dict | None = None
+    if analysis_id and _UUID_RE.match(analysis_id):
+        analysis_file = Path(TEMP_ANALYSIS_DIR) / f"analysis_{analysis_id}.json"
+        if analysis_file.exists():
+            try:
+                with open(analysis_file, "r", encoding="utf-8") as f:
+                    raw = json.load(f)
+            except Exception as load_err:
+                print(f"[generation] failed to load analysis {analysis_id}: {load_err}")
+
+    total_bounds = (
+        (raw.get("meta") or {}).get("total_bounds") if raw else None
+    )
+    if not total_bounds:
+        total_bounds = _normalize_total_bounds(bounding_box) or VIRTUAL_ROOM_BOUNDS
+
+    furniture_list: dict = {"architecturalObjects": (raw or {}).get("objects", [])}
+    furniture_list["meta"] = {"total_bounds": total_bounds}
+    return furniture_list
 
 
 def _load_json_id_file(prefix: str, file_id: str, label: str) -> dict:
@@ -436,7 +479,7 @@ async def update_analysis_object(
 @router.post("/api/scenarist", response_model=JobEnqueueResponse)
 async def scenarist(request: ScenaristStreamRequest, req: Request):
     """Enqueue scenarist agent. Poll GET /api/jobs/{job_id} for thought progress."""
-    furniture_list = _load_furniture_list(request.analysis_id)
+    furniture_list = _load_furniture_list(request.analysis_id, request.bounding_box)
     user_context = request.user_context
     llm_model = request.llm_model
     duration = request.duration
@@ -494,7 +537,7 @@ async def scenarist(request: ScenaristStreamRequest, req: Request):
 async def foley_artist(request: FoleyArtistRequest, req: Request):
     """Enqueue foley artist. Poll GET /api/jobs/{job_id} for thought progress."""
     scenario_data = _load_json_id_file("scenarios", request.scenario_id, "scenario_id")
-    furniture_list = _load_furniture_list(request.analysis_id)
+    furniture_list = _load_furniture_list(request.analysis_id, request.bounding_box)
     maximum_sounds = request.maximum_sounds
     llm_model = request.llm_model
 
@@ -554,13 +597,14 @@ class SpeechAgentRequest(BaseModel):
     analysis_id: str | None = None
     llm_model: str = DEFAULT_LLM_MODEL
     language: str | None = None
+    bounding_box: dict | None = None
 
 
 @router.post("/api/speech-agent", response_model=JobEnqueueResponse)
 async def speech_agent(request: SpeechAgentRequest, req: Request):
     """Enqueue speech agent. Poll GET /api/jobs/{job_id} for thought progress."""
     scenario_data = _load_json_id_file("scenarios", request.scenario_id, "scenario_id")
-    furniture_list = _load_furniture_list(request.analysis_id)
+    furniture_list = _load_furniture_list(request.analysis_id, request.bounding_box)
     llm_model = request.llm_model
     language = request.language
 

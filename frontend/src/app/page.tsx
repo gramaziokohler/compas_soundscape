@@ -1972,7 +1972,7 @@ function HomeContent() {
             ? (orchestrateMeta?.speechLines?.[0] || scenarioSource?.speechLines?.[0] || scenarioSource?.script || p.text)
             : p.text,
           duration: isBackground ? 10 : (p.metadata?.duration_seconds ?? 10),
-          guidance_scale: 4.5,
+          guidance_scale: 0.9,
           negative_prompt: '',
           seed_copies: variantCount,
           steps: useSoundscapeStore.getState().globalSteps,
