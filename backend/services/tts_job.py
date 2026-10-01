@@ -56,7 +56,7 @@ def generate_tts_item(
     text: str,
     output_path: str,
     voice_name: str,
-    language: str | None,
+    language_code: str | None,
     tts_model: str,
     dbfs: float,
 ) -> float:
@@ -77,7 +77,7 @@ def generate_tts_item(
                 text=text,
                 output_path=output_path,
                 voice_name=voice_name,
-                language=language,
+                language_code=language_code,
                 model=tts_model or DEFAULT_TTS_MODEL,
             )
             last_exc = None

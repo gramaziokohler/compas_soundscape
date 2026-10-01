@@ -18,7 +18,9 @@ import type {
   AmbisonicOrder,
   SourceReceiverIRMapping,
   AcousticSimulationMode,
-  ImpulseResponseMetadata
+  ImpulseResponseMetadata,
+  OutputDiagnostics,
+  OutputSourceDiagnostics
 } from '@/types/audio';
 import { AudioMode } from '@/types/audio';
 
@@ -59,6 +61,7 @@ import {
 } from './utils/audio-file-decoder';
 import { AUDIO_CONTROL, DEFAULT_SPEED_OF_SOUND, API_BASE_URL } from '@/utils/constants';
 import { registerOutputDeviceTarget } from './output-device';
+import { OutputLevelMeter } from './utils/output-level-meter';
 
 export class AudioOrchestrator implements IAudioOrchestrator {
   private audioContext: AudioContext | null = null;
@@ -200,6 +203,9 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   // Limiter node to prevent harsh clipping
   private limiter: DynamicsCompressorNode | null = null;
 
+  // Final-output probe (limiter → meter → destination): what the user actually hears.
+  private outputMeter: OutputLevelMeter | null = null;
+
   // Detaches this context from the shared output-device registry on dispose.
   private unregisterOutputDeviceTarget: (() => void) | null = null;
 
@@ -221,7 +227,9 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     this.limiter.ratio.value = AUDIO_CONTROL.LIMITER.RATIO;
     this.limiter.attack.value = AUDIO_CONTROL.LIMITER.ATTACK_SEC;
     this.limiter.release.value = AUDIO_CONTROL.LIMITER.RELEASE_SEC;
-    this.limiter.connect(audioContext.destination);
+    this.outputMeter = new OutputLevelMeter(audioContext);
+    this.limiter.connect(this.outputMeter.node);
+    this.outputMeter.node.connect(audioContext.destination);
 
     try {
       // Test ambisonic order support
@@ -1702,11 +1710,72 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     this.currentModeInstance.setMasterVolume(volume);
   }
 
+  /** Current master volume (0..1), including values set before the mode existed. */
+  getMasterVolume(): number {
+    return this.pendingMasterVolume;
+  }
+
+  /** Resume a context the browser suspended (autoplay policy). */
+  async resumeAudioContext(): Promise<void> {
+    if (this.audioContext && this.audioContext.state !== 'running') {
+      await this.audioContext.resume();
+    }
+  }
+
+  /** Forget the averaged output level (call when playback starts). */
+  resetOutputLevel(): void {
+    this.outputMeter?.reset();
+  }
+
+  /**
+   * Snapshot of the final output level and every gain stage that could make it
+   * quiet. Call at `LOW_OUTPUT_HINT.POLL_MS` — each call advances the output average.
+   * Returns null before initialization.
+   */
+  getOutputDiagnostics(): OutputDiagnostics | null {
+    if (!this.audioContext || !this.outputMeter) return null;
+
+    const mode = this.currentMode;
+    const modeAny = this.currentModeInstance as { listenerPosition?: Position } | null;
+    const listener = modeAny?.listenerPosition ?? null;
+    // AMBISONIC_IR is 3DOF: the receiver is locked, so camera distance is irrelevant.
+    const distanceMatters = mode === AudioMode.ANECHOIC || mode === AudioMode.NO_IR_RESONANCE;
+    const irMode = mode === AudioMode.AMBISONIC_IR ? this.ambisonicIRMode : null;
+
+    const sources: OutputSourceDiagnostics[] = [];
+    for (const id of this.getPlayingSourceIds()) {
+      const entry = this.sourceRegistry.get(id);
+      if (!entry) continue;
+      const { x, y, z } = entry.position;
+      sources.push({
+        id,
+        position: { x, y, z },
+        level: this.getSourceLevel(id),
+        muted: this.muteRegistry.get(id) ?? false,
+        distance: distanceMatters && listener
+          ? Math.hypot(x - listener.x, y - listener.y, z - listener.z)
+          : null,
+        ir: irMode?.getSourceIRStatus(id) ?? null,
+      });
+    }
+
+    return {
+      contextState: this.audioContext.state,
+      outputDbfs: this.outputMeter.sample(),
+      masterVolume: this.pendingMasterVolume,
+      mode,
+      sources,
+    };
+  }
+
   /**
    * Dispose of all resources
    */
   dispose(): void {
     console.log('[AudioOrchestrator] Disposing');
+
+    this.outputMeter?.dispose();
+    this.outputMeter = null;
 
     // Dispose all mode instances
     if (this.anechoicMode) {

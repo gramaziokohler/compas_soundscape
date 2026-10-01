@@ -21,7 +21,7 @@ function getIterationVariantInfo(
   soundTrims: Record<string, { start: number; end: number }> | undefined,
   fallbackDurationMs: number,
   soundEvents?: SoundEvent[],
-): { audioUrl: string; durationMs: number } {
+): { audioUrl: string; durationMs: number; trim?: { start: number; end: number } } {
   const link = iterationLinks?.[`${primarySoundId}-${iterationIndex}`];
   const variantIdx = link?.variantIndex ?? 0;
   // Resolve by explicit prompt_index + copy_index grouping (works for every id
@@ -52,7 +52,7 @@ function getIterationVariantInfo(
     (eventOverride ? resolveSoundAudioUrl(eventOverride) : undefined) ||
     variantMeta?.soundEvent.url ||
     primaryMetadata.soundEvent.url;
-  return { audioUrl, durationMs };
+  return { audioUrl, durationMs, trim };
 }
 
 /**
@@ -394,6 +394,7 @@ export function extractTimelineSoundsFromData(
     const iterationOriginalIndices: number[] = [];
     const iterationDurationsMs: number[] = [];
     const iterationAudioUrls: string[] = [];
+    const iterationTrims: ({ start: number; end: number } | undefined)[] = [];
     for (let idx = 0; idx < rawMs.length && iterations.length < AUDIO_TIMELINE.MAX_ITERATIONS_TO_DISPLAY; idx++) {
       if (excludedIdxs.includes(idx)) continue;
       const ms = rawMs[idx];
@@ -414,6 +415,7 @@ export function extractTimelineSoundsFromData(
         );
         iterationDurationsMs.push(variantInfo.durationMs);
         iterationAudioUrls.push(variantInfo.audioUrl);
+        iterationTrims.push(variantInfo.trim);
       }
     }
 
@@ -474,6 +476,7 @@ export function extractTimelineSoundsFromData(
       scheduledIterationOriginalIndices: iterationOriginalIndices,
       iterationDurationsMs,
       iterationAudioUrls,
+      iterationTrims,
       audioUrl: audioUrl || undefined,
       trimStartFraction: trim?.start,
       trimEndFraction: trim?.end,

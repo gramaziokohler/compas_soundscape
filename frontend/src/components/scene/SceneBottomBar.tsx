@@ -5,6 +5,7 @@ import { Icon, RefreshIcon } from '@/components/ui/Icon';
 import { NotificationCenter } from '@/components/ui/NotificationCenter';
 import { UndoRedoToolbar } from '@/components/ui/UndoRedoToolbar';
 import { SceneShortcutsButton } from '@/components/scene/SceneShortcutsButton';
+import { LowOutputHintPopover } from '@/components/scene/LowOutputHintPopover';
 import { SceneVolumeButton } from '@/components/scene/SceneVolumeButton';
 import { useSceneWorkflowStore, useUIStore } from '@/store';
 import { SCENE_BOTTOM_BAR } from '@/utils/constants';
@@ -62,7 +63,8 @@ export interface SceneBottomBarProps {
  * scene-level control by intent:
  *   left   — app: home, "Simple" (Expert mode only — the full Simple/Expert
  *            choice lives in Settings › Display), undo/redo, save
- *   center — playback of the selected scene: play/pause, stop, time, timeline
+ *   center — playback of the selected scene: play/pause, stop, time, timeline;
+ *            a low-output hint pops above it when playback is too quiet
  *   right  — view: volume, reset view, refresh, Object Explorer / load model;
  *            then help & system: shortcuts, notifications, settings
  * The docked DAW opens above it; sidebars stop at its top edge.
@@ -136,9 +138,15 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
       </div>
 
       {/* ── Center: playback ── */}
-      <div className="scene-bottom-bar__group">
+      <div className="scene-bottom-bar__group" style={{ position: 'relative' }}>
         {isViewerReady && hasTimeline && (
           <>
+            <LowOutputHintPopover
+              audioOrchestrator={audioOrchestrator}
+              isPlaying={isPlaying}
+              timelineOpen={showTimeline}
+              onOpenTimeline={onToggleTimeline}
+            />
             <button
               type="button"
               className="bar-play"

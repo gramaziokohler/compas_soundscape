@@ -1,5 +1,6 @@
 import { API_BASE_URL, SPECKLE_INGESTION } from '@/utils/constants';
 import type { CompasGeometry, SoundEvent, SoundGenerationConfig, FileUploadResponse, JobType, UserPreferences } from '@/types';
+import type { TtsCustomVoice, TtsCustomVoiceCreateRequest, TtsDialectsResponse, TtsLanguageMatch } from '@/types/ttsLanguage';
 import type { ImpulseResponseMetadata } from '@/types/audio';
 import type { ModalAnalysisRequest, ModalAnalysisResult } from '@/types/modal';
 import type { SpeckleProjectModelsResponse, SpeckleModelLatestVersion } from '@/types/speckle-models';
@@ -782,6 +783,86 @@ export const apiService = {
   // Cancel TTS generation (via unified /api/jobs/{id}/cancel)
   async cancelTTSGeneration(generationId: string): Promise<void> {
     await cancelUnifiedJob(generationId);
+  },
+
+  // ─── TTS language / dialects (backend routers/tts_voices.py) ──────────────
+
+  /** Voice-library accents + the caller's custom dialect voices. */
+  async listTtsDialects(): Promise<TtsDialectsResponse> {
+    const response = await fetchWithErrorHandling(`${API_BASE_URL}/api/tts/dialects`, undefined, 'TTS dialects');
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: 'Failed to load TTS dialects' }));
+      throw new Error(err.detail || 'Failed to load TTS dialects');
+    }
+    return response.json();
+  },
+
+  /** Resolve free-text TTS language ("Swiss German") against the backend lists. */
+  async resolveTtsLanguage(text: string): Promise<TtsLanguageMatch> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/tts/resolve-language`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      },
+      'Resolve TTS language'
+    );
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: 'Failed to resolve TTS language' }));
+      throw new Error(err.detail || 'Failed to resolve TTS language');
+    }
+    return response.json();
+  },
+
+  /** Start creating a female + male custom voice for a dialect (job — poll via getTtsCustomVoiceJob). */
+  async createTtsCustomVoice(data: TtsCustomVoiceCreateRequest): Promise<{ job_id: string }> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/tts/custom-voices`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      },
+      'Create custom voice'
+    );
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: 'Failed to create custom voice' }));
+      throw new Error(err.detail || 'Failed to create custom voice');
+    }
+    return response.json();
+  },
+
+  /** Poll a custom-voice creation job (unified /api/jobs/{id}). */
+  async getTtsCustomVoiceJob(jobId: string): Promise<{
+    completed: boolean;
+    cancelled: boolean;
+    error: string | null;
+    progress: number;
+    status: string;
+    result: TtsCustomVoice[] | null;
+  }> {
+    const job = await getUnifiedJobStatus(jobId);
+    const legacy = toLegacyJobStatus(job);
+    return { ...legacy, result: Array.isArray(job.result) ? (job.result as TtsCustomVoice[]) : null };
+  },
+
+  async listTtsCustomVoices(): Promise<TtsCustomVoice[]> {
+    const response = await fetchWithErrorHandling(`${API_BASE_URL}/api/tts/custom-voices`, undefined, 'Custom voices');
+    if (!response.ok) return [];
+    return response.json();
+  },
+
+  async deleteTtsCustomVoice(voiceId: string): Promise<void> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/tts/custom-voices/${encodeURIComponent(voiceId)}`,
+      { method: 'DELETE' },
+      'Delete custom voice'
+    );
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: 'Failed to delete custom voice' }));
+      throw new Error(err.detail || 'Failed to delete custom voice');
+    }
   },
 
   // Calibrate Audio (normalize RMS + dBFS calibration for non-ML audio modes)

@@ -231,7 +231,8 @@ export function DAWDock({
         const audioUrl = sound.iterationAudioUrls?.[i] ?? sound.audioUrl;
         const clipKey = `${sound.id}-${originalIdx}`;
         registry.set(clipKey, { clipKey, soundId: sound.id, iterationIndex: originalIdx, startMs, durationMs });
-        return { clipKey, iterationIndex: originalIdx, startMs, durationMs, audioUrl, label: displayName, iterationLink: iterationLinks[clipKey] };
+        const trim = sound.iterationTrims?.[i];
+        return { clipKey, iterationIndex: originalIdx, startMs, durationMs, audioUrl, trim, label: displayName, iterationLink: iterationLinks[clipKey] };
       });
 
       // Excluded iterations: display-only ghost clips (never draggable/played).

@@ -1,12 +1,14 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { BarButton } from '@/components/ui/BarButton';
 import { VerticalVolumeSlider } from '@/components/ui/VerticalVolumeSlider';
 import { Icon } from '@/components/ui/Icon';
+import { useAudioControlsStore } from '@/store';
+import { AUDIO_CONTROL } from '@/utils/constants';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
 
-const DEFAULT_MASTER_VOLUME = 0.8;
+const DEFAULT_MASTER_VOLUME = AUDIO_CONTROL.MASTER_VOLUME.RESET;
 
 interface SceneVolumeButtonProps {
   audioOrchestrator: AudioOrchestrator | null;
@@ -14,16 +16,18 @@ interface SceneVolumeButtonProps {
 
 /**
  * Master volume for the scene bottom bar: click toggles mute, hover reveals a
- * vertical slider above the bar.
+ * vertical slider above the bar. The value lives in audioControlsStore so other
+ * UI (e.g. the low-output hints) can change it; this component mirrors it onto
+ * the AudioOrchestrator.
  */
 export function SceneVolumeButton({ audioOrchestrator }: SceneVolumeButtonProps) {
-  const [volume, setVolume] = useState(DEFAULT_MASTER_VOLUME);
+  const volume = useAudioControlsStore((s) => s.masterVolume);
+  const handleChange = useAudioControlsStore((s) => s.setMasterVolume);
   const [isHovering, setIsHovering] = useState(false);
 
-  const handleChange = useCallback((value: number) => {
-    setVolume(value);
-    audioOrchestrator?.setMasterVolume(value);
-  }, [audioOrchestrator]);
+  useEffect(() => {
+    audioOrchestrator?.setMasterVolume(volume);
+  }, [audioOrchestrator, volume]);
 
   const muted = volume === 0;
 

@@ -798,6 +798,61 @@ class TTSGenerationRequest(BaseModel):
     tts_model: Optional[str] = None
 
 
+class TTSDialect(BaseModel):
+    """One accent of the Gemini voice library (e.g. "Egyptian Arabic", ar-EG)."""
+    accent: str
+    language_code: str
+    region_code: Optional[str] = None
+    voice_count: int
+
+
+class TTSCustomVoice(BaseModel):
+    """A user's prompted Gemini voice for a dialect with no native library voices."""
+    id: str
+    dialect_name: str
+    language_code: str
+    gender: str
+    gemini_voice_id: str
+    description: str
+    expire_time: Optional[str] = None
+    created_at: str
+
+
+class TTSDialectsResponse(BaseModel):
+    dialects: list[TTSDialect]
+    custom_voices: list[TTSCustomVoice]
+
+
+class TTSLanguageResolveRequest(BaseModel):
+    text: str
+
+
+class TTSLanguageMatch(BaseModel):
+    """Result of resolving free-text TTS language (utils/language_resolver.py).
+
+    kind: 'custom' | 'library' | 'tag' | 'unknown'.
+    """
+    kind: str
+    query: str
+    label: str
+    language_code: Optional[str] = None
+    accent: Optional[str] = None
+    voice_count: int = 0
+    custom_voices: list[TTSCustomVoice] = []
+    # False when characters are re-voiced with regional/custom voices.
+    uses_classic_voices: bool = True
+    # Base language a custom voice would be created with ('tag'/'unknown' only).
+    suggested_language_code: Optional[str] = None
+    default_description: Optional[str] = None
+
+
+class TTSCustomVoiceCreateRequest(BaseModel):
+    dialect_name: str
+    description: Optional[str] = None
+    # Overrides the inferred base language (BCP-47) when given.
+    language_code: Optional[str] = None
+
+
 # ============================================================================
 # Per-user Preferences (Advanced Settings)
 # ============================================================================

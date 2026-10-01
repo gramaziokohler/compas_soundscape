@@ -29,7 +29,7 @@ import { solveOrchestrateSchedule, scheduleEntryKey } from '@/lib/audio/orchestr
 import { serializeTrackOverlaps } from '@/lib/audio/utils/serialize-track-overlaps';
 import { parseAuthoredSeconds } from '@/lib/audio/utils/timeline-utils';
 import { pausePreviewInstance, pauseAllPreviewInstances } from '@/lib/audio/previewRegistry';
-import { AUDIO_PLAYBACK, AUDIO_TIMELINE, AUDIO_OUTPUT, DEFAULT_DBFS, DEFAULT_MAXIMUM_FOLEY_SOUNDS, TTS_DEFAULT_LANGUAGE } from '@/utils/constants';
+import { AUDIO_CONTROL, AUDIO_PLAYBACK, AUDIO_TIMELINE, AUDIO_OUTPUT, DEFAULT_DBFS, DEFAULT_MAXIMUM_FOLEY_SOUNDS, TTS_DEFAULT_LANGUAGE } from '@/utils/constants';
 import { apiService } from '@/services/api';
 import { useSoundscapeStore } from './soundscapeStore';
 import { useSpeckleEngineStore } from './speckleEngineStore';
@@ -206,6 +206,9 @@ export interface AudioControlsStoreState {
    */
   outputDeviceId: string;
   setOutputDeviceId: (deviceId: string) => void;
+  /** Master output volume (0..1). Session-only; mirrored onto the AudioOrchestrator by SceneVolumeButton. */
+  masterVolume: number;
+  setMasterVolume: (volume: number) => void;
   /** Set actual buffer duration for a sound — called by SoundSphereManager on buffer load. */
   setSoundBufferDuration: (soundId: string, durationSec: number) => void;
   /** Set generation-in-progress flag — gates bake during active generation. */
@@ -339,6 +342,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
         ttsLanguage: TTS_DEFAULT_LANGUAGE,
         outputDeviceId: AUDIO_OUTPUT.DEFAULT_DEVICE_ID,
         normalizeImpulseResponses: false,
+        masterVolume: AUDIO_CONTROL.MASTER_VOLUME.MAX,
         _generatedSounds: [],
         _soundConfigs: [],
         soundBufferDurations: {},
@@ -831,6 +835,9 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
 
         setOutputDeviceId: (deviceId) =>
           set({ outputDeviceId: deviceId }, false, 'audio/setOutputDeviceId'),
+
+        setMasterVolume: (volume) =>
+          set({ masterVolume: volume }, false, 'audio/setMasterVolume'),
 
         setOrchestrateIterationLinks: (configs) => {
           const { _generatedSounds, iterationLinks } = get();
@@ -1696,7 +1703,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
     partialize: (state: AudioControlsStoreState) => {
       const { individualSoundStates, previewingSoundId, _generatedSounds, _soundConfigs,
         soundBufferDurations, isBakingSchedule, isDeferredCycleBakePending,
-        _pendingPlayAllStagger, _generationInProgress, loopAnalysisInProgress, ...persistable } = state;
+        _pendingPlayAllStagger, _generationInProgress, loopAnalysisInProgress, masterVolume, ...persistable } = state;
       return {
         ...persistable,
         mutedSounds: [...(state.mutedSounds || [])],

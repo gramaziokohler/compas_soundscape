@@ -14,7 +14,18 @@ function waveformColor(muted: boolean): string {
 }
 
 /** Draws a static waveform thumbnail from cached min/max peaks on a plain canvas. */
-function PeaksCanvas({ peaks, color }: { peaks: AudioPeaks; color: string }) {
+function PeaksCanvas({
+  peaks,
+  color,
+  trimStart = 0,
+  trimEnd = 1,
+}: {
+  peaks: AudioPeaks;
+  color: string;
+  /** Kept fraction (0–1) of the source; only this range of peaks is drawn. */
+  trimStart?: number;
+  trimEnd?: number;
+}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -36,10 +47,13 @@ function PeaksCanvas({ peaks, color }: { peaks: AudioPeaks; color: string }) {
       ctx.clearRect(0, 0, widthPx, heightPx);
 
       // Continuous filled silhouette spanning every amplitude edge (no border).
-      const n = peaks.min.length;
+      const total = peaks.min.length;
+      const from = Math.min(total - 1, Math.max(0, Math.floor(trimStart * total)));
+      const to = Math.min(total, Math.max(from + 1, Math.ceil(trimEnd * total)));
+      const n = to - from;
       const mid = heightPx / 2;
       let globalPeak = 1e-6;
-      for (let i = 0; i < n; i++) {
+      for (let i = from; i < to; i++) {
         const mx = peaks.max[i] ?? 0;
         const mn = peaks.min[i] ?? 0;
         if (mx > globalPeak) globalPeak = mx;
@@ -49,7 +63,7 @@ function PeaksCanvas({ peaks, color }: { peaks: AudioPeaks; color: string }) {
       const top = new Float32Array(widthPx);
       const bottom = new Float32Array(widthPx);
       for (let x = 0; x < widthPx; x++) {
-        const peakIdx = Math.min(n - 1, Math.floor(((x + 0.5) / widthPx) * n));
+        const peakIdx = from + Math.min(n - 1, Math.floor(((x + 0.5) / widthPx) * n));
         const mx = peaks.max[peakIdx] ?? 0;
         const mn = peaks.min[peakIdx] ?? 0;
         top[x] = mid - mx * scale;
@@ -62,7 +76,7 @@ function PeaksCanvas({ peaks, color }: { peaks: AudioPeaks; color: string }) {
     const ro = new ResizeObserver(draw);
     ro.observe(container);
     return () => ro.disconnect();
-  }, [peaks, color]);
+  }, [peaks, color, trimStart, trimEnd]);
 
   return (
     <div ref={containerRef} style={{ width: '100%', height: '100%' }}>
@@ -77,6 +91,9 @@ export interface DAWClipProps {
   durationMs: number;
   pxPerSecond: number;
   audioUrl?: string;
+  /** Kept fraction (0–1) of the source audio (sound-card trim). */
+  trimStart?: number;
+  trimEnd?: number;
   color: string;
   name: string;
   isMuted: boolean;
@@ -106,6 +123,8 @@ function DAWClipImpl({
   durationMs,
   pxPerSecond,
   audioUrl,
+  trimStart,
+  trimEnd,
   color,
   name,
   isMuted,
@@ -232,7 +251,13 @@ function DAWClipImpl({
       data-clip-key={clipKey}
     >
       <div style={{ width: '100%', height: '100%', pointerEvents: 'none', opacity: 0.75 }}>
-        {peaks && <PeaksCanvas key={themeVersion} peaks={peaks} color={waveformColor(isMuted)} />}
+        {peaks && <PeaksCanvas
+            key={themeVersion}
+            peaks={peaks}
+            color={waveformColor(isMuted)}
+            trimStart={trimStart}
+            trimEnd={trimEnd}
+          />}
       </div>
 
       {isLoadingWaveform && !isExcluded && (

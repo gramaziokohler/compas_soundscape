@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react';
 import { NestedMenu, type NestedMenuItem } from '@/components/ui/NestedMenu';
+import { TtsLanguageStatus } from '@/components/ui/TtsLanguageStatus';
+import { useTtsLanguageResolver } from '@/hooks/useTtsLanguageResolver';
 import { defaultSceneOptions, useAudioControlsStore, useUIStore } from '@/store';
 import type { SceneQuality, SceneWorkflowOptions } from '@/types/sceneWorkflow';
 import { AUDIO_MODEL_NAMES, LLM_MODEL_NAMES, SIMPLE_MODE } from '@/utils/constants';
@@ -54,6 +56,8 @@ export function ScenePromptComposer({ willQueue, onSubmit, onClose }: ScenePromp
   const hasModel = useUIStore((s) => !!s.globalSpeckleData);
   // Empty speechLanguage = keep the app-wide TTS language (English by default).
   const appSpeechLanguage = useAudioControlsStore((s) => s.ttsLanguage);
+  // Checks a committed speech language against the voice library / custom voices.
+  const languageResolver = useTtsLanguageResolver();
 
   const [prompt, setPrompt] = useState('');
   const [options, setOptions] = useState<SceneWorkflowOptions>(() => defaultSceneOptions());
@@ -157,7 +161,10 @@ export function ScenePromptComposer({ willQueue, onSubmit, onClose }: ScenePromp
       label: 'Speech language',
       value: options.speechLanguage || appSpeechLanguage,
       placeholder: SIMPLE_MODE.SPEECH_LANGUAGE_PLACEHOLDER,
-      onCommit: (v) => patch({ speechLanguage: v }),
+      onCommit: (v) => {
+        patch({ speechLanguage: v });
+        void languageResolver.resolve(v || appSpeechLanguage);
+      },
     },
     { kind: 'separator', key: 'sep-image' },
     {
@@ -262,6 +269,7 @@ export function ScenePromptComposer({ willQueue, onSubmit, onClose }: ScenePromp
           </svg>
         </button>
       </div>
+      {options.includeSpeech && <TtsLanguageStatus resolver={languageResolver} />}
       {willQueue && <div className="bubble-step__meta">A scene is generating — this one will start right after.</div>}
       {menu && <NestedMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />}
     </div>

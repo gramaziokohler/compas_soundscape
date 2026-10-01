@@ -40,7 +40,7 @@
  */
 
 import type { IAudioMode } from '../core/interfaces/IAudioMode';
-import type { Position, Orientation, AmbisonicOrder } from '@/types/audio';
+import type { Position, Orientation, AmbisonicOrder, SourceIRStatus } from '@/types/audio';
 import type { FadeOptions } from '../utils/fade-envelope';
 import { applyFadeInOut } from '../utils/fade-envelope';
 import type { IBinauralDecoder } from '../core/interfaces/IBinauralDecoder';
@@ -48,6 +48,7 @@ import { AudioMode } from '@/types/audio';
 import { OmnitoneDecoder } from '../decoders/OmnitoneDecoder';
 import { SourceLevelMeter } from '../utils/source-level';
 import { AUDIO_CONTROL, IMPULSE_RESPONSE } from '@/utils/constants';
+import { linearToDbfs } from '@/utils/utils';
 
 // Lazy load ambisonics to avoid SSR issues (window is not defined)
 let ambisonics: any = null;
@@ -79,6 +80,8 @@ interface SourceChain {
   convolver: any; // ambisonics.convolver
   sourceIRBuffer: AudioBuffer | null; // Per-source IR buffer (for simulation mode)
   sourceIRPeak: number; // Peak amplitude of the IR fed to the convolver (0 = no IR / identity)
+  sourceIRL2: number; // W-channel L2 norm of that IR = broadband convolution gain (0 = no IR)
+  irSilenced: boolean; // True while a zero-IR mutes the source (no IR for its position)
   normGainValue: number; // Peak-normalization gain factor (1.0 = no normalization)
 
   // Source state
@@ -494,6 +497,8 @@ export class AmbisonicIRMode implements IAudioMode {
       convolver,
       sourceIRBuffer: null, // No per-source IR yet (will be set in simulation mode)
       sourceIRPeak: initialIRPeak,
+      sourceIRL2: this.irBuffer ? this.computeL2(this.irBuffer) : 0,
+      irSilenced: false,
       normGainValue: this.globalNormGain,
       position,
       isPlaying: false,
@@ -594,6 +599,8 @@ export class AmbisonicIRMode implements IAudioMode {
     chain.convolver.updateFilters(identityIR);
     chain.sourceIRBuffer = null;
     chain.sourceIRPeak = 0;
+    chain.sourceIRL2 = 0;
+    chain.irSilenced = false;
     chain.normGainValue = 1.0;
     this.applyIRGain(chain);
     if (this.normalizeEnabled && this.audioContext) {
@@ -626,6 +633,8 @@ export class AmbisonicIRMode implements IAudioMode {
     chain.convolver.updateFilters(silentIR);
     chain.sourceIRBuffer = null;
     chain.sourceIRPeak = 0;
+    chain.sourceIRL2 = 0;
+    chain.irSilenced = true;
     chain.normGainValue = 1.0;
     this.applyIRGain(chain);
     if (this.normalizeEnabled && this.audioContext) {
@@ -687,6 +696,8 @@ export class AmbisonicIRMode implements IAudioMode {
     chain.convolver.updateFilters(this.getConvolverIR(processedBuffer));
     chain.sourceIRBuffer = processedBuffer;
     chain.sourceIRPeak = this.computePeak(processedBuffer);
+    chain.sourceIRL2 = this.computeL2(processedBuffer);
+    chain.irSilenced = false;
 
     // Compute per-source normalization gain
     chain.normGainValue = this.computeNormGain(processedBuffer);
@@ -748,6 +759,8 @@ export class AmbisonicIRMode implements IAudioMode {
     chain.convolver.updateFilters(this.getConvolverIR(this.irBuffer));
     // Keep the chain's peak + gain offset in sync with the new global IR
     chain.sourceIRPeak = this.computePeak(this.irBuffer);
+    chain.sourceIRL2 = this.computeL2(this.irBuffer);
+    chain.irSilenced = false;
     this.applyIRGain(chain);
   }
 
@@ -1105,6 +1118,30 @@ export class AmbisonicIRMode implements IAudioMode {
       }
     }
     return peak;
+  }
+
+  /**
+   * L2 norm of the W (omni) channel — the broadband gain the convolution applies
+   * to a white-ish signal. Peak alone under-reports diffuse, far-field IRs.
+   */
+  private computeL2(buffer: AudioBuffer): number {
+    const data = buffer.getChannelData(0);
+    let sum = 0;
+    for (let i = 0; i < data.length; i++) sum += data[i] * data[i];
+    return Math.sqrt(sum);
+  }
+
+  /**
+   * Convolution status for a source, used by the low-output hints.
+   * gainDb folds in the live normalization and IR-gain node values.
+   */
+  getSourceIRStatus(sourceId: string): SourceIRStatus | null {
+    const chain = this.sourceChains.get(sourceId);
+    if (!chain) return null;
+    if (chain.irSilenced) return { state: 'silenced', gainDb: -Infinity };
+    if (!(chain.sourceIRL2 > 0)) return { state: 'dry', gainDb: 0 };
+    const linear = chain.sourceIRL2 * chain.normGainNode.gain.value * chain.irGainNode.gain.value;
+    return { state: 'convolved', gainDb: linearToDbfs(linear) };
   }
 
   /**

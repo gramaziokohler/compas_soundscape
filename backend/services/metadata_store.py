@@ -151,7 +151,23 @@ CREATE TABLE IF NOT EXISTS user_preferences (
     updated_at    TEXT NOT NULL
 );
 
+-- Per-user Gemini 3.8 prompted TTS voices for dialects without native library
+-- voices (routers/tts_voices.py). One voice per (user, dialect, gender); the
+-- audio-side voice lives at Google under gemini_voice_id until expire_time.
+CREATE TABLE IF NOT EXISTS custom_voices (
+    id              TEXT PRIMARY KEY,
+    user_hash       TEXT NOT NULL,
+    dialect_name    TEXT NOT NULL,
+    language_code   TEXT NOT NULL,
+    gender          TEXT NOT NULL,
+    gemini_voice_id TEXT NOT NULL,
+    description     TEXT NOT NULL,
+    expire_time     TEXT,
+    created_at      TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_hash);
+CREATE INDEX IF NOT EXISTS idx_custom_voices_user ON custom_voices(user_hash);
 CREATE INDEX IF NOT EXISTS idx_members_user ON workspace_members(user_hash);
 CREATE INDEX IF NOT EXISTS idx_model_workspace ON model_workspace(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_model_workspaces_ws ON model_workspaces(workspace_id);
@@ -255,6 +271,56 @@ class MetadataStore:
             (user_hash, payload, _now()),
         )
         return data
+
+    # ── custom TTS voices ────────────────────────────────────────────────
+    def list_custom_voices(self, user_hash: str) -> list[dict]:
+        if not user_hash:
+            return []
+        rows = self._query(
+            "SELECT * FROM custom_voices WHERE user_hash = ? ORDER BY dialect_name, gender", (user_hash,)
+        )
+        return [dict(r) for r in rows]
+
+    def add_custom_voice(
+        self,
+        user_hash: str,
+        dialect_name: str,
+        language_code: str,
+        gender: str,
+        gemini_voice_id: str,
+        description: str,
+        expire_time: Optional[str] = None,
+    ) -> dict:
+        """Insert a custom voice, replacing any previous one for the same
+        (user, dialect, gender). Returns the stored row plus ``replaced`` (the
+        Gemini voice id that was superseded, so the caller can delete it)."""
+        old = self._query(
+            "SELECT id, gemini_voice_id FROM custom_voices "
+            "WHERE user_hash = ? AND lower(dialect_name) = lower(?) AND gender = ?",
+            (user_hash, dialect_name, gender),
+        )
+        for row in old:
+            self._execute("DELETE FROM custom_voices WHERE id = ?", (row["id"],))
+        vid = _new_id()
+        self._execute(
+            "INSERT INTO custom_voices (id, user_hash, dialect_name, language_code, gender, "
+            "gemini_voice_id, description, expire_time, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (vid, user_hash, dialect_name, language_code, gender, gemini_voice_id, description,
+             expire_time, _now()),
+        )
+        row = dict(self._query("SELECT * FROM custom_voices WHERE id = ?", (vid,))[0])
+        row["replaced"] = [r["gemini_voice_id"] for r in old]
+        return row
+
+    def delete_custom_voice(self, user_hash: str, voice_id: str) -> Optional[dict]:
+        """Delete one of the user's custom voices; returns the deleted row."""
+        rows = self._query(
+            "SELECT * FROM custom_voices WHERE id = ? AND user_hash = ?", (voice_id, user_hash)
+        )
+        if not rows:
+            return None
+        self._execute("DELETE FROM custom_voices WHERE id = ?", (voice_id,))
+        return dict(rows[0])
 
     # ── workspaces ───────────────────────────────────────────────────────
     def create_workspace(self, owner_hash: str, name: str, workspace_id: Optional[str] = None) -> dict:

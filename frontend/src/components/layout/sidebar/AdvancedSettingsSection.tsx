@@ -17,6 +17,7 @@ import { CardSelect } from "@/components/ui/CardSelect";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { SearchBar } from "@/components/ui/SearchBar";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { TtsLanguageInput } from "@/components/ui/TtsLanguageInput";
 import { apiService } from "@/services/api";
 import type { TokenStatus, LLMProviders } from "@/services/api";
 import type { SoundscapeStats } from "@/types/soundscape";
@@ -31,6 +32,7 @@ import { OutputDeviceSelector } from "@/components/audio/OutputDeviceSelector";
 import type { ColorThemePreference } from "@/utils/color-theme";
 import type { UIMode } from "@/types/sceneWorkflow";
 import {
+  TTS_LANGUAGE,
   UI_BORDER_RADIUS,
   AUDIO_MODEL_TANGOFLUX,
   AUDIO_MODEL_SA3,
@@ -870,19 +872,16 @@ export function AdvancedSettingsSection({
               {isVisible('tts-language') && (
                 <div className="flex flex-col gap-0.5">
                   <label className="text-[10px] text-secondary-hover">TTS Language</label>
-                  <input
-                    ref={ttsLanguageRef}
-                    type="text"
+                  <TtsLanguageInput
+                    inputRef={ttsLanguageRef}
                     value={ttsLanguage}
-                    onChange={(e) => setTtsLanguage(e.target.value)}
-                    placeholder="e.g. English with a slightly german accent"
-                    className="w-full px-2 py-1 text-xs rounded bg-secondary-lighter text-foreground border border-secondary-light focus:outline-none focus:border-primary transition-colors"
-                    style={{
-                      borderRadius: `${UI_BORDER_RADIUS.SM}px`,
-                      ...(highlightTarget === 'tts-language'
+                    onChange={setTtsLanguage}
+                    placeholder={TTS_LANGUAGE.PLACEHOLDER}
+                    style={
+                      highlightTarget === 'tts-language'
                         ? { boxShadow: '0 0 0 1.5px var(--color-primary)' }
-                        : {}),
-                    }}
+                        : undefined
+                    }
                   />
                 </div>
               )}

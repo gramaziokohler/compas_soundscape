@@ -21,11 +21,16 @@ import {
   PYROOMACOUSTICS_SIMULATION_MODE_FOA,
   PYROOMACOUSTICS_SIMULATION_MODE_NAMES
 } from '@/utils/constants';
+import { useMemo } from 'react';
+import { useFileUploadStore } from '@/store';
+import { estimateRayCount } from '@/lib/acoustics/ray-count-estimate';
 import type { PyroomAcousticsSimulationConfig } from '@/types/acoustics';
 import { ToggleField } from '@/components/ui/ToggleField';
 import { RangeSlider } from '@/components/ui/RangeSlider';
 import { CardSelect } from '@/components/ui/CardSelect';
 import { AcousticMaterialsSummary } from './AcousticMaterialsSummary';
+
+const RAYS_STEP = 1000;
 
 interface PyroomAcousticsSimulationSettingsProps {
   config: PyroomAcousticsSimulationConfig;
@@ -37,6 +42,19 @@ export function PyroomAcousticsSimulationSettings({
   onUpdateConfig
 }: PyroomAcousticsSimulationSettingsProps) {
   
+  const geometryBounds = useFileUploadStore((s) => s.geometryBounds);
+  const rayEstimate = useMemo(
+    () => estimateRayCount(geometryBounds, config.settings.max_order, RAYS_STEP),
+    [geometryBounds, config.settings.max_order]
+  );
+  const rayMarkers = useMemo(() => {
+    if (!rayEstimate) return undefined;
+    const rec = { value: rayEstimate.recommended, label: 'rec', tone: 'primary' as const };
+    // Collapse to one tick when both land on the same value (e.g. clamped to the max).
+    if (rayEstimate.min === rayEstimate.recommended) return [rec];
+    return [{ value: rayEstimate.min, label: 'min', tone: 'warning' as const }, rec];
+  }, [rayEstimate]);
+
   const handleSettingChange = (field: keyof PyroomAcousticsSimulationConfig['settings'], value: any) => {
     onUpdateConfig({
       settings: {
@@ -101,17 +119,25 @@ export function PyroomAcousticsSimulationSettings({
           disabled={config.isRunning}
         />
         {config.settings.ray_tracing && (
-          <RangeSlider
-            label="Rays"
-            value={config.settings.n_rays}
-            min={PYROOMACOUSTICS_RAY_TRACING_N_RAYS_MIN}
-            max={PYROOMACOUSTICS_RAY_TRACING_N_RAYS_MAX}
-            step={1000}
-            onChange={(value) => handleSettingChange('n_rays', value)}
-            disabled={config.isRunning}
-            defaultValue={PYROOMACOUSTICS_RAY_TRACING_N_RAYS}
-            showLabels={false}
-          />
+          <>
+            <RangeSlider
+              label="Rays"
+              value={config.settings.n_rays}
+              min={PYROOMACOUSTICS_RAY_TRACING_N_RAYS_MIN}
+              max={PYROOMACOUSTICS_RAY_TRACING_N_RAYS_MAX}
+              step={RAYS_STEP}
+              onChange={(value) => handleSettingChange('n_rays', value)}
+              disabled={config.isRunning}
+              defaultValue={PYROOMACOUSTICS_RAY_TRACING_N_RAYS}
+              showLabels={false}
+              markers={rayMarkers}
+            />
+            {rayEstimate && (
+              <p className="text-[10px]" style={{ color: 'var(--color-secondary-hover)' }}>
+                {`Min ≈ ${rayEstimate.min.toLocaleString()} · Recommended ≈ ${rayEstimate.recommended.toLocaleString()} (${Math.round(rayEstimate.volume).toLocaleString()} m³ bbox)`}
+              </p>
+            )}
+          </>
         )}
       </div>
 

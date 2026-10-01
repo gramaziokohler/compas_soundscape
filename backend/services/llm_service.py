@@ -57,6 +57,7 @@ from config.constants import (
     LLM_PROVIDER_OPENAI,
     LLM_PROVIDER_ANTHROPIC,
     TTS_CHARACTER_NAMES,
+    TTS_INLINE_VOCAL_TAGS,
 )
 
 
@@ -2277,10 +2278,17 @@ For the duration estimation (in seconds with 0.1 precision):
             "scripts for the characters involved. "
             "You also have access to the architectural space information to estimate where "
             "each character is speaking from within the room. "
-            "Add audio tags when relevant to emphasize emotion, such as [whispers], [excitedly], [cough], ..."
+            "The scripts are read aloud VERBATIM by a text-to-speech model, so anything you write is "
+            "spoken. Only when relevant, add English inline vocal tags in angle brackets for human "
+            f"vocalizations, chosen exclusively from: {', '.join(TTS_INLINE_VOCAL_TAGS)}. "
+            "Never use square-bracket tags, stage directions or emotion words like (excitedly)."
         )
+        # Gemini 3.8 TTS speaks the language/dialect of the TEXT (speech_config.language only
+        # biases accent), so a dialect must be written as spoken, not in its standard form.
         language_instruction = (
-            f"CRITICAL: Write ALL dialogue scripts in {language}. Never output scripts in any other language.\n\n"
+            f"CRITICAL: Write ALL dialogue scripts in {language}. Never output scripts in any other language. "
+            f"If {language} is a dialect or regional variety, write it exactly as it is spoken, with its own "
+            "spelling, vocabulary and grammar — never the standard written language.\n\n"
             if language
             else ""
         )
@@ -2325,8 +2333,8 @@ For the duration estimation (in seconds with 0.1 precision):
             '    "id": "Clara_1",\n'
             '    "timestamps": ["00:21", "00:45", "00:54"],\n'
             '    "character": "Clara",\n'
-            '    "script": "Morning Marcus, [cough] good to see you!; If you look closely at July, '
-            'that is exactly where our third quarter drops began to manifest.; [excitedly] Ok bye then!",\n'
+            '    "script": "Morning Marcus, <cough> good to see you!; If you look closely at July, '
+            'that is exactly where our third quarter drops began to manifest.; <laugh> Ok bye then!",\n'
             '    "position": [1.2, 0.8, 1.55]\n'
             "  }\n"
             "]\n\n"

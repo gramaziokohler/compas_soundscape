@@ -520,3 +520,78 @@ Any new state keyed by an analysis card index must be added to `remapLinkedCardI
 │ Limiter (safety) → Stereo Output (L/R)                     │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+### Low-Output Helper Hints
+
+When scene playback is too quiet, a popover above the bottom-bar play button explains why and
+offers a one-click fix.
+
+```
+limiter → OutputLevelMeter (inline AnalyserNode) → destination
+            │  averaged RMS dBFS
+            ▼
+AudioOrchestrator.getOutputDiagnostics()   ← per playing source: post-fader level,
+            │                                 engine mute, listener distance (6DOF modes),
+            │                                 IR status / broadband gain (AmbisonicIRMode)
+            ▼
+useLowOutputHints (polls every 250 ms while playing; output < −42 dBFS for 2 s)
+            ▼
+diagnoseLowOutput()  — first matching rule wins:
+  browser suspended → master volume → all muted/soloed out → quiet tracks →
+  sounds outside simulated positions (zero IR) → low-energy IRs → camera too far → generic
+            ▼
+LowOutputHintPopover (SceneBottomBar playback group): Enable audio / Turn up /
+  Unmute all / Open timeline / Normalize IRs / Move closer, or dismiss for the session
+```
+
+Files: `lib/audio/utils/output-level-meter.ts`, `lib/audio/utils/low-output-diagnosis.ts`,
+`hooks/useLowOutputHints.ts`, `components/scene/LowOutputHintPopover.tsx`. Thresholds live in
+`utils/constants.ts` → `LOW_OUTPUT_HINT`. Master volume lives in
+`audioControlsStore.masterVolume` (session-only) so hints can raise it; `SceneVolumeButton`
+mirrors it onto the orchestrator.
+
+### Pyroomacoustics Ray-Count Estimate
+
+The "Rays" slider in `PyroomAcousticsSimulationSettings.tsx` shows `min` / `rec` tick markers
+computed by `frontend/src/lib/acoustics/ray-count-estimate.ts` from the model bounding box
+(`useFileUploadStore.geometryBounds`, metres). With `V = xyz`, `S = 2(xy+yz+zx)`, `MFP = 4V/S`:
+
+- **min** — Rindel (1995) eq. 1, `N ≥ 8π c² t² / A`, over the ISM window `t = m·MFP/c`
+  (`m` = Image-Source order, so `N = 8π (m·MFP)² / A`; `A` = smallest resolved surface, 1 m²).
+- **rec** — `max(min, K·V / (π r² c Δt))`: K = 100 receiver hits per histogram bin
+  (r = 0.5 m, Δt = 4 ms, mirrored from the backend constants).
+
+Both are rounded to the slider step and clamped to the 1,000–50,000 range. Constants live in
+`utils/constants.ts` (`PYROOMACOUSTICS_RAY_TRACING_*`).
+
+## TTS language → voice (Gemini 3.8)
+
+Gemini 3.8 TTS reads the transcript verbatim and speaks the **language of the text**;
+`speech_config.language` only biases accent and must be a **BCP-47 tag** (free text such as
+"Swiss German" → HTTP 400). Dialect/accent comes from the **voice**. The UI language stays free text.
+
+```
+"Swiss German" ──► utils/language_resolver.resolve_language(text, dialects, custom_voices)
+                     1. custom   user's prompted voice (SQLite custom_voices)      → custom voice id
+                     2. library  exact voice-library accent ("Egyptian Arabic")     → regional voices
+                     3. tag      Babel/CLDR name or tag ("Swiss German" → gsw);
+                                 upgraded to library when native voices exist ("German" → de-DE)
+                     4. unknown  → auto-detect, classic voices
+                 ──► services/tts_voice_service.pick_voice(match, classic_voice)
+                       same-gender regional voice (stable per character) | custom voice | classic voice
+                 ──► tts_service.generate_speech(voice, language_code=<BCP-47 or None>)
+```
+
+- `services/tts_voice_catalog.py` — live Extended Voice Library (`client.voices.list`, ≈2 000 voices,
+  50 accents) cached in Redis `tts:voice_catalog` for 24 h; nothing is hard-coded, stale cache beats empty.
+- `routers/tts_voices.py` — `GET /api/tts/dialects`, `POST /api/tts/resolve-language`,
+  `GET|POST /api/tts/custom-voices`, `DELETE /api/tts/custom-voices/{id}`. Creation is an IO job
+  (`JOB_TYPE_TTS_VOICE`) that makes a female + male `prompted` voice (`voices.create`, ≈30 s each,
+  expires after 1 year) and stores it per `user_hash` in SQLite `custom_voices`.
+- `routers/tts.py` resolves once per job; character names are unchanged (only the Gemini voice id is
+  swapped), so the character ↔ voice naming in `TTS_VOICE_CHARACTERS` / `TTS_CHARACTER_VOICES` is intact.
+- Frontend: `components/ui/TtsLanguageInput.tsx` (settings) and `ScenePromptComposer` resolve on
+  Enter/commit via `hooks/useTtsLanguageResolver.ts`; `TtsLanguageStatus` shows regional/custom badges or
+  the "create a custom voice for this dialect?" prompt.
+- The speech agent (`llm_service._build_speech_agent_prompts`) receives the display name and is told to
+  write dialects as spoken; it may only use Gemini 3.8 angle-bracket vocal tags (`TTS_INLINE_VOCAL_TAGS`).

@@ -10,6 +10,8 @@ export interface DAWLaneClip {
   startMs: number;
   durationMs: number;
   audioUrl?: string;
+  /** Kept fraction (0–1) of the source audio; the waveform draws only this range. */
+  trim?: { start: number; end: number };
   label: string;
   iterationLink?: IterationLink;
   /** True for a solver-excluded, display-only ghost clip. */
@@ -102,6 +104,8 @@ function DAWLaneImpl({
           durationMs={clip.durationMs}
           pxPerSecond={pxPerSecond}
           audioUrl={clip.audioUrl}
+          trimStart={clip.trim?.start}
+          trimEnd={clip.trim?.end}
           color={color}
           name={clip.label}
           isMuted={isMuted}

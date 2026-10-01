@@ -266,12 +266,11 @@ TTS_AVAILABLE_VOICES = [
     "Autonoe",
     "Callirrhoe",
     "Despina",
-    "Encelade",
+    "Enceladus",
     "Erinome",
     "Gacrux",
     "Iapetus",
     "Laomedeia",
-    "Léda",
     "Pulcherrima",
     "Rasalgethi",
     "Sadachbia",
@@ -301,12 +300,12 @@ TTS_VOICE_CHARACTERS = {
     "Mia": "Aoede",
     "Elena": "Callirrhoe",
     "Clara": "Despina",
-    "Gabriel": "Encelade",
+    "Gabriel": "Enceladus",
     "Eva": "Erinome",
     "Luna": "Gacrux",
     "Victor": "Iapetus",
     "Lara": "Laomedeia",
-    "Sara": "Léda",
+    "Sara": "Autonoe",
     "Julia": "Pulcherrima",
     "Oscar": "Rasalgethi",
     "Arthur": "Sadachbia",
@@ -323,6 +322,48 @@ TTS_CHARACTER_NAMES = list(TTS_VOICE_CHARACTERS.keys())
 TTS_OUTPUT_DIR = "./temp/static/sounds/generated/tts"
 TTS_OUTPUT_URL_PREFIX = "/static/sounds/generated/tts"
 TTS_TASK_CLEANUP_DELAY_SECONDS = 600
+
+# ── TTS language / dialect resolution (services/tts_voice_catalog.py,
+#    utils/language_resolver.py, routers/tts_voices.py) ──────────────────────
+# Gemini 3.8 rejects anything but a BCP-47 tag in speech_config.language, and the
+# spoken language follows the transcript text — dialect/accent comes from the
+# VOICE. The Extended Voice Library (client.voices.list) is fetched live and
+# cached in Redis so new regional voices appear without a code change.
+TTS_VOICE_CATALOG_REDIS_KEY = "tts:voice_catalog"
+TTS_VOICE_CATALOG_TTL_SECONDS = 24 * 3600
+TTS_VOICE_CATALOG_PAGE_SIZE = 100
+TTS_VOICE_CATALOG_RETRY_SECONDS = 60  # back-off after a failed library fetch
+# Accent of the 30 classic prebuilt voices (Kore, Puck, …). A language resolving
+# to this accent keeps the characters' classic voices instead of swapping them.
+TTS_CLASSIC_VOICE_ACCENT = "General American"
+# Babel display-name locales used to match free text ("Swiss German",
+# "Schweizerdeutsch", "suisse allemand") to a BCP-47 tag.
+TTS_LANGUAGE_NAME_LOCALES = ("en", "de", "fr", "it")
+TTS_VOICE_GENDER_FEMALE = "female"
+TTS_VOICE_GENDER_MALE = "male"
+TTS_CUSTOM_VOICE_GENDERS = (TTS_VOICE_GENDER_FEMALE, TTS_VOICE_GENDER_MALE)
+TTS_CUSTOM_VOICE_TYPE = "prompted"
+TTS_CUSTOM_VOICE_DISPLAY_NAME_MAX = 64
+TTS_CUSTOM_VOICE_DESCRIPTION_MAX = 600
+TTS_CUSTOM_VOICE_DESCRIPTION_TEMPLATE = (
+    "Native {dialect} speaker in their 30s. Speaks everyday {dialect} "
+    "with fully authentic regional pronunciation, vocabulary and intonation, "
+    "never the standard written form."
+)  # gender is passed separately (voices.create ``gender``)
+# Gemini 3.8 inline vocal tags (speech-generation docs). Transcripts are read
+# verbatim, so any other bracketed text — e.g. "[excitedly]" — is spoken aloud.
+# Keep tags in English even for non-English transcripts.
+TTS_INLINE_VOCAL_TAGS = (
+    "<laugh>", "<chuckle>", "<giggle>", "<sigh>", "<cough>", "<throat-clearing>",
+    "<gasp>", "<breath>", "<exhales>", "<yawn>", "<sneeze>", "<sob>", "<groan>",
+    "<whispering>", "<shout>", "<short pause>", "<long pause>",
+)
+# Language-resolution outcomes (LanguageMatch.kind). Mirrored in
+# frontend/src/types/ttsLanguage.ts.
+TTS_LANGUAGE_MATCH_CUSTOM = "custom"
+TTS_LANGUAGE_MATCH_LIBRARY = "library"
+TTS_LANGUAGE_MATCH_TAG = "tag"
+TTS_LANGUAGE_MATCH_UNKNOWN = "unknown"
 
 # Default Generation Parameters (TangoFlux)
 DEFAULT_GUIDANCE_SCALE = 4.5  # Default guidance scale for generation
@@ -803,7 +844,8 @@ JOB_TYPE_CHORAS = "choras"
 # IO job types (asyncio.create_task in the API process — no queue, no worker)
 JOB_TYPE_TTS = "tts"
 JOB_TYPE_LLM = "llm"
-IO_JOB_TYPES = (JOB_TYPE_TTS, JOB_TYPE_LLM)
+JOB_TYPE_TTS_VOICE = "tts_voice"  # custom dialect voice creation (routers/tts_voices.py)
+IO_JOB_TYPES = (JOB_TYPE_TTS, JOB_TYPE_LLM, JOB_TYPE_TTS_VOICE)
 
 # Job statuses
 JOB_STATUS_QUEUED = "queued"

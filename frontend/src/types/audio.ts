@@ -109,6 +109,12 @@ export interface TimelineSound {
    */
   iterationAudioUrls?: string[];
   /**
+   * Per-iteration trim fractions (0–1 of the source buffer, parallel to scheduledIterations).
+   * `undefined` entries mean untrimmed. The DAW uses them to draw only the kept
+   * portion of the (untrimmed) source waveform.
+   */
+  iterationTrims?: ({ start: number; end: number } | undefined)[];
+  /**
    * Original iteration indices the orchestrate solver EXCLUDED for this sound
    * (its timing link could not be satisfied strictly). Not scheduled or played.
    */
@@ -353,3 +359,67 @@ export interface WAVParseResult {
   audioData: Float32Array[];
 }
 
+
+// ============================================================================
+// Low-output diagnostics (AudioOrchestrator.getOutputDiagnostics → hint popover)
+// ============================================================================
+
+/** How a source's convolver is currently configured in AMBISONIC_IR mode. */
+export interface SourceIRStatus {
+  /** 'dry' = identity/no IR, 'convolved' = real IR, 'silenced' = zero-IR (no IR for this position). */
+  state: 'dry' | 'convolved' | 'silenced';
+  /** Broadband IR gain in dB (W-channel L2 × normalization × IR gain); -Infinity when silenced. */
+  gainDb: number;
+}
+
+/** Per-source snapshot of everything between the fader and the master bus. */
+export interface OutputSourceDiagnostics {
+  id: string;
+  position: Position3D;
+  /** Post-fader, pre-mute level (SourceLevelMeter 0..1 scale). */
+  level: number;
+  /** Effective engine mute (track mute or solo of another sound). */
+  muted: boolean;
+  /** Listener→source distance in metres; null when the active mode ignores distance. */
+  distance: number | null;
+  /** IR status in AMBISONIC_IR mode; null in other modes. */
+  ir: SourceIRStatus | null;
+}
+
+/** Snapshot of the final output and the reasons it could be quiet. */
+export interface OutputDiagnostics {
+  contextState: AudioContextState;
+  /** Averaged post-limiter output level, RMS dBFS. */
+  outputDbfs: number;
+  masterVolume: number;
+  mode: AudioMode;
+  /** Only sources with in-flight voices. */
+  sources: OutputSourceDiagnostics[];
+}
+
+export type LowOutputHintId =
+  | 'context-suspended'
+  | 'master-low'
+  | 'all-muted'
+  | 'tracks-quiet'
+  | 'out-of-simulation'
+  | 'low-ir'
+  | 'too-far'
+  | 'generic';
+
+export type LowOutputHintAction =
+  | 'resume-audio'
+  | 'raise-master'
+  | 'unmute-all'
+  | 'open-timeline'
+  | 'normalize-irs'
+  | 'move-closer';
+
+/** One helper hint shown next to the play button when the output is too quiet. */
+export interface LowOutputHint {
+  id: LowOutputHintId;
+  message: string;
+  action: { kind: LowOutputHintAction; label: string } | null;
+  /** Target for 'move-closer' (nearest playing sound). */
+  target?: Position3D;
+}

@@ -1049,6 +1049,77 @@ canvas {
   color: var(--color-secondary-hover);
   margin: 6px 0 2px;
 }
+/* Low-output helper hint (components/scene/LowOutputHintPopover.tsx) — rises
+   above the play button inside the bar's playback group. */
+.bar-hint {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 280px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 8px 10px 10px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-strong);
+  border-left: 3px solid var(--color-warning);
+  border-radius: 10px;
+  box-shadow: var(--shadow-lg);
+  color: var(--foreground);
+  animation: bar-hint-in 0.2s ease-out;
+}
+@keyframes bar-hint-in {
+  from { opacity: 0; transform: translate(-50%, 6px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
+}
+.bar-hint__icon {
+  display: flex;
+  padding-top: 1px;
+  color: var(--color-warning);
+}
+.bar-hint__body {
+  flex: 1;
+  min-width: 0;
+}
+.bar-hint__title {
+  font-size: 11px;
+  font-weight: 600;
+  margin: 0 0 2px;
+}
+.bar-hint__message {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--color-secondary-hover);
+  margin: 0;
+}
+.bar-hint__action {
+  margin-top: 8px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--color-primary);
+  color: var(--color-on-blue);
+  transition: background-color 0.15s ease;
+}
+.bar-hint__action:hover {
+  background: var(--color-primary-hover);
+}
+.bar-hint__close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  color: var(--color-secondary-hover);
+  transition: background-color 0.15s ease;
+}
+.bar-hint__close:hover {
+  background: var(--color-secondary-light);
+}
 
 /* ==========================================================================
    Card design system — shared presentation classes (token-only)

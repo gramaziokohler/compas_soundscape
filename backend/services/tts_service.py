@@ -7,8 +7,11 @@ via the Gemini 3.8 TTS models (``gemini-3.8-flash-tts`` /
 
 Gemini 3.8 TTS differs from the removed 2.5 / 3.1-preview TTS models:
 
-* The transcript is read strictly word-for-word, so language/style hints are
-  passed as structured config (``speech_config.language``) — never inline text.
+* The transcript is read strictly word-for-word and its language decides the
+  spoken language. ``speech_config.language`` only biases accent and MUST be a
+  BCP-47 tag (free text like "Swiss German" is rejected with a 400) — callers
+  resolve the user's text first (utils/language_resolver.py). Dialect comes
+  from the voice (services/tts_voice_service.py ``pick_voice``).
 * Unary requests return a complete WAV file (``audio/wav``, RIFF header) rather
   than raw PCM, so the returned bytes are written directly (no manual header).
 """
@@ -53,7 +56,7 @@ class TTSService:
         text: str,
         output_path: str,
         voice_name: str = TTS_DEFAULT_VOICE,
-        language: Optional[str] = None,
+        language_code: Optional[str] = None,
         model: str = DEFAULT_TTS_MODEL,
     ) -> tuple[str, float]:
         """
@@ -82,10 +85,10 @@ class TTSService:
         client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
 
         speech_config: dict = {"voice": voice_name}
-        if language:
-            # Gemini 3.8 TTS reads the transcript verbatim; the language/accent
-            # hint must live in structured config, not in the input text.
-            speech_config["language"] = language
+        if language_code:
+            # BCP-47 only — the accent hint lives in structured config, never in
+            # the transcript (which is read verbatim).
+            speech_config["language"] = language_code
 
         interaction = client.interactions.create(
             model=model or DEFAULT_TTS_MODEL,

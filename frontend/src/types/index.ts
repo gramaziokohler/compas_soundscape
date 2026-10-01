@@ -275,6 +275,14 @@ export type SoundState = 'playing' | 'paused' | 'stopped';
 
 // Per-user preferences (Advanced Settings)
 import type { UserPreferences, ListenerOrientation } from './preferences';
+export type {
+  TtsLanguageMatchKind,
+  TtsDialect,
+  TtsCustomVoice,
+  TtsDialectsResponse,
+  TtsLanguageMatch,
+  TtsCustomVoiceCreateRequest,
+} from './ttsLanguage';
 export type { UserPreferences, ListenerOrientation };
 
 // Import SidebarTabValue from constants for single source of truth

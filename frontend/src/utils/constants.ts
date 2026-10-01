@@ -564,15 +564,14 @@ export const TTS_VOICES = [
   { value: "Algieba", label: "Oliver (Smooth)" }, // Homme
   { value: "Alnilam", label: "Thomas (Firm)" }, // Homme
   { value: "Aoede", label: "Mia (Breezy)" }, // Femme
-  { value: "Autonoe", label: "Anna (Bright)" }, // Femme
   { value: "Callirrhoe", label: "Elena (Calm)" }, // Femme
   { value: "Despina", label: "Clara (Smooth)" }, // Femme
-  { value: "Encelade", label: "Gabriel (Breathy)" }, // Homme
+  { value: "Enceladus", label: "Gabriel (Breathy)" }, // Homme
   { value: "Erinome", label: "Eva (Open)" }, // Femme
   { value: "Gacrux", label: "Luna (Mature)" }, // Femme
   { value: "Iapetus", label: "Victor (Clear)" }, // Homme
   { value: "Laomedeia", label: "Lara (Upbeat)" }, // Femme
-  { value: "Léda", label: "Sara (Young)" }, // Femme
+  { value: "Autonoe", label: "Sara (Bright)" }, // Femme
   { value: "Pulcherrima", label: "Julia (Direct)" }, // Femme
   { value: "Rasalgethi", label: "Oscar (Informative)" }, // Homme
   { value: "Sadachbia", label: "Arthur (Lively)" }, // Homme
@@ -587,6 +586,23 @@ export const TTS_VOICES = [
 
 export const TTS_DEFAULT_VOICE = "Kore";
 export const TTS_DEFAULT_LANGUAGE = "English";
+
+/**
+ * TTS language / dialect resolution UI (components/ui/TtsLanguageInput.tsx,
+ * hooks/useTtsLanguageResolver.ts). Gemini 3.8 speaks the language of the text;
+ * the dialect/accent comes from the voice — a regional library voice or a
+ * user-created custom voice (backend routers/tts_voices.py).
+ */
+export const TTS_LANGUAGE = {
+  /** Poll interval while a custom voice is being created (≈30 s per voice). */
+  CUSTOM_VOICE_POLL_MS: 2000,
+  /** Give up polling a custom-voice job after this long. */
+  CUSTOM_VOICE_TIMEOUT_MS: 5 * 60 * 1000,
+  DATALIST_ID: 'tts-language-suggestions',
+  PLACEHOLDER: 'e.g. Swiss German, Egyptian Arabic, Glasgow English',
+  DESCRIPTION_ROWS: 3,
+  DESCRIPTION_MAX: 600,
+} as const;
 
 /**
  * Bare character name → Gemini TTS voice value. Mirrors the backend
@@ -610,12 +626,12 @@ export const TTS_CHARACTER_VOICES: Record<string, string> = {
   Mia: "Aoede",
   Elena: "Callirrhoe",
   Clara: "Despina",
-  Gabriel: "Encelade",
+  Gabriel: "Enceladus",
   Eva: "Erinome",
   Luna: "Gacrux",
   Victor: "Iapetus",
   Lara: "Laomedeia",
-  Sara: "Léda",
+  Sara: "Autonoe",
   Julia: "Pulcherrima",
   Oscar: "Rasalgethi",
   Arthur: "Sadachbia",
@@ -1029,6 +1045,7 @@ export const AUDIO_CONTROL = {
   MASTER_VOLUME: {
     MIN: 0.0,
     MAX: 1.0,   // Unity gain maximum
+    RESET: 0.8, // Value restored by "unmute" / slider double-click
   },
   
   // Limiter settings (DynamicsCompressorNode)
@@ -1403,6 +1420,32 @@ export const AUDIO_LEVEL = {
   RELEASE: 0.12,
   /** Below this scaled level the source is treated as silent. */
   SILENCE_THRESHOLD: 0.01,
+} as const;
+
+// Low-output helper hints (hooks/useLowOutputHints.ts, lib/audio/utils/low-output-diagnosis.ts)
+export const LOW_OUTPUT_HINT = {
+  /** Master output analyser window (~43 ms at 48 kHz). */
+  FFT_SIZE: 2048,
+  /** How often the master output is sampled while playing. */
+  POLL_MS: 250,
+  /** Time constant of the output power average (smooths transients between clips). */
+  AVERAGE_WINDOW_MS: 1500,
+  /** Averaged output (RMS dBFS, post-limiter) below this counts as "too quiet". */
+  LOW_OUTPUT_DBFS: -42,
+  /** Output must rise above this to clear the hint (hysteresis against flicker). */
+  RECOVER_OUTPUT_DBFS: -36,
+  /** Output must stay low this long before a hint appears. */
+  SUSTAIN_MS: 2000,
+  /** Master volume at or below this is reported as muted/low. */
+  MASTER_LOW: 0.1,
+  /** Post-fader source level (SourceLevelMeter 0..1 scale) below this is a quiet track. */
+  SOURCE_QUIET_LEVEL: 0.03,
+  /** Listener further than this from the nearest playing sound (6DOF modes) is "too far". */
+  FAR_DISTANCE_M: 12,
+  /** Camera distance from the sound after the "Move closer" action. */
+  FLY_TO_DISTANCE_M: 3,
+  /** Effective IR broadband gain (W-channel L2 × norm × IR gain) below this is "quiet IR". */
+  LOW_IR_GAIN_DB: -30,
 } as const;
 
 // Receiver Configuration
@@ -1910,6 +1953,12 @@ export const PYROOMACOUSTICS_RAY_TRACING_RECOMMENDED_MAX_ORDER = 3; // Recommend
 export const PYROOMACOUSTICS_RAY_TRACING_N_RAYS = 10000; // Default number of rays
 export const PYROOMACOUSTICS_RAY_TRACING_N_RAYS_MIN = 1000; // Minimum number of rays
 export const PYROOMACOUSTICS_RAY_TRACING_N_RAYS_MAX = 50000; // Maximum number of rays
+// Ray-count estimate (Rindel 1995, eq. 1 + receiver-hit density). Receiver radius / bin size
+// mirror backend/config/constants.py (PYROOMACOUSTICS_RAY_TRACING_RECEIVER_RADIUS / _HIST_BIN_SIZE).
+export const PYROOMACOUSTICS_RAY_TRACING_RECEIVER_RADIUS = 0.5; // Receiver sphere radius (m)
+export const PYROOMACOUSTICS_RAY_TRACING_HIST_BIN_SIZE = 0.004; // Energy histogram bin (s)
+export const PYROOMACOUSTICS_RAY_TRACING_TARGET_HITS_PER_BIN = 100; // K: receiver hits per bin (~10% noise)
+export const PYROOMACOUSTICS_RAY_TRACING_MIN_RESOLVED_SURFACE_AREA = 1; // A: smallest surface to discover (m²)
 export const PYROOMACOUSTICS_DEFAULT_SCATTERING = 0.05; // Default scattering coefficient (0-1)
 export const PYROOMACOUSTICS_SCATTERING_MIN = 0.0; // Minimum scattering (specular reflection)
 export const PYROOMACOUSTICS_SCATTERING_MAX = 1.0; // Maximum scattering (diffuse reflection)

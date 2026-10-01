@@ -18,6 +18,10 @@ from fastapi import APIRouter, HTTPException, Request
 
 from services.tts_service import TTSService
 from services.tts_job import generate_tts_item, sanitize_filename
+from services.tts_voice_catalog import voice_catalog
+from services.tts_voice_service import pick_voice
+from services.metadata_store import metadata_store
+from utils.language_resolver import resolve_language
 from services.job_store import job_store
 from services.io_jobs import start_io_job, run_blocking
 from services.paths import user_sounds_dir
@@ -58,7 +62,13 @@ async def generate_tts(request: TTSGenerationRequest, req: Request):
     sounds_out = user_sounds_dir(session_id)
     sounds_out.mkdir(parents=True, exist_ok=True)
     url_prefix = f"{GENERATED_SOUND_URL_PREFIX}/{session_id}"
-    language = request.language
+    # Resolve the user's free-text language ("Swiss German") once per job into a
+    # BCP-47 code + dialect voices (Gemini 3.8 rejects free text with a 400).
+    user_hash = getattr(req.state, "user_hash", None)
+    dialects = await run_blocking(voice_catalog.dialects)
+    match = resolve_language(
+        request.language, dialects, metadata_store.list_custom_voices(user_hash) if user_hash else []
+    )
 
     async def _run(job_id: str) -> None:
         completed_sounds: list[dict] = []
@@ -69,6 +79,7 @@ async def generate_tts(request: TTSGenerationRequest, req: Request):
         for idx, item in enumerate(valid_texts):
             text = (item.get("text") or "").strip()
             voice_name = item.get("voice_name", TTS_DEFAULT_VOICE)
+            gemini_voice = await run_blocking(pick_voice, match, voice_name, voice_catalog)
             display_name = item.get("display_name") or text
             prompt_index = item.get("prompt_index", idx)
             copy_index = item.get("copy_index", 0)
@@ -101,7 +112,7 @@ async def generate_tts(request: TTSGenerationRequest, req: Request):
             try:
                 real_duration_seconds = await run_blocking(
                     generate_tts_item,
-                    tts_service, text, output_path, voice_name, language, tts_model, dbfs,
+                    tts_service, text, output_path, gemini_voice, match.language_code, tts_model, dbfs,
                 )
             except Exception as exc:
                 errors.append(f"{display_short}: {exc}")
