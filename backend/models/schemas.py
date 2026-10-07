@@ -2,7 +2,7 @@
 # Pydantic Models for Request Bodies
 
 from enum import Enum
-from typing import Literal
+from typing import Any, Literal
 from typing import Optional
 
 from config.constants import DEFAULT_AUDIO_MODEL
@@ -223,6 +223,22 @@ class PyroomacousticsMaterialsResponse(BaseModel):
 # Speckle Model Schemas
 # ============================================================================
 
+class SpeckleIngestionStatusResponse(BaseModel):
+    """Live status of an async Speckle file ingestion (GET /api/speckle/ingestion/{id})."""
+    status: Optional[str] = None
+    # queued | processing | materializing | success | failed
+    stage: str
+    progress_message: Optional[str] = None
+    # 0–1 fraction while processing; None when Speckle reports no percentage
+    progress: Optional[float] = None
+    # converting | packing | bundling | publishing
+    phase: Optional[str] = None
+    attempt: Optional[int] = None
+    version_id: Optional[str] = None
+    object_id: Optional[str] = None
+    error: Optional[str] = None
+
+
 class SpeckleModelAuthor(BaseModel):
     """Author info for a Speckle model"""
     id: str
@@ -412,6 +428,8 @@ class SoundscapeGridListener(BaseModel):
     selectedObjectIds: list[str] = []
     boundingBox: Optional[dict[str, list[float]]] = None  # {min: [x,y,z], max: [x,y,z]}
     points: list[list[float]] = []
+    placementMode: Optional[str] = None  # "objects" | "area"
+    drawnArea: Optional[dict[str, Any]] = None  # frontend DrawnArea polygon (placementMode "area")
 
 
 class SoundscapeIRMetadata(BaseModel):
@@ -492,10 +510,14 @@ class SoundscapeData(BaseModel):
     resonance_audio_config: Optional[dict] = None
     # Per-iteration variant/entity links (keyed by f"{sound_id}-{iteration_index}")
     iteration_links: Optional[dict] = None
+    # Per-clip DAW trim overrides {start, end} (0-1 of the source), keyed `${soundId}-${iterationIndex}`
+    iteration_trims: Optional[dict] = None
     # Sound IDs currently muted in the DAW timeline
     muted_sounds: Optional[list[str]] = None
-    # Sound ID currently soloed in the DAW timeline (None = none)
+    # Legacy single soloed sound ID (read-only fallback; superseded by soloed_sounds)
     soloed_sound: Optional[str] = None
+    # Variant sound IDs of every soloed DAW track (multi-solo)
+    soloed_sounds: Optional[list[str]] = None
     # Solver-excluded iteration indices per sound ID (timing link unsatisfiable)
     excluded_iterations: Optional[dict] = None
     # Reason per excluded iteration, keyed f"{sound_id}-{iteration_index}"
@@ -905,3 +927,5 @@ class UserPreferences(BaseModel):
     show_spectrograms: Optional[bool] = None
     # History
     enable_auto_save: Optional[bool] = None
+    # One-time UI hints the user has already seen (e.g. "fps"), shown once per identity
+    seen_hints: Optional[list[str]] = None

@@ -153,13 +153,10 @@ export class SpeckleAudioCoordinator {
 
     this.eventBridge.setupEventListeners();
 
-    this.eventBridge.setOnCustomObjectSelected((object: THREE.Object3D, type: 'sound' | 'receiver') => {
-      if (this.dragHandler) {
-        // Large-object labels are click proxies for an invisible marker group —
-        // select the marker itself so the surface gumball attaches there.
-        const target = (object.userData?.markerTarget as THREE.Object3D | undefined) ?? object;
-        this.dragHandler.selectObjects([target]);
-      }
+    // Objects arrive already resolved to their drag targets (large-object labels
+    // → their invisible marker group), so the surface gumball attaches there.
+    this.eventBridge.setOnCustomSelectionChanged((objects: THREE.Object3D[]) => {
+      this.dragHandler?.selectObjects(objects);
     });
 
     this.eventBridge.setOnSelectionCleared(() => {
@@ -208,13 +205,7 @@ export class SpeckleAudioCoordinator {
       const positions = this.gridReceiverManager?.getPositions() || [];
       if (!positions[instanceId]) return;
 
-      // Prefer explicit point ID (when multiple grids are visible); fall back to legacy format
-      const pointId =
-        this.gridReceiverManager?.getPointId(instanceId) ??
-        (() => {
-          const gid = this.gridReceiverManager?.getGridListenerId();
-          return gid ? `${gid}-${instanceId}` : null;
-        })();
+      const pointId = this.resolveGridPointId(instanceId);
       if (!pointId) return;
 
       const pos = positions[instanceId];
@@ -535,6 +526,24 @@ export class SpeckleAudioCoordinator {
     this.externalOnGridListenerDoubleClickedCallback = callback;
   }
 
+  /** Single click on a grid listener point (debounced against double-click) → its point id. */
+  public setOnGridListenerClicked(callback: (pointId: string) => void): void {
+    if (!this.eventBridge) return;
+    this.eventBridge.setOnGridListenerSingleClicked((instanceId: number) => {
+      const pointId = this.resolveGridPointId(instanceId);
+      if (pointId) callback(pointId);
+    });
+  }
+
+  /** Grid point id (`${gridId}-${index}`) for an instanced-mesh hit. */
+  private resolveGridPointId(instanceId: number): string | null {
+    // Prefer explicit point ID (when multiple grids are visible); fall back to legacy format
+    const explicit = this.gridReceiverManager?.getPointId(instanceId);
+    if (explicit) return explicit;
+    const gid = this.gridReceiverManager?.getGridListenerId();
+    return gid ? `${gid}-${instanceId}` : null;
+  }
+
   /**
    * Set callback for when a receiver position is updated via drag
    * This syncs the 3D position back to React state to persist the dragged position
@@ -657,6 +666,11 @@ export class SpeckleAudioCoordinator {
   public setOnReceiverSingleClicked(callback: (receiverId: string) => void): void {
     if (!this.eventBridge) return;
     this.eventBridge.setOnReceiverSingleClicked(callback);
+  }
+
+  /** Detach the gizmo / selection from sound spheres or listeners that were just hidden. */
+  public deselectCustomObjectsOfType(type: 'sound' | 'receiver'): void {
+    this.eventBridge?.deselectCustomObjectsOfType(type);
   }
 
   public setOnCustomObjectDeselected(callback: () => void): void {

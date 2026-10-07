@@ -6,6 +6,7 @@
  */
 
 import type * as THREE from 'three';
+import type { DrawnArea } from './area-drawing';
 
 /**
  * ReceiverData
@@ -34,6 +35,13 @@ export interface ReceiverData {
 }
 
 /**
+ * How a grid listener's boundary is defined:
+ * - 'objects': bounding box of the Speckle surfaces picked in the viewer
+ * - 'area': polygon drawn on the model (listeners are kept inside it)
+ */
+export type GridPlacementMode = 'objects' | 'area';
+
+/**
  * GridListenerData
  *
  * Represents a grid of listeners distributed evenly on selected surface(s).
@@ -51,6 +59,22 @@ export interface GridListenerData {
   selectedObjectIds: string[];  // Speckle object IDs used for bounding box
   boundingBox: { min: [number, number, number]; max: [number, number, number] } | null;
   points: [number, number, number][]; // Computed grid points
+  /** Boundary source — absent on grids saved before area drawing existed ('objects'). */
+  placementMode?: GridPlacementMode;
+  /** Drawn polygon boundary (placementMode 'area'); boundingBox is its 3D extent. */
+  drawnArea?: DrawnArea | null;
+}
+
+/**
+ * ListenerExpandRequest
+ *
+ * Ask the listeners section to expand a listener / grid card from outside
+ * (viewer click, double-click, acoustics "go to listener"). `seq` increments on
+ * every request so the same id re-expands a card the user collapsed meanwhile.
+ */
+export interface ListenerExpandRequest {
+  id: string;
+  seq: number;
 }
 
 /**

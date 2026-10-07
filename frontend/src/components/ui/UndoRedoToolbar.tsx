@@ -43,8 +43,8 @@ export function UndoRedoToolbar() {
 
   return (
     <div className="scene-bottom-bar__group">
-      <BarButton onClick={globalUndo} disabled={!canUndo} title="Undo (Ctrl+Z)" icon={<HistoryIcon />} />
-      <BarButton onClick={globalRedo} disabled={!canRedo} title="Redo (Ctrl+Y)" icon={<HistoryIcon redo />} />
+      <BarButton onClick={globalUndo} disabled={!canUndo} title="Undo" shortcut="UNDO" icon={<HistoryIcon />} />
+      <BarButton onClick={globalRedo} disabled={!canRedo} title="Redo" shortcut="REDO" icon={<HistoryIcon redo />} />
     </div>
   );
 }

@@ -42,7 +42,7 @@ class PyroomacousticsService:
         Add receiver microphone(s) to room based on simulation mode.
 
         Coordinate systems:
-        - Room/Mesh (Z-up): +X=Right, +Y=Forward, +Z=Up
+        - Room/Mesh (Z-up, listener frame): -Y=Forward, +X=Left, +Z=Up
         - AmbiX B-format:   +X=Front, +Y=Left, +Z=Up
 
         Args:
@@ -60,7 +60,7 @@ class PyroomacousticsService:
             - Mono mode: Single omnidirectional microphone
             - FOA mode: MicrophoneArray with 4 coincident directivity mics (W=omni, Y/Z/X=fig-8)
                        AmbiX format: ACN channel ordering (W, Y, Z, X) with SN3D normalization.
-                       Mic orientations aligned to Speckle Z-UP convention (-Y=Forward, -X=Left, +Z=Up).
+                       Mic orientations aligned to the listener frame (-Y=Forward, +X=Left, +Z=Up).
                        Directivity is applied to ISM; ray tracing uses omnidirectional fallback.
         """
 
@@ -80,14 +80,20 @@ class PyroomacousticsService:
 
             elif simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_FOA:
                 # B-format First Order Ambisonics using directivity patterns via MicrophoneArray.
-                # ACN Channel Order: W (0), Y (1), Z (2), X (3) with N3D normalization.
+                # ACN Channel Order: W (0), Y (1), Z (2), X (3) with SN3D normalization.
                 # DirectionVector: azimuth from +X in XY plane, colatitude from +Z.
                 from pyroomacoustics.directivities import CardioidFamily, DirectionVector
 
                 # AmbiX output: ACN channel ordering + SN3D normalization
                 # SN3D: all channels have unit gain (no sqrt(3) scaling)
-                # Speckle Z-UP mesh convention: +X=Right, -Y=Forward, +Z=Up
+                # Listener frame (right-handed, Z-up; yaw=0 faces -Y, see
+                # speckle-camera-controller.ts): -Y=Forward, +X=Left, +Z=Up
                 # AmbiX convention: +X=Front, +Y=Left, +Z=Up
+                #
+                # pyroomacoustics evaluates mic directivity at the direction of
+                # arrival (image_source - mic), response = p + (1-p)·(orientation·DOA).
+                # Each figure-of-8 therefore points TOWARD the direction its
+                # channel must be positive for.
 
                 directivities = [
                     # ACN 0 - W: Omnidirectional (SN3D gain = 1.0)
@@ -95,26 +101,19 @@ class PyroomacousticsService:
                         orientation=DirectionVector(azimuth=0, colatitude=0, degrees=True),
                         p=1.0, gain=1.0
                     ),
-                    # ACN 1 - Y: Figure-of-8 oriented toward +X (Speckle Right).
-                    # A source at Speckle Left (-X) sends a wave whose pressure
-                    # gradient at the receiver points +X (source → receiver).
-                    # Dot product (+X)·(+X) = +1 → LEFT source → +Y  ✓
+                    # ACN 1 - Y: Figure-of-8 toward +X (listener Left) → LEFT source → +Y
                     CardioidFamily(
                         orientation=DirectionVector(azimuth=0, colatitude=90, degrees=True),
                         p=0.0, gain=1.0
                     ),
-                    # ACN 2 - Z: Figure-of-8 oriented toward -Z (Speckle Down).
-                    # A source above (+Z) sends a wave whose gradient points -Z.
-                    # Dot product (-Z)·(-Z) = +1 → UP source → +Z  ✓
+                    # ACN 2 - Z: Figure-of-8 toward +Z (Up) → UP source → +Z
                     CardioidFamily(
-                        orientation=DirectionVector(azimuth=0, colatitude=180, degrees=True),
+                        orientation=DirectionVector(azimuth=0, colatitude=0, degrees=True),
                         p=0.0, gain=1.0
                     ),
-                    # ACN 3 - X: Figure-of-8 oriented toward +Y (Speckle Back).
-                    # A source in Front (-Y) sends a wave whose gradient points +Y.
-                    # Dot product (+Y)·(+Y) = +1 → FRONT source → +X  ✓
+                    # ACN 3 - X: Figure-of-8 toward -Y (listener Forward) → FRONT source → +X
                     CardioidFamily(
-                        orientation=DirectionVector(azimuth=90, colatitude=90, degrees=True),
+                        orientation=DirectionVector(azimuth=-90, colatitude=90, degrees=True),
                         p=0.0, gain=1.0
                     ),
                 ]
@@ -124,7 +123,7 @@ class PyroomacousticsService:
                 mic_array = pra.MicrophoneArray(positions, fs=room.fs, directivity=directivities)
                 room.add_microphone_array(mic_array)
 
-                print(f"Added FOA mic_array at {receiver_position} (ACN: W,Y,Z,X with N3D)")
+                print(f"Added FOA mic_array at {receiver_position} (ACN: W,Y,Z,X with SN3D)")
 
             else:
                 raise ValueError(f"Unsupported simulation mode: {simulation_mode}")

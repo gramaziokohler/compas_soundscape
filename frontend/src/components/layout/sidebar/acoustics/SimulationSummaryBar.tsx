@@ -17,7 +17,9 @@
  * Each item is colored `--color-error` when its count is 0 and primary when > 0.
  * Clicking an item navigates to the relevant section (expanding the left sidebar /
  * right sidebar / Object Explorer panel as needed) and plays a transient
- * SectionHighlight border.
+ * SectionHighlight border. In Simple mode nothing expands: the click only rings
+ * the soundscape bubble column / listener bubble column / Object Explorer
+ * button in the bottom bar.
  *
  * Usage:
  * ```tsx
@@ -39,6 +41,7 @@ import {
 } from '@/store';
 import { collapseVariantsToOne, groupSoundsByPosition } from '@/utils/positionKey';
 import { SectionHighlight } from '@/components/ui/SectionHighlight';
+import { SCENE_BOTTOM_BAR, SIMPLE_MODE } from '@/utils/constants';
 import { OBJECT_EXPLORER_PANEL_ID, openMaterialsExplorer } from './openMaterialsExplorer';
 
 const HIGHLIGHT_TARGETS = {
@@ -48,6 +51,13 @@ const HIGHLIGHT_TARGETS = {
 } as const;
 
 type HighlightKey = keyof typeof HIGHLIGHT_TARGETS;
+
+/** Simple mode: ring the bubble columns / Object Explorer button in place — nothing expands. */
+const SIMPLE_HIGHLIGHT_TARGETS: Record<HighlightKey, { id: string; color: string }> = {
+  sources: { id: SIMPLE_MODE.SOUNDSCAPES_COLUMN_ID, color: 'var(--color-primary)' },
+  listeners: { id: SIMPLE_MODE.LISTENERS_COLUMN_ID, color: 'var(--color-warning)' },
+  materials: { id: SCENE_BOTTOM_BAR.OBJECT_EXPLORER_BUTTON_ID, color: 'var(--color-primary)' },
+};
 
 export function SimulationSummaryBar() {
   const soundscapeData = useSoundscapeStore((s) => s.soundscapeData);
@@ -59,6 +69,7 @@ export function SimulationSummaryBar() {
   const receivers = useReceiversStore((s) => s.receivers);
   const gridListeners = useGridListenersStore((s) => s.gridListeners);
   const materialAssignments = useAcousticMaterialStore((s) => s.materialAssignments);
+  const isSimple = useUIStore((s) => s.uiMode === 'simple');
 
   const [highlight, setHighlight] = useState<{ key: HighlightKey; trigger: number } | null>(null);
 
@@ -104,18 +115,26 @@ export function SimulationSummaryBar() {
   };
 
   const handleSources = () => {
-    useUIStore.getState().setIsLeftSidebarExpanded(true);
-    useUIStore.getState().triggerSoundsNav();
+    if (!isSimple) {
+      useUIStore.getState().setIsLeftSidebarExpanded(true);
+      useUIStore.getState().triggerSoundsNav();
+    }
     runHighlight('sources');
   };
   const handleListeners = () => {
-    useRightSidebarStore.getState().requestExpand();
+    if (!isSimple) useRightSidebarStore.getState().requestExpand();
     runHighlight('listeners');
   };
   const handleMaterials = () => {
-    openMaterialsExplorer();
+    if (!isSimple) openMaterialsExplorer();
     runHighlight('materials');
   };
+
+  const highlightTarget = highlight
+    ? isSimple
+      ? SIMPLE_HIGHLIGHT_TARGETS[highlight.key]
+      : { id: HIGHLIGHT_TARGETS[highlight.key], color: undefined }
+    : null;
 
   return (
     <>
@@ -129,10 +148,11 @@ export function SimulationSummaryBar() {
         <SummaryChip count={listenerCount} label="listener" onClick={handleListeners} />
         <SummaryChip count={materialCount} label="material" onClick={handleMaterials} />
       </div>
-      {highlight && (
+      {highlight && highlightTarget && (
         <SectionHighlight
-          targetId={HIGHLIGHT_TARGETS[highlight.key]}
+          targetId={highlightTarget.id}
           trigger={highlight.trigger}
+          color={highlightTarget.color}
         />
       )}
     </>

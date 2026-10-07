@@ -8,6 +8,7 @@
 import type { ReactNode } from 'react';
 import type React from 'react';
 import type { VariantsBarProps } from '@/components/ui/VariantsBar';
+import type { ShortcutId } from '@/utils/constants';
 
 // ============================================================================
 // Card Type Identifiers
@@ -158,6 +159,12 @@ export interface CardBaseConfig {
   display_name?: string;
   /** Number of sounds/prompts to generate */
   numSounds?: number;
+  /**
+   * Snapshot of the generation inputs captured when the result was produced
+   * (see `utils/generationSignature.ts`). Transient — never sent to the backend;
+   * re-captured on project restore. Drives the "Regenerate" button.
+   */
+  generatedSignature?: string;
 }
 
 // ============================================================================
@@ -285,8 +292,10 @@ export interface CardProps<TConfig extends CardBaseConfig = CardBaseConfig, TRes
   canRemove?: boolean;
   /** Custom title for the close button */
   closeButtonTitle?: string;
-  /** Custom title for the reset button */
-  resetButtonTitle?: string;
+  /** Confirmation question for the floating-card trash button (defaults to "<closeButtonTitle>?"). */
+  removeConfirmMessage?: string;
+  /** Keyboard shortcut shown on the close button's tooltip (only while expanded). */
+  closeButtonShortcut?: ShortcutId;
   /** Menu items shown in the kebab (⋮) dropdown — replaces the old ReactNode[] pattern */
   customButtons?: CustomMenuItem[];
 
@@ -297,8 +306,6 @@ export interface CardProps<TConfig extends CardBaseConfig = CardBaseConfig, TRes
   onUpdateConfig: (index: number, updates: Partial<TConfig>) => void;
   /** Called when card is removed */
   onRemove: (index: number) => void;
-  /** Called when card is reset (result cleared) */
-  onReset: (index: number) => void;
   /** Called when the inline error is dismissed (clears the error state in the parent) */
   onDismissError?: (index: number) => void;
   /** Called when the card header is double-clicked (e.g. zoom to associated 3D object) */
@@ -309,6 +316,8 @@ export interface CardProps<TConfig extends CardBaseConfig = CardBaseConfig, TRes
   onTogglePower?: () => void;
   /** Current power state shown by the power button (on = primary-colored). */
   isPoweredOn?: boolean;
+  /** Power button tooltips — `on` is shown while powered (the action turns it off). Defaults to simulation wording. */
+  powerTitles?: { on: string; off: string };
 
   /** Library/service version string(s) shown under the title in after-generation state. Pass an array for multiple lines. */
   version?: string | string[];
@@ -348,21 +357,29 @@ export interface CardProps<TConfig extends CardBaseConfig = CardBaseConfig, TRes
   showVariantsPostGen?: boolean;
 
   /**
-   * When provided, the settings summary's `Prompt` row becomes editable: a pen
-   * icon reveals an inline editor with a regenerate button that swaps the
-   * active variant's audio in place (same sound id / DAW / entity links).
-   */
-  promptAction?: {
-    onRegenerate: (newPrompt: string) => void;
-    isRegenerating?: boolean;
-  };
-
-  /**
-   * Show a collapsible, read-only recap of the card's pre-generation settings
-   * below the post-generation content.
+   * Show a collapsible settings section below the post-generation content —
+   * either `settingsContent` (editable) or a read-only recap of the card's
+   * pre-generation settings.
    * @default true
    */
   showSettingsSummary?: boolean;
+  /**
+   * Editable settings UI (usually the same editors as `beforeContent`) shown
+   * inside the settings section once the card has a result. Omit for cards
+   * where regenerating makes no sense — they keep the read-only recap.
+   */
+  settingsContent?: ReactNode;
+  /** True when the settings changed since the result was generated (see `utils/generationSignature.ts`). */
+  settingsDirty?: boolean;
+  /**
+   * Re-runs generation with the edited settings. While `settingsDirty`, the
+   * settings box shows a "Regenerate" button wired to this handler.
+   */
+  onRegenerate?: () => Promise<void> | void;
+  /** Restores the settings used for the last generation ("Revert" beside Regenerate). */
+  onRevertSettings?: () => void;
+  /** Settings field keys edited since generation — their labels get a "*" (see ModifiedMark). */
+  modifiedSettings?: ReadonlySet<string>;
   /** Optional content pinned above the settings summary (e.g. scenario parcours toggle). */
   beforeSettingsSummary?: ReactNode;
 }

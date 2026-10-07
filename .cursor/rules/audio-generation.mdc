@@ -46,9 +46,10 @@ The store exposes three generation entry points, all routing into `handleGenerat
 | `handleGenerateSingle(targetIndex)` | Generate a single config → `handleGenerateInternal([targetIndex])` |
 | `handleGenerateFiltered(targetIndices)` | Generate a subset → `handleGenerateInternal(targetIndices)` |
 | `handleRegenerateSingle(targetIndex)` | Generate one new variant for an already-generated card (see § Regeneration below) |
+| `handleRegenerateConfig(targetIndex)` | Regenerate ALL variants of a generated card from its edited settings → `handleGenerateInternal([i], { force: true })`. Same deterministic event ids (links survive); variants not reproduced are dropped + pruned. Card "Regenerate" button. |
 
 `handleGenerateInternal` (at soundscapeStore.ts:392) is the core orchestrator. It:
-1. Skips already-generated config indices (tracks `alreadyGenerated` set from `soundscapeData`)
+1. Skips already-generated config indices (tracks `alreadyGenerated` set from `soundscapeData`) — unless `force` targets them
 2. Splits configs by type: ML generation (TangoFlux/AudioLDM2), ElevenLabs, TTS, upload, library, catalog
 3. For ML: submits via `apiService.generateSounds()`, polls via `getSoundGenerationStatus()` (wraps the unified `GET /api/jobs/{job_id}`), streams `partial_sounds` into `generatedSounds` as each sound completes
 4. `mapBackendSound()` remaps batch-relative IDs to config-absolute IDs to avoid collision
@@ -154,7 +155,7 @@ When the pending variant is selected during regeneration, `SoundResultContent` r
 | State | `beforeContent` | `afterContent` | Card styles |
 |-------|----------------|----------------|-------------|
 | **Pre-generation** | `SoundPreContent` (config UI) | `undefined` | Collapsed info shows "(pending)" |
-| **Post-generation** | `undefined` | `SoundResultContent` (waveform + variant bar) | `hasResult=true`, shows mute/solo/reset buttons |
+| **Post-generation** | `undefined` | `SoundResultContent` (waveform + variant bar) | `hasResult=true`; settings section = `SoundPreContent settingsOnly` (TTA/TTS/library/catalog), "Regenerate" once edited |
 
 The transition is gated by `isSoundGenerated(index)` which checks if any `generatedSounds` entry has a matching `prompt_index`.
 

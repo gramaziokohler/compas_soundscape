@@ -1,21 +1,24 @@
 'use client';
 
 import { Fragment, useLayoutEffect, useRef, useState, useCallback, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { DAWRuler, computeTickStep, type LoopRegion } from './DAWRuler';
 import { DAWTrackHead } from './DAWTrackHead';
 import { DAWLane, type DAWLaneClip } from './DAWLane';
-import { DAWStatusBar } from './DAWStatusBar';
+import { DAWBarControls } from './DAWBarControls';
 import { DAWClipMenu } from './DAWClipMenu';
 import { IntervalSettingsPanel } from './IntervalSettingsPanel';
 import { useDawView } from './useDawView';
 import { useClipSelection } from './useClipSelection';
-import { useClipGesture, ensureTrackMaterialized, type ClipDescriptor, type TriggerDep } from './useClipGesture';
+import { useClipGesture, ensureTrackMaterialized, readClipTrimCopy, type ClipDescriptor, type TriggerDep } from './useClipGesture';
+import { useClipTrimGesture } from './useClipTrimGesture';
+import type { ClipTrimCopy } from '@/store/audioControlsStore';
 import { parseTriggerExpression } from '@/lib/audio/utils/trigger-ref';
 import { useAudioControlsStore } from '@/store/audioControlsStore';
 import { useSoundscapeStore } from '@/store/soundscapeStore';
 import { useSpeckleStore } from '@/store/speckleStore';
 import { useUIStore } from '@/store/uiStore';
-import { DAW, DEFAULT_DBFS, UI_SIDEBAR_RESIZE, UI_SIDEBAR_TOGGLE } from '@/utils/constants';
+import { DAW, DEFAULT_DBFS, SCENE_BOTTOM_BAR, UI_SIDEBAR_RESIZE, UI_SIDEBAR_TOGGLE } from '@/utils/constants';
 import type { TimelineSound, IterationLink } from '@/types/audio';
 import type { PlaybackSchedulerService } from '@/lib/audio/playback-scheduler-service';
 
@@ -62,7 +65,6 @@ export interface DAWDockProps {
   rightOffset: number;
   /** Distance from the screen bottom (px) — the dock sits on top of the scene bottom bar. */
   bottomOffset?: number;
-  sampleRate?: number;
   playbackSchedulerRef?: React.RefObject<PlaybackSchedulerService | null>;
 }
 
@@ -78,13 +80,13 @@ export function DAWDock({
   leftOffset,
   rightOffset,
   bottomOffset = 0,
-  sampleRate,
 }: DAWDockProps) {
   const timelineDurationMs = useAudioControlsStore((s) => s.timelineDurationMs);
   const mutedSounds = useAudioControlsStore((s) => s.mutedSounds);
-  const soloedSound = useAudioControlsStore((s) => s.soloedSound);
+  const soloedSounds = useAudioControlsStore((s) => s.soloedSounds);
   const soundVolumes = useAudioControlsStore((s) => s.soundVolumes);
   const iterationLinks = useAudioControlsStore((s) => s.iterationLinks);
+  const iterationTrims = useAudioControlsStore((s) => s.iterationTrims);
   const isBakingSchedule = useAudioControlsStore((s) => s.isBakingSchedule);
   const storedSoundTimestamps = useAudioControlsStore((s) => s.soundTimestamps);
   const soundBufferDurations = useAudioControlsStore((s) => s.soundBufferDurations);
@@ -106,7 +108,10 @@ export function DAWDock({
   const soundConfigs = useSoundscapeStore((s) => s.soundConfigs);
   const objectSoundLinks = useSpeckleStore((s) => s.objectSoundLinks);
 
-  const { pxPerSecond, setPxPerSecond, snapMode, setSnapMode, dockHeight, setDockHeight, dockAutoFit, setDockAutoFit, trackHeight, setTrackHeight } = useDawView({
+  const {
+    pxPerSecond, setPxPerSecond, snapMode, setSnapMode, dockHeight, setDockHeight, dockAutoFit, setDockAutoFit,
+    maxDockHeight, autoFitMaxDockHeight, trackHeight, setTrackHeight,
+  } = useDawView({
     durationMs: timelineDurationMs, leftOffset, rightOffset,
   });
   const selection = useClipSelection();
@@ -232,7 +237,8 @@ export function DAWDock({
         const clipKey = `${sound.id}-${originalIdx}`;
         registry.set(clipKey, { clipKey, soundId: sound.id, iterationIndex: originalIdx, startMs, durationMs });
         const trim = sound.iterationTrims?.[i];
-        return { clipKey, iterationIndex: originalIdx, startMs, durationMs, audioUrl, trim, label: displayName, iterationLink: iterationLinks[clipKey] };
+        const sourceDurationMs = sound.iterationSourceDurationsMs?.[i];
+        return { clipKey, iterationIndex: originalIdx, startMs, durationMs, audioUrl, trim, sourceDurationMs, label: displayName, iterationLink: iterationLinks[clipKey] };
       });
 
       // Excluded iterations: display-only ghost clips (never draggable/played).
@@ -285,6 +291,15 @@ export function DAWDock({
       const configIdx = sound?.cardIndex ?? sound?.promptIndex;
       if (configIdx !== undefined) onSelectSoundCard?.(configIdx);
     },
+  });
+
+  const trimGesture = useClipTrimGesture({
+    soundsRef,
+    pxPerSecondRef,
+    snapModeRef,
+    gridStepSecRef,
+    playheadMsRef,
+    clipRegistryRef: registryRef,
   });
 
   /* ---- Hover -> 3D viewer highlight (linked entity + sound sphere) ---- */
@@ -438,8 +453,16 @@ export function DAWDock({
     if (currentTime >= loopRegion.endMs) onSeek(loopRegion.startMs);
   }, [currentTime, isPlaying, loopRegion, onSeek]);
 
-  /* ---- Duration edit (ruler icon + footer share this state) ---- */
+  /* ---- Duration edit (ruler pencil) ---- */
   const [isEditingDuration, setIsEditingDuration] = useState(false);
+
+  /* ---- Bottom-bar slot (right of "Timeline") that receives the snap / zoom /
+       export controls while the dock is expanded. Looked up after mount: the
+       bar renders after the dock in SpeckleScene. ---- */
+  const [barControlsSlot, setBarControlsSlot] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    setBarControlsSlot(document.getElementById(SCENE_BOTTOM_BAR.DAW_CONTROLS_SLOT_ID));
+  }, []);
 
   /* ---- Top-edge resize hover state (sidebar-style blue grip) ---- */
   const [isResizeHovered, setIsResizeHovered] = useState(false);
@@ -493,9 +516,12 @@ export function DAWDock({
   }, [selection, handleRemoveTimestamp]);
 
   const handleDuplicateSelected = useCallback(() => {
-    selection.selectedClipKeys.forEach((key) => {
-      const d = registryRef.current.get(key);
-      if (!d) return;
+    // Snapshot trims before inserting — each insert shifts later indices on the track.
+    const sources = [...selection.selectedClipKeys]
+      .map((key) => registryRef.current.get(key))
+      .filter((d): d is ClipDescriptor => !!d)
+      .map((d) => ({ d, trimCopy: readClipTrimCopy(d.soundId, d.iterationIndex) }));
+    sources.forEach(({ d, trimCopy }) => {
       ensureTrackMaterialized(soundsRef, d.soundId);
       const store = useAudioControlsStore.getState();
       const current = store.soundTimestamps[d.soundId] ?? [];
@@ -506,20 +532,25 @@ export function DAWDock({
       }
       const newTs = [...current];
       newTs.splice(insertAt, 0, newStartSec);
-      store.remapIterationLinksForInsert(d.soundId, insertAt);
+      store.remapIterationLinksForInsert(d.soundId, insertAt, trimCopy);
       store.handleTimestampsChange(d.soundId, newTs);
     });
   }, [selection]);
 
-  const clipboardRef = useRef<Array<{ soundId: string; offsetMs: number; durationMs: number }>>([]);
+  const clipboardRef = useRef<Array<{ soundId: string; offsetMs: number; durationMs: number; trimCopy?: ClipTrimCopy }>>([]);
   const handleCopySelected = useCallback(() => {
     const descriptors = [...selection.selectedClipKeys].map((k) => registryRef.current.get(k)).filter((d): d is ClipDescriptor => !!d);
     if (descriptors.length === 0) return;
     const minStart = Math.min(...descriptors.map((d) => d.startMs));
-    clipboardRef.current = descriptors.map((d) => ({ soundId: d.soundId, offsetMs: d.startMs - minStart, durationMs: d.durationMs }));
+    clipboardRef.current = descriptors.map((d) => ({
+      soundId: d.soundId,
+      offsetMs: d.startMs - minStart,
+      durationMs: d.durationMs,
+      trimCopy: readClipTrimCopy(d.soundId, d.iterationIndex),
+    }));
   }, [selection]);
   const handlePasteAtPlayhead = useCallback(() => {
-    clipboardRef.current.forEach(({ soundId, offsetMs }) => {
+    clipboardRef.current.forEach(({ soundId, offsetMs, trimCopy }) => {
       ensureTrackMaterialized(soundsRef, soundId);
       const store = useAudioControlsStore.getState();
       const current = store.soundTimestamps[soundId] ?? [];
@@ -530,7 +561,7 @@ export function DAWDock({
       }
       const newTs = [...current];
       newTs.splice(insertAt, 0, newStartSec);
-      store.remapIterationLinksForInsert(soundId, insertAt);
+      store.remapIterationLinksForInsert(soundId, insertAt, trimCopy);
       store.handleTimestampsChange(soundId, newTs);
     });
   }, [currentTime]);
@@ -541,7 +572,8 @@ export function DAWDock({
     if (targetTag === 'INPUT' || targetTag === 'TEXTAREA' || (e.target as HTMLElement).isContentEditable) return;
 
     const mod = e.ctrlKey || e.metaKey;
-    if (e.key === 'Escape') { selection.clear(); return; }
+    // preventDefault: Esc in the dock is consumed here (global Esc cascade stands down).
+    if (e.key === 'Escape') { e.preventDefault(); selection.clear(); return; }
     if (mod && e.key.toLowerCase() === 'a') { e.preventDefault(); selection.selectAll([...registryRef.current.keys()]); return; }
     if (mod && e.key.toLowerCase() === 'd') { e.preventDefault(); handleDuplicateSelected(); return; }
     if (mod && e.key.toLowerCase() === 'c') { e.preventDefault(); handleCopySelected(); return; }
@@ -567,8 +599,7 @@ export function DAWDock({
     const startHeight = dockHeight;
     const move = (ev: PointerEvent) => {
       const delta = startY - ev.clientY;
-      const maxH = window.innerHeight - bottomOffset - DAW.MAX_DOCK_HEIGHT_MARGIN;
-      setDockHeight(Math.max(DAW.MIN_DOCK_HEIGHT, Math.min(maxH, startHeight + delta)));
+      setDockHeight(Math.max(DAW.MIN_DOCK_HEIGHT, Math.min(maxDockHeight, startHeight + delta)));
     };
     const up = () => {
       setIsResizeActive(false);
@@ -577,18 +608,20 @@ export function DAWDock({
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
-  }, [dockHeight, setDockHeight, setDockAutoFit]);
+  }, [dockHeight, maxDockHeight, setDockHeight, setDockAutoFit]);
 
   /* ---- Auto-fit: while the user hasn't manually resized the dock, its height
-       hugs the content — ruler + one row per track + the status footer. It grows
-       when tracks are added and shrinks when they're removed. ---- */
+       hugs the content — ruler + one row per track — up to 1/3 of the window;
+       overflowing tracks scroll. Only a manual drag takes it further (to 1/2). ---- */
   useEffect(() => {
     if (!dockAutoFit) return;
-    const maxH = window.innerHeight - bottomOffset - DAW.MAX_DOCK_HEIGHT_MARGIN;
-    const needed = DAW.RULER_HEIGHT + rows.length * trackHeight + DAW.STATUS_HEIGHT;
-    const target = Math.max(DAW.MIN_DOCK_HEIGHT, Math.min(maxH, needed));
+    const needed = DAW.RULER_HEIGHT + rows.length * trackHeight;
+    const target = Math.round(Math.max(DAW.MIN_DOCK_HEIGHT, Math.min(autoFitMaxDockHeight, needed)));
     if (dockHeight !== target) setDockHeight(target);
-  }, [dockAutoFit, dockHeight, rows.length, trackHeight, setDockHeight]);
+  }, [dockAutoFit, dockHeight, autoFitMaxDockHeight, rows.length, trackHeight, setDockHeight]);
+
+  // A persisted manual height may exceed the cap after the window shrinks.
+  const renderedDockHeight = Math.min(dockHeight, maxDockHeight);
 
   /* ---- Wheel zoom while over the dock: Ctrl/Meta+wheel = vertical track-height
        zoom, Alt+wheel = horizontal timeline zoom (px/sec). ---- */
@@ -615,7 +648,6 @@ export function DAWDock({
   const cursorLeft = DAW.HEAD_WIDTH + (currentTime / 1000) * pxPerSecond;
   const tickStepPx = tickStepSec * pxPerSecond;
 
-  const totalClipCount = useMemo(() => rows.reduce((n, r) => n + r.clips.length, 0), [rows]);
 
   /* ---- Connection-line overlay data ---- */
   const iterationPixelPositions = useMemo(() => {
@@ -698,7 +730,7 @@ export function DAWDock({
       onKeyDown={handleKeyDown}
       className="transition-all duration-300 ease-in-out"
       style={{
-        position: 'fixed', bottom: `${bottomOffset}px`, left: `${leftOffset}px`, right: `${rightOffset}px`, height: `${dockHeight}px`,
+        position: 'fixed', bottom: `${bottomOffset}px`, left: `${leftOffset}px`, right: `${rightOffset}px`, height: `${renderedDockHeight}px`,
         display: 'flex', flexDirection: 'column',
         zIndex: 200, overflow: 'visible', userSelect: 'none', outline: 'none',
       }}
@@ -708,34 +740,25 @@ export function DAWDock({
           (reveals the scene behind, no border line). */}
       <div
         className="sidebar-glass backdrop-blur-lg backdrop-saturate-150"
-        style={dockWidth > 0 ? { clipPath: buildTopNotchClipPath(dockWidth, dockHeight) } : undefined}
+        style={dockWidth > 0 ? { clipPath: buildTopNotchClipPath(dockWidth, renderedDockHeight) } : undefined}
         aria-hidden="true"
       />
 
       <div className="relative z-[1] flex flex-col flex-1 min-h-0">
-        {/* Status strip on top (duration, counts, snap, zoom, export), then the
-            ruler and tracks. The floating reduce knob and the sidebar-style
-            resize grip are overlays (see below), so they reserve no space. */}
-        <DAWStatusBar
-          durationMs={timelineDurationMs}
-          onDurationChange={setTimelineDurationMs}
-          isEditingDuration={isEditingDuration}
-          onStartEditDuration={() => setIsEditingDuration(true)}
-          onStopEditDuration={() => setIsEditingDuration(false)}
-          timelineOverrun={timelineOverrun}
-          onExtendTimeline={handleExtendTimelineToFit}
-          trackCount={rows.length}
-          clipCount={totalClipCount}
-          selectionCount={selection.selectedClipKeys.size}
-          pxPerSecond={pxPerSecond}
-          onZoomChange={setPxPerSecond}
-          snapMode={snapMode}
-          onSnapModeChange={setSnapMode}
-          onDownload={onDownload}
-          originalIRChannelCount={originalIRChannelCount}
-          isBakingSchedule={isBakingSchedule}
-          sampleRate={sampleRate}
-        />
+        {/* Ruler and tracks only — snap / zoom / export live in the scene bottom
+            bar (portal below). The floating reduce knob and the sidebar-style
+            resize grip are overlays, so they reserve no space. */}
+        {barControlsSlot && createPortal(
+          <DAWBarControls
+            pxPerSecond={pxPerSecond}
+            onZoomChange={setPxPerSecond}
+            snapMode={snapMode}
+            onSnapModeChange={setSnapMode}
+            onDownload={onDownload}
+            originalIRChannelCount={originalIRChannelCount}
+          />,
+          barControlsSlot,
+        )}
         <div ref={scrollContainerRef} style={{ flex: 1, overflow: 'auto', position: 'relative' }}>
           <div
             onPointerDown={handleTracksPointerDown}
@@ -747,8 +770,13 @@ export function DAWDock({
               onSeek={onSeek}
               loopRegion={loopRegion}
               onLoopRegionChange={setLoopRegion}
-              onEditDuration={() => setIsEditingDuration(true)}
-              hasOverrun={!!timelineOverrun && timelineOverrun.iterationCount > 0}
+              isEditingDuration={isEditingDuration}
+              onStartEditDuration={() => setIsEditingDuration(true)}
+              onStopEditDuration={() => setIsEditingDuration(false)}
+              onDurationChange={setTimelineDurationMs}
+              overrunProposedMs={timelineOverrun?.proposedDurationMs ?? null}
+              onExtendTimeline={handleExtendTimelineToFit}
+              isBakingSchedule={isBakingSchedule}
             />
 
             {rows.map(({ sound, displayName, configIdx, clips }) => (
@@ -762,7 +790,7 @@ export function DAWDock({
                   excludedCount={sound.excludedIterations?.length ?? 0}
                   trackHeight={trackHeight}
                   isMuted={mutedSounds.has(sound.id)}
-                  isSoloed={soloedSound === sound.id}
+                  isSoloed={soloedSounds.has(sound.id)}
                   volumeDbfs={soundVolumes[sound.id] ?? soundConfigs[configIdx ?? -1]?.dbfs ?? DEFAULT_DBFS}
                   onMute={() => handleMute(sound.id)}
                   onSolo={() => handleSolo(sound.id)}
@@ -795,6 +823,19 @@ export function DAWDock({
                   onClipPointerDown={(e, clip) => {
                     selection.onClipPressed(clip.clipKey, e, clips.map((c) => c.clipKey));
                     gesture.beginDrag(e, { clipKey: clip.clipKey, soundId: sound.id, iterationIndex: clip.iterationIndex, startMs: clip.startMs, durationMs: clip.durationMs });
+                  }}
+                  trimPreview={trimGesture.trimPreview}
+                  onClipTrimPointerDown={(e, clip, edge) => {
+                    if (!clip.sourceDurationMs) return;
+                    trimGesture.beginTrim(e, {
+                      clipKey: clip.clipKey,
+                      soundId: sound.id,
+                      iterationIndex: clip.iterationIndex,
+                      startMs: clip.startMs,
+                      durationMs: clip.durationMs,
+                      trim: clip.trim ?? { start: 0, end: 1 },
+                      sourceDurationMs: clip.sourceDurationMs,
+                    }, edge);
                   }}
                   onDeleteClip={(iterationIndex) => { ensureTrackMaterialized(soundsRef, sound.id); handleRemoveTimestamp(sound.id, iterationIndex); }}
                   onClipContextMenu={(iterationIndex, x, y) => setContextMenu({ soundId: sound.id, iterationIndex, x, y })}
@@ -976,6 +1017,9 @@ export function DAWDock({
               entityIndex: contextMenuData.currentLink.entityIndex,
             })
           }
+          onResetTrim={iterationTrims[`${contextMenuData.soundId}-${contextMenuData.iterationIndex}`]
+            ? () => trimGesture.resetTrim(contextMenuData.soundId, contextMenuData.iterationIndex)
+            : undefined}
           onClose={() => setContextMenu(null)}
         />
       )}

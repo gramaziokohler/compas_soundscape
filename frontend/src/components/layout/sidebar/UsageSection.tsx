@@ -21,9 +21,10 @@ import { ScenarioAfterView, getScenarioPipelineStatus } from '@/components/layou
 import { ScenarioParcoursToggle } from '@/components/layout/sidebar/analysis/ScenarioResultContent';
 import { AnalysisResultContent } from '@/components/layout/sidebar/analysis/AnalysisResultContent';
 import { TextResultPreview } from '@/components/layout/sidebar/analysis/TextResultPreview';
-import { useAnalysisStore, useCardFlowStore, useSoundscapeStore } from '@/store';
+import { useAnalysisStore, useAreaDrawingStore, useCardFlowStore, useSoundscapeStore } from '@/store';
 import { useServiceVersions } from '@/hooks/useServiceVersions';
 import { LLM_MODEL_TO_PROVIDER } from '@/utils/constants';
+import { getGenerationRevertPatch, getGenerationSignature, getModifiedGenerationFields, isGenerationDirty } from '@/utils/generationSignature';
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -38,7 +39,6 @@ export interface UsageSectionProps {
   onUpdateConfig: (index: number, updates: Partial<AnalysisConfig>) => void;
   onRun: (index: number) => void;
   onStop: () => void;
-  onReset: (index: number) => void;
   onTogglePromptSelection: (configIndex: number, promptId: string) => void;
   onSendToSoundGeneration: () => void;
   /** Send selected prompts AND advance to step 2 (Sounds). Receives original card index and title. */
@@ -106,7 +106,6 @@ export function UsageSection({
   onUpdateConfig,
   onRun,
   onStop,
-  onReset,
   onTogglePromptSelection,
   onSendToSoundGeneration,
   onAdvanceToSounds,
@@ -182,6 +181,23 @@ export function UsageSection({
       }
     },
     [],
+  );
+
+  // Restore the inputs of the last generation. A reverted drawn area is mirrored
+  // into the area-drawing store, which owns the viewer polygon and placement.
+  const handleRevertSettings = useCallback(
+    (config: AnalysisConfig, originalIndex: number) => {
+      const patch = getGenerationRevertPatch(config);
+      if (!patch) return;
+      onUpdateConfig(originalIndex, patch as Partial<AnalysisConfig>);
+      if ('drawnArea' in patch) {
+        const area = patch.drawnArea as TextAnalysisConfig['drawnArea'];
+        const areaStore = useAreaDrawingStore.getState();
+        if (area) areaStore.finishDrawing(originalIndex, area);
+        else areaStore.removeArea(originalIndex);
+      }
+    },
+    [onUpdateConfig],
   );
 
   // Filter to usage card types only, then by active parent context if set
@@ -498,6 +514,8 @@ export function UsageSection({
         }
       }
 
+      const isRegenerable = getGenerationSignature(config) !== null;
+
       // Scenario action button label
       let actionButtonLabel = 'Generate Sound Prompts';
       if (config.type === 'scenario') {
@@ -550,15 +568,23 @@ export function UsageSection({
           showIndex={true}
           canRemove={true}
           closeButtonTitle="Remove"
-          resetButtonTitle="Reset to configuration UI"
           onToggleExpand={(i) => onToggleExpand(i)}
           onUpdateConfig={(i, updates) => onUpdateConfig(originalIndex, updates)}
           onRemove={() => onRemoveConfig(originalIndex)}
-          onReset={() => onReset(originalIndex)}
           error={config.error || null}
           onDismissError={() => onUpdateConfig(originalIndex, { error: null })}
           beforeContent={getBeforeContent(config, originalIndex)}
           afterContent={getAfterContent(config, originalIndex)}
+          // Text / scenario: pending editors stay editable once generated; an edit surfaces "Regenerate"
+          settingsContent={isRegenerable && configHasResult ? getBeforeContent(config, originalIndex) : undefined}
+          settingsDirty={configHasResult && isGenerationDirty(config)}
+          onRevertSettings={isRegenerable ? () => handleRevertSettings(config, originalIndex) : undefined}
+          modifiedSettings={isRegenerable && configHasResult ? getModifiedGenerationFields(config) : undefined}
+          onRegenerate={
+            config.type === 'scenario' ? () => handleRegenerateScenario(originalIndex)
+              : config.type === 'text' ? () => handleRegenerateText(originalIndex)
+              : undefined
+          }
           onRun={config.type === 'freeform' ? async () => onAdvanceToSounds(originalIndex, title) : async () => onRun(originalIndex)}
           onCancel={onStop}
           actionButtonLabel={actionButtonLabel}
@@ -626,7 +652,6 @@ export function UsageSection({
       getCardVersion,
       onUpdateConfig,
       onRemoveConfig,
-      onReset,
       onRun,
       onStop,
       onSendToSoundGeneration,
@@ -637,6 +662,7 @@ export function UsageSection({
       handleRefreshScenario,
       handleRegenerateScenario,
       handleRegenerateText,
+      handleRevertSettings,
       textHasParentAnalysis,
     ],
   );

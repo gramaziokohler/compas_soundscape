@@ -66,6 +66,12 @@ export interface IterationLink {
   entityIndex?: number;
 }
 
+/** Kept window of a source buffer, as fractions (0–1) of its full length. */
+export interface TrimRange {
+  start: number;
+  end: number;
+}
+
 /**
  * Timeline Types
  */
@@ -113,7 +119,13 @@ export interface TimelineSound {
    * `undefined` entries mean untrimmed. The DAW uses them to draw only the kept
    * portion of the (untrimmed) source waveform.
    */
-  iterationTrims?: ({ start: number; end: number } | undefined)[];
+  iterationTrims?: (TrimRange | undefined)[];
+  /**
+   * Per-iteration UNTRIMMED source buffer length in ms (parallel to scheduledIterations).
+   * `undefined` while the variant's buffer is not decoded — the DAW disables
+   * edge-trimming for that clip until it is known.
+   */
+  iterationSourceDurationsMs?: (number | undefined)[];
   /**
    * Original iteration indices the orchestrate solver EXCLUDED for this sound
    * (its timing link could not be satisfied strictly). Not scheduled or played.

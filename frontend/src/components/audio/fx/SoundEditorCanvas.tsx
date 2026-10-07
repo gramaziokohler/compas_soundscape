@@ -42,7 +42,13 @@ const DEFAULT_HEIGHT = 96;
 const MIN_HEIGHT = 60;
 const MAX_HEIGHT = 320;
 const ZOOM_DEBOUNCE_MS = 140;
-const ZOOM_STEP = 1.6;
+/** Zoom factor per +/- button click. */
+const ZOOM_STEP = 1.25;
+/** Wheel zoom is proportional to scroll distance: one ~100px mouse notch ≈ ×1.12. */
+const ZOOM_WHEEL_SENSITIVITY = 0.0011;
+/** Pixel equivalents for WheelEvent.deltaMode LINE / PAGE. */
+const WHEEL_LINE_PX = 16;
+const WHEEL_PAGE_PX = 400;
 const ZOOM_MAX = 4000;
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -229,33 +235,34 @@ export function SoundEditorCanvas({
   }, [zoom, ready, applyZoomNow]);
 
   // Mouse wheel over the waveform/spectrogram zooms instead of scrolling.
-  const zoomIn = useCallback(() => {
+  // Multiply the current zoom by `factor` (>1 in, <1 out); snaps back to
+  // "fit" (0) once it would drop to or below the fit resolution.
+  const zoomBy = useCallback((factor: number) => {
     setZoom((z) => {
-      const base = z > 0 ? z : fitPxPerSec();
-      return base > 0 ? Math.min(ZOOM_MAX, base * ZOOM_STEP) : z;
+      const fit = fitPxPerSec();
+      const base = z > 0 ? z : fit;
+      if (base <= 0) return z;
+      const next = Math.min(ZOOM_MAX, base * factor);
+      return next <= fit * 1.01 ? 0 : next;
     });
   }, [fitPxPerSec]);
 
-  const zoomOut = useCallback(() => {
-    setZoom((z) => {
-      const base = z > 0 ? z : fitPxPerSec();
-      if (base <= 0) return z;
-      const next = base / ZOOM_STEP;
-      return next <= fitPxPerSec() * 1.01 ? 0 : next;
-    });
-  }, [fitPxPerSec]);
+  const zoomIn = useCallback(() => zoomBy(ZOOM_STEP), [zoomBy]);
+  const zoomOut = useCallback(() => zoomBy(1 / ZOOM_STEP), [zoomBy]);
 
   useEffect(() => {
     const el = boxRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
-      if (e.deltaY < 0) zoomIn();
-      else zoomOut();
+      const unit = e.deltaMode === 1 ? WHEEL_LINE_PX : e.deltaMode === 2 ? WHEEL_PAGE_PX : 1;
+      const dy = e.deltaY * unit;
+      if (dy === 0) return;
+      zoomBy(Math.exp(-dy * ZOOM_WHEEL_SENSITIVITY));
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-  }, [zoomIn, zoomOut]);
+  }, [zoomBy]);
 
   useEffect(() => {
     const ws = wsRef.current;
@@ -296,6 +303,8 @@ export function SoundEditorCanvas({
   };
 
   const zoomed = zoom > 0;
+  const fitPx = fitPxPerSec();
+  const zoomPercent = zoomed && fitPx > 0 ? Math.round((zoom / fitPx) * 100) : 100;
 
   return (
     <div className="card-stack">
@@ -359,14 +368,19 @@ export function SoundEditorCanvas({
             <ZoomIn size={13} />
           </button>
           {zoomed && (
-            <button
-              type="button"
-              onClick={() => setZoom(0)}
-              title="Reset zoom"
-              className="p-1 text-secondary-hover hover:text-foreground"
-            >
-              <Maximize2 size={13} />
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => setZoom(0)}
+                title="Reset zoom"
+                className="p-1 text-secondary-hover hover:text-foreground"
+              >
+                <Maximize2 size={13} />
+              </button>
+              <span className="text-[10px] tabular-nums text-secondary-hover">
+                {zoomPercent}%
+              </span>
+            </>
           )}
           {regions.length > 0 && (
             <button

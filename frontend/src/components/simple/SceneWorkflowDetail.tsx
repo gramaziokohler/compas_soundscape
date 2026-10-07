@@ -3,6 +3,8 @@
 import { useMemo, type ReactNode } from 'react';
 import { useAnalysisStore, useSceneWorkflowStore, useSoundscapeStore } from '@/store';
 import type { SceneProgress, SceneWorkflowStep, SoundScene } from '@/types/sceneWorkflow';
+import { SceneSettingsSummary } from './SceneSettingsSummary';
+import { ThinkingDisclosure } from '@/components/ui/ThinkingDisclosure';
 import { SIMPLE_MODE } from '@/utils/constants';
 import {
   SCENE_WORKFLOW_STEPS,
@@ -75,6 +77,9 @@ export function SceneWorkflowDetail({ scene, progress, onOpenExpert, onShowSound
   const soundGenCardProgress = useSoundscapeStore((s) => s.soundGenCardProgress);
   const soundGenProgressValue = useSoundscapeStore((s) => s.soundGenProgressValue);
   const analysisProgress = useAnalysisStore((s) => s.analysisProgress);
+  const analysisThinking = useAnalysisStore((s) => s.analysisThinking);
+  const isOrchestrating = useSoundscapeStore((s) => s.isOrchestrating);
+  const orchestrateThinking = useSoundscapeStore((s) => s.orchestrateThinking);
   const run = useSceneWorkflowStore((s) => s.runs[scene.usageIndex]);
   const isQueuedOrRunning = useSceneWorkflowStore(
     (s) => s.activeUsageIndex === scene.usageIndex || s.queue.includes(scene.usageIndex),
@@ -135,6 +140,9 @@ export function SceneWorkflowDetail({ scene, progress, onOpenExpert, onShowSound
       }
       return `${foley.length} sounds${sc.includeSpeech === false ? '' : ` · ${speeches.length} voices`}`;
     }
+    if (step === 'generate' && state === 'running' && isOrchestrating) {
+      return 'Scheduling the sounds on the timeline…';
+    }
     if (step === 'generate' && scene.soundCount > 0) {
       return `${scene.generatedCount}/${scene.soundCount} sounds`;
     }
@@ -142,14 +150,13 @@ export function SceneWorkflowDetail({ scene, progress, onOpenExpert, onShowSound
   };
 
   const generating = progress.status === 'running' && progress.step === 'generate';
+  const orchestrating = generating && isOrchestrating;
   const stepPercent = Math.max(0, Math.min(PERCENT, generating ? soundGenProgressValue : analysisProgress));
+  // The orchestrate agent runs inside the generate step; the other agents report through analysisStore.
+  const thinking = generating ? (orchestrating ? orchestrateThinking : '') : analysisThinking;
 
   return (
     <div className="flex flex-col gap-2.5">
-      {sc?.userContext && (
-        <div className="bubble-step__meta italic line-clamp-2">&ldquo;{sc.userContext}&rdquo;</div>
-      )}
-
       <ol className="flex flex-col gap-2">
         {SCENE_WORKFLOW_STEPS.map((step) => {
           const state = stepState(step);
@@ -158,12 +165,17 @@ export function SceneWorkflowDetail({ scene, progress, onOpenExpert, onShowSound
             <li key={step} className={`bubble-step ${state === 'pending' || state === 'skipped' ? 'bubble-step--pending' : ''}`}>
               <span className="mt-0.5"><StepIcon state={state} /></span>
               <div className="min-w-0 flex-1">
-                <div>{SIMPLE_MODE.STEP_LABELS[step]}</div>
+                <div>
+                  {step === 'generate' && orchestrating ? SIMPLE_MODE.ORCHESTRATE_LABEL : SIMPLE_MODE.STEP_LABELS[step]}
+                </div>
                 {detail && <div className="bubble-step__meta line-clamp-2">{detail}</div>}
                 {state === 'running' && (
-                  <div className="bubble-progress mt-1">
-                    <div className="bubble-progress__value" style={{ width: `${Math.round(stepPercent)}%` }} />
-                  </div>
+                  <>
+                    <div className="bubble-progress mt-1">
+                      <div className="bubble-progress__value" style={{ width: `${Math.round(stepPercent)}%` }} />
+                    </div>
+                    <ThinkingDisclosure text={thinking} />
+                  </>
                 )}
               </div>
             </li>
@@ -171,7 +183,7 @@ export function SceneWorkflowDetail({ scene, progress, onOpenExpert, onShowSound
         })}
       </ol>
 
-      {generating && soundIndices.length > 0 && (
+      {generating && !orchestrating && soundIndices.length > 0 && (
         <ul className="flex flex-col gap-1 max-h-[min(200px,25dvh)] overflow-y-auto">
           {soundIndices.map((i) => {
             const done = isSoundConfigGenerated(soundConfigs, generatedSounds, i);
@@ -211,6 +223,9 @@ export function SceneWorkflowDetail({ scene, progress, onOpenExpert, onShowSound
           Open in expert mode
         </button>
       </div>
+
+      <SceneSettingsSummary usageIndex={scene.usageIndex} />
+
     </div>
   );
 }

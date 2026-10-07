@@ -10,6 +10,7 @@ import { pauseStore, commitStore } from '@/store';
 import type { ScenarioPreviewParcours, ScenarioPreviewStop } from '@/store';
 import { ScenarioResultContent } from './ScenarioResultContent';
 import { AUDIO_PLAYBACK, SCENARIO_TIMELINE } from '@/utils/constants';
+import { ModifiedMark, useIsFieldModified } from '@/components/ui/ModifiedMark';
 
 // ─── Object-reference renderer ────────────────────────────────────────────────
 
@@ -318,12 +319,14 @@ export function ScenarioContent({
   const hasAnalysisResult =
     parent?.type === 'model-analysis' &&
     !!(parent as AnalyzeModelConfig).analysisResult?.analysisId;
+  const isModified = useIsFieldModified();
 
   return (
     <div className="card-stack">
       {hasAnalysisResult && (
         <ToggleField
           label="Use 3D model analysis as context"
+          modified={isModified('useAnalysisResult')}
           checked={config.useAnalysisResult}
           onChange={(checked) => onUpdateConfig(index, { useAnalysisResult: checked })}
         />
@@ -334,7 +337,7 @@ export function ScenarioContent({
           htmlFor={`scenario-context-${index}`}
           className="text-xs font-medium card-label opacity-70"
         >
-          Context (optional)
+          Context (optional){isModified('userContext') && <ModifiedMark />}
         </label>
         <textarea
           id={`scenario-context-${index}`}
@@ -360,6 +363,7 @@ export function ScenarioContent({
         <div className="flex-1">
           <RangeSlider
             label="People"
+            modified={isModified('peopleCount')}
             min={0}
             max={20}
             step={1}
@@ -372,6 +376,7 @@ export function ScenarioContent({
         <div className="flex-1">
           <RangeSlider
             label="Plausibility"
+            modified={isModified('likeliness')}
             min={1}
             max={10}
             step={1}
@@ -385,6 +390,7 @@ export function ScenarioContent({
 
       <RangeSlider
         label="Duration"
+        modified={isModified('timelineDurationMs')}
         value={config.timelineDurationMs / 1_000}
         min={SCENARIO_TIMELINE.MIN_SECONDS}
         max={SCENARIO_TIMELINE.MAX_SECONDS}

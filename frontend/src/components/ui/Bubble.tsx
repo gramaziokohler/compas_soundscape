@@ -1,6 +1,7 @@
 "use client";
 
 import { type CSSProperties, type MouseEvent, type ReactNode } from "react";
+import { Power } from "lucide-react";
 import { SIMPLE_MODE } from "@/utils/constants";
 
 export type BubbleStatus = "idle" | "queued" | "running" | "error";
@@ -27,7 +28,12 @@ export interface BubbleProps {
   /** Secondary line in the hover label (e.g. live status). */
   detail?: string;
   tone?: BubbleTone;
+  /** Expand / reduce the bubble's card. */
   onClick: () => void;
+  /** When set, the hover label becomes a flyout with a power button (on = `selected`). */
+  onTogglePower?: () => void;
+  /** Power button tooltip / accessible name. */
+  powerTitle?: string;
 }
 
 /**
@@ -37,6 +43,9 @@ export interface BubbleProps {
  * simulations and listeners. One state system for all of them: pending
  * (frosted, muted icon), ready (primary border + icon), ready + selected
  * (solid primary, inverted icon); a progress ring while running.
+ * A click only expands / reduces the card. Ready items pass `onTogglePower`:
+ * the hover label then turns into a flyout holding a power button (next to the
+ * bubble, joined to it by an invisible hover bridge so it stays reachable).
  *
  * Usage:
  * ```tsx
@@ -61,6 +70,8 @@ export function Bubble({
   detail,
   tone = "primary",
   onClick,
+  onTogglePower,
+  powerTitle,
 }: BubbleProps) {
   const ringSize = size + SIMPLE_MODE.RING_STROKE * 4;
   const radius = ringSize / 2 - SIMPLE_MODE.RING_STROKE;
@@ -111,11 +122,31 @@ export function Bubble({
         {icon}
       </button>
       <span
-        className={`bubble-label sidebar-toggle-label backdrop-blur-lg backdrop-saturate-150 bubble-label--${labelSide}`}
-        aria-hidden="true"
+        className={[
+          "bubble-label sidebar-toggle-label backdrop-blur-lg backdrop-saturate-150",
+          `bubble-label--${labelSide}`,
+          tone !== "primary" && `bubble-label--${tone}`,
+          onTogglePower && "bubble-label--interactive",
+        ].filter(Boolean).join(" ")}
+        aria-hidden={onTogglePower ? undefined : true}
       >
-        <span className="bubble-label__title">{label}</span>
-        {detail && <span className="bubble-label__detail">{detail}</span>}
+        {onTogglePower && (
+          <button
+            type="button"
+            className={`bubble-power${selected ? " power-btn--on" : ""}`}
+            style={{ width: SIMPLE_MODE.FLYOUT_POWER_SIZE, height: SIMPLE_MODE.FLYOUT_POWER_SIZE }}
+            onClick={(e) => { e.stopPropagation(); onTogglePower(); }}
+            title={powerTitle}
+            aria-label={powerTitle ?? `Power ${label}`}
+            aria-pressed={selected}
+          >
+            <Power size={SIMPLE_MODE.POWER_ICON_SIZE} strokeWidth={2.4} aria-hidden="true" />
+          </button>
+        )}
+        <span className="bubble-label__text">
+          <span className="bubble-label__title">{label}</span>
+          {detail && <span className="bubble-label__detail">{detail}</span>}
+        </span>
       </span>
     </div>
   );
@@ -123,6 +154,8 @@ export function Bubble({
 
 export interface BubbleAddButtonProps {
   label: string;
+  /** DOM id on the button (animation target for panels that reduce into it). */
+  id?: string;
   onClick: (e: MouseEvent<HTMLButtonElement>) => void;
   active?: boolean;
   size?: number;
@@ -140,12 +173,13 @@ export interface BubbleAddButtonProps {
  * <BubbleAddButton label="New sound scene" active={composerOpen} onClick={toggleComposer} />
  * ```
  */
-export function BubbleAddButton({ label, onClick, active = false, size = SIMPLE_MODE.BUBBLE_SIZE, labelSide = "right", tone = "primary" }: BubbleAddButtonProps) {
+export function BubbleAddButton({ label, id, onClick, active = false, size = SIMPLE_MODE.BUBBLE_SIZE, labelSide = "right", tone = "primary" }: BubbleAddButtonProps) {
   return (
     <div className="bubble-wrap group" style={{ width: size, height: size }}>
       <button
+        id={id}
         type="button"
-        className={`bubble bubble--add backdrop-blur-lg backdrop-saturate-150 ${tone !== "primary" ? `bubble--${tone}` : ""} ${active ? "bubble--selected" : ""}`}
+        className={`bubble bubble--addbackdrop-blur-lg backdrop-saturate-150 ${tone !== "primary" ? `bubble--${tone}` : ""} ${active ? "bubble--selected" : ""}`}
         style={{ width: size, height: size }}
         onClick={onClick}
         aria-label={label}
@@ -176,7 +210,7 @@ export interface BubbleExitButtonProps {
 /**
  * BubbleExitButton Component
  *
- * Small warning-colored circle that sits beside an active bubble and leaves the
+ * Small red (error-colored) circle that sits beside an active bubble and leaves the
  * mode it put the viewer in (e.g. a listener's first-person view).
  *
  * Usage:
@@ -206,6 +240,59 @@ export function BubbleExitButton({ label, onClick, size = SIMPLE_MODE.EXIT_BUTTO
       >
         <span className="bubble-label__title">{label}</span>
       </span>
+    </div>
+  );
+}
+
+export interface BubbleScrollButtonProps {
+  /** Which end of the column the button sits at / scrolls toward. */
+  direction: "up" | "down";
+  /** Bubbles hidden beyond this end (0 → disabled). */
+  hiddenCount: number;
+  onClick: () => void;
+  labelSide?: "left" | "right";
+  tone?: BubbleTone;
+}
+
+/**
+ * BubbleScrollButton Component
+ *
+ * Small frosted pill at either end of an overflowing bubble column: a chevron
+ * and the number of bubbles hidden on that side. Click scrolls one page.
+ *
+ * Usage:
+ * ```tsx
+ * <BubbleScrollButton direction="down" hiddenCount={3} onClick={pageDown} />
+ * ```
+ */
+export function BubbleScrollButton({ direction, hiddenCount, onClick, labelSide = "right", tone = "primary" }: BubbleScrollButtonProps) {
+  const disabled = hiddenCount === 0;
+  const width = SIMPLE_MODE.BUBBLE_SIZE;
+  const height = SIMPLE_MODE.SCROLL_BUTTON_HEIGHT;
+  const label = `Scroll ${direction} — ${hiddenCount} more`;
+  return (
+    <div className="bubble-wrap group" style={{ width, height }}>
+      <button
+        type="button"
+        className={`bubble bubble--scroll backdrop-blur-lg backdrop-saturate-150 ${tone !== "primary" ? `bubble--${tone}` : ""}`}
+        style={{ width, height }}
+        onClick={(e) => { e.stopPropagation(); onClick(); }}
+        disabled={disabled}
+        aria-label={label}
+      >
+        <svg width={8} height={5} viewBox="0 0 12 7" fill="none" aria-hidden="true" style={{ transform: direction === "up" ? "rotate(180deg)" : undefined }}>
+          <path d="M1 1l5 5 5-5" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        {!disabled && <span className="bubble-scroll__count">{hiddenCount}</span>}
+      </button>
+      {!disabled && (
+        <span
+          className={`bubble-label sidebar-toggle-label backdrop-blur-lg backdrop-saturate-150 bubble-label--${labelSide}`}
+          aria-hidden="true"
+        >
+          <span className="bubble-label__title">{label}</span>
+        </span>
+      )}
     </div>
   );
 }

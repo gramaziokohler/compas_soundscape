@@ -6,6 +6,7 @@ import { SpeckleScene } from "@/components/scene/SpeckleScene";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { RightSidebar } from "@/components/layout/RightSidebar";
 import { SimpleSoundscapes } from "@/components/simple/SimpleSoundscapes";
+import { HomeSceneComposer } from "@/components/simple/HomeSceneComposer";
 import { registerSendToSoundGeneration } from "@/store/sceneWorkflowStore";
 import type { SidebarProps } from "@/types/components";
 import { AdvancedSettingsPanel } from "@/components/scene/AdvancedSettingsPanel";
@@ -30,6 +31,7 @@ import {
   useRightSidebarStore,
   useAcousticLayerStore,
   useUIStore,
+  selectHasSaveTarget,
   useGridListenersStore,
   useErrorsStore,
   useCardFlowStore,
@@ -47,14 +49,17 @@ import { useAudioOutputDeviceSync } from "@/hooks/useAudioOutputDeviceSync";
 import { applyOutputDevice } from "@/lib/audio/output-device";
 import { useViewportScale } from "@/hooks/useViewportScale";
 import { useUndoRedo } from "@/hooks/useUndoRedo";
+import { useGlobalShortcuts } from "@/hooks/useGlobalShortcuts";
 import { useJobRecovery } from "@/hooks/useJobRecovery";
 import { useModelVersionWatcher } from "@/hooks/useModelVersionWatcher";
 import { apiService } from "@/services/api";
-import { API_BASE_URL, DEFAULT_DBFS, DEFAULT_NUM_SOUNDS, RECEIVER_CONFIG, SPIRAL_PLACEMENT, DEFAULT_LISTENER_ORIENTATION, TTS_DEFAULT_LANGUAGE, DEFAULT_MAXIMUM_FOLEY_SOUNDS, SANDBOX_MODEL_ID, MODEL_VERSION_WATCH } from "@/utils/constants";
+import { API_BASE_URL, DEFAULT_BACKGROUND_DURATION_SECONDS, DEFAULT_DBFS, DEFAULT_NUM_SOUNDS, RECEIVER_CONFIG, SPIRAL_PLACEMENT, DEFAULT_LISTENER_ORIENTATION, TTS_DEFAULT_LANGUAGE, DEFAULT_MAXIMUM_FOLEY_SOUNDS, SANDBOX_MODEL_ID, MODEL_VERSION_WATCH } from "@/utils/constants";
 import { parseAuthoredSeconds } from "@/lib/audio/utils/timeline-utils";
 import { getCameraFrontSpiralPosition } from "@/lib/three/spiral-placement";
 import type { LoadTab, SoundGenerationConfig, SoundEvent } from "@/types";
 import type { SoundscapeData } from "@/types/soundscape";
+import type { ListenerExpandRequest } from "@/types/receiver";
+import { parseGridPointId } from "@/utils/gridListenerPoints";
 import type { AcousticSimulationMode } from "@/types/audio";
 import type { AudioAnalysisConfig, AnalysisConfig } from "@/types/analysis";
 import { CARD_TYPE_LABELS } from "@/types/card";
@@ -63,6 +68,7 @@ import type { AudioRenderingMode } from "@/components/audio/AudioRenderingModeSe
 import { buildSoundscapeSavePayload, restoreSoundscapeState, getBlobUrlSounds, buildAnalysisStateSave, restoreAnalysisState } from "@/utils/soundscape-serializer";
 import { getStoredJobs, recordInflightJob } from "@/lib/job-tracker";
 import { ImportSandboxModal } from "@/components/scene/ImportSandboxModal";
+import { homeStageHasWork } from "@/hooks/useHomeStageHasWork";
 import { NewModelVersionModal } from "@/components/scene/NewModelVersionModal";
 import { HomeProjectModal } from "@/components/scene/HomeProjectModal";
 import { WorkspaceJoinDialog } from "@/components/ui/WorkspaceJoinDialog";
@@ -99,6 +105,11 @@ let _fitCameraToBoundingBoxOnLoad = false;
 function homeProjectIdFromName(name: string): string {
   const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'project';
   return `home-${slug}`;
+}
+
+/** Page URL that reopens a saved Homepage project (read by the URL bootstrap). */
+function homeProjectUrl(modelId: string): string {
+  return `/?home=${encodeURIComponent(modelId)}`;
 }
 
 /**
@@ -169,7 +180,8 @@ function applyRestoredSoundscapePayload(
   }
 
   useAudioControlsStore.getState().restoreIterationLinks(restored.iterationLinks);
-  useAudioControlsStore.getState().restoreMuteSolo(restored.mutedSounds, restored.soloedSound);
+  useAudioControlsStore.getState().restoreIterationTrims(restored.iterationTrims);
+  useAudioControlsStore.getState().restoreMuteSolo(restored.mutedSounds, restored.soloedSounds);
   useAudioControlsStore.getState().restoreExclusions(restored.excludedIterations, restored.exclusionReasons);
 
   if (restored.receivers.length > 0) {
@@ -256,6 +268,7 @@ function collectSimulationIRIds(config: unknown): Set<string> {
 
 function HomeContent() {
   useUndoRedo();
+  useGlobalShortcuts();
   // ── Refresh survival ─────────────────────────────────────────────────────
   // Use window.location.search directly (not useSearchParams) because
   // useSearchParams can return empty values during SSR/hydration in Next.js,
@@ -481,11 +494,9 @@ function HomeContent() {
       // Read live store state instead of the render closure — this effect only
       // runs once at mount (deps=[]), so a captured `globalSpeckleData` variable
       // would be frozen at its mount-time value (null on a cold refresh) forever.
-      const liveModelId = useUIStore.getState().globalSpeckleData?.model_id ?? SANDBOX_MODEL_ID;
-      // Never autosave on the Home page (fresh stage or a loaded Homepage
-      // project) — saving there is manual (Save → Homepage project).
-      const uiState = useUIStore.getState();
-      if (!uiState.globalSpeckleData) return;
+      // Never autosave on the bare Home page — saving there is manual
+      // (Save → Homepage project). A model or a saved Homepage project autosaves.
+      if (!selectHasSaveTarget(useUIStore.getState())) return;
       if (!autosaveEnabledRef.current) return;
       // Viewers are read-only: never attempt a save (the backend would reject it).
       if (useWorkspaceStore.getState().workspace?.role === 'viewer') return;
@@ -1089,13 +1100,13 @@ function HomeContent() {
     if (globalSpeckleData) {
       setIsBootstrappingModel(false);
     }
-    // Autosave is effective only with a model (`enableAutoSave && globalSpeckleData`)
-    // — the Home page never autosaves. The preference itself is never switched
-    // off here: it is restored later from localStorage / server preferences, and
-    // writing `false` on Home would be synced back as the user's choice. Opening
-    // a model turns it on by itself.
-    if (globalSpeckleData) useUIStore.getState().setEnableAutoSave(true);
-  }, [globalSpeckleData]);
+    // Autosave is effective only with a save target (a model or a saved Homepage
+    // project, see `selectHasSaveTarget`) — the bare Home page never autosaves.
+    // The preference itself is never switched off here: it is restored later
+    // from localStorage / server preferences, and writing `false` on Home would
+    // be synced back as the user's choice. Opening a target turns it on by itself.
+    if (globalSpeckleData || homeProject) useUIStore.getState().setEnableAutoSave(true);
+  }, [globalSpeckleData, homeProject]);
 
   // Callback when Speckle viewer is loaded
     const handleSpeckleViewerLoaded = useCallback((viewer: import('@speckle/viewer').Viewer) => {
@@ -1393,17 +1404,21 @@ function HomeContent() {
   // FPS mode programmatic exit trigger (increment to exit first-person mode)
   const [exitFPSTrigger, setExitFPSTrigger] = useState(0);
 
-  // Forced expanded listener card — derived from active go-to target (single listeners only)
-  const goToExpandedSingleListenerId = useMemo(() => {
+  // Powered single listener (its card's power button is on) — derived from the
+  // active go-to target (single listeners only)
+  const poweredListenerId = useMemo(() => {
     if (!activeIRGroupId) return null;
     return receivers.receivers.some((r) => r.id === activeIRGroupId) ? activeIRGroupId : null;
   }, [activeIRGroupId, receivers.receivers]);
 
-  // Collapse all listener cards trigger (from FPS exit via Escape or go-to toggle off)
-  const [collapseListenerCardTrigger, setCollapseListenerCardTrigger] = useState(0);
+  // Incremented on every FPS exit (clears the highlighted IR group in acoustics)
+  const [fpsExitCount, setFpsExitCount] = useState(0);
 
-  // Expanded grid listener ID (controls which grid's points are rendered in 3D)
-  const [expandedGridListenerId, setExpandedGridListenerId] = useState<string | null>(null);
+  // Powered grid listener ID (controls which grid's points are rendered in 3D)
+  const [activeGridListenerId, setActiveGridListenerId] = useState<string | null>(null);
+
+  // Request to expand a listener / grid card from outside its section
+  const [listenerExpandRequest, setListenerExpandRequest] = useState<ListenerExpandRequest | null>(null);
 
   // FPS listener orientation lives in uiStore (persisted + synced to the user's
   // preferences) so it survives refresh.
@@ -1898,7 +1913,7 @@ function HomeContent() {
           prompt: isSpeech
             ? (orchestrateMeta?.speechLines?.[0] || scenarioSource?.speechLines?.[0] || scenarioSource?.script || p.text)
             : p.text,
-          duration: isBackground ? 10 : (p.metadata?.duration_seconds ?? 10),
+          duration: isBackground ? DEFAULT_BACKGROUND_DURATION_SECONDS : (p.metadata?.duration_seconds ?? 10),
           guidance_scale: 0.9,
           negative_prompt: '',
           seed_copies: variantCount,
@@ -2044,18 +2059,7 @@ function HomeContent() {
   };
 
   /** True when the Home stage holds any work (it starts empty on every load). */
-  const homeHasImportableWork = (): boolean => {
-    const home = captureHomeElements();
-    const hasAnalysis = useAnalysisStore.getState().analysisConfigs.length > 0;
-    return (
-      home.configs.length > 0 ||
-      home.events.length > 0 ||
-      home.receivers.length > 0 ||
-      home.gridListeners.length > 0 ||
-      useAcousticsSimulationStore.getState().simulationConfigs.length > 0 ||
-      hasAnalysis
-    );
-  };
+  const homeHasImportableWork = homeStageHasWork;
 
   /** Empty every domain store so a model opens without the Home elements. */
   const resetDomainForFreshModel = () => {
@@ -2076,8 +2080,9 @@ function HomeContent() {
     audio.restoreVolumes({});
     audio.restoreSoundTimestamps({});
     audio.restoreIterationLinks({});
+    audio.restoreIterationTrims({});
     audio.restoreExclusions({}, {});
-    audio.restoreMuteSolo([], null);
+    audio.restoreMuteSolo([], []);
     useAcousticLayerStore.getState().clearAcousticLayer();
   };
 
@@ -2131,10 +2136,12 @@ function HomeContent() {
     }
 
     setIsUploadingGlobalModel(true);
+    const { setGlobalModelUploadProgress } = useUIStore.getState();
 
     try {
-      // Upload directly to backend for Speckle conversion
-      const uploadResponse = await apiService.uploadFile(file);
+      // Upload directly to backend for Speckle conversion; ingestion polls stream
+      // live stage / % into the scene loading overlay.
+      const uploadResponse = await apiService.uploadFile(file, setGlobalModelUploadProgress);
 
       // Extract speckle data from response
       // (`apiService.uploadFile` already waited for Speckle ingestion, so version_id
@@ -2144,8 +2151,14 @@ function HomeContent() {
       if (speckleData) {
         console.log('[page.tsx] Model uploaded to Speckle:', speckleData.url);
         setGlobalModelFile(file);
+        setGlobalModelUploadProgress({ stage: 'loading', message: null, progress: null, phase: null, attempt: null });
         // Route through the shared select flow so the Home import prompt applies.
-        await handleSpeckleModelSelect(speckleData, true);
+        // The upload response carries no display name — label it with the file name
+        // (otherwise the import prompt falls back to the raw model id).
+        await handleSpeckleModelSelect(
+          { ...speckleData, display_name: file.name },
+          true,
+        );
       } else {
         console.warn('[page.tsx] No Speckle data in upload response');
         setGlobalModelFile(null);
@@ -2156,6 +2169,7 @@ function HomeContent() {
       setGlobalModelFile(null);
     } finally {
       setIsUploadingGlobalModel(false);
+      setGlobalModelUploadProgress(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isUploadingGlobalModel, handleApiError]);
@@ -2285,11 +2299,15 @@ function HomeContent() {
         useAudioControlsStore.getState().restoreIterationLinks(
           restored.iterationLinks,
         );
+        // Restore per-clip DAW trims (same keys as the iteration links).
+        useAudioControlsStore.getState().restoreIterationTrims(
+          restored.iterationTrims,
+        );
 
         // Restore DAW mute/solo states
         useAudioControlsStore.getState().restoreMuteSolo(
           restored.mutedSounds,
-          restored.soloedSound,
+          restored.soloedSounds,
         );
 
         // Restore persisted solver exclusions (marks in the DAW timeline).
@@ -2305,7 +2323,7 @@ function HomeContent() {
           console.log(`[DEBUG-LOAD]   link[${k}] = ${JSON.stringify(v)}`);
         }
         console.log('[DEBUG-LOAD]   mutedSounds:', [...useAudioControlsStore.getState().mutedSounds]);
-        console.log('[DEBUG-LOAD]   soloedSound:', useAudioControlsStore.getState().soloedSound);
+        console.log('[DEBUG-LOAD]   soloedSounds:', [...useAudioControlsStore.getState().soloedSounds]);
 
         // Restore receivers (authoritative — the domain was reset above)
         receivers.restoreReceivers(restored.receivers, restored.selectedReceiverId);
@@ -2544,9 +2562,10 @@ function HomeContent() {
         useAudioControlsStore.getState().soundTimestamps,
         useAudioControlsStore.getState().iterationLinks,
         [...useAudioControlsStore.getState().mutedSounds],
-        useAudioControlsStore.getState().soloedSound,
+        [...useAudioControlsStore.getState().soloedSounds],
         useAudioControlsStore.getState().excludedIterations,
         useAudioControlsStore.getState().exclusionReasons,
+        useAudioControlsStore.getState().iterationTrims,
       );
 
       // Embed analysis state in the soundscape data
@@ -2742,8 +2761,13 @@ function HomeContent() {
     setIsSavingHomeProject(true);
     try {
       await handleSaveSoundscape({ modelId, modelName: name });
-      // The saved project becomes the active one → Home button + auto-save on.
+      // The saved project becomes the active one → Home button + auto-save on,
+      // and the URL points at it so a refresh reopens the project directly.
       useUIStore.getState().setHomeProject({ modelId, name });
+      window.history.replaceState(null, '', homeProjectUrl(modelId));
+      // Re-baseline against the now-active project so the first autosave does
+      // not re-save content identical to what was just written.
+      lastSavedSignatureRef.current = computeSaveSignatureRef.current?.() ?? null;
     } finally {
       setIsSavingHomeProject(false);
       setShowHomeProjectModal(false);
@@ -2753,7 +2777,7 @@ function HomeContent() {
   // Reload a saved Homepage project onto the sandbox stage via the URL bootstrap.
   const handleOpenHomeProject = useCallback((modelId: string) => {
     setShowHomeProjectModal(false);
-    window.location.href = `/?home=${encodeURIComponent(modelId)}`;
+    window.location.href = homeProjectUrl(modelId);
   }, []);
 
   // Wrapped file change handler to clear SED results and load audio info
@@ -2796,33 +2820,6 @@ function HomeContent() {
     }
     soundGen.handleRemoveConfig(index);
   }, [soundGen.soundConfigs, soundGen.handleRemoveConfig, unlinkObjectFromSound, resolveEntityObjectId]);
-
-  // Handle sound reset (remove generated sound but keep config)
-  // Downgrades entity color from full pink → light pink
-  const handleResetSound = useCallback((soundId: string, promptIndex: number) => {
-
-    // Downgrade entity color from generated (full pink) to pending (light pink)
-    const config = soundGen.soundConfigs[promptIndex];
-    for (const ent of config?.entities || []) {
-      const objectId = resolveEntityObjectId(ent);
-      if (objectId) {
-        // Re-link with hasGeneratedSound=false to downgrade color
-        linkObjectToSound(objectId, promptIndex, false);
-      }
-    }
-
-    // Filter out sounds with this prompt index using current state from store
-    const currentSoundscapeData = useSoundscapeStore.getState().soundscapeData;
-    if (currentSoundscapeData) {
-      const updatedSounds = currentSoundscapeData.filter(
-        (sound: any) => sound.prompt_index !== promptIndex
-      );
-      soundGen.setSoundscapeData(updatedSounds.length > 0 ? updatedSounds : null);
-    }
-
-    // Reset the sound config atomically (clears display_name, uploaded audio, library search, etc.)
-    soundGen.handleResetSoundConfig(promptIndex);
-  }, [soundGen.soundConfigs, soundGen.setSoundscapeData, soundGen.handleResetSoundConfig, linkObjectToSound, resolveEntityObjectId]);
 
   // Handle sound card selection from ThreeScene (sound sphere click)
   const handleSelectSoundCard = useCallback((promptIndex: number) => {
@@ -3382,23 +3379,42 @@ function HomeContent() {
     audioOrchestrator.setReceiverMode(isActive, receiverId || undefined, hasReceivers);
   }, [audioOrchestrator, receivers.receivers.length]);
 
-  // Exit go-to-listener / FPS mode and optionally collapse listener cards
-  const exitGoToListenerMode = useCallback((collapseCards = true) => {
+  // Exit go-to-listener / FPS mode. A single listener powers off; a grid stays
+  // powered (its points remain shown) — grid power-off is handleToggleGridListenerPower.
+  const exitGoToListenerMode = useCallback(() => {
     setActiveIRGroupId(null);
     setIsFPSModeActive(false);
     setGoToReceiverId(null);
     setGoToPosition(null);
     setGoToPositionReceiverId(null);
     setExitFPSTrigger((t) => t + 1);
-    setExpandedGridListenerId(null);
-    if (collapseCards) setCollapseListenerCardTrigger((t) => t + 1);
+    setFpsExitCount((t) => t + 1);
     audioOrchestrator.setReceiverMode(false, undefined, receivers.receivers.length > 0);
   }, [audioOrchestrator, receivers.receivers.length]);
+
+  // Grid listener power button: show / hide its points. One powered listener
+  // at a time — powering a grid leaves any FPS view first.
+  const handleToggleGridListenerPower = useCallback((gridId: string) => {
+    if (activeGridListenerId === gridId) {
+      if (isFPSModeActive) exitGoToListenerMode();
+      setActiveGridListenerId(null);
+      return;
+    }
+    if (isFPSModeActive || activeIRGroupId) exitGoToListenerMode();
+    setActiveGridListenerId(gridId);
+  }, [activeGridListenerId, isFPSModeActive, activeIRGroupId, exitGoToListenerMode]);
+
+  // Expand the card of a listener, or of the grid owning a grid point id
+  const requestListenerCardExpand = useCallback((listenerOrPointId: string) => {
+    const isReceiver = receivers.receivers.some((r) => r.id === listenerOrPointId);
+    const id = isReceiver ? listenerOrPointId : parseGridPointId(listenerOrPointId)?.gridId ?? listenerOrPointId;
+    setListenerExpandRequest((prev) => ({ id, seq: (prev?.seq ?? 0) + 1 }));
+  }, [receivers.receivers]);
 
   // Handler: Go To Receiver (activates first-person view at receiver position)
   const handleGoToReceiver = useCallback((receiverId: string) => {
     if (activeIRGroupId === receiverId) {
-      exitGoToListenerMode(true);
+      exitGoToListenerMode();
       return;
     }
 
@@ -3424,22 +3440,21 @@ function HomeContent() {
       setGoToReceiverId(receiverId);
       setIsFPSModeActive(true);
       audioOrchestrator.setReceiverMode(true, receiverId, true);
-      setExpandedGridListenerId(null);
+      setActiveGridListenerId(null);
       return;
     }
 
     // Try grid listener points: ID format is `${gridListenerId}-${index}`
-    const lastDash = receiverId.lastIndexOf('-');
-    if (lastDash > 0) {
-      const parentId = receiverId.substring(0, lastDash);
-      const pointIdx = parseInt(receiverId.substring(lastDash + 1), 10);
-      const gridListener = gridListeners.gridListeners.find(g => g.id === parentId);
-      if (gridListener && !isNaN(pointIdx) && gridListener.points[pointIdx]) {
-        setGoToPosition(gridListener.points[pointIdx]);
+    const gridPoint = parseGridPointId(receiverId);
+    if (gridPoint) {
+      const gridListener = gridListeners.gridListeners.find(g => g.id === gridPoint.gridId);
+      const point = gridListener?.points[gridPoint.index];
+      if (point) {
+        setGoToPosition(point);
         setGoToPositionReceiverId(receiverId);
         setIsFPSModeActive(true);
         audioOrchestrator.setReceiverMode(true, receiverId, true);
-        setExpandedGridListenerId(parentId);
+        setActiveGridListenerId(gridPoint.gridId);
         return;
       }
     }
@@ -3447,10 +3462,18 @@ function HomeContent() {
     console.warn('[Page] handleGoToReceiver: Receiver not found:', receiverId);
   }, [activeIRGroupId, exitGoToListenerMode, receivers.receivers, gridListeners.gridListeners, audioOrchestrator, acousticsSimulation.activeSimulationIndex, acousticsSimulation.simulationConfigs, addError]);
 
-  // Handler: Receiver mesh double-clicked in 3D scene → enter FPS + expand listener card
+  // Handler: Receiver mesh / grid point double-clicked in 3D scene → power on (FPS) + expand its card
+  // (Simple mode: power on only — the floating card stays closed.)
   const handleReceiverDoubleClickedInScene = useCallback((receiverId: string) => {
     handleGoToReceiver(receiverId);
-  }, [handleGoToReceiver]);
+    if (uiMode === 'expert') requestListenerCardExpand(receiverId);
+  }, [handleGoToReceiver, requestListenerCardExpand, uiMode]);
+
+  // Handler: Acoustics IR group "go to listener" → power on (FPS) + expand its card
+  const handleAcousticsGoToReceiver = useCallback((receiverId: string) => {
+    handleGoToReceiver(receiverId);
+    requestListenerCardExpand(receiverId);
+  }, [handleGoToReceiver, requestListenerCardExpand]);
 
   // Keyboard navigation between IR groups while in FPS mode (Shift+ArrowRight / Shift+ArrowLeft)
   useEffect(() => {
@@ -3481,12 +3504,13 @@ function HomeContent() {
       if (!nextId) return;
 
       handleGoToReceiver(nextId);
+      requestListenerCardExpand(nextId);
     };
 
     // Capture phase so Speckle's camera controls (which stopPropagation on arrow keys) can't block this
     window.addEventListener('keydown', handleKeyDown, true);
     return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [isFPSModeActive, activeIRGroupId, receivers.receivers, gridListeners.gridListeners, handleGoToReceiver]);
+  }, [isFPSModeActive, activeIRGroupId, receivers.receivers, gridListeners.gridListeners, handleGoToReceiver, requestListenerCardExpand]);
 
   /**
    * Add a receiver in front of the current camera.
@@ -3755,7 +3779,6 @@ function HomeContent() {
     isLinkingEntity: isLinkingEntity,
     linkingConfigIndex: linkingConfigIndex,
     useSpeckleViewer: useSpeckleViewer,
-    onResetSound: handleResetSound,
     onDuplicateConfig: soundGen.handleDuplicateConfig,
     onRegenerateSingle: soundGen.handleRegenerateSingle,
     onDeleteVariant: soundGen.handleDeleteVariant,
@@ -3775,7 +3798,6 @@ function HomeContent() {
     onStop: analysis.handleStopAnalysis,
     onTogglePromptSelection: analysis.handleTogglePromptSelection,
     onSendToSoundGeneration: handleSendAnalysisToGeneration,
-    onResetAnalysis: analysis.handleReset,
     onAudioExtract: handleAudioExtract,
     // Advanced settings props
     normalizeImpulseResponses: auralizationConfig.normalize,
@@ -3903,7 +3925,7 @@ function HomeContent() {
             goToPositionReceiverId={goToPositionReceiverId}
             gridListenerPoints={visibleGridListenerPoints}
             gridListenerPointIds={visibleGridListenerPointIds}
-            expandedGridListenerId={expandedGridListenerId}
+            expandedGridListenerId={activeGridListenerId}
             listenerOrientation={listenerOrientation}
             // Sound sphere position update (for simulation sync when dragging)
             onUpdateSoundPosition={(soundId, position) => {
@@ -3955,8 +3977,10 @@ function HomeContent() {
             exitFPSTrigger={exitFPSTrigger}
             // Receiver mesh double-click → expand listener card + enter FPS mode
             onReceiverDoubleClicked={handleReceiverDoubleClickedInScene}
-            // FPS exit via Escape → collapse listener card
-            onFPSExited={() => exitGoToListenerMode(true)}
+            // Listener / grid point single-click → expand its card
+            onListenerClicked={requestListenerCardExpand}
+            // FPS exit via Escape → power the listener off
+            onFPSExited={exitGoToListenerMode}
             className="w-full h-full"
           />
         ) : (
@@ -3974,6 +3998,8 @@ function HomeContent() {
         ) : (
           <SimpleSoundscapes sidebarProps={sidebarProps} />
         )}
+        {/* Home new-scene panel — stays open across a Simple ↔ Expert switch */}
+        <HomeSceneComposer />
 
       {/* Advanced Settings floating panel */}
       <AdvancedSettingsPanel
@@ -4038,19 +4064,20 @@ function HomeContent() {
         onUpdateReceiverName={receivers.updateReceiverName}
         onUpdateReceiverPosition={receivers.updateReceiverPosition}
         onGoToReceiver={handleGoToReceiver}
+        onAcousticsGoToReceiver={handleAcousticsGoToReceiver}
         onToggleReceiverHiddenForSimulation={receivers.toggleReceiverHiddenForSimulation}
-        onExitFPS={() => exitGoToListenerMode(false)}
+        onExitFPS={exitGoToListenerMode}
         isFPSModeActive={isFPSModeActive}
         forcedActiveGroupId={activeIRGroupId}
-        forcedExpandedListenerId={goToExpandedSingleListenerId}
-        collapseListenerCardTrigger={collapseListenerCardTrigger}
+        poweredListenerId={poweredListenerId}
+        listenerExpandRequest={listenerExpandRequest}
         // Grid listener props
         gridListeners={gridListeners.gridListeners}
         onAddGridListener={() => gridListeners.addGridListener()}
         onDeleteGridListener={gridListeners.removeGridListener}
         onComputeBounds={computeBoundsForObjectIds}
-        expandedGridListenerId={expandedGridListenerId}
-        onExpandedGridListenerChange={setExpandedGridListenerId}
+        activeGridListenerId={activeGridListenerId}
+        onToggleGridListenerPower={handleToggleGridListenerPower}
         // ShoeBox Acoustics props
         resonanceAudioConfig={resonanceAudioConfig}
         onToggleResonanceAudio={() => {}}
@@ -4086,10 +4113,9 @@ function HomeContent() {
         onSetActiveSimulation={acousticsSimulation.handleSetActiveSimulation}
         onUpdateSimulationName={acousticsSimulation.handleUpdateSimulationName}
         onIRHover={handleIRHover}
-        fpsExitTrigger={collapseListenerCardTrigger}
+        fpsExitTrigger={fpsExitCount}
         onIRGainChange={handleIRGainChange}
         onIRNormalizeChange={handleIRNormalizeChange}
-        listenerOrientation={listenerOrientation}
       />
       </main>
     </div>

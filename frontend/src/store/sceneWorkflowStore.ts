@@ -42,6 +42,7 @@ import { useSoundscapeStore } from './soundscapeStore';
 import { useAudioControlsStore } from './audioControlsStore';
 import { useCardFlowStore } from './cardFlowStore';
 import { useUIStore } from './uiStore';
+import { useRightSidebarStore } from './rightSidebarStore';
 import { notifySectionError } from './errorsStore';
 
 // ─── Module-level refs ────────────────────────────────────────────────────────
@@ -162,6 +163,9 @@ export interface SceneWorkflowStoreState {
    * Scene whose panel Simple mode should open when it mounts (set when leaving
    * Expert mode, so the user lands on the scene they were working on).
    */
+  /** The scene panel Simple mode currently has open (null = none); Detailed mode opens the same scene. */
+  openSimplePanel: { kind: 'scene' | 'workflow'; usageIndex: number } | null;
+  setOpenSimplePanel: (panel: { kind: 'scene' | 'workflow'; usageIndex: number } | null) => void;
   pendingSimpleFocus: number | null;
   consumeSimpleFocus: () => number | null;
   /**
@@ -178,7 +182,6 @@ export interface SceneWorkflowStoreState {
 export function defaultSceneOptions(): SceneWorkflowOptions {
   return {
     includeSpeech: true,
-    quality: SIMPLE_MODE.DEFAULT_QUALITY,
     durationMs: SIMPLE_MODE.DEFAULT_DURATION_MS,
     audioModel: useSoundscapeStore.getState().audioModel,
     llmModel: useSoundscapeStore.getState().llmModel,
@@ -268,9 +271,8 @@ export const useSceneWorkflowStore = create<SceneWorkflowStoreState>()(
           _sendToSoundGeneration(run.usageIndex);
           indices = getSceneSoundIndices(useSoundscapeStore.getState().soundConfigs, run.usageIndex);
           if (indices.length === 0) throw new StepError('No sounds to generate for this scene');
-          const { steps } = SIMPLE_MODE.QUALITY_PRESETS[run.options.quality];
           const { handleUpdateConfig } = useSoundscapeStore.getState();
-          indices.forEach((i) => handleUpdateConfig(i, 'steps', steps));
+          indices.forEach((i) => handleUpdateConfig(i, 'steps', SIMPLE_MODE.DIFFUSION_STEPS));
         }
 
         const sound = useSoundscapeStore.getState();
@@ -396,7 +398,8 @@ export const useSceneWorkflowStore = create<SceneWorkflowStoreState>()(
           analysis.handleAddConfig('scenario');
           useAnalysisStore.getState().handleUpdateConfig(usageIndex, {
             parentContextOriginalIndex: contextIndex,
-            display_name: deriveSceneTitle(prompt),
+            // Empty prompt (model loaded): no provisional title — the scenario title takes over.
+            display_name: deriveSceneTitle(prompt) || undefined,
             userContext: prompt.trim(),
             peopleCount: options.peopleCount,
             likeliness: options.likeliness,
@@ -480,6 +483,9 @@ export const useSceneWorkflowStore = create<SceneWorkflowStoreState>()(
           );
         },
 
+        openSimplePanel: null,
+        setOpenSimplePanel: (panel) => set({ openSimplePanel: panel }, false, 'sceneWorkflow/setOpenSimplePanel'),
+
         pendingSimpleFocus: null,
         consumeSimpleFocus: () => {
           const focus = get().pendingSimpleFocus;
@@ -490,19 +496,28 @@ export const useSceneWorkflowStore = create<SceneWorkflowStoreState>()(
         switchUIMode: (mode, focusUsageIndex) => {
           const ui = useUIStore.getState();
           if (mode === 'expert') {
-            const { activeUsageIndex, runs } = get();
+            const { activeUsageIndex, runs, openSimplePanel } = get();
             const selected = ui.isInSoundsStep ? ui.activeSoundParentIndex : null;
-            const target = focusUsageIndex ?? selected ?? activeUsageIndex;
+            // The scene whose circle is expanded in Simple mode wins, so Detailed
+            // mode opens the same cards / sections.
+            const target = focusUsageIndex ?? openSimplePanel?.usageIndex ?? selected ?? activeUsageIndex;
             if (target !== null && target >= 0) {
               const cfg = useAnalysisStore.getState().analysisConfigs[target];
               const hasSounds =
                 getSceneSoundIndices(useSoundscapeStore.getState().soundConfigs, target).length > 0;
               const run = runs[target];
-              const step = hasSounds ? 2 : run ? workflowStepToWizardStep(run.step) : 1;
+              const showsWorkflowStep = openSimplePanel?.kind === 'workflow' && openSimplePanel.usageIndex === target && !!run;
+              const step = showsWorkflowStep
+                ? workflowStepToWizardStep(run.step)
+                : hasSounds ? 2 : run ? workflowStepToWizardStep(run.step) : 1;
               syncExpertNavigation(step, cfg?.parentContextOriginalIndex ?? run?.contextIndex ?? null, target);
             }
             // The Sidebar reads its expanded state from the persisted store on mount.
-            ui.setIsLeftSidebarExpanded(true);
+            // Via the command (not just the flag): a Home-load collapse command is
+            // still stored and the mounting Sidebar would replay it over the flag.
+            ui.setLeftSidebarExpandCommand(true);
+            // Expand the right sidebar too (Object Explorer / entity info).
+            useRightSidebarStore.getState().requestExpand();
           } else {
             const flow = useCardFlowStore.getState();
             const shown = ui.sidebarWizardStep === 2

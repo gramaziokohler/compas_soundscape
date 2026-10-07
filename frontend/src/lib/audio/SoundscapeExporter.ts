@@ -18,7 +18,7 @@
  * All exports use 24-bit PCM WAV encoding.
  */
 
-import type { TimelineSound, Position, Position3D, Orientation, AmbisonicOrder, IterationLink } from '@/types/audio';
+import type { TimelineSound, Position, Position3D, Orientation, AmbisonicOrder, IterationLink, TrimRange } from '@/types/audio';
 import { AudioMode } from '@/types/audio';
 import { cartesianToSpherical } from './utils/ambisonic-utils';
 import { applyAmbisonicRotation } from './utils/ambisonic-rotation';
@@ -26,6 +26,8 @@ import { OmnitoneDecoder } from './decoders/OmnitoneDecoder';
 import { applyFadeInOut, resolveClipFade, type FadeOptions } from './utils/fade-envelope';
 import { audioBufferToWavBlob24 } from './utils/wav-encode';
 import { resolveVariantSoundIdByPrompt } from './utils/variant-sound-id';
+import { resolveIterationTrim } from './utils/iteration-trim';
+import { isSoundSilenced } from './utils/mute-solo';
 
 // ============================================================================
 // Public Types
@@ -76,11 +78,14 @@ export interface SoundscapeExportConfig {
   /** Muted sound IDs */
   mutedSounds: Set<string>;
 
-  /** ID of the soloed sound (null = no solo) */
-  soloedSound?: string | null;
+  /** Variant sound IDs of every soloed track (empty/undefined = no solo) */
+  soloedSounds?: Set<string>;
 
   /** Audio trim settings per sound (start/end as fraction 0-1 of buffer duration) */
-  soundTrims?: Record<string, { start: number; end: number }>;
+  soundTrims?: Record<string, TrimRange>;
+
+  /** Per-clip trim overrides (DAW edge-drag), keyed `${soundId}-${iterationIndex}`. */
+  iterationTrims?: Record<string, TrimRange>;
 
   /** Per-sound loopable flag — mirrored from playback so export fades match. */
   soundLoopable?: Record<string, boolean>;
@@ -174,8 +179,7 @@ export async function exportSoundscapeToWav(
   onProgress?.(0.02);
 
   const activeSounds = sounds.filter((s) => {
-    if (config.soloedSound) return s.id === config.soloedSound;
-    return !config.mutedSounds.has(s.id);
+    return !isSoundSilenced(s.id, config.mutedSounds, config.soloedSounds ?? new Set());
   });
 
   if (activeSounds.length === 0) {
@@ -341,7 +345,7 @@ async function buildAnechoicGraph(
     distNode.connect(encoder.in);
     encoder.out.connect(mixBus);
 
-    scheduleIterations(offlineCtx, resolveIterationBuffers(sound, sourceRegistry, config.iterationLinks, config.variantEvents, config.soundTrims), sound.scheduledIterations, gainNode, durationSecs(offlineCtx), resolveClipFade(sound.soundGroup, !!config.soundLoopable?.[sound.id]));
+    scheduleIterations(offlineCtx, resolveIterationBuffers(sound, sourceRegistry, config), sound.scheduledIterations, gainNode, durationSecs(offlineCtx), resolveClipFade(sound.soundGroup, !!config.soundLoopable?.[sound.id]));
   }
 }
 
@@ -454,7 +458,7 @@ async function buildAmbisonicIRGraph(
     gainNode.connect(convolver.in);
     convolver.out.connect(mixBus);
 
-    scheduleIterations(offlineCtx, resolveIterationBuffers(sound, sourceRegistry, config.iterationLinks, config.variantEvents, config.soundTrims), sound.scheduledIterations, gainNode, durationSecs(offlineCtx), resolveClipFade(sound.soundGroup, !!config.soundLoopable?.[sound.id]));
+    scheduleIterations(offlineCtx, resolveIterationBuffers(sound, sourceRegistry, config), sound.scheduledIterations, gainNode, durationSecs(offlineCtx), resolveClipFade(sound.soundGroup, !!config.soundLoopable?.[sound.id]));
   }
 }
 
@@ -571,7 +575,7 @@ async function buildResonanceGraph(
       gainNode.gain.value = soundGains.get(sound.id) ?? 1.0;
       gainNode.connect(resonanceSource.input);
 
-      scheduleIterations(offlineCtx, resolveIterationBuffers(sound, sourceRegistry, config.iterationLinks, config.variantEvents, config.soundTrims), sound.scheduledIterations, gainNode, durationSecs(offlineCtx), resolveClipFade(sound.soundGroup, !!config.soundLoopable?.[sound.id]));
+      scheduleIterations(offlineCtx, resolveIterationBuffers(sound, sourceRegistry, config), sound.scheduledIterations, gainNode, durationSecs(offlineCtx), resolveClipFade(sound.soundGroup, !!config.soundLoopable?.[sound.id]));
     }
 
     // Omnitone's HOARenderer.initialize() is async (Promise).  Yield to the
@@ -625,7 +629,7 @@ async function buildSimpleMixGraph(
     gainNode.gain.value = soundGains.get(sound.id) ?? 1.0;
     gainNode.connect(masterGain);
 
-    scheduleIterations(offlineCtx, resolveIterationBuffers(sound, sourceRegistry, config.iterationLinks, config.variantEvents, config.soundTrims), sound.scheduledIterations, gainNode, durationSecs(offlineCtx), resolveClipFade(sound.soundGroup, !!config.soundLoopable?.[sound.id]));
+    scheduleIterations(offlineCtx, resolveIterationBuffers(sound, sourceRegistry, config), sound.scheduledIterations, gainNode, durationSecs(offlineCtx), resolveClipFade(sound.soundGroup, !!config.soundLoopable?.[sound.id]));
   }
 }
 
@@ -738,10 +742,10 @@ function applyLinkedLimiter(
 // Scheduling & helpers
 // ============================================================================
 
-/** A scheduled iteration's resolved audio source: the variant buffer + that variant's trim. */
+/** A scheduled iteration's resolved audio source: the variant buffer + the trim it plays with. */
 interface IterationPlayback {
   buffer?: AudioBuffer;
-  trim?: { start: number; end: number };
+  trim?: TrimRange;
 }
 
 /**
@@ -753,10 +757,9 @@ interface IterationPlayback {
 function resolveIterationBuffers(
   sound: TimelineSound,
   sourceRegistry: Map<string, { buffer: AudioBuffer; position: Position }>,
-  iterationLinks?: Record<string, IterationLink>,
-  variantEvents?: ReadonlyArray<{ id: string; prompt_index?: number | null; copy_index?: number | null }>,
-  soundTrims?: Record<string, { start: number; end: number }>,
+  config: Pick<SoundscapeExportConfig, 'iterationLinks' | 'variantEvents' | 'soundTrims' | 'iterationTrims'>,
 ): IterationPlayback[] {
+  const { iterationLinks, variantEvents, soundTrims, iterationTrims } = config;
   const primaryEntry = sourceRegistry.get(sound.id);
   const fallbackBuffer = primaryEntry?.buffer;
   const iterations: IterationPlayback[] = [];
@@ -775,14 +778,20 @@ function resolveIterationBuffers(
         variantEvents ?? [],
       );
       const variantEntry = sourceRegistry.get(variantId);
-      // Trim is per-variant: apply the variant's own trim when its buffer is used,
-      // otherwise the primary trim matching the primary buffer fallback.
+      // Trim is per-variant: apply this clip's trim (clip override, else the
+      // variant's card trim) when its buffer is used, otherwise the primary card
+      // trim matching the primary buffer fallback.
       iterations.push({
         buffer: variantEntry?.buffer || fallbackBuffer,
-        trim: variantEntry ? soundTrims?.[variantId] : soundTrims?.[sound.id],
+        trim: variantEntry
+          ? resolveIterationTrim(sound.id, origIdx, variantId, iterationTrims, soundTrims)
+          : soundTrims?.[sound.id],
       });
     } else {
-      iterations.push({ buffer: fallbackBuffer, trim: soundTrims?.[sound.id] });
+      iterations.push({
+        buffer: fallbackBuffer,
+        trim: resolveIterationTrim(sound.id, origIdx, sound.id, iterationTrims, soundTrims),
+      });
     }
   }
   return iterations;

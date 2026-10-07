@@ -129,6 +129,7 @@ compas_soundscape/
 │       │   │       └── SoundGenerationSection.tsx   # Sound generation controls
 │       │   ├── scene/               # 3D scene components
 │       │   │   ├── SpeckleScene.tsx          # Main Speckle 3D scene component
+│       │   │   ├── ModelUploadProgress.tsx   # Live Speckle ingestion stage/% in the upload overlay (poll → apiService.uploadFile onProgress → uiStore.globalModelUploadProgress)
 │       │   │   └── VirtualTreeItem.tsx       # Virtual tree item for object explorer
 │       │   └── ui/                  # Reusable UI components
 │       │       ├── ButtonGroup.tsx           # Grouped button component
@@ -220,8 +221,10 @@ compas_soundscape/
 │       │       ├── sound-sphere-manager.ts      # Sound sphere creation & audio sources
 │       │       ├── speckle-audio-coordinator.ts # Speckle + audio coordination
 │       │       ├── speckle-camera-controller.ts # Speckle camera controls
-│       │       ├── speckle-drag-handler.ts      # Speckle drag interaction handler
-│       │       ├── speckle-event-bridge.ts      # Speckle event bridge (click, hover)
+│       │       ├── speckle-drag-handler.ts      # Speckle drag interaction handler (one gizmo moves a multi-selection)
+│       │       ├── speckle-event-bridge.ts      # Speckle event bridge (click, Shift/Ctrl multi-select, box-select)
+│       │       ├── custom-object-box-select.ts  # Screen-rect projection + selectable sound/listener collection for box-select
+│       │       ├── custom-selection-highlight.ts # Box outlines around multi-selected sound spheres / listeners
 │       │       ├── speckle-scene-adapter.ts     # Speckle scene adapter (Three.js bridge)
 │       │       └── spiral-placement.ts          # Spiral placement algorithm
 │       ├── services/
@@ -414,11 +417,50 @@ page.tsx
   │   simple → <SimpleSoundscapes sidebarProps/>     (components/simple/)
   │              ├── scene bubbles (useSoundScenes + useSceneProgress)
   │              ├── "+" → ScenePromptComposer ──► sceneWorkflowStore.startScene
-  │              ├── running bubble → SceneWorkflowDetail (live step detail, Stop/Resume)
+  │              │     (chips: speech, people, duration — people/duration are
+  │              │      components/ui/EditableCycleChip: click cycles, double-click exact value;
+  │              │      0 people disables speech; diffusion steps always SIMPLE_MODE.DIFFUSION_STEPS)
+  │              ├── running bubble → SceneWorkflowDetail (live step detail, Stop/Resume,
+  │              │     ThinkingDisclosure ← analysisStore.analysisThinking /
+  │              │     soundscapeStore.orchestrateThinking + isOrchestrating ("Orchestrate agent"),
+  │              │     "Scene settings" = getSceneSettingsRows + SettingsSummary tone="neutral")
   │              └── done bubble → select for DAW/3D + SoundGenerationSection panel
   └── <RightSidebar uiMode>  — same element tree in both modes (no remount):
         ├── AcousticsSection  presentation='section' | 'bubbles' (top-right column)
         └── ListenersSection  presentation='section' | 'bubbles' (bottom-right, grows upward)
+              (listeners/ListenerBubbles.tsx for the bubble presentation)
+
+Listener cards — expand ≠ power (one powered listener at a time, off by default):
+  expand  = UI only (ListenersSection.expandedItemId). Viewer click on a listener mesh /
+            grid point (event bridge debounced single click → SpeckleScene.onListenerClicked),
+            double-click and acoustics "go to listener" set page.listenerExpandRequest {id, seq}.
+  power   = Card.onTogglePower. Single → page.handleGoToReceiver (locked FPS view +
+            receiver audio mode; poweredListenerId). Grid → page.handleToggleGridListenerPower
+            (activeGridListenerId → grid showListeners → points in the viewer).
+            Leaving FPS (Esc / bubble exit / exitGoToListenerMode) keeps a grid powered;
+            only its power button turns it off. Simple mode: viewer double-click powers
+            on without opening the floating card.
+  grid boundary: GridListenerContent picks placementMode while no boundary exists —
+            'objects' (useObjectSelectionPhase → bbox of picked surfaces, default) or
+            'area' (areaDrawingStore.startGridDrawing(gridId) → useSpeckleAreaDrawing →
+            gridListenersStore.setGridListenerArea; points = bbox grid clipped to the
+            polygon, lib/three/grid-listener-geometry.ts). The grid polygon is stored on the
+            grid listener (drawnArea), not in areaDrawingStore.drawnAreas.
+  area drawing undo: while drawing, useSpeckleAreaDrawing installs an
+            undoRedoRegistry.setUndoRedoOverride → Ctrl+Z / Ctrl+Y (and the toolbar) undo /
+            redo placed points (AreaDrawingManager.undoPoint / redoPoint). Right-click is a no-op.
+  orientation: ListenerOrientationWidget — Y/P/R editable (PositionWidget); while powered it
+            mirrors the FPS camera and autosaves to receiversStore (debounced,
+            LISTENER_ORIENTATION). useSpeckleFPS reads receivers via ref so saves never
+            re-enter FPS. First FPS entry ever (per user, uiStore.seenHints synced via
+            user preferences) shows components/scene/FpsHelpPopup in Simple mode.
+
+Bubble columns overflow (all three columns):
+  useBubbleColumnSpace (viewport − headings − bottom bar − uiStore.dawDockBottomSpace;
+    right edge split by utils/bubbleOverflow.splitRightBudget using uiStore.bubbleColumnCounts)
+  └── components/ui/BubbleScrollColumn — renders only the bubbles that fit, between two
+      BubbleScrollButton pills ("N more"); wheel / drag / arrows scroll, focusIndex kept in view,
+      "+" always visible
 
 sceneWorkflowStore (one run at a time, FIFO queue, keyed by scenario card index)
   analyze   → analysisStore.handleAnalyze(context)        (skipped/reused if analyzed)
@@ -427,6 +469,7 @@ sceneWorkflowStore (one run at a time, FIFO queue, keyed by scenario card index)
   generate  → page.handleSendAnalysisToGeneration (registered) → soundscapeStore.handleGenerateFiltered
   Composer reference image → ScenarioConfig.referenceImages → /api/scenarist `screenshots`
   (always), plus a fresh model-analysis card when a model is loaded and "Re-run model analysis" is on.
+  Empty composer prompt is allowed when a model is loaded (scenario built from the analysis alone).
   Each step is idempotent (skipped when its result exists) → same runner powers Resume.
   Each step writes sidebarWizardStep / cardFlowStore + uiStore.sidebarNavCommand so a
   mounted expert Sidebar follows the pipeline live.
@@ -435,6 +478,35 @@ SpeckleScene
   └── SceneBottomBar (full width, both modes): home · undo/redo · save
         | transport (play/stop/time/timeline) | volume · view · explorer · shortcuts · notifications · settings
 ```
+
+### Generated-Card Settings & Regenerate
+
+Once a card has a result, `Card` renders its pending-state editors (`settingsContent`) inside the
+collapsible `SettingsSummary` ("Change … settings") instead of a read-only recap: a bordered
+"card inside a card" (`.card-settings-inset`) styled like a pending card — the `.card-generated`
+on-blue overrides are scoped out of it with `:not(.card-settings-inset *)`. Editing a setting puts
+**Regenerate** (`settingsDirty` + `onRegenerate`) at the bottom of that box (scrolled into view when
+it first appears; clicking it collapses the section), a warning-coloured reload icon right of the
+section title (**Revert**, `onRevertSettings`), and marks the edited labels with a "*" (`modifiedSettings` → `ModifiedFieldsProvider` →
+`useIsFieldModified` / `RangeSlider`·`ToggleField` `modified`). There is no header Reset button.
+
+```
+utils/generationSignature.ts   per-type whitelist of generation inputs → stable string (null = cannot regenerate)
+  captureGenerationSignature   written as config.generatedSignature in the SAME store write as the result:
+                                 soundscapeStore generate merge · AcousticsSection pyroom/choras completion ·
+                                 analysisStore text result / scenario result · serializer restore (baseline)
+  isGenerationDirty            live config vs snapshot → Card settingsDirty
+  getModifiedGenerationFields  edited keys (`duration`, `settings.max_order`, `materials`, `prompt`…) → "*" marks
+  getGenerationRevertPatch     snapshot values of the differing fields → "Revert" (sounds:
+                                 soundscapeStore.revertGenerationSettings; text also re-syncs areaDrawingStore)
+Regenerate actions             sounds → soundscapeStore.handleRegenerateConfig (handleGenerateInternal force:
+                                 same event ids, stale variants dropped) · pyroom/choras → runSimulation ·
+                                 text → analysisStore.handleRegenerateText · scenario → handleScenarioAnalyze
+Read-only (no signature)       upload, sample-audio, import-irs, audio & model analysis, freeform, listeners
+```
+
+The snapshot is transient (never sent to the backend). Simulation material edits on a completed card
+no longer reset it — the assignments are part of the signature, so they surface Regenerate instead.
 
 ### Analysis Card Index Links
 
@@ -550,48 +622,67 @@ Files: `lib/audio/utils/output-level-meter.ts`, `lib/audio/utils/low-output-diag
 `audioControlsStore.masterVolume` (session-only) so hints can raise it; `SceneVolumeButton`
 mirrors it onto the orchestrator.
 
+### Viewer Right-Click Menu
+
+Right-click selects what is under the cursor (like a left click) and opens a command menu on it.
+There is no hover tooltip.
+
+```
+useSceneContextMenu (contextmenu on the viewer container; ignored after a right-drag / in FPS)
+  └─▶ SpeckleEventBridge.selectForContextMenu(x, y) → ContextMenuHit
+        (guards against Speckle's own right-button ObjectClicked undoing the selection)
+SceneContextMenu → ui/ActionMenu (icon rows, key chips, separators)
+  model object : Hide (Shift+H) · Isolate · Reveal in explorer · Fit to view · Copy application ID
+  sound sphere : Mute · Solo · Reveal in sidebar · Fit to view · Copy sound ID
+  listener     : Listen from here · Reveal in sidebar · Fit to view · Copy listener ID
+  all          : ── · Clear selection (Esc)
+```
+
+Model-object actions are plain functions in `lib/three/speckle-selection-actions.ts`, shared with
+the Shift+H shortcut. Grid listener points get no menu.
+
+### Keyboard Shortcuts
+
+One global listener routes keys. The components that own each action publish it to a small
+registry, because the transport and the card previews live deep inside components.
+
+```
+SpeckleScene ──useSceneShortcutTargets──▶ registry 'timeline' (play/pause/stop/rewind), 'viewer' (frame)
+SoundGenerationSection ──useSoundCardShortcutTargets──▶ 'cardPreview' (expanded card's audio),
+                                                       'soundCards' (step/collapse/remove/zoom)
+                                  │   lib/shortcuts/shortcut-targets.ts (module state, no renders)
+                                  ▼
+useGlobalShortcuts (page.tsx, window keydown)
+  Space        → cardPreview if playable, else timeline   (resolvePlaybackTarget)
+  Shift+Space  → stop · Home → rewind · M → mute · F → frame · ? → shortcuts popover
+  Alt+↑/↓      → step cards · Delete → remove expanded card
+  Shift+H      → hide selected model objects (lib/three/speckle-selection-actions.ts)
+  Esc (deferred a tick, skipped if a local handler preventDefault'ed or a dialog is open)
+               → stop preview → collapse card → clear 3D selection
+```
+
+- **Skips:** text fields (`isTypingTarget`), open modals (`[aria-modal="true"]`), and
+  Ctrl/Cmd combos. Space also skips buttons reached with Tab (focus source tracked by pointerdown / Tab). A clicked button is blurred so Space plays audio instead of clicking it again.
+- **Ctrl/Cmd+Enter** is handled per card in `ui/Card.tsx`: from any text field inside an
+  expanded card it calls `onRun`, but only while the Generate button is clickable. Undo/redo
+  stays in `useUndoRedo`.
+- **Definitions** (keys, label, hint, group) live in `utils/constants.ts` →
+  `KEYBOARD_SHORTCUTS`. They drive the handler docs, the `ShortcutTooltip` hover cards and
+  the grouped `SceneShortcutsButton` popover.
+- **Tooltips:** `BarButton`, `CardButton`, `GenerateButton` and `WaveSurferPlayer` take an
+  optional `shortcut` (or `showShortcuts`) prop. It swaps the native `title` for the tooltip
+  and sets `aria-keyshortcuts`.
+
 ### Pyroomacoustics Ray-Count Estimate
 
-The "Rays" slider in `PyroomAcousticsSimulationSettings.tsx` shows `min` / `rec` tick markers
-computed by `frontend/src/lib/acoustics/ray-count-estimate.ts` from the model bounding box
-(`useFileUploadStore.geometryBounds`, metres). With `V = xyz`, `S = 2(xy+yz+zx)`, `MFP = 4V/S`:
+The "Rays" slider in `PyroomAcousticsSimulationSettings.tsx` shows a single `rec` tick marker and a
+tooltip ("Recommended ≈ N (V m³ acoustic layer bbox)") computed by
+`frontend/src/lib/acoustics/ray-count-estimate.ts` from the bounding box of the **acoustic region**
+(`useAcousticLayerStore.selectedAcousticGeometryIds`, unioned via `lib/three/speckle-object-bounds.ts`).
+Falls back to the whole-model box (Speckle `World.worldBox`, then `useFileUploadStore.geometryBounds`)
+when no region is resolved or the region is the whole model.
 
-- **min** — Rindel (1995) eq. 1, `N ≥ 8π c² t² / A`, over the ISM window `t = m·MFP/c`
-  (`m` = Image-Source order, so `N = 8π (m·MFP)² / A`; `A` = smallest resolved surface, 1 m²).
-- **rec** — `max(min, K·V / (π r² c Δt))`: K = 100 receiver hits per histogram bin
-  (r = 0.5 m, Δt = 4 ms, mirrored from the backend constants).
-
-Both are rounded to the slider step and clamped to the 1,000–50,000 range. Constants live in
-`utils/constants.ts` (`PYROOMACOUSTICS_RAY_TRACING_*`).
-
-## TTS language → voice (Gemini 3.8)
-
-Gemini 3.8 TTS reads the transcript verbatim and speaks the **language of the text**;
-`speech_config.language` only biases accent and must be a **BCP-47 tag** (free text such as
-"Swiss German" → HTTP 400). Dialect/accent comes from the **voice**. The UI language stays free text.
-
-```
-"Swiss German" ──► utils/language_resolver.resolve_language(text, dialects, custom_voices)
-                     1. custom   user's prompted voice (SQLite custom_voices)      → custom voice id
-                     2. library  exact voice-library accent ("Egyptian Arabic")     → regional voices
-                     3. tag      Babel/CLDR name or tag ("Swiss German" → gsw);
-                                 upgraded to library when native voices exist ("German" → de-DE)
-                     4. unknown  → auto-detect, classic voices
-                 ──► services/tts_voice_service.pick_voice(match, classic_voice)
-                       same-gender regional voice (stable per character) | custom voice | classic voice
-                 ──► tts_service.generate_speech(voice, language_code=<BCP-47 or None>)
-```
-
-- `services/tts_voice_catalog.py` — live Extended Voice Library (`client.voices.list`, ≈2 000 voices,
-  50 accents) cached in Redis `tts:voice_catalog` for 24 h; nothing is hard-coded, stale cache beats empty.
-- `routers/tts_voices.py` — `GET /api/tts/dialects`, `POST /api/tts/resolve-language`,
-  `GET|POST /api/tts/custom-voices`, `DELETE /api/tts/custom-voices/{id}`. Creation is an IO job
-  (`JOB_TYPE_TTS_VOICE`) that makes a female + male `prompted` voice (`voices.create`, ≈30 s each,
-  expires after 1 year) and stores it per `user_hash` in SQLite `custom_voices`.
-- `routers/tts.py` resolves once per job; character names are unchanged (only the Gemini voice id is
-  swapped), so the character ↔ voice naming in `TTS_VOICE_CHARACTERS` / `TTS_CHARACTER_VOICES` is intact.
-- Frontend: `components/ui/TtsLanguageInput.tsx` (settings) and `ScenePromptComposer` resolve on
-  Enter/commit via `hooks/useTtsLanguageResolver.ts`; `TtsLanguageStatus` shows regional/custom badges or
-  the "create a custom voice for this dialect?" prompt.
-- The speech agent (`llm_service._build_speech_agent_prompts`) receives the display name and is told to
-  write dialects as spoken; it may only use Gemini 3.8 angle-bracket vocal tags (`TTS_INLINE_VOCAL_TAGS`).
+Criterion: Vorländer's receiver-sphere bound `N ≥ (4.34/ΔL)² · V / (π r² c Δt)` with ΔL = 1 dB,
+r = 0.5 m, Δt = 4 ms (pyroomacoustics defaults); independent of the Image-Source order. Full
+derivation, pyroomacoustics specifics and references are in the header comment of
+`ray-count-estimate.ts`. Marker ticks are inset by `--slider-thumb-size` to align with the thumb.

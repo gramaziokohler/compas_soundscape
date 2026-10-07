@@ -8,6 +8,7 @@ import { dbfsToLinear } from '@/utils/utils';
 import { useUIStore } from '@/store';
 import { subscribeColorTheme } from '@/utils/color-theme';
 import { Spinner } from '@/components/ui/Spinner';
+import { OptionalShortcutTooltip } from '@/components/ui/ShortcutTooltip';
 import {
   createSilhouetteRenderFunction,
   resolveCssVar,
@@ -98,10 +99,13 @@ export interface WaveSurferPlayerProps {
   cursorColor?: string;
   /** Native tooltip for the waveform interaction area. */
   waveformTooltip?: string;
+  /** Show the Space / Shift+Space shortcut tooltips on play / stop (sound-card previews). */
+  showShortcuts?: boolean;
 }
 
 export function WaveSurferPlayer({
   audioUrl,
+  showShortcuts = false,
   isPlaying,
   onPlayPause,
   onStop,
@@ -635,47 +639,53 @@ export function WaveSurferPlayer({
 
         <div className="flex items-center gap-2">
           {/* Play/Pause button */}
-          <button
-            onClick={onPlayPause}
-            disabled={!isReady}
-            className="ws-play w-7 h-7 flex items-center justify-center rounded-full transition-colors"
-            style={{
-              backgroundColor: isPlaying ? color : 'var(--color-primary)',
-              color: 'var(--color-on-blue)',
-              opacity: isReady ? 1 : 0.5,
-              border: 'none',
-            }}
-            title={isPlaying ? 'Pause' : 'Play'}
-          >
-            {isPlaying ? (
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
-                <rect x="6" y="4" width="4" height="16" rx="1" />
-                <rect x="14" y="4" width="4" height="16" rx="1" />
-              </svg>
-            ) : (
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M8 5v14l11-7z" />
-              </svg>
-            )}
-          </button>
+          <OptionalShortcutTooltip shortcut={showShortcuts ? 'PLAY_PAUSE' : undefined} label={isPlaying ? 'Pause' : 'Play'}>
+            <button
+              onClick={onPlayPause}
+              disabled={!isReady}
+              className="ws-play w-7 h-7 flex items-center justify-center rounded-full transition-colors"
+              style={{
+                backgroundColor: isPlaying ? color : 'var(--color-primary)',
+                color: 'var(--color-on-blue)',
+                opacity: isReady ? 1 : 0.5,
+                border: 'none',
+              }}
+              title={showShortcuts ? undefined : (isPlaying ? 'Pause' : 'Play')}
+              aria-label={isPlaying ? 'Pause' : 'Play'}
+            >
+              {isPlaying ? (
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
+                  <rect x="6" y="4" width="4" height="16" rx="1" />
+                  <rect x="14" y="4" width="4" height="16" rx="1" />
+                </svg>
+              ) : (
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+              )}
+            </button>
+          </OptionalShortcutTooltip>
 
           {/* Stop button */}
-          <button
-            onClick={handleStop}
-            disabled={!isReady || !isPlaying}
-            className={`ws-stop w-7 h-7 flex items-center justify-center rounded-full transition-colors${isPlaying ? ' ws-stop--live' : ''}`}
-            style={{
-              backgroundColor: isPlaying ? 'var(--color-surface)' : 'var(--color-secondary-lighter)',
-              color: isPlaying ? 'var(--color-error)' : 'var(--color-secondary-hover)',
-              opacity: isReady ? 1 : 0.5,
-              border: '1px solid var(--color-border-strong)',
-            }}
-            title="Stop"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
-              <rect x="6" y="6" width="12" height="12" rx="1" />
-            </svg>
-          </button>
+          <OptionalShortcutTooltip shortcut={showShortcuts ? 'STOP' : undefined} label="Stop">
+            <button
+              onClick={handleStop}
+              disabled={!isReady || !isPlaying}
+              className={`ws-stop w-7 h-7 flex items-center justify-center rounded-full transition-colors${isPlaying ? ' ws-stop--live' : ''}`}
+              style={{
+                backgroundColor: isPlaying ? 'var(--color-surface)' : 'var(--color-secondary-lighter)',
+                color: isPlaying ? 'var(--color-error)' : 'var(--color-secondary-hover)',
+                opacity: isReady ? 1 : 0.5,
+                border: '1px solid var(--color-border-strong)',
+              }}
+              title={showShortcuts ? undefined : 'Stop'}
+              aria-label="Stop"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
+                <rect x="6" y="6" width="12" height="12" rx="1" />
+              </svg>
+            </button>
+          </OptionalShortcutTooltip>
         </div>
       </div>
     </div>

@@ -47,4 +47,6 @@ export interface UserPreferences {
   showSpectrograms?: boolean;
   // History
   enableAutoSave?: boolean;
+  // One-time UI hints already shown to this user (hooks/useOneTimeHint.ts)
+  seenHints?: string[];
 }

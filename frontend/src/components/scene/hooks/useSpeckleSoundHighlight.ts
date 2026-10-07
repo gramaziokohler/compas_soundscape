@@ -38,6 +38,8 @@ export function useSpeckleSoundHighlight({
   // the map resolves AFTER this effect's first run (and after a refresh), so the
   // effect must re-run when it changes — otherwise the gumball is never attached.
   const objectSoundLinks = useSpeckleStore(s => s.objectSoundLinks);
+  // Hidden sounds (spheres and entity markers alike) never carry the drag gizmo.
+  const showSoundSpheres = useUIStore(s => s.showSoundSpheres);
 
   // Keep a ref so the zoom effect can read the latest soundscapeData without
   // listing it as a dependency (prevents re-zooming when data populates on nav).
@@ -47,6 +49,8 @@ export function useSpeckleSoundHighlight({
   // Mesh the drag gizmo is currently attached to via the highlight-follow logic —
   // avoids re-attaching on every effect re-run and detects mesh recreation.
   const dragTargetSphereRef = useRef<THREE.Object3D | null>(null);
+  // Last highlighted card index — distinguishes a card change from other re-runs.
+  const prevEffectiveIndexRef = useRef<number | null>(null);
 
   // Note: Speckle object coloring (linked/diverse) is handled by the context's FilteringExtension.
   // This effect only handles sound sphere highlighting.
@@ -128,8 +132,16 @@ export function useSpeckleSoundHighlight({
     // expanded/selected (or the current one loses its highlight), re-attach the
     // gizmo to the highlighted sphere so it never stays on a previously clicked one.
     const dragHandler = coordinator.getDragHandler();
-    const attachTarget: THREE.Object3D | undefined = highlightedSphere ?? highlightedMarker;
-    if (dragHandler && !dragHandler.getIsDragging()) {
+    const attachTarget: THREE.Object3D | undefined = showSoundSpheres
+      ? (highlightedSphere ?? highlightedMarker)
+      : undefined;
+    // A multi-selection (Shift+click / box-select, owned by the event bridge)
+    // survives unrelated re-runs — e.g. the position sync after dragging it —
+    // and is only replaced when the selected/expanded card actually changes.
+    const cardChanged = prevEffectiveIndexRef.current !== effectiveIndex;
+    prevEffectiveIndexRef.current = effectiveIndex;
+    const keepMultiSelection = !cardChanged && (dragHandler?.getSelectedObjects().length ?? 0) > 1;
+    if (dragHandler && !dragHandler.getIsDragging() && !keepMultiSelection) {
       if (attachTarget) {
         const attached = dragHandler.getSelectedObjects()?.[0];
         if (attached !== attachTarget) {
@@ -151,7 +163,7 @@ export function useSpeckleSoundHighlight({
     }
 
     viewer?.requestRender();
-  }, [isViewerReady, selectedCardIndex, expandedSoundCardIndex, soundscapeData, selectedVariants, activeSimulationPositions, hoveredSoundCardIndex, objectSoundLinks]);
+  }, [isViewerReady, selectedCardIndex, expandedSoundCardIndex, soundscapeData, selectedVariants, activeSimulationPositions, hoveredSoundCardIndex, objectSoundLinks, showSoundSpheres]);
 
   // Zoom to sound sphere when card is double-clicked in sidebar
   useEffect(() => {

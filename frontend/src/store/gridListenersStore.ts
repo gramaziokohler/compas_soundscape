@@ -3,67 +3,30 @@
  *
  * Manages grid listener configurations with zundo temporal support.
  * Grid listeners define a 2D grid of receiver points distributed evenly
- * over selected Speckle surfaces.
+ * over selected Speckle surfaces, or inside a polygon drawn on the model.
  */
 
 import { create } from 'zustand';
 import { temporal } from 'zundo';
 import { devtools } from 'zustand/middleware';
 import { GRID_LISTENER_CONFIG } from '@/utils/constants';
+import {
+  computeAreaBounds,
+  computeGridPoints,
+  computeGridPointsInArea,
+} from '@/lib/three/grid-listener-geometry';
 import type { GridListenerData } from '@/types/receiver';
+import type { DrawnArea } from '@/types/area-drawing';
 
 // ─── Grid computation ─────────────────────────────────────────────────────────
 
-/**
- * Compute a centered 2D grid of listener points from a bounding box.
- *
- * Automatically detects the surface normal (the axis with the smallest range —
- * the "thin" slab direction). The grid is placed on the two larger axes,
- * and zOffset moves points along the normal axis (regardless of whether the
- * model is Y-up or Z-up).
- */
-export function computeGridPoints(
-  bbox: { min: [number, number, number]; max: [number, number, number] },
-  xSpacing: number,
-  ySpacing: number,
-  zOffset: number,
-): [number, number, number][] {
-  const rangesArr = [bbox.max[0] - bbox.min[0], bbox.max[1] - bbox.min[1], bbox.max[2] - bbox.min[2]];
+export { computeGridPoints };
 
-  // Find the axis with the smallest range — this is the surface normal (slab thickness)
-  let normalAxis = 0;
-  if (rangesArr[1] < rangesArr[normalAxis]) normalAxis = 1;
-  if (rangesArr[2] < rangesArr[normalAxis]) normalAxis = 2;
-
-  // The two grid axes are the other two
-  const gridAxes = ([0, 1, 2] as const).filter((a) => a !== normalAxis) as [0 | 1 | 2, 0 | 1 | 2];
-  const axis1 = gridAxes[0]; // maps to xSpacing
-  const axis2 = gridAxes[1]; // maps to ySpacing
-
-  // Normal position = mid of slab + zOffset (elevates the grid above the surface)
-  const normalMid = (bbox.min[normalAxis] + bbox.max[normalAxis]) / 2 + zOffset;
-
-  const range1 = rangesArr[axis1];
-  const range2 = rangesArr[axis2];
-  const center1 = (bbox.min[axis1] + bbox.max[axis1]) / 2;
-  const center2 = (bbox.min[axis2] + bbox.max[axis2]) / 2;
-
-  const count1 = Math.max(1, Math.floor(range1 / xSpacing) + 1);
-  const count2 = Math.max(1, Math.floor(range2 / ySpacing) + 1);
-  const start1 = center1 - ((count1 - 1) / 2) * xSpacing;
-  const start2 = center2 - ((count2 - 1) / 2) * ySpacing;
-
-  const points: [number, number, number][] = [];
-  for (let i1 = 0; i1 < count1; i1++) {
-    for (let i2 = 0; i2 < count2; i2++) {
-      const pt: [number, number, number] = [0, 0, 0];
-      pt[normalAxis] = normalMid;
-      pt[axis1] = start1 + i1 * xSpacing;
-      pt[axis2] = start2 + i2 * ySpacing;
-      points.push(pt);
-    }
-  }
-  return points;
+/** Recompute a grid's points from its boundary (drawn area or bounding box). */
+function layoutGridPoints(g: GridListenerData): [number, number, number][] {
+  if (g.drawnArea) return computeGridPointsInArea(g.drawnArea, g.xSpacing, g.ySpacing, g.zOffset);
+  if (g.boundingBox) return computeGridPoints(g.boundingBox, g.xSpacing, g.ySpacing, g.zOffset);
+  return [];
 }
 
 // ─── Partialize ───────────────────────────────────────────────────────────────
@@ -93,6 +56,8 @@ export interface GridListenersStoreState {
     objectIds: string[],
     bbox: { min: [number, number, number]; max: [number, number, number] },
   ) => void;
+  /** Use a drawn polygon as the grid boundary (points are clipped to it). */
+  setGridListenerArea: (id: string, area: DrawnArea) => void;
   toggleGridListenerHiddenForSimulation: (id: string) => void;
 
   /** Restore grid listener configurations from a saved soundscape (bulk replace). */
@@ -124,6 +89,8 @@ export const useGridListenersStore = create<GridListenersStoreState>()(
             selectedObjectIds: [],
             boundingBox: null,
             points: [],
+            placementMode: 'objects',
+            drawnArea: null,
           };
           set(
             (s) => ({ gridListeners: [...s.gridListeners, newGrid] }),
@@ -181,14 +148,7 @@ export const useGridListenersStore = create<GridListenersStoreState>()(
                 const next = { ...g, ...updates };
                 const spacingChanged =
                   'xSpacing' in updates || 'ySpacing' in updates || 'zOffset' in updates;
-                if (spacingChanged && next.boundingBox) {
-                  next.points = computeGridPoints(
-                    next.boundingBox,
-                    next.xSpacing,
-                    next.ySpacing,
-                    next.zOffset,
-                  );
-                }
+                if (spacingChanged) next.points = layoutGridPoints(next);
                 return next;
               }),
             }),
@@ -202,11 +162,37 @@ export const useGridListenersStore = create<GridListenersStoreState>()(
               gridListeners: s.gridListeners.map((g) => {
                 if (g.id !== id) return g;
                 const points = computeGridPoints(bbox, g.xSpacing, g.ySpacing, g.zOffset);
-                return { ...g, selectedObjectIds: objectIds, boundingBox: bbox, points };
+                return {
+                  ...g,
+                  placementMode: 'objects',
+                  drawnArea: null,
+                  selectedObjectIds: objectIds,
+                  boundingBox: bbox,
+                  points,
+                };
               }),
             }),
             false,
             'gridListeners/setBounds',
+          ),
+
+        setGridListenerArea: (id, area) =>
+          set(
+            (s) => ({
+              gridListeners: s.gridListeners.map((g) => {
+                if (g.id !== id) return g;
+                const next: GridListenerData = {
+                  ...g,
+                  placementMode: 'area',
+                  drawnArea: area,
+                  selectedObjectIds: [],
+                  boundingBox: computeAreaBounds(area),
+                };
+                return { ...next, points: layoutGridPoints(next) };
+              }),
+            }),
+            false,
+            'gridListeners/setArea',
           ),
 
         toggleGridListenerHiddenForSimulation: (id) =>

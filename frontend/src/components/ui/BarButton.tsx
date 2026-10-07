@@ -1,7 +1,8 @@
 "use client";
 
 import type { MouseEvent, ReactNode } from "react";
-import { NOTIFICATIONS } from "@/utils/constants";
+import { NOTIFICATIONS, type ShortcutId } from "@/utils/constants";
+import { OptionalShortcutTooltip, ariaKeyShortcuts } from "@/components/ui/ShortcutTooltip";
 
 export interface BarButtonProps {
   icon: ReactNode;
@@ -12,6 +13,8 @@ export interface BarButtonProps {
   label?: string;
   /** Toggled-on state (panel open, mode on) — primary tint. */
   active?: boolean;
+  /** Solid primary (blue) fill — the bar's main call to action. */
+  primary?: boolean;
   /** Warning tint (e.g. muted, update available). */
   warning?: boolean;
   disabled?: boolean;
@@ -20,6 +23,8 @@ export interface BarButtonProps {
   /** Small warning dot (e.g. "new version available"). */
   dot?: boolean;
   id?: string;
+  /** Keyboard shortcut — replaces the native title with a ShortcutTooltip (title becomes its label). */
+  shortcut?: ShortcutId;
 }
 
 /**
@@ -40,22 +45,25 @@ export function BarButton({
   onClick,
   label,
   active = false,
+  primary = false,
   warning = false,
   disabled = false,
   badge,
   dot = false,
   id,
+  shortcut,
 }: BarButtonProps) {
-  const classes = ["bar-btn", active && "bar-btn--active", warning && "bar-btn--warning"].filter(Boolean).join(" ");
-  return (
+  const classes = ["bar-btn", active && "bar-btn--active", primary && "bar-btn--primary", warning && "bar-btn--warning"].filter(Boolean).join(" ");
+  const button = (
     <button
       id={id}
       type="button"
       className={classes}
       onClick={onClick}
       disabled={disabled}
-      title={title}
+      title={shortcut ? undefined : title}
       aria-label={title}
+      aria-keyshortcuts={ariaKeyShortcuts(shortcut)}
       aria-pressed={active}
     >
       {icon}
@@ -66,4 +74,5 @@ export function BarButton({
       {dot && <span className="bar-btn__dot" aria-hidden="true" />}
     </button>
   );
+  return <OptionalShortcutTooltip shortcut={shortcut} label={title}>{button}</OptionalShortcutTooltip>;
 }

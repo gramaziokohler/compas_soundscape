@@ -16,7 +16,12 @@ interface CoordinatorCallbacksProps {
   setSelectedEntity: (entity: any) => void;
   setSelectedSpeckleObjectIds: (ids: string[]) => void;
   skipDeselectionRef: React.MutableRefObject<boolean>;
+  /** Listener mesh or grid listener point single-clicked (receiver id or grid point id). */
+  onListenerClicked?: (listenerOrPointId: string) => void;
 }
+
+/** Read at click time so the callbacks never need re-registering on mode change. */
+const isSimpleMode = () => useUIStore.getState().uiMode === 'simple';
 
 export function useSpeckleCoordinatorCallbacks({
   isViewerReady,
@@ -31,6 +36,7 @@ export function useSpeckleCoordinatorCallbacks({
   setSelectedEntity,
   setSelectedSpeckleObjectIds,
   skipDeselectionRef,
+  onListenerClicked,
 }: CoordinatorCallbacksProps) {
   const setExpandedSoundCardIdx = useUIStore(s => s.setExpandedSoundCardIndex);
 
@@ -50,8 +56,8 @@ export function useSpeckleCoordinatorCallbacks({
         return;
       }
 
-      // NORMAL SELECTION: expand linked sound card
-      if (objectIds.length > 0 && onSelectSoundCard) {
+      // NORMAL SELECTION: expand linked sound card (not in simple mode)
+      if (objectIds.length > 0 && onSelectSoundCard && !isSimpleMode()) {
         const selectedId = objectIds[0];
         const linkState = getObjectLinkState(selectedId);
         if (linkState.isLinked && linkState.linkedSoundIndex !== undefined) {
@@ -75,6 +81,8 @@ export function useSpeckleCoordinatorCallbacks({
         // selection (store + explorer) so only one object type is highlighted.
         skipDeselectionRef.current = true;
         setSelectedSpeckleObjectIds([]);
+        // Simple mode keeps the sphere selected without expanding its card.
+        if (isSimpleMode()) return;
         console.log('[SpeckleScene] Sound sphere clicked, selecting card:', promptIndex);
         setExpandedSoundCardIdx(null);
         onSelectSoundCard(promptIndex);
@@ -93,7 +101,13 @@ export function useSpeckleCoordinatorCallbacks({
           objectType: 'Receiver',
           receiverData: { position: receiver.position },
         });
+        onListenerClicked?.(receiverId);
       }
+    });
+
+    // ── Grid listener point single-click ──────────────────────────────────────
+    coordinator.setOnGridListenerClicked((pointId: string) => {
+      onListenerClicked?.(pointId);
     });
 
     // ── Custom object deselection ─────────────────────────────────────────────
@@ -117,6 +131,7 @@ export function useSpeckleCoordinatorCallbacks({
     applyFilterColors,
     receivers,
     setSelectedEntity,
+    onListenerClicked,
     setSelectedSpeckleObjectIds,
   ]);
 }

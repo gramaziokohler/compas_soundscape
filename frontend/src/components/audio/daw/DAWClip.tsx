@@ -1,12 +1,14 @@
 'use client';
 
 import { useRef, useState, useCallback, useEffect, memo } from 'react';
-import { API_BASE_URL } from '@/utils/constants';
+import { API_BASE_URL, DAW_CLIP_TRIM } from '@/utils/constants';
+import { DAWClipTrimHandle } from './DAWClipTrimHandle';
 import { subscribeColorTheme } from '@/utils/color-theme';
 import { Spinner } from '@/components/ui/Spinner';
 import { getAudioPeaks, type AudioPeaks } from '@/lib/audio/peaks-cache';
 import { drawSilhouettePath } from '@/lib/audio/waveform-silhouette';
 import type { IterationLink } from '@/types/audio';
+import type { TrimEdge } from './daw-trim';
 
 function waveformColor(muted: boolean): string {
   const styles = getComputedStyle(document.documentElement);
@@ -110,6 +112,11 @@ export interface DAWClipProps {
   isExcluded?: boolean;
   excludedReason?: string;
   onPointerDownClip: (e: React.PointerEvent<HTMLDivElement>) => void;
+  /** Edge-trim handles are shown only when the clip's source length is known. */
+  canTrim?: boolean;
+  /** This clip's edge is being dragged right now. */
+  isTrimming?: boolean;
+  onPointerDownTrimEdge?: (e: React.PointerEvent<HTMLDivElement>, edge: TrimEdge) => void;
   onDelete: () => void;
   onDoubleClick?: () => void;
   onContextMenu: (x: number, y: number) => void;
@@ -139,6 +146,9 @@ function DAWClipImpl({
   isExcluded,
   excludedReason,
   onPointerDownClip,
+  canTrim,
+  isTrimming,
+  onPointerDownTrimEdge,
   onDelete,
   onDoubleClick,
   onContextMenu,
@@ -192,7 +202,10 @@ function DAWClipImpl({
     [onContextMenu],
   );
 
-  const interactive = isSelected || isHovered;
+  const interactive = isSelected || isHovered || !!isTrimming;
+  // Too-narrow clips keep their whole body draggable (zoom in to trim them).
+  const showTrimHandles = !!canTrim && isDraggable && !isExcluded && !!onPointerDownTrimEdge
+    && widthPx >= DAW_CLIP_TRIM.HANDLE_WIDTH_PX * 3;
   const interactiveWidth = isSelected ? '1.5px' : '1px';
   const interactiveBorder = `${interactiveWidth} solid ${
     isSelected ? 'var(--color-primary)' : isMuted ? 'rgba(150,150,150,0.4)' : color
@@ -259,6 +272,16 @@ function DAWClipImpl({
             trimEnd={trimEnd}
           />}
       </div>
+
+      {showTrimHandles && (['start', 'end'] as const).map((edge) => (
+        <DAWClipTrimHandle
+          key={edge}
+          edge={edge}
+          visible={interactive}
+          active={!!isTrimming}
+          onPointerDown={(e) => onPointerDownTrimEdge?.(e, edge)}
+        />
+      ))}
 
       {isLoadingWaveform && !isExcluded && (
         <div

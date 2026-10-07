@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from config.constants import SPECKLE_SERVER_URL
 from services.speckle_service import SpeckleService
-from models.schemas import SpeckleProjectModelsResponse
+from models.schemas import SpeckleIngestionStatusResponse, SpeckleProjectModelsResponse
 from utils.file_operations import list_saved_soundscape_models
 
 
@@ -125,7 +125,7 @@ async def get_model_latest_version(model_id: str):
     return result
 
 
-@router.get("/ingestion/{ingestion_id}")
+@router.get("/ingestion/{ingestion_id}", response_model=SpeckleIngestionStatusResponse)
 async def get_ingestion_status(ingestion_id: str):
     """
     Poll the status of an asynchronous Speckle file ingestion.

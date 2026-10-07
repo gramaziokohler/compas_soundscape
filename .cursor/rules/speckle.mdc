@@ -115,9 +115,15 @@ POST /api/upload
        ├─ _get_or_create_model()
        └─ fileUploadMutations.startFileIngestion # async; returns ModelIngestion.id
             → {model_id, url, ingestion_id, version_id: ""}
-client polls GET /api/speckle/ingestion/{ingestion_id}
+client polls GET /api/speckle/ingestion/{ingestion_id}   (every 1 s, SPECKLE_INGESTION)
   └─ get_ingestion_status()
-       └─ on status == "success":
+       ├─ queued / processing → {stage, progress (0–1), phase, attempt, progress_message}
+       │    (ModelIngestionProcessingStatus.progress / .phase — streamed to the
+       │     scene overlay via apiService.uploadFile(file, onProgress) →
+       │     uiStore.globalModelUploadProgress → ModelUploadProgress)
+       └─ on status == "success": _poll_materialization(versionId)
+            # non-blocking: runs in _MATERIALIZE_EXECUTOR; polls return
+            # stage "materializing" (no ids) until it finishes
             _materialize_legacy_version(versionId)
               ├─ client.version.get() → referencedObject (bundle.<project>.<model>.<version>)
               ├─ operations.receive(bundle_ref, ServerTransport)  # bundle dispatch → Collection
@@ -133,8 +139,9 @@ Rules:
 2. Materialization is cached (in-process dict **+** Redis `speckle:legacy_version:v2:<bundleVersionId>`)
    so polled status checks are idempotent and concurrent polls do not race (guarded by
    `_MATERIALIZE_LOCK`). The `v2` prefix invalidates copies made before the geo-fix below.
-3. If materialization fails, `get_ingestion_status` returns `success` with **no** ids so the client
-   keeps polling instead of loading an unreadable bundle.
+3. While materialization runs (background thread) or after it fails, `get_ingestion_status` returns
+   `success` / `stage: "materializing"` with **no** ids so the client keeps polling instead of loading an
+   unreadable bundle. A failed run is dropped and retried on the next poll.
 4. Requires `specklepy[bundle]==2026.9.0b3` + `gql==4.0.0` (`requirements.txt`).
 5. `Model.to_base()` projection → root `Collection(applicationId="artifact-root")`, nested
    `Collection`s, `DataObject(displayValue=[Mesh])`, `renderMaterialProxies`,
@@ -219,7 +226,7 @@ Scale to metres: `mm=0.001, cm=0.01, ft=0.3048, in=0.0254`.
 
 - `GET  /api/speckle/models` → project + all models with `latest_version`
 - `POST /api/upload` (multipart) → `{speckle: {model_id, url, ingestion_id, version_id}, geometry}`
-- `GET  /api/speckle/ingestion/{ingestion_id}` → `{status, progress_message, version_id, object_id, error}`
+- `GET  /api/speckle/ingestion/{ingestion_id}` → `SpeckleIngestionStatusResponse` `{status, stage, progress_message, progress, phase, attempt, version_id, object_id, error}`
 - `POST /api/speckle/model-entities` `{project_id, version_id}` → entity list
 - `POST /api/speckle/model-screenshots` `{project_id, version_id}` → 3 base64 PNGs
 

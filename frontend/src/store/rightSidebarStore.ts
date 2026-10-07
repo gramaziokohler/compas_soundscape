@@ -13,8 +13,6 @@ export interface RightSidebarStoreState {
   isExpanded: boolean;
   /** Current resized width in px (updates live while dragging). */
   width: number;
-  /** True while the right-click context menu is open — prevents sidebar from auto-expanding. */
-  rightClickActive: boolean;
   /**
    * Fraction (0–1) of the right sidebar height taken by the Acoustics
    * (simulation) section; the Listeners section fills the remainder.
@@ -27,7 +25,6 @@ export interface RightSidebarStoreState {
   convolutionHintNonce: number;
   requestExpand: () => void;
   requestCollapse: () => void;
-  setRightClickActive: (active: boolean) => void;
   setSimulationAreaRatio: (ratio: number) => void;
   setSidebarWidth: (width: number) => void;
   requestConvolutionHint: () => void;
@@ -39,7 +36,6 @@ export const useRightSidebarStore = create<RightSidebarStoreState>()(
       (set) => ({
         isExpanded: false,
         width: UI_SIDEBAR_RESIZE.RIGHT_DEFAULT_WIDTH,
-        rightClickActive: false,
         simulationAreaRatio: UI_SIDEBAR_RESIZE.RIGHT_SPLIT_DEFAULT_RATIO,
         convolutionHintNonce: 0,
         requestExpand: () => set({ isExpanded: true }, false, 'rightSidebar/expand'),
@@ -50,8 +46,6 @@ export const useRightSidebarStore = create<RightSidebarStoreState>()(
             false,
             'rightSidebar/requestConvolutionHint',
           ),
-        setRightClickActive: (active) =>
-          set({ rightClickActive: active }, false, 'rightSidebar/setRightClickActive'),
         setSimulationAreaRatio: (ratio) =>
           set({ simulationAreaRatio: ratio }, false, 'rightSidebar/setSimulationAreaRatio'),
         setSidebarWidth: (width) => set({ width }, false, 'rightSidebar/setWidth'),

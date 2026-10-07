@@ -42,8 +42,8 @@ export interface ThreeSceneProps {
   /** Set of muted sound IDs */
   mutedSounds: Set<string>;
 
-  /** ID of the soloed sound (only this sound plays, null if none) */
-  soloedSound: string | null;
+  /** Variant IDs of every soloed track (only these play; empty if none) */
+  soloedSounds: Set<string>;
 
   /** Callback when a sound's play/pause state is toggled */
   onToggleSound: (soundId: string) => void;

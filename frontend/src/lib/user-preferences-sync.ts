@@ -53,6 +53,7 @@ function collectPreferences(): UserPreferences {
     listenerOrientation: { ...ui.listenerOrientation },
     showSpectrograms: ui.showSpectrograms,
     enableAutoSave: ui.enableAutoSave,
+    seenHints: [...ui.seenHints],
     normalizeImpulseResponses: audio.normalizeImpulseResponses,
     outputDeviceId: audio.outputDeviceId,
     globalBaseDbfs: audio.globalBaseDbfs,
@@ -97,6 +98,7 @@ export function applyPreferences(prefs: UserPreferences): void {
   if (prefs.listenerOrientation !== undefined) ui.setListenerOrientation(prefs.listenerOrientation);
   if (prefs.showSpectrograms !== undefined) ui.setShowSpectrograms(prefs.showSpectrograms);
   if (prefs.enableAutoSave !== undefined) ui.setEnableAutoSave(prefs.enableAutoSave);
+  if (prefs.seenHints !== undefined) ui.setSeenHints(prefs.seenHints);
 
   if (prefs.normalizeImpulseResponses !== undefined) {
     audio.setNormalizeImpulseResponses(prefs.normalizeImpulseResponses);

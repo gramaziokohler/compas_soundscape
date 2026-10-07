@@ -74,10 +74,42 @@ export function registerTemporalStore(
   });
 }
 
+// ─── Modal override ──────────────────────────────────────────────────────────
+
+/**
+ * A transient mode with its own step history (e.g. placing polygon points while
+ * drawing an area). While set, Ctrl+Z / Ctrl+Y and the toolbar act on it
+ * instead of the store history.
+ */
+export interface UndoRedoOverride {
+  undo: () => void;
+  redo: () => void;
+  canUndo: () => boolean;
+  canRedo: () => boolean;
+}
+
+let _override: UndoRedoOverride | null = null;
+
+/** Install (or clear with null) the modal undo/redo override. */
+export function setUndoRedoOverride(override: UndoRedoOverride | null): void {
+  _override = override;
+  _notifyUndoRedo();
+}
+
+/** Re-read availability after the override's own history changed. */
+export function notifyUndoRedoChanged(): void {
+  _notifyUndoRedo();
+}
+
 // ─── Undo / Redo ─────────────────────────────────────────────────────────────
 
 /** Undo the single most-recent action, targeting the correct store. */
 export function globalUndo(): void {
+  if (_override) {
+    _override.undo();
+    _notifyUndoRedo();
+    return;
+  }
   if (_actionLog.length === 0) return;
   const storeId = _actionLog.pop()!;
   _busy = true;
@@ -89,6 +121,11 @@ export function globalUndo(): void {
 
 /** Redo the most-recently undone action. */
 export function globalRedo(): void {
+  if (_override) {
+    _override.redo();
+    _notifyUndoRedo();
+    return;
+  }
   if (_redoLog.length === 0) return;
   const storeId = _redoLog.pop()!;
   _busy = true;
@@ -98,8 +135,8 @@ export function globalRedo(): void {
   _notifyUndoRedo();
 }
 
-export const canUndo = (): boolean => _actionLog.length > 0;
-export const canRedo = (): boolean => _redoLog.length > 0;
+export const canUndo = (): boolean => (_override ? _override.canUndo() : _actionLog.length > 0);
+export const canRedo = (): boolean => (_override ? _override.canRedo() : _redoLog.length > 0);
 
 // ─── Reactive subscription for UI (e.g. toolbar buttons) ─────────────────────
 
@@ -109,8 +146,8 @@ const _undoRedoListeners = new Set<() => void>();
 let _undoRedoSnapshot = { canUndo: false, canRedo: false };
 
 function _notifyUndoRedo(): void {
-  const nextCanUndo = _actionLog.length > 0;
-  const nextCanRedo = _redoLog.length > 0;
+  const nextCanUndo = canUndo();
+  const nextCanRedo = canRedo();
   if (nextCanUndo !== _undoRedoSnapshot.canUndo || nextCanRedo !== _undoRedoSnapshot.canRedo) {
     _undoRedoSnapshot = { canUndo: nextCanUndo, canRedo: nextCanRedo };
   }

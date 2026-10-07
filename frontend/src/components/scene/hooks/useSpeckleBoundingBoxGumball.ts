@@ -217,7 +217,9 @@ export function useSpeckleBoundingBoxGumball({
       dragAnchor.position.copy(hitWorldPoint);
       dragStartAnchor = hitWorldPoint.clone();
       dragAnchor.visible = true;
-      transformHelper.visible = true;
+      // The TransformControls gizmo stays hidden: the face's own arrow is the
+      // only handle shown (it changes color while dragging).
+      bbm.setHoveredGumball(hit);
       syncTransformAxis(dragAxis);
       transformControls.attach(dragAnchor);
       // Refresh the object + TransformControls' drag plane matrices so pointerDown

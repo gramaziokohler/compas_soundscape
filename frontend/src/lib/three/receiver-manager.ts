@@ -44,6 +44,9 @@ export class ReceiverManager {
 
   // Label sprites — one per receiver, keyed by receiver ID
   private labelSprites: Map<string, THREE.Sprite> = new Map();
+  /** Applied to objects created after a hide, so they never pop back in. */
+  private receiversVisible = true;
+  private labelsVisible = true;
 
   // Headphones OBJ geometry — loaded asynchronously, shared across all meshes
   private headphonesGeomResult: HeadphonesGeometryResult | null = null;
@@ -229,6 +232,7 @@ export class ReceiverManager {
     cubeMesh.layers.disableAll();
     cubeMesh.layers.enable(0); // Default layer for basic rendering
     cubeMesh.layers.enable(4); // OVERLAY layer for custom objects
+    cubeMesh.visible = this.receiversVisible;
 
     // CRITICAL: Force update matrix to ensure proper rendering
     cubeMesh.updateMatrix();
@@ -402,6 +406,7 @@ export class ReceiverManager {
 
       const sprite = createLabelSprite(text);
       sprite.position.copy(mesh.position);
+      sprite.visible = this.labelsVisible;
       target.add(sprite);
       this.labelSprites.set(id, sprite);
     }
@@ -443,6 +448,7 @@ export class ReceiverManager {
 
   /** Show or hide all receiver meshes. */
   public setReceiversVisible(visible: boolean): void {
+    this.receiversVisible = visible;
     this.receiverMeshes.forEach(m => { m.visible = visible; });
   }
 
@@ -459,6 +465,7 @@ export class ReceiverManager {
 
   /** Show or hide all receiver label sprites. */
   public setLabelSpritesVisible(visible: boolean): void {
+    this.labelsVisible = visible;
     this.labelSprites.forEach(s => { s.visible = visible; });
   }
 

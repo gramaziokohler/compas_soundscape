@@ -133,7 +133,7 @@ export {
   discardAcousticSelectionSnapshot,
 } from './acousticLayerStore';
 
-export { useUIStore } from './uiStore';
+export { useUIStore, selectHasSaveTarget } from './uiStore';
 export type { UIStoreState, SidebarNavCommand } from './uiStore';
 
 export { useSceneWorkflowStore, registerSendToSoundGeneration, defaultSceneOptions } from './sceneWorkflowStore';
@@ -226,4 +226,7 @@ export {
   commitStore,
   subscribeUndoRedo,
   getUndoRedoSnapshot,
+  setUndoRedoOverride,
+  notifyUndoRedoChanged,
 } from './undoRedoRegistry';
+export type { UndoRedoOverride } from './undoRedoRegistry';

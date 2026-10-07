@@ -15,12 +15,15 @@ interface ConfirmDialogProps {
   disabled?: boolean;
   /** Only disable the confirm button — cancel stays active. */
   disableConfirm?: boolean;
-  variant?: "danger" | "default";
+  /** "warning" = amber accent, used for viewer area drawing. */
+  variant?: "danger" | "default" | "warning";
   /** When true, recolors the "default" variant for legibility on a solid-blue generated card. */
   onBlueBackground?: boolean;
   /** When true, uses a solid theme-aware surface instead of the translucent tint
    *  (for popovers on the DAW track head / scene overlays where glass would be unreadable). */
   solidBackground?: boolean;
+  /** Stack the buttons vertically (confirm on top) — for narrow popovers. */
+  stacked?: boolean;
 }
 
 /**
@@ -30,7 +33,7 @@ interface ConfirmDialogProps {
  * arbitrary content (children) above the buttons for transient settings panels.
  *
  * Features:
- * - Two variants: "danger" (red, destructive) and "default" (primary, neutral)
+ * - Variants: "danger" (red, destructive), "default" (primary, neutral), "warning" (amber, area drawing)
  * - Optional `children` content slot between the message and the action row
  * - Disabled state for in-flight operations (shows loading label)
  * - Color tokens from CSS custom properties — no hex values
@@ -60,18 +63,28 @@ export function ConfirmDialog({
   variant = "default",
   onBlueBackground = false,
   solidBackground = false,
+  stacked = false,
 }: ConfirmDialogProps) {
   const isDanger = variant === "danger";
-  const accentColor = isDanger ? "var(--color-error)" : "var(--color-primary)";
+  const isWarning = variant === "warning";
+  const accentColor = isDanger
+    ? "var(--color-error)"
+    : isWarning
+      ? "var(--color-warning)"
+      : "var(--color-primary)";
   const accentBg = isDanger
     ? "color-mix(in srgb, var(--color-error) 8%, transparent)"
-    : onBlueBackground
+    : isWarning
+      ? "color-mix(in srgb, var(--color-warning) 14%, transparent)"
+      : onBlueBackground
       ? "color-mix(in srgb, var(--color-on-blue) 60%, transparent)"
       : "color-mix(in srgb, var(--color-confirm-tint) 65%, transparent)";
   const panelBg = solidBackground ? "var(--color-surface-2)" : accentBg;
   const messageColor = isDanger
     ? "var(--color-error)"
-    : onBlueBackground
+    : isWarning
+      ? "var(--color-warning-hover)"
+      : onBlueBackground
       ? "var(--color-on-blue)"
       : solidBackground
         ? "var(--color-blue-text)"
@@ -95,7 +108,7 @@ export function ConfirmDialog({
         </p>
       )}
       {children}
-      <div className="flex gap-2">
+      <div className={stacked ? "flex flex-col-reverse gap-1.5" : "flex gap-2"}>
         <button
           onClick={onCancel}
           disabled={disabled}

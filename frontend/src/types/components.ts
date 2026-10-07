@@ -120,7 +120,6 @@ export interface SidebarProps {
   linkingConfigIndex?: number | null;
   // Speckle viewer mode - enables entity linking for Speckle objects
   useSpeckleViewer?: boolean;
-  onResetSound?: (soundId: string, promptIndex: number) => void;
   onDuplicateConfig?: (index: number) => void;
   onRegenerateSingle?: (index: number) => Promise<void>;
   onDeleteVariant?: (promptIndex: number, variantIdx: number) => void;
@@ -151,7 +150,6 @@ export interface SidebarProps {
   onStop: () => void;
   onTogglePromptSelection: (configIndex: number, promptId: string) => void;
   onSendToSoundGeneration: (parentUsageIndex?: number) => void;
-  onResetAnalysis: (index: number) => void;
   /** Async callback to extract SED audio segments and inject them as sound cards. */
   onAudioExtract: (config: AudioAnalysisConfig, originalIndex: number) => Promise<void>;
   // Sidebar expanded state callback
@@ -249,7 +247,6 @@ export interface SoundGenerationSectionProps {
   linkingConfigIndex?: number | null;
   // Speckle viewer mode - enables entity Entity linking for Speckle objects
   useSpeckleViewer?: boolean;
-  onResetSound?: (soundId: string, promptIndex: number) => void;
   onDuplicateConfig?: (index: number) => void;
   onRegenerateSingle?: (index: number) => Promise<void>;
   onDeleteVariant?: (promptIndex: number, variantIdx: number) => void;

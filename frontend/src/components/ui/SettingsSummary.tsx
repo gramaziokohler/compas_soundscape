@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { ChevronDown, ChevronRight, Pencil, RefreshCw } from 'lucide-react';
+import { useState, type ReactNode } from 'react';
+import { ChevronDown, ChevronRight, RotateCcw } from 'lucide-react';
 import type { CardBaseConfig, CardType } from '@/types/card';
 import type { PyroomAcousticsSimulationConfig, ChorasSimulationConfig } from '@/types/acoustics';
 import type {
@@ -11,13 +11,21 @@ import type {
 } from '@/types/analysis';
 import type { SoundGenerationConfig } from '@/types';
 import { useAudioControlsStore } from '@/store';
+import { ModifiedFieldsProvider } from '@/components/ui/ModifiedMark';
 
 /**
  * SettingsSummary Component
  *
- * A collapsible, read-only summary of label/value settings rows. Rendered on
- * generated cards (via Card) to recap the pre-generation configuration without
- * exposing the editing UI. Renders nothing when `rows` is empty.
+ * A collapsible settings section rendered on generated cards (via Card). It
+ * shows either:
+ * - `children` — the card's editable settings UI (same editors as the pending
+ *   state) inside a bordered "card inside a card" styled like a pending card,
+ *   with an optional `footer` (Revert / Regenerate). Labels of fields listed in
+ *   `modifiedFields` show a "*" (see ModifiedMark). Kept mounted while
+ *   collapsed so editors with live side effects (e.g. material assignment)
+ *   don't remount.
+ * - `rows` — a read-only label/value recap, for cards where regenerating makes
+ *   no sense (uploads, imported IRs…). Renders nothing when `rows` is empty.
  *
  * **Usage:**
  * ```tsx
@@ -28,6 +36,9 @@ import { useAudioControlsStore } from '@/store';
  *     { label: 'Prompt', value: longText, expandable: true },
  *   ]}
  * />
+ * <SettingsSummary title="Change sound settings" rows={[]} modifiedFields={fields} footer={actions}>
+ *   <SoundPreContent ... />
+ * </SettingsSummary>
  * ```
  *
  * Rows marked `expandable` truncate long values and show a clickable "…" suffix
@@ -44,117 +55,63 @@ export interface SettingsRow {
   truncateAt?: number;
 }
 
+/** Text palette: `on-blue` for blue cards, `neutral` for frosted / theme surfaces (light + dark). */
+export type SettingsSummaryTone = 'on-blue' | 'neutral';
+
+const TONE_COLORS: Record<SettingsSummaryTone, { muted: string; value: string }> = {
+  'on-blue': { muted: 'var(--color-on-blue-muted)', value: 'var(--color-on-blue)' },
+  neutral: { muted: 'var(--color-secondary-hover)', value: 'var(--foreground)' },
+};
+
 interface SettingsSummaryProps {
   /** Section title shown on the toggle button. */
   title?: string;
-  /** Label/value rows to display. Renders nothing when empty. */
+  /** Text palette (default `on-blue`). */
+  tone?: SettingsSummaryTone;
+  /** Read-only label/value rows (ignored when `children` is given). */
   rows: SettingsRow[];
-  /** Whether the section starts expanded. */
-  defaultExpanded?: boolean;
+  /** Editable settings UI — replaces the read-only rows when provided. */
+  children?: ReactNode;
+  /** Actions pinned at the bottom of the editable settings box (e.g. Regenerate). */
+  footer?: ReactNode;
+  /** Field keys edited since generation — their labels get a "*". */
+  modifiedFields?: ReadonlySet<string>;
   /**
-   * When provided and the rows include a `Prompt`, that row gains a pen icon
-   * that reveals an inline editor plus a regenerate button. Submitting calls
-   * `onRegenerate(newPrompt)` — the owning card regenerates the active variant
-   * in place (same variant id / DAW / entity links).
+   * When set, a small warning-coloured reload icon right of the title restores
+   * the settings of the last generation.
    */
-  promptAction?: {
-    onRegenerate: (newPrompt: string) => void;
-    isRegenerating?: boolean;
-  };
-}
-
-/** Editable Prompt row — pen toggles an inline textarea + regenerate button. */
-function PromptRow({
-  label,
-  value,
-  onRegenerate,
-  isRegenerating,
-}: {
-  label: string;
-  value: string;
-  onRegenerate: (newPrompt: string) => void;
-  isRegenerating?: boolean;
-}) {
-  const [isEditing, setIsEditing] = useState(false);
-  const [draft, setDraft] = useState(value);
-
-  // Keep the draft in sync with the active variant while not editing.
-  useEffect(() => {
-    if (!isEditing) setDraft(value);
-  }, [value, isEditing]);
-
-  const submit = () => {
-    const trimmed = draft.trim();
-    if (!trimmed) return;
-    onRegenerate(trimmed);
-    setIsEditing(false);
-  };
-
-  return (
-    <div className="flex flex-col gap-1">
-      <div className="flex items-baseline justify-between gap-3">
-        <span className="shrink-0" style={{ color: 'var(--color-on-blue-muted)' }}>{label}</span>
-        <span className="flex items-center gap-1 justify-end min-w-0 max-w-[70%]">
-          {!isEditing && (
-            <span className="text-right break-words" style={{ color: 'var(--color-on-blue)' }}>
-              {value}
-            </span>
-          )}
-          <button
-            type="button"
-            onClick={() => setIsEditing((v) => !v)}
-            title={isEditing ? 'Cancel editing' : 'Edit prompt'}
-            aria-label={isEditing ? 'Cancel editing prompt' : 'Edit prompt'}
-            className="on-blue-btn flex-shrink-0 flex h-5 w-5 items-center justify-center rounded transition-colors"
-          >
-            <Pencil size={11} />
-          </button>
-        </span>
-      </div>
-      {isEditing && (
-        <div className="flex items-end gap-1.5">
-          <textarea
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-                e.preventDefault();
-                submit();
-              }
-            }}
-            rows={2}
-            autoFocus
-            placeholder="Prompt…"
-            className="flex-1 min-w-0 rounded-lg border border-on-blue-faint bg-blue-chip-bg p-2 text-xxs text-on-blue outline-none focus:border-on-blue"
-          />
-          <button
-            type="button"
-            onClick={submit}
-            disabled={isRegenerating || !draft.trim()}
-            title="Regenerate this variant with the edited prompt"
-            aria-label="Regenerate this variant"
-            className={`on-blue-btn flex-shrink-0 flex h-7 w-7 items-center justify-center rounded transition-colors ${
-              isRegenerating || !draft.trim() ? 'opacity-50 cursor-not-allowed' : ''
-            }`}
-          >
-            <RefreshCw size={13} className={isRegenerating ? 'animate-spin' : ''} />
-          </button>
-        </div>
-      )}
-    </div>
-  );
+  onRevert?: () => void;
+  /** Whether the section starts expanded (uncontrolled mode). */
+  defaultExpanded?: boolean;
+  /** Controlled expanded state — pair with `onExpandedChange`. */
+  expanded?: boolean;
+  onExpandedChange?: (expanded: boolean) => void;
 }
 
 export function SettingsSummary({
   title = 'Settings',
   rows,
+  children,
+  footer,
+  modifiedFields,
+  onRevert,
   defaultExpanded = false,
-  promptAction,
+  expanded,
+  onExpandedChange,
+  tone = 'on-blue',
 }: SettingsSummaryProps) {
-  const [isExpanded, setIsExpanded] = useState(defaultExpanded);
+  const colors = TONE_COLORS[tone];
+  const [localExpanded, setLocalExpanded] = useState(defaultExpanded);
+  const isExpanded = expanded ?? localExpanded;
+  const toggleExpanded = () => {
+    const next = !isExpanded;
+    if (expanded === undefined) setLocalExpanded(next);
+    onExpandedChange?.(next);
+  };
   const [expandedRows, setExpandedRows] = useState<Set<string>>(() => new Set());
 
-  if (rows.length === 0) return null;
+  const hasEditor = children !== undefined && children !== null;
+  if (!hasEditor && rows.length === 0) return null;
 
   const toggleRow = (label: string) => {
     setExpandedRows((prev) => {
@@ -167,44 +124,57 @@ export function SettingsSummary({
 
   return (
     <div>
-      <button
-        onClick={() => setIsExpanded((v) => !v)}
-        className="flex items-center gap-1.5 w-full text-left text-xxs transition-colors"
-        style={{ color: 'var(--color-on-blue-muted)' }}
-        onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--color-on-blue)'; }}
-        onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--color-on-blue-muted)'; }}
-      >
-        {isExpanded ? <ChevronDown size={11} className="shrink-0" /> : <ChevronRight size={11} className="shrink-0" />}
-        <span>{title}</span>
-      </button>
-      {isExpanded && (
+      <div className="flex items-center gap-1.5">
+        <button
+          onClick={toggleExpanded}
+          className="flex flex-1 min-w-0 items-center gap-1.5 text-left text-xxs transition-colors"
+          style={{ color: colors.muted }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = colors.value; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = colors.muted; }}
+        >
+          {isExpanded ? <ChevronDown size={11} className="shrink-0" /> : <ChevronRight size={11} className="shrink-0" />}
+          <span>{title}</span>
+        </button>
+        {onRevert && (
+          <button
+            type="button"
+            onClick={onRevert}
+            className="settings-revert-btn"
+            title="Revert to the settings used for the last generation"
+            aria-label="Revert settings"
+          >
+            <RotateCcw size={11} />
+          </button>
+        )}
+      </div>
+      {hasEditor && (
+        <div
+          className="card-collapse-body card-settings-inset card-stack"
+          style={!isExpanded ? { display: 'none' } : undefined}
+        >
+          <ModifiedFieldsProvider fields={modifiedFields}>
+            {children}
+          </ModifiedFieldsProvider>
+          {footer}
+        </div>
+      )}
+      {!hasEditor && isExpanded && (
         <div className="card-collapse-body card-stack--tight text-xxs">
           {rows.map((row) => {
-            if (row.label === 'Prompt' && promptAction) {
-              return (
-                <PromptRow
-                  key={row.label}
-                  label={row.label}
-                  value={row.value}
-                  onRegenerate={promptAction.onRegenerate}
-                  isRegenerating={promptAction.isRegenerating}
-                />
-              );
-            }
             const isRowExpanded = expandedRows.has(row.label);
             const truncateAt = row.truncateAt ?? 48;
             const isLong = row.value.length > truncateAt;
             return (
               <div key={row.label} className="flex items-baseline justify-between gap-3">
-                <span className="shrink-0" style={{ color: 'var(--color-on-blue-muted)' }}>{row.label}</span>
-                <span className="text-right break-words max-w-[70%]" style={{ color: 'var(--color-on-blue)' }}>
+                <span className="shrink-0" style={{ color: colors.muted }}>{row.label}</span>
+                <span className="text-right break-words max-w-[70%]" style={{ color: colors.value }}>
                   {row.expandable && isLong ? (
                     <>
                       {isRowExpanded ? row.value : row.value.slice(0, truncateAt)}
                       <button
                         onClick={() => toggleRow(row.label)}
                         className="transition-colors px-0.5 cursor-pointer"
-                        style={{ color: 'var(--color-on-blue-muted)' }}
+                        style={{ color: colors.muted }}
                         title={isRowExpanded ? 'Collapse' : 'Show full value'}
                         aria-label={`${isRowExpanded ? 'Collapse' : 'Show full'} ${row.label}`}
                       >
@@ -260,6 +230,16 @@ export function getSettingsTitle(config: CardBaseConfig): string {
   if (SOUND_TYPES.includes(config.type)) return 'Sound Settings';
   if (ANALYSIS_TYPES.includes(config.type)) return 'Analysis Settings';
   return 'Settings';
+}
+
+/**
+ * Title of the editable settings section on a generated card.
+ */
+export function getEditableSettingsTitle(config: CardBaseConfig): string {
+  if (SIMULATION_TYPES.includes(config.type)) return 'Change simulation settings';
+  if (SOUND_TYPES.includes(config.type)) return 'Change sound settings';
+  if (ANALYSIS_TYPES.includes(config.type)) return 'Change analysis settings';
+  return 'Change settings';
 }
 
 /**

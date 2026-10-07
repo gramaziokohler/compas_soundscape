@@ -26,6 +26,7 @@ import type { AnalysisConfig, AnalysisResult, TextPromptResult } from '@/types/a
 import { API_BASE_URL, AUDIO_PLAYBACK } from '@/utils/constants';
 import { newConfigId } from '@/utils/config-id';
 import { parseAuthoredSeconds } from '@/lib/audio/utils/timeline-utils';
+import { captureGenerationSignature } from '@/utils/generationSignature';
 
 /**
  * Coerce a persisted schedule to numbers. The backend `SoundscapeSoundEvent`
@@ -125,12 +126,14 @@ export function buildSoundscapeSavePayload(
   iterationLinks?: Record<string, { variantIndex?: number; entityNodeId?: string; entityPosition?: [number, number, number]; entityIndex?: number }>,
   /** Sound IDs currently muted in the DAW timeline (from audioControls) */
   mutedSounds?: string[],
-  /** Sound ID currently soloed in the DAW timeline (from audioControls) */
-  soloedSound?: string | null,
+  /** Variant sound IDs of every soloed DAW track (from audioControls) */
+  soloedSounds?: string[],
   /** Solver-excluded iteration indices per sound ID (from audioControls) */
   excludedIterations?: Record<string, number[]>,
   /** Reason per excluded iteration, keyed `${soundId}-${iterationIndex}` (from audioControls) */
   exclusionReasons?: Record<string, string>,
+  /** Per-clip DAW trim overrides, keyed `${soundId}-${iterationIndex}` (from audioControls) */
+  iterationTrims?: Record<string, { start: number; end: number }>,
 ): SoundscapeSavePayload {
   // Map runtime configs to serializable configs
   console.log('[DEBUG-SERIALIZE-SAVE] configs count:', soundConfigs.length);
@@ -293,6 +296,8 @@ export function buildSoundscapeSavePayload(
       ? { min: [...g.boundingBox.min], max: [...g.boundingBox.max] }
       : null,
     points: g.points.map((p) => [...p]),
+    placementMode: g.placementMode ?? 'objects',
+    drawnArea: g.drawnArea ?? null,
   }));
 
   // Serialize simulation configs and collect IR URLs
@@ -499,8 +504,9 @@ export function buildSoundscapeSavePayload(
       },
     } : undefined,
     iteration_links: iterationLinks && Object.keys(iterationLinks).length > 0 ? iterationLinks : undefined,
+    iteration_trims: iterationTrims && Object.keys(iterationTrims).length > 0 ? iterationTrims : undefined,
     muted_sounds: mutedSounds && mutedSounds.length > 0 ? mutedSounds : undefined,
-    soloed_sound: soloedSound ?? undefined,
+    soloed_sounds: soloedSounds && soloedSounds.length > 0 ? soloedSounds : undefined,
     excluded_iterations: excludedIterations && Object.keys(excludedIterations).length > 0 ? excludedIterations : undefined,
     exclusion_reasons: exclusionReasons && Object.keys(exclusionReasons).length > 0 ? exclusionReasons : undefined,
   };
@@ -529,6 +535,7 @@ export function restoreSoundscapeState(
   soundVolumes: Record<string, number>;
   soundTimestamps: Record<string, number[]>;
   iterationLinks: Record<string, SoundscapeIterationLink>;
+  iterationTrims: Record<string, { start: number; end: number }>;
   globalSettings: {
     duration: number;
     steps: number;
@@ -544,13 +551,13 @@ export function restoreSoundscapeState(
   activeSimulationIndex: number | null;
   resonanceAudioConfig: ResonanceAudioConfig | null;
   mutedSounds: string[];
-  soloedSound: string | null;
+  soloedSounds: string[];
   excludedIterations: Record<string, number[]>;
   exclusionReasons: Record<string, string>;
 } {
   console.log('[DEBUG-DESERIALIZE] === restore begin ===');
   console.log('[DEBUG-DESERIALIZE] loadedData.muted_sounds:', JSON.stringify(loadedData.muted_sounds));
-  console.log('[DEBUG-DESERIALIZE] loadedData.soloed_sound:', JSON.stringify(loadedData.soloed_sound));
+  console.log('[DEBUG-DESERIALIZE] loadedData.soloed_sounds:', JSON.stringify(loadedData.soloed_sounds ?? loadedData.soloed_sound));
   console.log('[DEBUG-DESERIALIZE] loadedData.iteration_links keys:', loadedData.iteration_links ? Object.keys(loadedData.iteration_links).length : 0);
   console.log('[DEBUG-DESERIALIZE] loadedData.sound_configs count:', loadedData.sound_configs?.length);
   console.log('[DEBUG-DESERIALIZE] loadedData.sound_events count:', loadedData.sound_events?.length);
@@ -789,6 +796,8 @@ export function restoreSoundscapeState(
           }
         : null,
       points: g.points.map((p) => p as [number, number, number]),
+      placementMode: g.placementMode ?? 'objects',
+      drawnArea: g.drawnArea ?? null,
     }),
   );
 
@@ -954,6 +963,12 @@ export function restoreSoundscapeState(
 
   const activeSimulationIndex = loadedData.active_simulation_index ?? null;
 
+  // Baseline the "Regenerate" snapshots: a restored card starts clean (the
+  // snapshot is transient and never saved). In place — later restore passes
+  // keep references to these config objects.
+  soundConfigs.forEach((c) => Object.assign(c, captureGenerationSignature(c)));
+  restoredSimConfigs.forEach((c) => Object.assign(c, captureGenerationSignature(c)));
+
   const resonanceAudioConfig: ResonanceAudioConfig | null = loadedData.resonance_audio_config ? {
     enabled: loadedData.resonance_audio_config.enabled,
     ambisonicOrder: loadedData.resonance_audio_config.ambisonic_order,
@@ -967,6 +982,7 @@ export function restoreSoundscapeState(
     soundVolumes,
     soundTimestamps,
     iterationLinks: loadedData.iteration_links ?? {},
+    iterationTrims: loadedData.iteration_trims ?? {},
     globalSettings,
     receivers: restoredReceivers,
     gridListeners: restoredGridListeners,
@@ -975,7 +991,8 @@ export function restoreSoundscapeState(
     activeSimulationIndex,
     resonanceAudioConfig,
     mutedSounds: loadedData.muted_sounds ?? [],
-    soloedSound: loadedData.soloed_sound ?? null,
+    // Legacy saves stored one soloed id; restoreMuteSolo expands ids to whole tracks.
+    soloedSounds: loadedData.soloed_sounds ?? (loadedData.soloed_sound ? [loadedData.soloed_sound] : []),
     excludedIterations: loadedData.excluded_iterations ?? {},
     exclusionReasons: loadedData.exclusion_reasons ?? {},
   };
@@ -1254,6 +1271,9 @@ export function restoreAnalysisState(analysisState: AnalysisState): {
 
     return config as AnalysisConfig;
   });
+
+  // Restored cards start clean — see the sound/simulation restore above.
+  analysisConfigs.forEach((c) => Object.assign(c, captureGenerationSignature(c)));
 
   const parentIndices = buildParentIndexMap(analysisState.configs);
   console.log('[DEBUG-ANALYSIS-LOAD] configs count:', analysisConfigs.length,

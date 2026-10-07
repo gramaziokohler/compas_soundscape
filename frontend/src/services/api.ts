@@ -3,7 +3,12 @@ import type { CompasGeometry, SoundEvent, SoundGenerationConfig, FileUploadRespo
 import type { TtsCustomVoice, TtsCustomVoiceCreateRequest, TtsDialectsResponse, TtsLanguageMatch } from '@/types/ttsLanguage';
 import type { ImpulseResponseMetadata } from '@/types/audio';
 import type { ModalAnalysisRequest, ModalAnalysisResult } from '@/types/modal';
-import type { SpeckleProjectModelsResponse, SpeckleModelLatestVersion } from '@/types/speckle-models';
+import type {
+  SpeckleProjectModelsResponse,
+  SpeckleModelLatestVersion,
+  SpeckleIngestionStatus,
+  SpeckleUploadProgress,
+} from '@/types/speckle-models';
 import type { SoundscapeSavePayload, SoundscapeSaveResponse, SoundscapeLoadResponse, SoundscapeStats } from '@/types/soundscape';
 
 /**
@@ -56,12 +61,16 @@ async function fetchWithErrorHandling(
 // model analysis) needs the real version_id/object_id, so `uploadFile` waits
 // here until ingestion succeeds instead of each caller racing the pipeline.
 
-export interface SpeckleIngestionStatus {
-  status: string;
-  progress_message: string | null;
-  version_id: string | null;
-  object_id: string | null;
-  error: string | null;
+/** Map one ingestion status probe onto the client-side upload progress shape. */
+function toUploadProgress(status: SpeckleIngestionStatus): SpeckleUploadProgress {
+  const stage = status.stage === 'success' || status.stage === 'failed' ? 'materializing' : status.stage;
+  return {
+    stage,
+    message: status.progress_message,
+    progress: stage === 'processing' ? status.progress : null,
+    phase: status.phase,
+    attempt: status.attempt,
+  };
 }
 
 /** Single probe of an ingestion job's status. Throws on transport/HTTP error. */
@@ -85,7 +94,8 @@ async function fetchSpeckleIngestionStatus(ingestionId: string): Promise<Speckle
  * Transient probe failures are retried; terminal job states throw.
  */
 async function waitForSpeckleIngestion(
-  ingestionId: string
+  ingestionId: string,
+  onProgress?: (progress: SpeckleUploadProgress) => void
 ): Promise<{ versionId: string; objectId: string }> {
   for (let attempt = 0; attempt < SPECKLE_INGESTION.MAX_ATTEMPTS; attempt++) {
     let terminalError: Error | null = null;
@@ -94,8 +104,10 @@ async function waitForSpeckleIngestion(
       if (status.status === 'success' && status.version_id) {
         return { versionId: status.version_id, objectId: status.object_id ?? '' };
       }
-      if (status.status === 'failed' || status.status === 'cancelled' || status.status === 'invalid') {
+      if (status.stage === 'failed') {
         terminalError = new Error(status.error || `Speckle ingestion ${status.status}`);
+      } else {
+        onProgress?.(toUploadProgress(status));
       }
     } catch (err) {
       // Transient polling failures (network/502) — keep waiting.
@@ -308,6 +320,7 @@ const PREF_WIRE_KEYS: Record<keyof UserPreferences, string> = {
   maximumFoleySounds: 'maximum_foley_sounds',
   showSpectrograms: 'show_spectrograms',
   enableAutoSave: 'enable_auto_save',
+  seenHints: 'seen_hints',
 };
 
 function prefsToWire(prefs: Partial<UserPreferences>): Record<string, unknown> {
@@ -592,8 +605,12 @@ export const apiService = {
   },
 
   // File Upload
-  async uploadFile(file: File): Promise<FileUploadResponse | CompasGeometry> {
+  async uploadFile(
+    file: File,
+    onProgress?: (progress: SpeckleUploadProgress) => void
+  ): Promise<FileUploadResponse | CompasGeometry> {
     try {
+      onProgress?.({ stage: 'uploading', message: null, progress: null, phase: null, attempt: null });
       const formData = new FormData();
       formData.append("file", file);
 
@@ -617,7 +634,7 @@ export const apiService = {
       // the viewer can load it and simulations have a valid version_id.
       const speckle = (data as FileUploadResponse | undefined)?.speckle;
       if (speckle?.ingestion_id && !speckle.version_id) {
-        const resolved = await waitForSpeckleIngestion(speckle.ingestion_id);
+        const resolved = await waitForSpeckleIngestion(speckle.ingestion_id, onProgress);
         speckle.version_id = resolved.versionId;
         speckle.object_id = resolved.objectId;
       }

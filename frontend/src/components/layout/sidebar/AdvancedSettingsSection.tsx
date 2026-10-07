@@ -22,15 +22,14 @@ import { apiService } from "@/services/api";
 import type { TokenStatus, LLMProviders } from "@/services/api";
 import type { SoundscapeStats } from "@/types/soundscape";
 import { useTextGenerationStore } from "@/store/textGenerationStore";
-import { useSceneWorkflowStore, useSoundscapeStore } from "@/store";
+import { useSoundscapeStore } from "@/store";
 import { setElevenLabsApiKey, isElevenLabsKeySet } from "@/services/elevenlabs";
 import { useServiceVersions } from "@/hooks/useServiceVersions";
 import { useAudioControlsStore } from "@/store/audioControlsStore";
-import { useUIStore, type AdvancedSettingsFocusTarget } from "@/store/uiStore";
+import { useUIStore, selectHasSaveTarget, type AdvancedSettingsFocusTarget } from "@/store/uiStore";
 import { CollaborationPanel } from "@/components/layout/CollaborationPanel";
 import { OutputDeviceSelector } from "@/components/audio/OutputDeviceSelector";
 import type { ColorThemePreference } from "@/utils/color-theme";
-import type { UIMode } from "@/types/sceneWorkflow";
 import {
   TTS_LANGUAGE,
   UI_BORDER_RADIUS,
@@ -43,8 +42,6 @@ import {
   TTS_MODEL_NAMES,
   LLM_MODEL_GEMINI_FLASH,
   LLM_MODEL_GEMINI_PRO,
-  LLM_MODEL_OPENAI,
-  LLM_MODEL_ANTHROPIC,
   LLM_MODEL_NAMES,
   LLM_MODEL_TO_PROVIDER,
   DEFAULT_LISTENER_ORIENTATION,
@@ -118,7 +115,7 @@ type SectionKey = 'display' | 'acoustic' | 'tokens' | 'llm' | 'rendering' | 'wor
 
 const SECTION_LABELS: Record<SectionKey, string> = {
   display: 'Display',
-  acoustic: 'Acoustic',
+  acoustic: 'Acoustics',
   tokens: 'API Tokens',
   llm: 'Models',
   rendering: 'Audio settings',
@@ -126,11 +123,15 @@ const SECTION_LABELS: Record<SectionKey, string> = {
   history: 'History',
 };
 
-const SECTION_KEYS: SectionKey[] = ['display', 'acoustic', 'tokens', 'llm', 'rendering', 'workspaces', 'history'];
+// 'tokens' is temporarily hidden from the nav (TokensSection code is kept for re-enabling).
+const SECTION_KEYS: SectionKey[] = ['display', 'acoustic', 'llm', 'rendering', 'workspaces', 'history'];
+
+// OpenAI (ChatGPT) and Anthropic (Claude) are temporarily hidden from the LLM picker.
+const LLM_MODEL_OPTIONS = [LLM_MODEL_GEMINI_FLASH, LLM_MODEL_GEMINI_PRO];
 
 type SettingKey =
   | 'label-sprites' | 'hovering-highlight' | 'sound-spheres' | 'playing-highlight' | 'listeners' | 'ground-grid'
-  | 'interface-mode' | 'appearance'
+  | 'appearance'
   | 'grid-spacing' | 'grid-color' | 'grid-labels'
   | 'sound-speed' | 'mesh-length'
   | 'tokens'
@@ -148,7 +149,6 @@ interface SettingEntry {
 }
 
 const SETTINGS: SettingEntry[] = [
-  { section: 'display', key: 'interface-mode', terms: ['interface', 'simple', 'expert', 'advanced', 'mode', 'ui'] },
   { section: 'display', key: 'appearance', terms: ['appearance', 'theme', 'light', 'dark', 'color scheme', 'mode'] },
   { section: 'display', key: 'label-sprites', terms: ['label sprites', 'label', 'sprite'] },
   { section: 'display', key: 'hovering-highlight', terms: ['hovering highlight', 'hover', 'highlight'] },
@@ -162,10 +162,11 @@ const SETTINGS: SettingEntry[] = [
 
   { section: 'acoustic', key: 'sound-speed', terms: ['sound speed', 'speed', 'velocity'] },
   { section: 'acoustic', key: 'mesh-length', terms: ['mesh length', 'lc', 'characteristic length', 'mesh'] },
+  { section: 'acoustic', key: 'listener-orientation', terms: ['listener orientation', 'orientation', 'listener', 'x', 'y', 'z'] },
 
   { section: 'tokens', key: 'tokens', terms: ['speckle', 'google', 'openai', 'anthropic', 'elevenlabs', 'token', 'api key', 'project name', 'apply tokens'] },
 
-  { section: 'llm', key: 'llm-model', terms: ['llm', 'llm model', 'models', 'language model', 'gemini', 'openai', 'anthropic', 'chatgpt', 'claude'] },
+  { section: 'llm', key: 'llm-model', terms: ['llm', 'llm model', 'models', 'language model', 'gemini'] },
   { section: 'llm', key: 'tts-model', terms: ['tts', 'tts model', 'speech', 'text to speech', 'gemini tts'] },
   { section: 'llm', key: 'tts-language', terms: ['tts language', 'language', 'voice', 'accent'] },
   { section: 'llm', key: 'audio-model', terms: ['text-to-audio', 'audio model', 'tangoflux', 'audioldm', 'elevenlabs', 'generator'] },
@@ -175,7 +176,6 @@ const SETTINGS: SettingEntry[] = [
   { section: 'llm', key: 'trim-silence', terms: ['trim silence', 'silence', 'trim', 'text-to-audio settings'] },
 
   { section: 'rendering', key: 'output-device', terms: ['output device', 'audio device', 'sound device', 'audio card', 'sound card', 'speaker', 'output', 'sink', 'device'] },
-  { section: 'rendering', key: 'listener-orientation', terms: ['listener orientation', 'orientation', 'listener', 'x', 'y', 'z'] },
   { section: 'rendering', key: 'spectrograms', terms: ['spectrograms', 'spectrogram'] },
   { section: 'rendering', key: 'base-spl', terms: ['base level', 'base spl', 'spl', 'volume', 'db', 'decibel'] },
   { section: 'rendering', key: 'max-foley', terms: ['max sounds', 'max foley', 'foley', 'maximum sounds', 'prompt'] },
@@ -560,6 +560,7 @@ export function AdvancedSettingsSection({
     const keys = new Set<SettingKey>();
 
     for (const entry of SETTINGS) {
+      if (!SECTION_KEYS.includes(entry.section)) continue;
       const label = SECTION_LABELS[entry.section].toLowerCase();
       const entryMatches =
         words.some((w) => label.includes(w)) ||
@@ -597,7 +598,7 @@ export function AdvancedSettingsSection({
 
   const tokenSettingsTrigger = useTextGenerationStore((s) => s.tokenSettingsTrigger);
   useEffect(() => {
-    if (tokenSettingsTrigger > 0) setActiveSection('tokens');
+    if (tokenSettingsTrigger > 0 && SECTION_KEYS.includes('tokens')) setActiveSection('tokens');
   }, [tokenSettingsTrigger]);
 
   // Shortcut requests from cards (e.g. the TTS Language row / "Even more settings").
@@ -636,12 +637,10 @@ export function AdvancedSettingsSection({
   const setShowSpectrograms = useUIStore((s) => s.setShowSpectrograms);
   const enableAutoSave = useUIStore((s) => s.enableAutoSave);
   // Autosave only applies to an opened model — the Home page always saves manually.
-  const hasModel = useUIStore((s) => !!s.globalSpeckleData);
+  const hasSaveTarget = useUIStore(selectHasSaveTarget);
   const setEnableAutoSave = useUIStore((s) => s.setEnableAutoSave);
   const colorTheme = useUIStore((s) => s.colorTheme);
   const setColorTheme = useUIStore((s) => s.setColorTheme);
-  const uiMode = useUIStore((s) => s.uiMode);
-  const switchUIMode = useSceneWorkflowStore((s) => s.switchUIMode);
   const showGroundGridLabels = useUIStore((s) => s.showGroundGridLabels);
   const setShowGroundGridLabels = useUIStore((s) => s.setShowGroundGridLabels);
   const resolvedGridColor = groundGridColor || getCssColorString('--color-primary');
@@ -709,20 +708,6 @@ export function AdvancedSettingsSection({
         <div className="flex-1 min-w-0">
           {activeSection === 'display' && (
             <div className="flex flex-col gap-1">
-              {isVisible('interface-mode') && (
-                <div className="flex flex-col gap-2 py-0.5">
-                  <span className="text-[10px] whitespace-nowrap tracking-wider text-secondary-hover">Interface</span>
-                  <CardSelect
-                    compact
-                    value={uiMode}
-                    onChange={(v) => { if (v !== uiMode) switchUIMode(v as UIMode); }}
-                    options={[
-                      { value: 'simple', label: 'Simple' },
-                      { value: 'expert', label: 'Expert' },
-                    ]}
-                  />
-                </div>
-              )}
               {isVisible('appearance') && (
                 <div className="flex flex-col gap-2 py-0.5">
                   <span className="text-[10px] whitespace-nowrap tracking-wider text-secondary-hover">View mode</span>
@@ -824,6 +809,22 @@ export function AdvancedSettingsSection({
                   hoverText="Characteristic mesh length for DE method. Double-click to reset to 1.5 m."
                 />
               )}
+              {isVisible('listener-orientation') && (
+                <CollapsibleGroup title="Listener orientation" forceExpanded={isSearchActive}>
+                  {(['x', 'y', 'z'] as const).map((axis) => (
+                    <RangeSlider
+                      key={axis}
+                      label={axis.toUpperCase()}
+                      value={listenerOrientation[axis]}
+                      min={-1}
+                      max={1}
+                      step={0.1}
+                      defaultValue={DEFAULT_LISTENER_ORIENTATION[axis]}
+                      onChange={(v) => onListenerOrientationChange({ ...listenerOrientation, [axis]: v })}
+                    />
+                  ))}
+                </CollapsibleGroup>
+              )}
             </div>
           )}
 
@@ -839,12 +840,7 @@ export function AdvancedSettingsSection({
                   <CardSelect
                     value={llmModel}
                     onChange={onLlmModelChange}
-                    options={[
-                      LLM_MODEL_GEMINI_FLASH,
-                      LLM_MODEL_GEMINI_PRO,
-                      LLM_MODEL_OPENAI,
-                      LLM_MODEL_ANTHROPIC,
-                    ].map((m) => {
+                    options={LLM_MODEL_OPTIONS.map((m) => {
                       const installed = isProviderInstalled(m, llmProviders);
                       return {
                         value: m,
@@ -1001,22 +997,6 @@ export function AdvancedSettingsSection({
                   hoverText="Maximum generated sounds per prompt"
                 />
               )}
-              {isVisible('listener-orientation') && (
-                <CollapsibleGroup title="Listener orientation" forceExpanded={isSearchActive}>
-                  {(['x', 'y', 'z'] as const).map((axis) => (
-                    <RangeSlider
-                      key={axis}
-                      label={axis.toUpperCase()}
-                      value={listenerOrientation[axis]}
-                      min={-1}
-                      max={1}
-                      step={0.1}
-                      defaultValue={DEFAULT_LISTENER_ORIENTATION[axis]}
-                      onChange={(v) => onListenerOrientationChange({ ...listenerOrientation, [axis]: v })}
-                    />
-                  ))}
-                </CollapsibleGroup>
-              )}              
             </div>
           )}
 
@@ -1028,10 +1008,10 @@ export function AdvancedSettingsSection({
             <div className="flex flex-col gap-2">
               {isVisible('auto-save') && (
                 <ToggleField
-                  checked={enableAutoSave && hasModel}
+                  checked={enableAutoSave && hasSaveTarget}
                   onChange={setEnableAutoSave}
-                  disabled={!hasModel}
-                  label={hasModel ? 'Autosave' : 'Autosave (off on the Home page)'}
+                  disabled={!hasSaveTarget}
+                  label={hasSaveTarget ? 'Autosave' : 'Autosave (off on the Home page)'}
                 />
               )}
               {isVisible('delete-history') && (

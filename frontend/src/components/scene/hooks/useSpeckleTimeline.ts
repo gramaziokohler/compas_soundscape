@@ -25,7 +25,7 @@ interface TimelineProps {
   audioOrchestrator: AudioOrchestrator | null;
   soundVolumes: Record<string, number>;
   mutedSounds: Set<string>;
-  soloedSound: string | null;
+  soloedSounds: Set<string>;
   listenerOrientation: { x: number; y: number; z: number };
   isFirstPersonMode: boolean;
 }
@@ -51,7 +51,7 @@ export function useSpeckleTimeline({
   audioOrchestrator,
   soundVolumes,
   mutedSounds,
-  soloedSound,
+  soloedSounds,
   listenerOrientation,
   isFirstPersonMode,
 }: TimelineProps): TimelineResult {
@@ -95,6 +95,7 @@ export function useSpeckleTimeline({
   const soundLoopable           = useAudioControlsStore((s) => s.soundLoopable);
   const excludedIterations      = useAudioControlsStore((s) => s.excludedIterations);
   const exclusionReasons        = useAudioControlsStore((s) => s.exclusionReasons);
+  const iterationTrims          = useAudioControlsStore((s) => s.iterationTrims);
   const setIterationLink      = useAudioControlsStore((s) => s.setIterationLink);
   const soundConfigs          = useSoundscapeStore((s) => s.soundConfigs);
 
@@ -134,6 +135,7 @@ export function useSpeckleTimeline({
             iterationLinks,
             excludedIterations,
             exclusionReasons,
+            iterationTrims,
           );
           console.log('[useSpeckleTimeline] extracted', sounds.length, 'sounds');
           setTimelineSounds(sounds);
@@ -149,7 +151,7 @@ export function useSpeckleTimeline({
     return () => clearTimeout(timeoutId);
     // soundMetadataReady is included so the effect re-runs when polling marks it ready.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [soundscapeData, selectedVariants, soundTrims, soundMetadataReady, timelineDurationMs, soundTimestamps, soundIterationDurations, isBakingSchedule, iterationLinks, soundBufferDurations, excludedIterations, exclusionReasons]);
+  }, [soundscapeData, selectedVariants, soundTrims, soundMetadataReady, timelineDurationMs, soundTimestamps, soundIterationDurations, isBakingSchedule, iterationLinks, soundBufferDurations, excludedIterations, exclusionReasons, iterationTrims]);
 
   // ============================================================================
   // Effect - Poll for Sound Metadata Readiness
@@ -247,11 +249,12 @@ export function useSpeckleTimeline({
         iterationLinks,
         excludedIterations,
         exclusionReasons,
+        iterationTrims,
       );
       setTimelineSounds(sounds);
       console.log('[useSpeckleTimeline] 🔄 Timeline refreshed:', sounds.length, 'sounds');
     }
-  }, [soundTrims, soundscapeData, timelineDurationMs, soundTimestamps, soundIterationDurations, iterationLinks, excludedIterations, exclusionReasons]);
+  }, [soundTrims, soundscapeData, timelineDurationMs, soundTimestamps, soundIterationDurations, iterationLinks, excludedIterations, exclusionReasons, iterationTrims]);
 
   // ============================================================================
   // Callback - Download Soundscape as WAV
@@ -293,8 +296,9 @@ export function useSpeckleTimeline({
           : listenerOrientation,
         soundGains,
         mutedSounds,
-        soloedSound,
+        soloedSounds,
         soundTrims,
+        iterationTrims,
         soundLoopable,
         iterationLinks,
         simulationName: activeSimulation?.display_name ?? null,
@@ -315,8 +319,10 @@ export function useSpeckleTimeline({
     soundVolumes,
     globalBaseDbfs,
     mutedSounds,
-    soloedSound,
+    soloedSounds,
     soundTrims,
+    iterationTrims,
+    iterationLinks,
     soundLoopable,
     listenerOrientation,
     isFirstPersonMode,

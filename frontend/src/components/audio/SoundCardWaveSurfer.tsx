@@ -398,6 +398,7 @@ export function SoundCardWaveSurfer({
       audioUrl={resolvedUrl}
       isPlaying={isPlaying}
       onPlayPause={handlePlayPause}
+      showShortcuts
       onStop={handleStop}
       volumeDbfs={volumeDbfs}
       baseVolumeDbfs={baseVolumeDbfs}

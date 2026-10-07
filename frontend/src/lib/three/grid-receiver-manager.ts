@@ -112,6 +112,7 @@ export class GridReceiverManager {
     mesh.layers.disableAll();
     mesh.layers.enable(0);
     mesh.layers.enable(4);
+    mesh.visible = this.pointsVisible;
 
     const target = this.parentGroup || this.scene;
     target.add(mesh);
@@ -119,9 +120,12 @@ export class GridReceiverManager {
     return mesh;
   }
 
+  /** Remembered so a mesh (re)created while hidden stays hidden. */
+  private pointsVisible = true;
   public setGridListenerId(id: string | null): void { this.gridListenerId = id; }
   public getGridListenerId(): string | null { return this.gridListenerId; }
   public setVisible(visible: boolean): void {
+    this.pointsVisible = visible;
     if (this.instancedMesh) this.instancedMesh.visible = visible;
   }
   public getPositions(): [number, number, number][] { return this.positions; }

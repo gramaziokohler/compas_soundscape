@@ -15,12 +15,13 @@ import { useAudioControlsStore } from '@/store/audioControlsStore';
 import { useSoundscapeStore } from '@/store/soundscapeStore';
 import { resolveVariantSoundIdByPrompt } from '@/lib/audio/utils/variant-sound-id';
 import { resolveClipFade } from '@/lib/audio/utils/fade-envelope';
+import { resolveIterationTrim } from '@/lib/audio/utils/iteration-trim';
 
 export function buildScoreFromTimelineSounds(
   timelineSounds: TimelineSound[],
   timelineDurationMs: number,
 ): TimelineScore {
-  const { iterationLinks, soundTrims, soundLoopable } = useAudioControlsStore.getState();
+  const { iterationLinks, soundTrims, iterationTrims, soundLoopable } = useAudioControlsStore.getState();
   // Full sibling list for prompt_index-based variant resolution — works for every
   // id shape (including duplicated/AI-detected tracks), unlike string parsing.
   const generatedSounds = useSoundscapeStore.getState().generatedSounds;
@@ -40,8 +41,9 @@ export function buildScoreFromTimelineSounds(
       const variantIndex = link?.variantIndex ?? 0;
       const sourceId = resolveVariantSoundIdByPrompt(ts.id, variantIndex, ts.promptIndex, generatedSounds);
       // Trim is per-variant: this clip plays `sourceId`'s buffer, so apply the trim
-      // stored for THAT variant — never the track/primary variant's trim.
-      const trim = soundTrims[sourceId];
+      // stored for THAT variant — never the track/primary variant's trim — unless
+      // the clip has its own DAW trim override.
+      const trim = resolveIterationTrim(ts.id, originalIdx, sourceId, iterationTrims, soundTrims);
 
       // Prefer the linked entity's live position over the persisted snapshot so a
       // clip whose object moved (new model version) plays from the new location.

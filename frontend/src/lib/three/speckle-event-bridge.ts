@@ -12,6 +12,14 @@ import type { SpeckleSceneAdapter } from './speckle-scene-adapter';
 import type { SpeckleDragHandler } from './speckle-drag-handler';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { useAreaDrawingStore } from '@/store';
+import {
+  collectSelectableCustomObjects,
+  isProjectedRectSelected,
+  projectBoxToScreenRect,
+  projectObjectToScreenRect,
+  resolveCustomDragTarget,
+  type ScreenRect,
+} from './custom-object-box-select';
 
 /**
  * Snapshot of FilteringExtension state, captured before a click
@@ -36,6 +44,11 @@ function isObjectVisible(object: THREE.Object3D): boolean {
   return true;
 }
 
+/** What a right-click landed on — drives the viewer context menu. */
+export type ContextMenuHit =
+  | { kind: 'speckle'; objectIds: string[] }
+  | { kind: 'sound' | 'receiver'; object: THREE.Object3D };
+
 export class SpeckleEventBridge {
   private viewer: Viewer;
   private adapter: SpeckleSceneAdapter;
@@ -45,7 +58,7 @@ export class SpeckleEventBridge {
   private dragHandler: SpeckleDragHandler | null = null;
   private raycaster: THREE.Raycaster;
   private mouse: THREE.Vector2;
-  private onCustomObjectSelected: ((object: THREE.Object3D, type: 'sound' | 'receiver') => void) | null = null;
+  private onCustomSelectionChanged: ((objects: THREE.Object3D[]) => void) | null = null;
   private onSelectionCleared: (() => void) | null = null;
   private onReceiverDoubleClicked: ((receiverId: string) => void) | null = null;
   private onCustomObjectDoubleClicked: ((position: THREE.Vector3, type: 'sound' | 'receiver') => void) | null = null;
@@ -54,12 +67,16 @@ export class SpeckleEventBridge {
   private onSoundSphereClicked: ((promptKey: string) => void) | null = null;
   private onReceiverSingleClicked: ((receiverId: string) => void) | null = null;
   private onGridListenerDoubleClicked: ((instanceId: number) => void) | null = null;
-  private lastClickTime: number = 0;
-  private lastClickedObject: THREE.Object3D | null = null;
-  private lastClickedObjectKey: string | null = null;
+  private onGridListenerSingleClicked: ((instanceId: number) => void) | null = null;
+  /** Sound spheres / markers / listeners selected through this bridge (drag targets). */
+  private customSelection: THREE.Object3D[] = [];
   private doubleClickDelay: number = 300;
   private singleClickTimer: ReturnType<typeof setTimeout> | null = null;
-  private pendingSingleClickData: { object: THREE.Object3D; type: 'sound' | 'receiver' } | null = null;
+  private pendingSingleClickData: {
+    object: THREE.Object3D;
+    type: 'sound' | 'receiver' | 'grid-receiver';
+    instanceId?: number;
+  } | null = null;
 
   // Saved state for unified selection correction after Speckle processes a click
   private savedFilterSnapshot: FilterSnapshot | null = null;
@@ -70,6 +87,10 @@ export class SpeckleEventBridge {
   private selectionBeforeClick: string[] = [];
   private lastClickWasShift = false;
   private lastClickWasCtrl = false;
+  /** Speckle ids selected by the last right-click (context menu). Re-asserted when
+   *  Speckle's own right-button ObjectClicked lands after the `contextmenu` event
+   *  (macOS / Linux order) and would otherwise clear or replace the selection. */
+  private contextMenuSelection: string[] | null = null;
 
   // Orbit/drag detection to prevent selection while orbiting the camera
   private static readonly DRAG_THRESHOLD_PX = 4;
@@ -126,6 +147,19 @@ export class SpeckleEventBridge {
       if (dx * dx + dy * dy > SpeckleEventBridge.DRAG_THRESHOLD_PX * SpeckleEventBridge.DRAG_THRESHOLD_PX) {
         dragged = true;
       }
+    }
+
+    // Right-click already resolved its own selection (selectForContextMenu) —
+    // undo Speckle's auto-select and keep the context-menu target selected.
+    if (!dragged && button === 2 && this.contextMenuSelection) {
+      const ids = this.contextMenuSelection;
+      this.contextMenuSelection = null;
+      if (ids.length > 0) {
+        this.selectionExtension.selectObjects(ids);
+      } else {
+        this.selectionExtension.clearSelection();
+      }
+      return;
     }
 
     if (dragged) {
@@ -308,13 +342,11 @@ export class SpeckleEventBridge {
       }
 
       // Selecting a Speckle object clears any previously active custom-object
-      // (sound sphere / receiver) selection.
-      if (desired.length > 0 && this.lastClickedObject) {
-        if (this.onSelectionCleared) {
-          this.onSelectionCleared();
-        }
-        this.lastClickedObject = null;
-        this.lastClickedObjectKey = null;
+      // (sound sphere / receiver) selection — unless this is a Shift/Ctrl click,
+      // which extends a mixed selection.
+      const keepCustom = shift || ctrl;
+      if (desired.length > 0 && !keepCustom) {
+        this.clearCustomSelection();
       }
 
       if (this.onSpeckleObjectSelected) {
@@ -337,6 +369,7 @@ export class SpeckleEventBridge {
   private handlePointerDown = (e: PointerEvent): void => {
     this.pointerDownPos = { x: e.clientX, y: e.clientY };
     this.wasOrbiting = false;
+    this.contextMenuSelection = null;
 
     this.applyCameraRemapForButton(e);
 
@@ -499,7 +532,13 @@ export class SpeckleEventBridge {
     window.removeEventListener('pointerup', this.onBoxSelectPointerUp);
 
     if (allowFinalize && this.boxSelectActive && this.boxSelectStartPos) {
-      this.finalizeBoxSelect(this.boxSelectStartPos.x, this.boxSelectStartPos.y, e.clientX, e.clientY);
+      this.finalizeBoxSelect(
+        this.boxSelectStartPos.x,
+        this.boxSelectStartPos.y,
+        e.clientX,
+        e.clientY,
+        e.ctrlKey || e.metaKey
+      );
     }
 
     this.removeBoxSelectOverlay();
@@ -541,27 +580,33 @@ export class SpeckleEventBridge {
   }
 
   /**
-   * Selects Speckle objects touched by the drag rectangle.
+   * Selects objects touched by the drag rectangle.
    *
    *  - Dragging left-to-right (x2 >= x1): "strict" mode — only objects whose
    *    projected screen AABB is FULLY contained inside the rectangle are selected.
    *  - Dragging right-to-left (x2 < x1): "crossing" mode — any object whose
    *    projected screen AABB merely overlaps the rectangle is selected.
+   *
+   * Visible sound spheres and listeners inside the rect are selected alongside
+   * Speckle meshes; holding Ctrl/Cmd selects ONLY sound spheres and listeners.
    */
-  private finalizeBoxSelect(x1: number, y1: number, x2: number, y2: number): void {
-    const left = Math.min(x1, x2);
-    const right = Math.max(x1, x2);
-    const top = Math.min(y1, y2);
-    const bottom = Math.max(y1, y2);
+  private finalizeBoxSelect(x1: number, y1: number, x2: number, y2: number, ctrl: boolean): void {
+    const rect: ScreenRect = {
+      left: Math.min(x1, x2),
+      right: Math.max(x1, x2),
+      top: Math.min(y1, y2),
+      bottom: Math.max(y1, y2),
+    };
     const strictContainment = x2 >= x1;
 
-    const ids = this.getObjectIdsInScreenRect(left, top, right, bottom, strictContainment);
+    const ids = ctrl ? [] : this.getObjectIdsInScreenRect(rect, strictContainment);
+    const custom = this.getCustomObjectsInScreenRect(rect, strictContainment);
 
-    // Clear any custom-object (sound/receiver) selection a fresh box-select starts over.
-    if (this.lastClickedObject) {
-      if (this.onSelectionCleared) this.onSelectionCleared();
-      this.lastClickedObject = null;
-      this.lastClickedObjectKey = null;
+    // A fresh box-select starts the custom-object (sound/receiver) selection over.
+    this.cancelPendingSingleClick();
+    this.clearCustomSelection();
+    if (custom.length > 0) {
+      this.setCustomSelection(custom);
     }
 
     this.selectionExtension.clearSelection();
@@ -578,13 +623,7 @@ export class SpeckleEventBridge {
    * the given rect. When `strictContainment` is true, the object's full projected AABB
    * must fit inside the rect; otherwise any overlap qualifies.
    */
-  private getObjectIdsInScreenRect(
-    left: number,
-    top: number,
-    right: number,
-    bottom: number,
-    strictContainment: boolean
-  ): string[] {
+  private getObjectIdsInScreenRect(rect: ScreenRect, strictContainment: boolean): string[] {
     try {
       const renderer = this.viewer.getRenderer() as any;
       const camera = this.adapter.getCamera();
@@ -593,9 +632,6 @@ export class SpeckleEventBridge {
       const objects: any[] = typeof renderer.getObjects === 'function' ? renderer.getObjects() : [];
 
       const ids: string[] = [];
-      const corner = new THREE.Vector3();
-      const viewPos = new THREE.Vector3();
-
       for (const obj of objects) {
         const aabb: THREE.Box3 | undefined = obj?.aabb;
         const rv = obj?.renderView;
@@ -603,52 +639,97 @@ export class SpeckleEventBridge {
         if (!aabb || !objectId) continue;
         if (this.isObjectFilteredOut(objectId)) continue;
 
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        let anyVisible = false;
-        let allCornersVisible = true;
-
-        for (let i = 0; i < 8; i++) {
-          corner.set(
-            i & 1 ? aabb.max.x : aabb.min.x,
-            i & 2 ? aabb.max.y : aabb.min.y,
-            i & 4 ? aabb.max.z : aabb.min.z
-          );
-
-          viewPos.copy(corner).applyMatrix4(camera.matrixWorldInverse);
-          if (viewPos.z > 0) {
-            allCornersVisible = false;
-            continue; // behind the camera — skip this corner
-          }
-
-          anyVisible = true;
-          const ndc = corner.clone().project(camera);
-          const sx = canvasRect.left + (ndc.x * 0.5 + 0.5) * canvasRect.width;
-          const sy = canvasRect.top + (-ndc.y * 0.5 + 0.5) * canvasRect.height;
-          if (sx < minX) minX = sx;
-          if (sx > maxX) maxX = sx;
-          if (sy < minY) minY = sy;
-          if (sy > maxY) maxY = sy;
+        const projected = projectBoxToScreenRect(aabb, camera, canvasRect);
+        if (projected && isProjectedRectSelected(projected, rect, strictContainment)) {
+          ids.push(objectId);
         }
-
-        if (!anyVisible) continue;
-
-        if (strictContainment) {
-          // Full projected AABB must fit inside the rect (and have all 8 corners
-          // in front of the camera — a partially-behind-camera object can't be "fully inside").
-          if (!allCornersVisible) continue;
-          if (minX < left || maxX > right || minY < top || maxY > bottom) continue;
-        } else {
-          // Any overlap between the projected AABB and the rect qualifies.
-          if (maxX < left || minX > right || maxY < top || minY > bottom) continue;
-        }
-
-        ids.push(objectId);
       }
 
       return ids;
     } catch (error) {
       console.error('[SpeckleEventBridge] getObjectIdsInScreenRect error:', error);
       return [];
+    }
+  }
+
+  /** Visible sound spheres / markers / listeners inside the rect, as drag targets. */
+  private getCustomObjectsInScreenRect(rect: ScreenRect, strictContainment: boolean): THREE.Object3D[] {
+    try {
+      const camera = this.adapter.getCamera();
+      const canvasRect = this.viewer.getRenderer().renderer.domElement.getBoundingClientRect();
+      return collectSelectableCustomObjects(this.adapter.getCustomObjects())
+        .filter(({ probe }) => {
+          const projected = projectObjectToScreenRect(probe, camera, canvasRect);
+          return !!projected && isProjectedRectSelected(projected, rect, strictContainment);
+        })
+        .map(({ target }) => target);
+    } catch (error) {
+      console.error('[SpeckleEventBridge] getCustomObjectsInScreenRect error:', error);
+      return [];
+    }
+  }
+
+  // ============================================================================
+  // Custom-object (sound sphere / listener) selection
+  // ============================================================================
+
+  /** Replace the custom selection and attach the shared drag gizmo to it. */
+  private setCustomSelection(objects: THREE.Object3D[]): void {
+    this.customSelection = objects;
+    this.onCustomSelectionChanged?.(objects);
+  }
+
+  /** Drop the custom selection (gizmo + React entity). No-op when nothing is selected. */
+  private clearCustomSelection(): void {
+    if (this.customSelection.length === 0) return;
+    this.customSelection = [];
+    this.onSelectionCleared?.();
+  }
+
+  private cancelPendingSingleClick(): void {
+    if (this.singleClickTimer) {
+      clearTimeout(this.singleClickTimer);
+      this.singleClickTimer = null;
+    }
+    this.pendingSingleClickData = null;
+  }
+
+  /**
+   * Shift+click (add) / Ctrl+click (remove) on a sound sphere or listener —
+   * same semantics as for Speckle meshes. The Speckle mesh selection is kept,
+   * and no single-click side effects fire (they would collapse the selection
+   * onto one card).
+   */
+  private applyModifierCustomClick(target: THREE.Object3D, subtract: boolean): void {
+    // Speckle's SelectionExtension auto-selected whatever mesh lies behind the
+    // sphere on pointerup — put the pre-click mesh selection back.
+    const before = this.selectionBeforeClick.filter((id) => !this.isObjectFilteredOut(id));
+    this.selectionBeforeClick = [];
+    if (before.length > 0) {
+      this.selectionExtension.selectObjects(before);
+    } else {
+      this.selectionExtension.clearSelection();
+    }
+
+    this.cancelPendingSingleClick();
+
+    // The gizmo may also have been attached by the sound-card highlight (card
+    // expanded from the sidebar) — extend what is actually attached.
+    const current = this.dragHandler?.getSelectedObjects().slice() ?? this.customSelection;
+    let next: THREE.Object3D[];
+    if (subtract) {
+      next = current.filter((o) => o !== target);
+    } else {
+      next = current.includes(target) ? current : [...current, target];
+    }
+
+    if (next.length > 0) {
+      this.setCustomSelection(next);
+    } else {
+      // Removing the last object: the gizmo may have been attached by the
+      // highlight hook (customSelection empty), so clear unconditionally.
+      this.customSelection = [];
+      this.onSelectionCleared?.();
     }
   }
 
@@ -693,31 +774,28 @@ export class SpeckleEventBridge {
       event.stopPropagation();
       event.preventDefault();
 
-      // Grid listener points: no gumball, no single-click side effects — only double-click matters
+      // Grid listener points: no gumball — a (debounced) single click only reports
+      // the point so its grid card can expand; double-click enters FPS.
       if (customHit.type === 'grid-receiver') {
         this.clearVisualSelections();
+        this.scheduleSingleClick({ object: customHit.object, type: 'grid-receiver', instanceId: customHit.instanceId });
+        return;
+      }
+
+      const target = resolveCustomDragTarget(customHit.object);
+
+      // Shift/Ctrl+click: add to / remove from a multi-selection.
+      if (this.lastClickWasShift || this.lastClickWasCtrl) {
+        this.applyModifierCustomClick(target, this.lastClickWasCtrl);
         return;
       }
 
       // Only clear visuals (Speckle highlight + drag gizmo) without notifying React,
       // to avoid cascading state updates (bounding box, timeline, etc.)
       this.clearVisualSelections();
-      if (this.onCustomObjectSelected) {
-        this.onCustomObjectSelected(customHit.object, customHit.type as 'sound' | 'receiver');
-      }
+      this.setCustomSelection([target]);
 
-      // Debounce single-click side effects (card expansion, entity panel, etc.)
-      // so they are cancelled if a double-click follows within 300ms.
-      if (this.singleClickTimer) {
-        clearTimeout(this.singleClickTimer);
-      }
-      this.pendingSingleClickData = { object: customHit.object, type: customHit.type as 'sound' | 'receiver' };
-      this.singleClickTimer = setTimeout(() => {
-        this.fireSingleClickCallbacks();
-      }, this.doubleClickDelay);
-
-      this.lastClickedObject = customHit.object;
-      this.lastClickedObjectKey = customHit.object.userData.promptKey || customHit.object.userData.receiverId || customHit.object.uuid;
+      this.scheduleSingleClick({ object: customHit.object, type: customHit.type });
     } else {
       // UNIFIED SELECTION (mode-agnostic):
       // Pre-compute the correct visible hit while filtering state is still valid,
@@ -729,13 +807,10 @@ export class SpeckleEventBridge {
         this.handleSpeckleSelection();
       }, 50);
 
-      // Clear custom object selection if one was active
-      if (this.lastClickedObject) {
-        if (this.onSelectionCleared) {
-          this.onSelectionCleared();
-        }
-        this.lastClickedObject = null;
-        this.lastClickedObjectKey = null;
+      // Clear custom object selection if one was active — Shift/Ctrl+click on a
+      // mesh keeps it (mixed multi-selection).
+      if (!this.lastClickWasShift && !this.lastClickWasCtrl) {
+        this.clearCustomSelection();
       }
     }
   };
@@ -795,6 +870,20 @@ export class SpeckleEventBridge {
   };
 
   /**
+   * Debounce single-click side effects (card expansion, entity panel, etc.)
+   * so they are cancelled if a double-click follows within doubleClickDelay.
+   */
+  private scheduleSingleClick(data: NonNullable<typeof this.pendingSingleClickData>): void {
+    if (this.singleClickTimer) {
+      clearTimeout(this.singleClickTimer);
+    }
+    this.pendingSingleClickData = data;
+    this.singleClickTimer = setTimeout(() => {
+      this.fireSingleClickCallbacks();
+    }, this.doubleClickDelay);
+  }
+
+  /**
    * Fire debounced single-click callbacks (sound card expansion, receiver info, etc.)
    */
   private fireSingleClickCallbacks(): void {
@@ -816,9 +905,13 @@ export class SpeckleEventBridge {
         this.onReceiverSingleClicked(receiverId);
       }
     }
+
+    if (data.type === 'grid-receiver' && data.instanceId !== undefined && this.onGridListenerSingleClicked) {
+      this.onGridListenerSingleClicked(data.instanceId);
+    }
   }
 
-  private updateMouseFromEvent(event: MouseEvent): void {
+  private updateMouseFromEvent(event: { clientX: number; clientY: number }): void {
     const canvas = this.viewer.getRenderer().renderer.domElement;
     const rect = canvas.getBoundingClientRect();
     this.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
@@ -858,7 +951,7 @@ export class SpeckleEventBridge {
   }
 
   private raycastCustomObjects(
-    visibleOnly: boolean = false
+    visibleOnly: boolean = true
   ): { type: 'sound' | 'receiver' | 'grid-receiver'; object: THREE.Object3D; instanceId?: number } | null {
     const camera = this.adapter.getCamera();
     this.raycaster.setFromCamera(this.mouse, camera);
@@ -871,6 +964,9 @@ export class SpeckleEventBridge {
     if (intersects.length === 0) return null;
 
     for (const intersect of intersects) {
+      // THREE's raycaster ignores `visible` (own and ancestors') — skip hidden hits.
+      if (visibleOnly && !isObjectVisible(intersect.object)) continue;
+
       // InstancedMesh grid listener — use instanceId to identify the point
       if ((intersect.object as any).isInstancedMesh && intersect.object.userData.customObjectType === 'grid-receiver') {
         return { type: 'grid-receiver', object: intersect.object, instanceId: intersect.instanceId };
@@ -914,10 +1010,10 @@ export class SpeckleEventBridge {
   private clearVisualSelections(): void {
     // Detach drag gizmo directly — do NOT call onSelectionCleared which also
     // triggers setSelectedEntity(null) → React cascades
-    if (this.lastClickedObject && this.dragHandler) {
+    if (this.customSelection.length > 0 && this.dragHandler) {
       this.dragHandler.deselectObjects();
     }
-    this.lastClickedObject = null;
+    this.customSelection = [];
 
     // Clear Speckle highlight only — do NOT call onSpeckleObjectSelected
     this.selectionExtension.clearSelection();
@@ -929,18 +1025,66 @@ export class SpeckleEventBridge {
    */
   private clearAllSelections(): void {
     // Clear custom object selection
-    if (this.lastClickedObject) {
-      if (this.onSelectionCleared) {
-        this.onSelectionCleared();
-      }
-      this.lastClickedObject = null;
-    }
+    this.clearCustomSelection();
 
     // Clear Speckle object selection
     this.selectionExtension.clearSelection();
     if (this.onSpeckleObjectSelected) {
       this.onSpeckleObjectSelected([]);
     }
+  }
+
+  /**
+   * Drop the selection when any selected object is of the given type — called
+   * when sound spheres / listeners are hidden, so a gizmo is never left on an
+   * invisible object. Surface markers (entity-linked sounds) are invisible
+   * groups, so they are matched by type rather than by visibility.
+   */
+  public deselectCustomObjectsOfType(type: 'sound' | 'receiver'): void {
+    const attached = this.dragHandler?.getSelectedObjects() ?? [];
+    if (!attached.some((o) => o.userData?.customObjectType === type)) return;
+    this.customSelection = [];
+    this.dragHandler?.deselectObjects();
+    this.onSelectionCleared?.();
+  }
+
+  /**
+   * Right-click: select whatever is under the cursor exactly like a plain left
+   * click would (Speckle mesh, sound sphere or listener) and report what was
+   * hit so the context menu can act on it. Right-clicking a mesh that is part
+   * of the current multi-selection keeps that selection. Single-click side
+   * effects (card expansion) are NOT fired — the menu offers them explicitly.
+   * Returns null when nothing selectable is under the cursor (selection kept).
+   */
+  public selectForContextMenu(clientX: number, clientY: number): ContextMenuHit | null {
+    this.updateMouseFromEvent({ clientX, clientY });
+    this.cancelPendingSingleClick();
+
+    const customHit = this.raycastCustomObjects();
+    if (customHit && customHit.type !== 'grid-receiver') {
+      const target = resolveCustomDragTarget(customHit.object);
+      this.clearVisualSelections();
+      this.setCustomSelection([target]);
+      this.contextMenuSelection = [];
+      return { kind: customHit.type, object: customHit.object };
+    }
+    if (customHit) return null;
+
+    const hitId = this.findVisibleSpeckleHit();
+    if (!hitId) return null;
+
+    const before = this.selectionBeforeClick.filter((id) => !this.isObjectFilteredOut(id));
+    const ids = before.includes(hitId) ? before : [hitId];
+    this.selectionExtension.selectObjects(ids);
+    this.clearCustomSelection();
+    this.contextMenuSelection = ids;
+    this.onSpeckleObjectSelected?.(ids);
+    return { kind: 'speckle', objectIds: ids };
+  }
+
+  /** Clear every selection (Speckle meshes + sound spheres / listeners) — same as Esc. */
+  public clearSelection(): void {
+    this.clearAllSelections();
   }
 
   public setOnSoundSphereClicked(callback: (promptKey: string) => void): void {
@@ -963,8 +1107,9 @@ export class SpeckleEventBridge {
     this.isFirstPersonModeActive = active;
   }
 
-  public setOnCustomObjectSelected(callback: (object: THREE.Object3D, type: 'sound' | 'receiver') => void): void {
-    this.onCustomObjectSelected = callback;
+  /** Called with the full custom selection (drag targets) whenever it changes to a non-empty set. */
+  public setOnCustomSelectionChanged(callback: (objects: THREE.Object3D[]) => void): void {
+    this.onCustomSelectionChanged = callback;
   }
 
   public setOnSelectionCleared(callback: () => void): void {
@@ -991,6 +1136,10 @@ export class SpeckleEventBridge {
     this.onGridListenerDoubleClicked = callback;
   }
 
+  public setOnGridListenerSingleClicked(callback: (instanceId: number) => void): void {
+    this.onGridListenerSingleClicked = callback;
+  }
+
   /** Returns true if the last pointer gesture was a drag (orbit/pan), regardless of button. */
   public getWasOrbiting(): boolean {
     return this.wasOrbiting;
@@ -1003,7 +1152,7 @@ export class SpeckleEventBridge {
     const savedMouse = this.mouse.clone();
     this.mouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
     this.mouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
-    const hit = this.raycastCustomObjects();
+    const hit = this.raycastCustomObjects(false);
     this.mouse.copy(savedMouse);
     return hit !== null;
   }
@@ -1091,14 +1240,15 @@ export class SpeckleEventBridge {
     canvas.removeEventListener('click', this.handleCanvasClick, true);
     canvas.removeEventListener('dblclick', this.handleCanvasDblClick, true);
     window.removeEventListener('keydown', this.handleKeyDown);
-    this.onCustomObjectSelected = null;
+    this.onCustomSelectionChanged = null;
     this.onSelectionCleared = null;
     this.onReceiverDoubleClicked = null;
     this.onCustomObjectDoubleClicked = null;
     this.onReceiverSingleClicked = null;
     this.onGridListenerDoubleClicked = null;
+    this.onGridListenerSingleClicked = null;
     this.onSpeckleObjectSelected = null;
-    this.lastClickedObject = null;
+    this.customSelection = [];
     this.pendingSingleClickData = null;
   }
 }

@@ -70,6 +70,14 @@ export function useSpeckleFPS({
   const onFPSExitedRef = useRef(onFPSExited);
   useEffect(() => { onFPSExitedRef.current = onFPSExited; });
 
+  // Latest receivers, read by the go-to-receiver effect without re-running it:
+  // the listener card autosaves orientation while in FPS, and re-entering FPS on
+  // every save would snap the camera back.
+  const receiversRef = useRef(receivers);
+  useEffect(() => { receiversRef.current = receivers; });
+  const goToReceiverPosition = receivers.find(r => r.id === goToReceiverId)?.position;
+  const goToReceiverPositionKey = goToReceiverPosition ? goToReceiverPosition.join(',') : null;
+
   // ============================================================================
   // Effect - Keyboard Controls (arrow keys for look, Escape to exit)
   // Mirrors the backup's [] deps pattern: registered once, reads coordinator from
@@ -359,9 +367,10 @@ export function useSpeckleFPS({
     const receiverPosition = receiverMesh.position.clone();
 
     // Check for per-receiver saved orientation
-    const receiverData = receivers.find(r => r.id === goToReceiverId);
+    const receiverData = receiversRef.current.find(r => r.id === goToReceiverId);
     const savedYaw = receiverData?.yaw ?? 0;
     const savedPitch = receiverData?.pitch ?? 0;
+    const savedRoll = receiverData?.roll ?? 0;
     const hasSavedOrientation = savedYaw !== 0 || savedPitch !== 0;
 
     let initialTarget: THREE.Vector3;
@@ -383,6 +392,8 @@ export function useSpeckleFPS({
     }
 
     coordinator.enableFirstPersonMode(receiverPosition, initialTarget, goToReceiverId);
+    // The look-at target only carries yaw/pitch — apply the saved roll on top.
+    if (savedRoll !== 0) coordinator.rotateFirstPersonView(0, 0, savedRoll);
     setIsFirstPersonMode(true);
     coordinator.updateActiveReceiver(goToReceiverId);
 
@@ -391,10 +402,10 @@ export function useSpeckleFPS({
       position: receiverPosition.toArray(),
       target: initialTarget.toArray(),
     });
-    // NOTE: `soundscapeData` is intentionally NOT in the deps — it is unused in
-    // the body, and re-running on every sound edit (e.g. dragging a sound
-    // sphere) would call enableFirstPersonMode again, resetting the FPS view.
-  }, [goToReceiverId, receivers, listenerOrientation]);
+    // NOTE: `receivers` is intentionally NOT in the deps (read via ref) — only
+    // this receiver's position re-centers the view. Orientation saves and sound
+    // edits must not call enableFirstPersonMode again, which resets the FPS view.
+  }, [goToReceiverId, goToReceiverPositionKey, listenerOrientation]);
 
   // ============================================================================
   // Effect - Go To Position (grid listener points with no individual mesh)

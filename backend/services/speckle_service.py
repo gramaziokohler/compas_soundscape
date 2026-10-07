@@ -45,6 +45,7 @@ import os
 import json
 import logging
 import threading
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Optional, Dict, List
 from dotenv import load_dotenv
 from gql import gql
@@ -64,6 +65,8 @@ from config.constants import (
     SPECKLE_SERVER_URL,
     SPECKLE_PROJECT_NAME,
     SPECKLE_SUPPORTED_FORMATS,
+    SPECKLE_MATERIALIZE_WORKERS,
+    SPECKLE_MATERIALIZING_MESSAGE,
     REDIS_URL,
 )
 
@@ -79,6 +82,14 @@ logger = logging.getLogger(__name__)
 _LEGACY_VERSION_CACHE: Dict[str, Dict[str, str]] = {}
 _LEGACY_VERSION_LOCK = threading.Lock()
 _MATERIALIZE_LOCK = threading.Lock()
+# Materialization is started from an ingestion poll but runs in the background so
+# the poll returns immediately (stage "materializing") instead of hanging for the
+# whole bundle download + re-send. Keyed by bundle version id.
+_MATERIALIZE_EXECUTOR = ThreadPoolExecutor(
+    max_workers=SPECKLE_MATERIALIZE_WORKERS, thread_name_prefix="speckle-materialize"
+)
+_MATERIALIZE_FUTURES: Dict[str, Future] = {}
+_MATERIALIZE_FUTURES_LOCK = threading.Lock()
 # ``v3`` prefix invalidates cached mappings created before ``created_at`` was
 # included (needed by the frontend version watcher to tell a real new publish
 # from a re-materialized copy).
@@ -104,6 +115,15 @@ def _get_redis():
             REDIS_URL, decode_responses=True, socket_connect_timeout=2, socket_timeout=2
         )
     return _redis_client
+
+
+def _normalize_ingestion_progress(value) -> Optional[float]:
+    """Speckle reports ingestion progress as a float; clamp it to a 0–1 fraction
+    (accepting a 0–100 percentage defensively)."""
+    if not isinstance(value, (int, float)):
+        return None
+    fraction = value / 100.0 if value > 1 else float(value)
+    return max(0.0, min(1.0, fraction))
 
 
 def _cache_get_legacy_version(bundle_version_id: str) -> Optional[Dict[str, str]]:
@@ -607,9 +627,13 @@ class SpeckleService:
             ingestion_id: The `id` returned by `startFileIngestion`.
 
         Returns:
-            dict: {status, progress_message, version_id, object_id, error} or None on
-            transport failure. `status` is the ModelIngestionStatus enum value
-            (queued | processing | success | failed | cancelled | invalid).
+            dict: {status, stage, progress_message, progress, phase, attempt,
+            version_id, object_id, error} or None on transport failure. `status` is
+            the ModelIngestionStatus enum value (queued | processing | success |
+            failed | cancelled | invalid). `stage` adds the app-side
+            "materializing" step between Speckle's success and loadable ids.
+            `progress` is a 0–1 fraction (processing only, may be None); `phase` is
+            converting | packing | bundling | publishing (may be None).
         """
         if not self.client or not self.project_id:
             logger.error("Not authenticated or no project selected.")
@@ -621,7 +645,9 @@ class SpeckleService:
                 ingestion(id: $ingestionId) {
                     statusData {
                         ... on ModelIngestionQueuedStatus { status progressMessage }
-                        ... on ModelIngestionProcessingStatus { status progressMessage }
+                        ... on ModelIngestionProcessingStatus {
+                            status progressMessage progress phase attempt
+                        }
                         ... on ModelIngestionSuccessStatus { status versionId }
                         ... on ModelIngestionFailedStatus { status errorReason }
                         ... on ModelIngestionCancelledStatus { status }
@@ -646,37 +672,71 @@ class SpeckleService:
 
         status = status_data.get("status")
         version_id = status_data.get("versionId")
-        progress_message = status_data.get("progressMessage")
-        object_id = None
+        phase = status_data.get("phase")
+
+        result = {
+            "status": status,
+            "stage": status if status in ("queued", "processing", "success") else "failed",
+            "progress_message": status_data.get("progressMessage"),
+            "progress": _normalize_ingestion_progress(status_data.get("progress")),
+            "phase": phase.lower() if isinstance(phase, str) else None,
+            "attempt": status_data.get("attempt"),
+            "version_id": version_id,
+            "object_id": None,
+            "error": status_data.get("errorReason"),
+        }
 
         if status == "success" and version_id:
             # The ingested version is bundle-only; convert it into a classic version the
-            # viewer/simulation pipeline can read. If that fails we report no ids so the
-            # client keeps polling rather than loading an unreadable bundle reference.
-            legacy = self._materialize_legacy_version(version_id)
+            # viewer/simulation pipeline can read. Until that is done we report no ids so
+            # the client keeps polling rather than loading an unreadable bundle reference.
+            legacy = self._poll_materialization(version_id)
             if legacy:
-                version_id = legacy["version_id"]
-                object_id = legacy["object_id"]
+                result["version_id"] = legacy["version_id"]
+                result["object_id"] = legacy["object_id"]
             else:
-                logger.error(
-                    f"Ingestion {ingestion_id} succeeded but {version_id} could not be "
-                    "materialized into a readable legacy version"
+                result.update(
+                    stage="materializing",
+                    progress_message=SPECKLE_MATERIALIZING_MESSAGE,
+                    version_id=None,
                 )
-                return {
-                    "status": status,
-                    "progress_message": "Preparing the model for the viewer...",
-                    "version_id": None,
-                    "object_id": None,
-                    "error": None,
-                }
 
-        return {
-            "status": status,
-            "progress_message": progress_message,
-            "version_id": version_id,
-            "object_id": object_id,
-            "error": status_data.get("errorReason"),
-        }
+        return result
+
+    def _poll_materialization(self, bundle_version_id: str) -> Optional[Dict[str, str]]:
+        """
+        Non-blocking driver for ``_materialize_legacy_version``.
+
+        Returns the cached legacy ids when ready; otherwise starts (or keeps waiting
+        on) a background materialization and returns None. A failed run is dropped so
+        the next poll retries it.
+        """
+        cached = _cache_get_legacy_version(bundle_version_id)
+        if cached:
+            return cached
+
+        with _MATERIALIZE_FUTURES_LOCK:
+            future = _MATERIALIZE_FUTURES.get(bundle_version_id)
+            if future is None:
+                _MATERIALIZE_FUTURES[bundle_version_id] = _MATERIALIZE_EXECUTOR.submit(
+                    self._materialize_legacy_version, bundle_version_id
+                )
+                return None
+            if not future.done():
+                return None
+            _MATERIALIZE_FUTURES.pop(bundle_version_id, None)
+
+        try:
+            legacy = future.result()
+        except Exception as exc:
+            logger.error(f"Background materialization of {bundle_version_id} raised: {exc}")
+            legacy = None
+        if not legacy:
+            logger.error(
+                f"Version {bundle_version_id} could not be materialized into a readable "
+                "legacy version — will retry on the next poll"
+            )
+        return legacy
 
     def upload_model(self, file_path: str, file_type: str, model_name: str = None) -> Optional[Dict]:
         """

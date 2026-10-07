@@ -1,7 +1,6 @@
 "use client";
 
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
-import { HelperHint } from "@/components/ui/HelperHint";
 
 export interface ObjectPickerBarProps {
   /** Whether the selection UI is active (grid: selecting, sound: linking). */
@@ -14,8 +13,6 @@ export interface ObjectPickerBarProps {
   confirmLabel?: string;
   /** Label for the cancel button. */
   cancelLabel?: string;
-  /** Hint text shown below the buttons. */
-  hintText?: string;
   /** Called when confirm is pressed. */
   onConfirm: () => void;
   /** Called when cancel is pressed. */
@@ -32,7 +29,6 @@ export interface ObjectPickerBarProps {
  * - Cancel is always enabled so the user can back out.
  * - The confirm button lights up (primary background) only when there is at
  *   least one selected object (`selectedCount > 0`); otherwise it is dimmed.
- * - A HelperHint reminds the user about shift-click multi-select and Enter.
  *
  * Usage:
  * ```tsx
@@ -42,7 +38,6 @@ export interface ObjectPickerBarProps {
  *   message="Select objects in the 3D view to link them."
  *   confirmLabel="Done"
  *   cancelLabel="Cancel"
- *   hintText="Hold shift to select multiple objects, press Enter when finished."
  *   onConfirm={commit}
  *   onCancel={cancel}
  * />
@@ -54,7 +49,6 @@ export function ObjectPickerBar({
   message = "Select one or multiple objects in the 3D view to link them.",
   confirmLabel = "Done",
   cancelLabel = "Cancel",
-  hintText = "Hold shift to select multiple objects, press Enter when finished.",
   onConfirm,
   onCancel,
   onBlueBackground = false,
@@ -62,17 +56,14 @@ export function ObjectPickerBar({
   if (!isSelecting) return null;
 
   return (
-    <>
-      <ConfirmDialog
-        message={message}
-        confirmLabel={confirmLabel}
-        cancelLabel={cancelLabel}
-        disableConfirm={selectedCount === 0}
-        onConfirm={onConfirm}
-        onCancel={onCancel}
-        onBlueBackground={onBlueBackground}
-      />
-      <HelperHint text={hintText} />
-    </>
+    <ConfirmDialog
+      message={message}
+      confirmLabel={confirmLabel}
+      cancelLabel={cancelLabel}
+      disableConfirm={selectedCount === 0}
+      onConfirm={onConfirm}
+      onCancel={onCancel}
+      onBlueBackground={onBlueBackground}
+    />
   );
 }

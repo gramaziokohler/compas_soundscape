@@ -47,7 +47,6 @@ export function ResonanceAudioControls({
   onRoomScaleChange,
   className = ''
 }: ResonanceAudioControlsProps) {
-  const enabled = config?.enabled ?? false;
   const materials = config?.roomMaterials ?? {
     left: 'transparent',
     right: 'transparent',
@@ -59,34 +58,31 @@ export function ResonanceAudioControls({
 
   return (
     <div className={`card-stack min-w-0 ${className}`}>
-      {/* Bounding Box Visualization Toggle */}
-      {enabled && (
-        <div className="flex items-center justify-between gap-1">
-          <ToggleField
-            className="flex-1 min-w-0"
-            checked={showBoundingBox}
-            onChange={onToggleBoundingBox}
-            label="Show Bounding Box"
-          />
-          {!hasGeometry && onRefreshBoundingBox && (
-            <button
-              onClick={onRefreshBoundingBox}
-              className="w-6 h-6 flex-shrink-0 flex items-center justify-center rounded-md text-secondary-hover hover:text-foreground hover:bg-secondary-light transition-all cursor-pointer"
-              title="Reset bounding box to original size"
-            >
-              <RefreshIcon size="0.8rem" />
-            </button>
-          )}
-        </div>
-      )}
+      {/* Bounding Box Visualization Toggle — parameters stay editable while the
+          auralization is powered off (AcousticsSection hides / restores the box). */}
+      <div className="flex items-center justify-between gap-1">
+        <ToggleField
+          className="flex-1 min-w-0"
+          checked={showBoundingBox}
+          onChange={onToggleBoundingBox}
+          label="Show Bounding Box"
+        />
+        {!hasGeometry && onRefreshBoundingBox && (
+          <button
+            onClick={onRefreshBoundingBox}
+            className="w-6 h-6 flex-shrink-0 flex items-center justify-center rounded-md text-secondary-hover hover:text-foreground hover:bg-secondary-light transition-all cursor-pointer"
+            title="Reset bounding box to original size"
+          >
+            <RefreshIcon size="0.8rem" />
+          </button>
+        )}
+      </div>
 
       {/* Surface Materials */}
-      {enabled && (
-        <ResonanceAudioMaterialUI
-          materials={materials}
-          onUpdateMaterials={onUpdateRoomMaterials}
-        />
-      )}
+      <ResonanceAudioMaterialUI
+        materials={materials}
+        onUpdateMaterials={onUpdateRoomMaterials}
+      />
     </div>
   );
 }

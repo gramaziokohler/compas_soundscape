@@ -39,6 +39,7 @@ export function useSceneProgress(scene: SoundScene): SceneProgress {
   const analysisProgress = useAnalysisStore((s) => s.analysisProgress);
   const soundGenProgress = useSoundscapeStore((s) => s.soundGenProgress);
   const soundGenProgressValue = useSoundscapeStore((s) => s.soundGenProgressValue);
+  const isOrchestrating = useSoundscapeStore((s) => s.isOrchestrating);
 
   return useMemo<SceneProgress>(() => {
     if (run?.status === 'queued') {
@@ -51,7 +52,9 @@ export function useSceneProgress(scene: SoundScene): SceneProgress {
         weightBefore(run.step) + SIMPLE_MODE.STEP_WEIGHTS[run.step] * clamp01(stepPct / PERCENT),
       );
       const detail = run.step === 'generate' ? soundGenProgress : analysisStatus;
-      const label = SIMPLE_MODE.STEP_LABELS[run.step];
+      const label = run.step === 'generate' && isOrchestrating
+        ? SIMPLE_MODE.ORCHESTRATE_LABEL
+        : SIMPLE_MODE.STEP_LABELS[run.step];
       return { status: 'running', step: run.step, fraction, statusText: detail ? `${label} · ${detail}` : `${label}…` };
     }
 
@@ -87,5 +90,5 @@ export function useSceneProgress(scene: SoundScene): SceneProgress {
       fraction: clamp01(fraction),
       statusText: run?.status === 'stopped' ? 'Stopped' : 'Not finished',
     };
-  }, [run, scene, analysisConfigs, analysisStatus, analysisProgress, soundGenProgress, soundGenProgressValue]);
+  }, [run, scene, analysisConfigs, analysisStatus, analysisProgress, soundGenProgress, soundGenProgressValue, isOrchestrating]);
 }

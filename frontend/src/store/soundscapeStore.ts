@@ -45,6 +45,7 @@ import { parseTriggerExpression } from '@/lib/audio/utils/trigger-ref';
 import { calculateSoundPosition, type GeometryBounds } from '@/utils/positioning';
 import { createSoundEventFromUpload } from '@/utils/event-factory';
 import { newConfigId } from '@/utils/config-id';
+import { captureGenerationSignature, getGenerationRevertPatch } from '@/utils/generationSignature';
 import { generateSoundEffect } from '@/services/elevenlabs';
 import { apiService } from '@/services/api';
 import { notifySectionError } from './errorsStore';
@@ -424,6 +425,7 @@ async function runOrchestrationForSources(
   onProgress?: (status: string) => void,
   timings?: Map<string, EntryTimings>,
   mode: 'initial' | 'reorchestrate' = 'initial',
+  onThinking?: (thinking: string) => void,
 ): Promise<{ entryById: Map<string, OrchestrateDynamics>; orchestrateIdByScenario: Map<string, string> }> {
   const entryById = new Map<string, OrchestrateDynamics>();
   const orchestrateIdByScenario = new Map<string, string>();
@@ -452,6 +454,7 @@ async function runOrchestrationForSources(
           // `s.status` is the backend's already-condensed last sentence
           // (`_last_status_sentence(thought)`), exactly what every other agent
           // card shows. Replacing it each poll keeps the line from accumulating.
+          if (typeof s.partial?.thinking === 'string') onThinking?.(s.partial.thinking);
           const items = Array.isArray(s.partial?.items) ? s.partial.items : [];
           if (items.length > 0) {
             onProgress?.(
@@ -665,6 +668,10 @@ export interface SoundscapeStoreState {
   orchestrateBaselineSignature: string | null;
   /** True while the "Re-orchestrate timeline" LLM run is in flight. */
   isReorchestrating: boolean;
+  /** True while the orchestrate agent runs (after generation, or a re-orchestration). Not persisted. */
+  isOrchestrating: boolean;
+  /** Full thinking text of the running orchestrate agent (live). Not persisted. */
+  orchestrateThinking: string;
 
   handleAddConfig: (type?: CardType) => void;
   handleBatchAddConfigs: (count: number) => number;
@@ -672,6 +679,8 @@ export interface SoundscapeStoreState {
   /** Remove multiple sound configs at once (cascade delete from a parent card). */
   handleRemoveConfigs: (indices: number[]) => void;
   handleUpdateConfig: (index: number, field: keyof SoundGenerationConfig, value: any) => void;
+  /** Restore a generated card's settings to those of its last generation (one undo step). */
+  revertGenerationSettings: (index: number) => void;
   /**
    * Re-parent a sound card to a different usage card (sound section), keeping all
    * generated variants/events (keyed by prompt_index) intact and repointing the
@@ -684,7 +693,14 @@ export interface SoundscapeStoreState {
   handleGenerate: () => Promise<void>;
   handleGenerateSingle: (targetIndex: number) => Promise<void>;
   handleGenerateFiltered: (targetIndices: number[]) => Promise<void>;
-  handleGenerateInternal: (targetIndices?: number[]) => Promise<void>;
+  /**
+   * Generate the targeted configs. With `force`, already-generated targets are
+   * regenerated too: their events are replaced (same deterministic ids, so
+   * positions / entity / DAW links survive) and stale extra variants dropped.
+   */
+  handleGenerateInternal: (targetIndices?: number[], options?: { force?: boolean }) => Promise<void>;
+  /** Regenerate ALL variants of an already-generated card from its (edited) settings. */
+  handleRegenerateConfig: (targetIndex: number) => Promise<void>;
   handleRegenerateSingle: (targetIndex: number) => Promise<void>;
   /**
    * Regenerate the audio of ONE existing variant IN PLACE, keeping its sound
@@ -783,6 +799,8 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
         orchestrateSoundsEnabled: false,
         orchestrateBaselineSignature: null,
         isReorchestrating: false,
+        isOrchestrating: false,
+        orchestrateThinking: '',
 
         handleAddConfig: (type = 'text-to-audio') => {
           const { globalDuration, globalSteps, soundConfigs } = get();
@@ -963,6 +981,21 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           }
         },
 
+        revertGenerationSettings: (index) => {
+          const config = get().soundConfigs[index];
+          const patch = config ? getGenerationRevertPatch(config) : null;
+          if (!patch) return;
+          set(
+            (s) => ({
+              soundConfigs: s.soundConfigs.map((c, i) =>
+                i === index ? ({ ...c, ...patch } as SoundGenerationConfig) : c,
+              ),
+            }),
+            false,
+            'soundscape/revertGenerationSettings',
+          );
+        },
+
         reassignSoundParent: (soundConfigIndex, targetParentUsageIndex) => {
           const { soundConfigs } = get();
           const config = soundConfigs[soundConfigIndex];
@@ -1093,7 +1126,10 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
 
         handleGenerate: async () => get().handleGenerateInternal(),
 
-        handleGenerateInternal: async (targetIndices?: number[]) => {
+        handleRegenerateConfig: (targetIndex) =>
+          get().handleGenerateInternal([targetIndex], { force: true }),
+
+        handleGenerateInternal: async (targetIndices?: number[], options?: { force?: boolean }) => {
           const {
             soundConfigs,
             soundscapeData,
@@ -1118,6 +1154,10 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               }
             });
           }
+          // Forced regeneration: targeted cards are generated again even though
+          // they already have events (replaced at merge time below).
+          const forcedIndices = new Set(options?.force ? targetIndices ?? [] : []);
+          forcedIndices.forEach((i) => alreadyGenerated.delete(i));
 
           const withIndices = soundConfigs
             .map((config, idx) => ({ config, originalIndex: idx }))
@@ -1918,8 +1958,22 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             // position ([0,0,0] until placed) — inherit the existing variant's position so
             // the simulation never sees the prompt at two different spots.
             const newEventIds = new Set(newEvents.map((e) => e.id));
+            // Cards that produced fresh events in this run (snapshot + stale-drop scope).
+            const cardsWithNewEvents = new Set(
+              withIndices
+                .filter(({ originalIndex }) =>
+                  newEvents.some((e) => promptMatchesCard(e.prompt_index, originalIndex)))
+                .map(({ originalIndex }) => originalIndex),
+            );
+            // A forced regeneration replaces the card's variant set: drop old
+            // variants the new run did not reproduce (e.g. fewer seed copies).
+            const isStaleForcedEvent = (e: any) =>
+              !newEventIds.has(e.id) &&
+              [...forcedIndices].some((i) =>
+                cardsWithNewEvents.has(i) && promptMatchesCard(e.prompt_index, i));
+            const staleEventIds = existing.filter(isStaleForcedEvent).map((e) => e.id).filter(Boolean);
             const allEvents = [
-              ...existing.filter((e) => !newEventIds.has(e.id)),
+              ...existing.filter((e) => !newEventIds.has(e.id) && !isStaleForcedEvent(e)),
               ...newEvents.map((e) => {
                 if (e.prompt_index === undefined) return e;
                 const anchor = existing.find(
@@ -1939,11 +1993,21 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               'allEvents:', allEvents.length);
 
             set(
-              { generatedSounds: allEvents, soundscapeData: allEvents.length > 0 ? allEvents : null },
+              (s) => ({
+                generatedSounds: allEvents,
+                soundscapeData: allEvents.length > 0 ? allEvents : null,
+                // Snapshot the generation inputs so later edits surface "Regenerate".
+                soundConfigs: s.soundConfigs.map((c, i) =>
+                  cardsWithNewEvents.has(i) ? { ...c, ...captureGenerationSignature(c) } : c,
+                ),
+              }),
               false,
               'soundscape/generateDone',
             );
             applyTrimRegions(allEvents);
+            if (staleEventIds.length > 0) {
+              useAudioControlsStore.getState().pruneSounds(staleEventIds);
+            }
 
             // Fresh audio must not inherit a stale schedule: sound ids encode the
             // (recycled) config index, so a persisted manual timestamp from a
@@ -1982,7 +2046,12 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             // strictly and estimate end-to-start delays against real lengths.
             if (orchestrateEnabled && hasTargetedScenario && scenarioGroups.size > 0) {
               set(
-                { soundGenProgress: 'Orchestrating timeline…', soundGenProgressValue: 100 },
+                {
+                  soundGenProgress: 'Orchestrating timeline…',
+                  soundGenProgressValue: 100,
+                  isOrchestrating: true,
+                  orchestrateThinking: '',
+                },
                 false,
                 'soundscape/orchestrateStart',
               );
@@ -2016,12 +2085,15 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                     set({ soundGenProgress: status }, false, 'soundscape/orchestrateProgress');
                   },
                   timings,
+                  'initial',
+                  (thinking) => set({ orchestrateThinking: thinking }, false, 'soundscape/orchestrateThinking'),
                 );
                 if (entryById.size > 0) {
                   applyOrchestrateDynamics(entryById, orchestrateIdByScenario);
                 }
               } finally {
                 _orchestrateProgressStatus = null;
+                set({ isOrchestrating: false, orchestrateThinking: '' }, false, 'soundscape/orchestrateEnd');
               }
             }
 
@@ -2798,7 +2870,13 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           }
 
           set(
-            { isReorchestrating: true, soundGenProgress: 'Orchestrating timeline…', soundGenProgressValue: 100 },
+            {
+              isReorchestrating: true,
+              isOrchestrating: true,
+              orchestrateThinking: '',
+              soundGenProgress: 'Orchestrating timeline…',
+              soundGenProgressValue: 100,
+            },
             false,
             'soundscape/reorchestrateStart',
           );
@@ -2820,6 +2898,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               },
               timings,
               'reorchestrate',
+              (thinking) => set({ orchestrateThinking: thinking }, false, 'soundscape/reorchestrateThinking'),
             );
             if (entryById.size > 0) {
               applyOrchestrateDynamics(entryById, orchestrateIdByScenario);
@@ -2834,7 +2913,13 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             notifySectionError('Re-orchestration failed', 'error');
           } finally {
             set(
-              { isReorchestrating: false, soundGenProgress: '', soundGenProgressValue: 0 },
+              {
+                isReorchestrating: false,
+                isOrchestrating: false,
+                orchestrateThinking: '',
+                soundGenProgress: '',
+                soundGenProgressValue: 0,
+              },
               false,
               'soundscape/reorchestrateEnd',
             );
@@ -3224,6 +3309,11 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               variants: newVariants,
             });
             get().handleUpdateConfig(promptIndex, 'seed_copies', Math.max(1, variants.length - 1));
+            // Deleting a variant is not a settings edit — re-baseline the snapshot.
+            const updated = get().soundConfigs[promptIndex];
+            if (updated?.generatedSignature !== undefined) {
+              get().handleUpdateConfig(promptIndex, 'generatedSignature', captureGenerationSignature(updated).generatedSignature);
+            }
           }
 
           // Re-sync the audio store and re-bake so the deleted variant leaves the

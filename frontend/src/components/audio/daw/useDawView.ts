@@ -11,15 +11,24 @@ const clampTrackHeight = (v: number) => Math.max(DAW.MIN_TRACK_HEIGHT, Math.min(
 /** Default track height lowered by N wheel-out notches — the compact first-open height. */
 const FIT_TRACK_HEIGHT = clampTrackHeight(DAW.TRACK_HEIGHT * DAW.WHEEL_ZOOM_OUT ** DAW.FIT_TRACK_HEIGHT_NOTCHES);
 
-function useViewportWidth(): number {
-  const [width, setWidth] = useState(() => (typeof window === 'undefined' ? 0 : window.innerWidth));
+function readViewportSize(): { width: number; height: number } {
+  return typeof window === 'undefined'
+    ? { width: 0, height: 0 }
+    : { width: window.innerWidth, height: window.innerHeight };
+}
+
+function useViewportSize(): { width: number; height: number } {
+  const [size, setSize] = useState(readViewportSize);
   useEffect(() => {
-    const update = () => setWidth(window.innerWidth);
+    const update = () => setSize((prev) => {
+      const next = readViewportSize();
+      return prev.width === next.width && prev.height === next.height ? prev : next;
+    });
     update();
     window.addEventListener('resize', update);
     return () => window.removeEventListener('resize', update);
   }, []);
-  return width;
+  return size;
 }
 
 interface UseDawViewArgs {
@@ -45,16 +54,22 @@ export function useDawView({ durationMs, leftOffset, rightOffset }: UseDawViewAr
   const setTimelineDock = useUIStore((s) => s.setTimelineDock);
   const manualView = useUIStore((s) => s.timelineView);
   const setTimelineView = useUIStore((s) => s.setTimelineView);
-  const viewportWidth = useViewportWidth();
+  const { width: viewportWidth, height: viewportHeight } = useViewportSize();
+  /** Dock height caps: auto-fit stops at 1/3 of the window, a manual drag at 1/2. */
+  const maxDockHeight = Math.max(DAW.MIN_DOCK_HEIGHT, viewportHeight * DAW.MAX_DOCK_RATIO);
+  const autoFitMaxDockHeight = Math.max(DAW.MIN_DOCK_HEIGHT, viewportHeight * DAW.AUTO_FIT_MAX_DOCK_RATIO);
 
   const dockHeight = timelineDock.height;
   // Older persisted payloads predate the flag — missing `autoFit` still means auto-fit.
   const dockAutoFit = timelineDock.autoFit !== false;
 
-  const [snapMode, setSnapMode] = useState<SnapMode>('on');
+  const [snapMode, setSnapMode] = useState<SnapMode>('off');
 
   const durationSec = durationMs / 1000;
-  const laneWidth = viewportWidth - leftOffset - rightOffset - DAW.HEAD_WIDTH - DAW.FIT_SCROLLBAR_ALLOWANCE;
+  // Reserve the ruler's "Edit timeline duration" button past the timeline end, so the
+  // fitted zoom never pushes it out of view (which would add a horizontal scrollbar).
+  const laneWidth = viewportWidth - leftOffset - rightOffset - DAW.HEAD_WIDTH - DAW.FIT_SCROLLBAR_ALLOWANCE
+    - DAW.RULER_END_CONTROL_GAP - DAW.RULER_EDIT_BUTTON_SIZE - 6;
   const fitPxPerSecond = viewportWidth <= 0 || durationSec <= 0
     ? DAW.FALLBACK_PX_PER_SECOND
     : clampPxPerSecond(laneWidth / durationSec);
@@ -93,6 +108,7 @@ export function useDawView({ durationMs, leftOffset, rightOffset }: UseDawViewAr
   return {
     pxPerSecond, setPxPerSecond, snapMode, setSnapMode,
     dockHeight, setDockHeight, dockAutoFit, setDockAutoFit,
+    maxDockHeight, autoFitMaxDockHeight,
     trackHeight, setTrackHeight,
   };
 }

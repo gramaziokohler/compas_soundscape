@@ -2,7 +2,9 @@
 
 import { memo, useMemo } from 'react';
 import { DAWClip } from './DAWClip';
-import type { IterationLink } from '@/types/audio';
+import type { IterationLink, TrimRange } from '@/types/audio';
+import type { TrimEdge } from './daw-trim';
+import type { TrimPreview } from './useClipTrimGesture';
 
 export interface DAWLaneClip {
   clipKey: string;
@@ -11,7 +13,9 @@ export interface DAWLaneClip {
   durationMs: number;
   audioUrl?: string;
   /** Kept fraction (0–1) of the source audio; the waveform draws only this range. */
-  trim?: { start: number; end: number };
+  trim?: TrimRange;
+  /** Untrimmed source buffer length (ms); edge-trimming is disabled until known. */
+  sourceDurationMs?: number;
   label: string;
   iterationLink?: IterationLink;
   /** True for a solver-excluded, display-only ghost clip. */
@@ -36,6 +40,9 @@ interface DAWLaneProps {
   isDuplicating: boolean;
   tickStepPx: number;
   onClipPointerDown: (e: React.PointerEvent<HTMLDivElement>, clip: DAWLaneClip) => void;
+  /** Live edge-trim preview (one clip at most); overrides that clip's start/length/trim. */
+  trimPreview?: TrimPreview | null;
+  onClipTrimPointerDown?: (e: React.PointerEvent<HTMLDivElement>, clip: DAWLaneClip, edge: TrimEdge) => void;
   onDeleteClip: (iterationIndex: number) => void;
   onClipContextMenu: (iterationIndex: number, x: number, y: number) => void;
   onClipDoubleClick?: () => void;
@@ -62,6 +69,8 @@ function DAWLaneImpl({
   isDuplicating,
   tickStepPx,
   onClipPointerDown,
+  trimPreview,
+  onClipTrimPointerDown,
   onDeleteClip,
   onClipContextMenu,
   onClipDoubleClick,
@@ -70,17 +79,25 @@ function DAWLaneImpl({
 }: DAWLaneProps) {
   const contentWidth = (timelineDurationMs / 1000) * pxPerSecond;
 
+  // Apply the live trim preview to its clip so the edge follows the pointer.
+  const shownClips = useMemo(() => {
+    if (!trimPreview || !clips.some((c) => c.clipKey === trimPreview.clipKey)) return clips;
+    return clips.map((c) => (c.clipKey === trimPreview.clipKey
+      ? { ...c, startMs: trimPreview.startMs, durationMs: trimPreview.durationMs, trim: trimPreview.trim }
+      : c));
+  }, [clips, trimPreview]);
+
   const overlapFlags = useMemo(() => {
     const flags = new Map<string, boolean>();
-    for (let i = 0; i < clips.length; i++) {
+    for (let i = 0; i < shownClips.length; i++) {
       let ov = false;
-      for (let j = 0; j < clips.length; j++) {
-        if (i !== j && overlaps(clips[i], clips[j])) { ov = true; break; }
+      for (let j = 0; j < shownClips.length; j++) {
+        if (i !== j && overlaps(shownClips[i], shownClips[j])) { ov = true; break; }
       }
-      flags.set(clips[i].clipKey, ov);
+      flags.set(shownClips[i].clipKey, ov);
     }
     return flags;
-  }, [clips]);
+  }, [shownClips]);
 
   return (
     <div
@@ -96,7 +113,7 @@ function DAWLaneImpl({
         backgroundPosition: '0 0',
       }}
     >
-      {clips.map((clip) => (
+      {shownClips.map((clip) => (
         <DAWClip
           key={clip.clipKey}
           clipKey={clip.clipKey}
@@ -120,6 +137,9 @@ function DAWLaneImpl({
           isExcluded={clip.excluded}
           excludedReason={clip.reason}
           onPointerDownClip={clip.excluded ? () => {} : (e) => onClipPointerDown(e, clip)}
+          canTrim={!!clip.sourceDurationMs && !!onClipTrimPointerDown}
+          isTrimming={trimPreview?.clipKey === clip.clipKey}
+          onPointerDownTrimEdge={(e, edge) => onClipTrimPointerDown?.(e, clip, edge)}
           onDelete={() => onDeleteClip(clip.iterationIndex)}
           onDoubleClick={clip.excluded ? undefined : onClipDoubleClick}
           onContextMenu={clip.excluded ? () => {} : (x, y) => onClipContextMenu(clip.iterationIndex, x, y)}

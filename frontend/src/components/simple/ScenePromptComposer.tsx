@@ -1,25 +1,19 @@
 'use client';
 
 import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react';
+import { EditableCycleChip } from '@/components/ui/EditableCycleChip';
 import { NestedMenu, type NestedMenuItem } from '@/components/ui/NestedMenu';
 import { TtsLanguageStatus } from '@/components/ui/TtsLanguageStatus';
 import { useTtsLanguageResolver } from '@/hooks/useTtsLanguageResolver';
 import { defaultSceneOptions, useAudioControlsStore, useUIStore } from '@/store';
-import type { SceneQuality, SceneWorkflowOptions } from '@/types/sceneWorkflow';
-import { AUDIO_MODEL_NAMES, LLM_MODEL_NAMES, SIMPLE_MODE } from '@/utils/constants';
+import type { SceneWorkflowOptions } from '@/types/sceneWorkflow';
+import { AUDIO_MODEL_NAMES, LLM_MODEL_NAMES, SCENARIO_TIMELINE, SIMPLE_MODE } from '@/utils/constants';
+import { isModEnter } from '@/lib/shortcuts/keyboard-utils';
+import { formatSceneDuration, MS_PER_SECOND } from '@/utils/sceneWorkflow';
 
-const QUALITIES: SceneQuality[] = ['fast', 'precise'];
-
-function formatDuration(ms: number): string {
-  const sec = Math.round(ms / 1000);
-  return sec < 60 ? `${sec}s` : `${Math.round(sec / 60)} min`;
-}
-
-/** Next value in a list, wrapping around (chip click-to-cycle). */
-function cycle<T>(list: readonly T[], current: T): T {
-  const i = list.indexOf(current);
-  return list[(i + 1) % list.length];
-}
+const DURATION_OPTIONS_S = SIMPLE_MODE.DURATION_OPTIONS_MS.map((ms) => ms / MS_PER_SECOND);
+const formatPeople = (n: number) => `${n} ${n === 1 ? 'person' : 'people'}`;
+const formatDuration = (s: number) => formatSceneDuration(s * MS_PER_SECOND);
 
 function readAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -41,11 +35,13 @@ export interface ScenePromptComposerProps {
  * ScenePromptComposer Component
  *
  * Minimal AI-prompt box for a new sound scene: free-text description, the three
- * everyday options as chips (speech, fast/precise, duration), and a "+" that
- * opens a multi-level menu for the rest (text-to-audio model, LLM, scenario
- * people / plausibility, free-text speech language, reference image — used by
+ * everyday options as chips (speech, people, duration — click cycles, double-click
+ * types an exact value; no people means no speech), and a "+" that opens a
+ * multi-level menu for the rest (text-to-audio model, LLM, scenario
+ * plausibility, free-text speech language, reference image — used by
  * the scenario, and by a fresh model analysis when a model is loaded). Enter sends,
- * Shift+Enter adds a new line, Escape closes.
+ * Shift+Enter adds a new line, Escape closes. With a model loaded the prompt may be
+ * left empty — the scenario is then imagined from the model analysis alone.
  *
  * Usage:
  * ```tsx
@@ -70,12 +66,17 @@ export function ScenePromptComposer({ willQueue, onSubmit, onClose }: ScenePromp
   }, []);
 
   const patch = (p: Partial<SceneWorkflowOptions>) => setOptions((o) => ({ ...o, ...p }));
-  const canSend = prompt.trim().length > 0;
+  // With a model loaded the scenario can be built from the model analysis alone.
+  const canSend = prompt.trim().length > 0 || hasModel;
+  // Speech needs people; the speech preference is kept for when people return.
+  const hasPeople = options.peopleCount > 0;
+  const speechOn = options.includeSpeech && hasPeople;
 
   const submit = () => {
     if (!canSend) return;
     onSubmit(prompt.trim(), {
       ...options,
+      includeSpeech: speechOn,
       speechLanguage: options.speechLanguage.trim(),
       reanalyze: hasModel && options.reanalyze,
     });
@@ -83,6 +84,12 @@ export function ScenePromptComposer({ willQueue, onSubmit, onClose }: ScenePromp
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // Ctrl/Cmd+Enter submits even while an options menu is open (app-wide prompt shortcut).
+    if (isModEnter(e)) {
+      e.preventDefault();
+      submit();
+      return;
+    }
     if (menu) return;
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -133,17 +140,8 @@ export function ScenePromptComposer({ willQueue, onSubmit, onClose }: ScenePromp
       kind: 'submenu',
       key: 'scenario',
       label: 'Scenario',
-      hint: `${options.peopleCount} people`,
+      hint: `Plausibility ${options.likeliness}/${SIMPLE_MODE.SCENARIO_LIKELINESS_MAX}`,
       items: [
-        {
-          kind: 'stepper',
-          key: 'people',
-          label: 'People',
-          value: options.peopleCount,
-          min: SIMPLE_MODE.SCENARIO_PEOPLE_MIN,
-          max: SIMPLE_MODE.SCENARIO_PEOPLE_MAX,
-          onChange: (v) => patch({ peopleCount: v }),
-        },
         {
           kind: 'stepper',
           key: 'likeliness',
@@ -198,7 +196,9 @@ export function ScenePromptComposer({ willQueue, onSubmit, onClose }: ScenePromp
         className="bubble-composer__input"
         rows={3}
         maxLength={SIMPLE_MODE.COMPOSER_MAX_PROMPT}
-        placeholder={hasModel ? 'A busy restaurant at 10 a.m., staff setting tables…' : 'A quiet library on a rainy afternoon…'}
+        placeholder={hasModel
+          ? 'A busy restaurant at 10 a.m., staff setting tables… or leave empty to imagine one from the model'
+          : 'A quiet library on a rainy afternoon…'}
         value={prompt}
         onChange={(e) => setPrompt(e.target.value)}
         onKeyDown={handleKeyDown}
@@ -208,29 +208,33 @@ export function ScenePromptComposer({ willQueue, onSubmit, onClose }: ScenePromp
       <div className="flex items-center gap-1.5 flex-wrap">
         <button
           type="button"
-          className={`bubble-chip ${options.includeSpeech ? 'bubble-chip--on' : ''}`}
+          className={`bubble-chip ${speechOn ? 'bubble-chip--on' : ''}`}
           onClick={() => patch({ includeSpeech: !options.includeSpeech })}
-          aria-pressed={options.includeSpeech}
-          title="Add voices and conversations to the scene"
+          disabled={!hasPeople}
+          aria-pressed={speechOn}
+          title={hasPeople ? 'Add voices and conversations to the scene' : 'No people in the scene — no speech'}
         >
-          {options.includeSpeech ? '+ Speech' : 'No speech'}
+          {speechOn ? '+ Speech' : 'No speech'}
         </button>
-        <button
-          type="button"
-          className="bubble-chip"
-          onClick={() => patch({ quality: cycle(QUALITIES, options.quality) })}
-          title="Fast generates quicker with fewer diffusion steps; Precise uses the full step count"
-        >
-          {SIMPLE_MODE.QUALITY_PRESETS[options.quality].label}
-        </button>
-        <button
-          type="button"
-          className="bubble-chip"
-          onClick={() => patch({ durationMs: cycle(SIMPLE_MODE.DURATION_OPTIONS_MS, options.durationMs) })}
+        <EditableCycleChip
+          value={options.peopleCount}
+          options={SIMPLE_MODE.PEOPLE_OPTIONS}
+          min={SIMPLE_MODE.SCENARIO_PEOPLE_MIN}
+          max={SIMPLE_MODE.SCENARIO_PEOPLE_MAX}
+          format={formatPeople}
+          title="Number of people in the scene"
+          onChange={(v) => patch({ peopleCount: v })}
+        />
+        <EditableCycleChip
+          value={options.durationMs / MS_PER_SECOND}
+          options={DURATION_OPTIONS_S}
+          min={SCENARIO_TIMELINE.MIN_SECONDS}
+          max={SCENARIO_TIMELINE.MAX_SECONDS}
+          format={formatDuration}
+          unit="s"
           title="Length of the generated scene"
-        >
-          {formatDuration(options.durationMs)}
-        </button>
+          onChange={(s) => patch({ durationMs: s * MS_PER_SECOND })}
+        />
         <button
           type="button"
           className={`bubble-chip bubble-chip--icon ${menu ? 'bubble-chip--on' : ''}`}
@@ -262,14 +266,16 @@ export function ScenePromptComposer({ willQueue, onSubmit, onClose }: ScenePromp
           onClick={submit}
           disabled={!canSend}
           aria-label={willQueue ? 'Queue scene' : 'Generate scene'}
-          title={willQueue ? 'Queue — starts when the current scene finishes' : 'Generate scene (Enter)'}
+          title={willQueue
+            ? 'Queue — starts when the current scene finishes'
+            : prompt.trim() ? 'Generate scene (Enter)' : 'Generate a scene from the model (Enter)'}
         >
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M8 13V3M3.5 7.5L8 3l4.5 4.5" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         </button>
       </div>
-      {options.includeSpeech && <TtsLanguageStatus resolver={languageResolver} />}
+      {speechOn && <TtsLanguageStatus resolver={languageResolver} />}
       {willQueue && <div className="bubble-step__meta">A scene is generating — this one will start right after.</div>}
       {menu && <NestedMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />}
     </div>

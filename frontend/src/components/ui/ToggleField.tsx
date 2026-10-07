@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { Badge } from "@/components/ui/Badge";
+import { ModifiedMark } from "@/components/ui/ModifiedMark";
 
 export interface ToggleFieldProps {
   checked: boolean;
@@ -13,6 +14,8 @@ export interface ToggleFieldProps {
   className?: string;
   /** Recessed badge styling when rendered on a solid-blue generated card. */
   onBlueBackground?: boolean;
+  /** Flags the label with a "*" — value changed since the card was generated. */
+  modified?: boolean;
 }
 
 /**
@@ -41,6 +44,7 @@ export function ToggleField({
   disabled = false,
   className = "",
   onBlueBackground = false,
+  modified = false,
 }: ToggleFieldProps) {
   return (
     <label
@@ -54,7 +58,7 @@ export function ToggleField({
       }}
     >
       <span className="toggle-row__content">
-        <span className="toggle-row__label">{label}</span>
+        <span className="toggle-row__label">{label}{modified && <ModifiedMark />}</span>
         {badge != null && badge !== "" && (
           <Badge
             variant={checked ? "primary" : "neutral"}

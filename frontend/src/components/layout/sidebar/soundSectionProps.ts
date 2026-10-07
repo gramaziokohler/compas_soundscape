@@ -52,7 +52,6 @@ export function buildSoundGenerationSectionProps(
     isLinkingEntity: props.isLinkingEntity,
     linkingConfigIndex: props.linkingConfigIndex,
     useSpeckleViewer: props.useSpeckleViewer,
-    onResetSound: props.onResetSound,
     onDuplicateConfig: props.onDuplicateConfig,
     onRegenerateSingle: props.onRegenerateSingle,
     onDeleteVariant: props.onDeleteVariant,

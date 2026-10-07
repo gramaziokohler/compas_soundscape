@@ -23,7 +23,6 @@ interface SceneTimelineProps {
   isAnyPlaying?: boolean;
   onSelectSoundCard?: (promptIndex: number) => void;
   originalIRChannelCount?: number;
-  sampleRate?: number;
   playbackSchedulerRef?: React.RefObject<PlaybackSchedulerService | null>;
 }
 
@@ -41,7 +40,6 @@ export function SceneTimeline({
   isAnyPlaying,
   onSelectSoundCard,
   originalIRChannelCount,
-  sampleRate,
   playbackSchedulerRef,
 }: SceneTimelineProps) {
   // Docked insets are measured from the actual fixed sidebars instead of being
@@ -107,7 +105,6 @@ export function SceneTimeline({
       leftOffset={insets.left}
       rightOffset={insets.right}
       bottomOffset={SCENE_BOTTOM_BAR.HEIGHT}
-      sampleRate={sampleRate}
       playbackSchedulerRef={playbackSchedulerRef}
     />
   );

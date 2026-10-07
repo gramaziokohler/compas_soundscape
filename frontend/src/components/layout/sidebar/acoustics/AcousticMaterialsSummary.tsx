@@ -26,6 +26,7 @@ import { ACOUSTIC_MATERIALS_SUMMARY } from '@/utils/constants';
 import { getMaterialColorByAbsorption } from '@/utils/utils';
 import { SectionHighlight } from '@/components/ui/SectionHighlight';
 import { OBJECT_EXPLORER_PANEL_ID, openMaterialsExplorer } from './openMaterialsExplorer';
+import { ModifiedMark } from '@/components/ui/ModifiedMark';
 
 const { NAME_SEPARATOR, TOOLTIP_SEPARATOR } = ACOUSTIC_MATERIALS_SUMMARY;
 
@@ -35,7 +36,7 @@ interface AssignedMaterial {
   color: string;
 }
 
-export function AcousticMaterialsSummary() {
+export function AcousticMaterialsSummary({ modified = false }: { modified?: boolean } = {}) {
   const materialAssignments = useAcousticMaterialStore((s) => s.materialAssignments);
   const availableMaterials = useAcousticMaterialStore((s) => s.availableMaterials);
   const [highlightTrigger, setHighlightTrigger] = useState(0);
@@ -63,7 +64,7 @@ export function AcousticMaterialsSummary() {
         title={hasMaterials ? assigned.map((m) => m.name).join(TOOLTIP_SEPARATOR) : undefined}
       >
         <span className="text-xxs card-label text-secondary-hover whitespace-nowrap leading-4">
-          Acoustic materials:
+          Acoustic materials{modified && <ModifiedMark />}:
         </span>
 
         {hasMaterials ? (

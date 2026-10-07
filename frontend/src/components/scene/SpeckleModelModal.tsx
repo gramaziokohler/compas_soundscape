@@ -2,6 +2,7 @@
 
 import React, { useEffect } from 'react';
 import { SceneEmptyState } from '@/components/scene/SceneEmptyState';
+import { useBackdropDismiss } from '@/hooks/useBackdropDismiss';
 
 interface SpeckleModelSelectData {
   model_id: string;
@@ -62,15 +63,19 @@ export function SpeckleModelModal({
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
 
+  const backdropProps = useBackdropDismiss(onClose);
+
   if (!open) return null;
 
   return (
     <div
+      role="dialog"
+      aria-modal="true"
       className="absolute inset-0 z-40 flex items-center justify-center pointer-events-auto"
       style={{ backgroundColor: 'color-mix(in srgb, var(--background) 62%, transparent)' }}
-      onClick={onClose}
+      {...backdropProps}
     >
-      <div onClick={(e) => e.stopPropagation()}>
+      <div>
         <SceneEmptyState
           modelFile={modelFile}
           isDragging={isDragging}

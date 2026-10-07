@@ -25,6 +25,7 @@ import {
 import { applyColorTheme, type ColorThemePreference } from '@/utils/color-theme';
 import { SIMPLE_MODE } from '@/utils/constants';
 import type { UIMode } from '@/types/sceneWorkflow';
+import type { SpeckleUploadProgress } from '@/types/speckle-models';
 
 /** One-shot request for the expert left sidebar to jump to a wizard step/card. */
 export interface SidebarNavCommand {
@@ -77,6 +78,9 @@ export interface UIStoreState {
   setGlobalModelFile: (file: File | null) => void;
   setGlobalSpeckleData: (data: any | null) => void;
   setIsUploadingGlobalModel: (uploading: boolean) => void;
+  /** Live stage/% of the in-flight model upload (null when idle). Transient. */
+  globalModelUploadProgress: SpeckleUploadProgress | null;
+  setGlobalModelUploadProgress: (progress: SpeckleUploadProgress | null) => void;
 
   // ── Soundscape persistence ────────────────────────────────────────────────
   isSavingSoundscape: boolean;
@@ -173,6 +177,11 @@ export interface UIStoreState {
   /** Sound id currently open in the Foley FX editor. Not persisted (model-bound). */
   soundEditorSoundId: string | null;
   setSoundEditorSoundId: (id: string | null) => void;
+  /** Keyboard-shortcuts popover open (bottom bar button or `?`). Not persisted. */
+  shortcutsOpen: boolean;
+  setShortcutsOpen: (open: boolean) => void;
+  /** Show / hide sound spheres and listeners together (bottom bar button or `S`) — drives the same flags as Settings → Display. */
+  toggleSoundsAndListenersVisible: () => void;
   /** Incremented each time the user double-clicks a sound card to zoom to its sphere. */
   zoomToSoundCardTrigger: { index: number; version: number } | null;
   triggerZoomToSoundCard: (index: number) => void;
@@ -189,6 +198,11 @@ export interface UIStoreState {
   // ── Autosave ────────────────────────────────────────────────────────────
   enableAutoSave: boolean;
   setEnableAutoSave: (v: boolean) => void;
+
+  // ── One-time hints (synced per user via user-preferences-sync) ─────────
+  seenHints: string[];
+  setSeenHints: (ids: string[]) => void;
+  markHintSeen: (id: string) => void;
 
   // ── Camera POV (survives refresh) ──────────────────────────────────────────
   cameraPosition: [number, number, number] | null;
@@ -250,6 +264,9 @@ export interface UIStoreState {
   /** Transient: px the docked DAW currently occupies at the bottom (published by SpeckleScene). */
   dawDockBottomSpace: number;
   setDawDockBottomSpace: (px: number) => void;
+  /** Transient: bubble counts of the Simple-mode right columns (they share one vertical budget). */
+  bubbleColumnCounts: { acoustics: number; listeners: number };
+  setBubbleColumnCount: (column: 'acoustics' | 'listeners', count: number) => void;
   /** Transient: the Home stage "load a model" dialog (Speckle browser + upload) is open. */
   showLoadModelPanel: boolean;
   setShowLoadModelPanel: (open: boolean | ((open: boolean) => boolean)) => void;
@@ -319,6 +336,9 @@ export const useUIStore = create<UIStoreState>()(
         set({ globalSpeckleData: data }, false, 'ui/setGlobalSpeckleData'),
       setIsUploadingGlobalModel: (uploading) =>
         set({ isUploadingGlobalModel: uploading }, false, 'ui/setIsUploadingGlobalModel'),
+      globalModelUploadProgress: null,
+      setGlobalModelUploadProgress: (progress) =>
+        set({ globalModelUploadProgress: progress }, false, 'ui/setGlobalModelUploadProgress'),
 
       // ── Soundscape persistence ───────────────────────────────────────────
       isSavingSoundscape: false,
@@ -425,6 +445,19 @@ export const useUIStore = create<UIStoreState>()(
       soundEditorSoundId: null,
       setSoundEditorSoundId: (id) =>
         set({ soundEditorSoundId: id }, false, 'ui/setSoundEditorSoundId'),
+      shortcutsOpen: false,
+      setShortcutsOpen: (open) =>
+        set({ shortcutsOpen: open }, false, 'ui/setShortcutsOpen'),
+      // Any visible -> hide both; both hidden -> show both.
+      toggleSoundsAndListenersVisible: () =>
+        set(
+          (s) => {
+            const next = !(s.showSoundSpheres || s.showSceneListeners);
+            return { showSoundSpheres: next, showSceneListeners: next };
+          },
+          false,
+          'ui/toggleSoundsAndListenersVisible',
+        ),
       zoomToSoundCardTrigger: null,
       triggerZoomToSoundCard: (index) =>
         set(
@@ -447,6 +480,15 @@ export const useUIStore = create<UIStoreState>()(
       // ── Autosave ───────────────────────────────────────────────────────────
       enableAutoSave: true,
       setEnableAutoSave: (v) => set({ enableAutoSave: v }, false, 'ui/setEnableAutoSave'),
+
+      // ── One-time hints ─────────────────────────────────────────────────────
+      seenHints: [],
+      setSeenHints: (ids) => set({ seenHints: ids }, false, 'ui/setSeenHints'),
+      markHintSeen: (id) => set(
+        (s) => (s.seenHints.includes(id) ? s : { seenHints: [...s.seenHints, id] }),
+        false,
+        'ui/markHintSeen',
+      ),
 
       // ── Camera POV ─────────────────────────────────────────────────────────
       cameraPosition: null,
@@ -509,6 +551,13 @@ export const useUIStore = create<UIStoreState>()(
         ),
       dawDockBottomSpace: 0,
       setDawDockBottomSpace: (px) => set({ dawDockBottomSpace: px }, false, 'ui/setDawDockBottomSpace'),
+      bubbleColumnCounts: { acoustics: 0, listeners: 0 },
+      setBubbleColumnCount: (column, count) =>
+        set(
+          (s) => (s.bubbleColumnCounts[column] === count ? {} : { bubbleColumnCounts: { ...s.bubbleColumnCounts, [column]: count } }),
+          false,
+          'ui/setBubbleColumnCount',
+        ),
       showLoadModelPanel: false,
       setShowLoadModelPanel: (open) =>
         set(
@@ -542,18 +591,27 @@ export const useUIStore = create<UIStoreState>()(
       const { globalModelFile, globalSpeckleData, speckleModelUrl, speckleBounds,
         hoveredIRSourceReceiver, activeGradientMap, selectedIRId, selectedIRMetadata,
         irRefreshTrigger, refreshBoundingBoxTrigger, roomScale, isUploadingGlobalModel,
+        globalModelUploadProgress,
         isSavingSoundscape, zoomToSoundCardTrigger, hoveredSoundCardIndex,
         activeSoundParentIndex, isInSoundsStep, showBoundingBox,
         cameraPosition, cameraTarget, acousticLayerSelectionMode, soundsNavTrigger,
-        leftSidebarExpandCommand, homeProject, sidebarNavCommand, dawDockBottomSpace, showLoadModelPanel,
+        leftSidebarExpandCommand, homeProject, sidebarNavCommand, dawDockBottomSpace, bubbleColumnCounts, showLoadModelPanel,
         // Transient: a settings-shortcut request must not replay after a refresh.
         advancedSettingsFocus,
         // Session-local: manual DAW zoom is duration-bound, so it must not outlive a refresh.
         timelineView,
         // Model-bound: a card index from a previous model must not decide which
         // scene gizmo attaches after a refresh (the sidebar re-expands card 0).
-        expandedSoundCardIndex, soundEditorSoundId, ...persistable } = state;
+        expandedSoundCardIndex, soundEditorSoundId, shortcutsOpen, ...persistable } = state;
       return persistable;
     },
   }),
 );
+
+/**
+ * True when edits have somewhere to be saved: an opened Speckle model or a
+ * saved Homepage project. Only the bare Home page (neither) has no target —
+ * autosave is off there and saving goes through "Save → Homepage project".
+ */
+export const selectHasSaveTarget = (s: UIStoreState): boolean =>
+  !!s.globalSpeckleData || !!s.homeProject;

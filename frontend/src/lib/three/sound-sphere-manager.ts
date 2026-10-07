@@ -125,6 +125,9 @@ export class SoundSphereManager {
 
   // Label sprites for entity-linked sounds (no mesh), keyed by sound ID
   private entityLabelSprites: Map<string, THREE.Sprite> = new Map();
+  /** Applied to objects created after a hide, so they never pop back in. */
+  private spheresVisible = true;
+  private labelsVisible = true;
 
   // Surface markers for large entity-linked sounds (no sphere), keyed by prompt index
   private markerGroups: Map<number, THREE.Group> = new Map();
@@ -894,7 +897,7 @@ export class SoundSphereManager {
     // Set specific layers for Speckle compatibility
     // Use OVERLAY layer (4) to avoid problematic render passes
     sphereMesh.layers.enable(4);
-    sphereMesh.visible = true;
+    sphereMesh.visible = this.spheresVisible;
 
     // Position from data (already resolved: stored > spiral > event)
     sphereMesh.position.fromArray(data.position);
@@ -1073,6 +1076,7 @@ export class SoundSphereManager {
     }
     const sprite = createLabelSprite(text);
     sprite.position.copy(position);
+    sprite.visible = this.labelsVisible;
     this.soundSpheresGroup.add(sprite);
     this.labelSprites.set(id, sprite);
   }
@@ -1202,6 +1206,7 @@ export class SoundSphereManager {
     sprite.userData.entitySlot = slotIdx;
     sprite.userData.entityGroupSize = groupSize;
     this.applyMarkerLabelUserData(sprite, soundEvent);
+    sprite.visible = this.labelsVisible;
     this.soundSpheresGroup.add(sprite);
     this.entityLabelSprites.set(soundEvent.id, sprite);
   }
@@ -1834,7 +1839,7 @@ export class SoundSphereManager {
   /**
    * Dim (or restore) a card's sound sphere based on its effective mute state.
    * A card is considered muted when ANY of its variants is muted, or when solo
-   * mode is active and none of its variants is the soloed one.
+   * mode is active and its track is not one of the soloed tracks.
    *
    * Only the selected variant of a card has a visible mesh, but the mesh is
    * keyed by prompt index here so muting a non-selected variant still dims the
@@ -1929,11 +1934,13 @@ export class SoundSphereManager {
 
   /** Show or hide all sound sphere meshes. */
   public setSoundSpheresVisible(visible: boolean): void {
+    this.spheresVisible = visible;
     this.soundMeshes.forEach(m => { m.visible = visible; });
   }
 
   /** Show or hide all label sprites (sphere-linked and entity-linked). */
   public setLabelSpritesVisible(visible: boolean): void {
+    this.labelsVisible = visible;
     this.labelSprites.forEach(s => { s.visible = visible; });
     this.entityLabelSprites.forEach(s => { s.visible = visible; });
   }

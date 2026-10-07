@@ -33,6 +33,8 @@ import { Bubble, BubbleAddButton, BubbleHeading } from '@/components/ui/Bubble';
 import { SimulationTypeIcon } from '@/components/ui/BubbleIcons';
 import { ContextMenu } from '@/components/ui/ContextMenu';
 import { useDismissOnSceneClick } from '@/hooks/useDismissOnSceneClick';
+import { useBubbleColumnSpace } from '@/hooks/useBubbleColumnSpace';
+import { BubbleScrollColumn } from '@/components/ui/BubbleScrollColumn';
 import { RangeSlider } from '@/components/ui/RangeSlider';
 import { ToggleField } from '@/components/ui/ToggleField';
 import { apiService } from '@/services/api';
@@ -99,6 +101,7 @@ import {
 import { groupSoundsByPosition, collapseVariantsToOne } from '@/utils/positionKey';
 import { useServiceVersions } from '@/hooks/useServiceVersions';
 import { recordInflightJob, removeInflightJob } from '@/lib/job-tracker';
+import { captureGenerationSignature, getGenerationRevertPatch, getModifiedGenerationFields, isGenerationDirty } from '@/utils/generationSignature';
 
 interface AcousticsSectionProps {
   // IR Library props
@@ -178,7 +181,7 @@ interface AcousticsSectionProps {
 }
 
 /** Column label row height above the first simulation bubble (px). */
-const BUBBLE_LABEL_HEIGHT = 24;
+const BUBBLE_LABEL_HEIGHT = SIMPLE_MODE.HEADING_HEIGHT;
 
 /**
  * Snapshot the active (non-hidden) grid listener configs exactly as they are at
@@ -285,6 +288,23 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   // ==========================================================================
 
   const serviceVersions = useServiceVersions();
+
+  // Powering ShoeBox (resonance) off hides its bounding box; powering it back on
+  // restores the box if it was shown before (unless the user re-enabled it meanwhile).
+  const resonanceEnabled = resonanceAudioConfig?.enabled ?? false;
+  const prevResonanceEnabledRef = useRef(resonanceEnabled);
+  const boundingBoxBeforePowerOffRef = useRef(false);
+  useEffect(() => {
+    const wasEnabled = prevResonanceEnabledRef.current;
+    prevResonanceEnabledRef.current = resonanceEnabled;
+    if (wasEnabled && !resonanceEnabled) {
+      boundingBoxBeforePowerOffRef.current = showBoundingBox;
+      if (showBoundingBox) onToggleBoundingBox(false);
+    } else if (!wasEnabled && resonanceEnabled) {
+      if (boundingBoxBeforePowerOffRef.current && !showBoundingBox) onToggleBoundingBox(true);
+      boundingBoxBeforePowerOffRef.current = false;
+    }
+  }, [resonanceEnabled, showBoundingBox, onToggleBoundingBox]);
 
   const { getViewerRef, clearMaterialColors, filteringEnabled, viewMode, setViewMode, worldTreeVersion } = useSpeckleStore();
   const handleReorderSimulationConfigs = useAcousticsSimulationStore((s) => s.handleReorderConfigs);
@@ -593,6 +613,8 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   const runChorasSimulation = useCallback(async (index: number) => {
     const config = simulationConfigs[index] as ChorasSimulationConfig;
     if (!config || config.type !== 'choras') return;
+    // Inputs this run is made of — stored on completion as the Regenerate baseline.
+    const runSignature = captureGenerationSignature(config);
 
     if (!speckleData) {
       handleUpdateConfig(index, { error: 'No Speckle data' } as any);
@@ -729,6 +751,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
               progress: 100,
               state: 'completed',
               completedAt: Date.now(),
+              ...runSignature,
               simulationResults: resultsText,
               importedIRIds: irImportResult.importedIRIds,
               sourceReceiverIRMapping: irImportResult.sourceReceiverMapping,
@@ -776,6 +799,8 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   const runPyroomSimulation = useCallback(async (index: number) => {
     const config = simulationConfigs[index] as PyroomAcousticsSimulationConfig;
     if (!config || config.type !== 'pyroomacoustics') return;
+    // Inputs this run is made of — stored on completion as the Regenerate baseline.
+    const runSignature = captureGenerationSignature(config);
 
     if (!speckleData) {
       handleUpdateConfig(index, { error: 'No Speckle data' } as any);
@@ -904,6 +929,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
               progress: 100,
               state: 'completed',
               completedAt: Date.now(),
+              ...runSignature,
               simulationResults: resultsText,
               importedIRIds: irImportResult.importedIRIds,
               sourceReceiverIRMapping: irImportResult.sourceReceiverMapping,
@@ -1066,82 +1092,10 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     onUpdateSimulationConfig(newIndex, updates);
   }, [simulationConfigs, onAddSimulationConfig, onUpdateSimulationConfig]);
 
-  /**
-   * Reset a simulation to before-simulation state
-   */
-  const resetSimulation = useCallback((index: number) => {
-    const config = simulationConfigs[index];
-    if (!config || config.type === 'resonance') return;
-
-    if (config.type === 'import-irs') {
-      handleUpdateConfig(index, {
-        state: 'idle',
-        error: null,
-        simulationResults: null,
-        importedIRIds: undefined,
-        sourceReceiverIRMapping: undefined,
-        simulationPositions: undefined,
-        completedAt: undefined,
-      } as any);
-      return;
-    }
-
-    const simConfig = config as ChorasSimulationConfig | PyroomAcousticsSimulationConfig;
-
-    // If a run is still in flight, stop tracking it so recovery doesn't resurrect it.
-    if ((simConfig as any).currentSimulationRunId) {
-      removeInflightJob((simConfig as any).currentSimulationRunId);
-    }
-
-    // Explicitly preserve Speckle material assignments and isolation across reset
-    // so that SpeckleSurfaceMaterialsSection can restore them on remount
-    const preservedMaterials = {
-      speckleMaterialAssignments: (simConfig as any).speckleMaterialAssignments,
-      speckleLayerName: (simConfig as any).speckleLayerName,
-      speckleGeometryObjectIds: (simConfig as any).speckleGeometryObjectIds,
-      speckleScatteringAssignments: (simConfig as any).speckleScatteringAssignments,
-      speckleIsolatedObjectIds: (simConfig as any).speckleIsolatedObjectIds,
-    };
-
-    const resetState = {
-      state: 'before-simulation',
-      isRunning: false,
-      status: '',
-      error: null,
-      progress: 0,
-      simulationResults: null,
-      importedIRMetadata: undefined,
-      currentSimulationId: null,
-      currentSimulationRunId: null,
-      importedIRIds: undefined,
-      sourceReceiverIRMapping: undefined,
-      ...preservedMaterials,
-    };
-
-    if (simConfig.savedSettings) {
-      handleUpdateConfig(index, {
-        ...resetState,
-        settings: simConfig.savedSettings.settings,
-        faceToMaterialMap: new Map(simConfig.savedSettings.faceToMaterialMap),
-        expandedMaterialItems: simConfig.savedSettings.expandedMaterialItems,
-        excludedLayers: simConfig.savedSettings.excludedLayers,
-        savedSettings: undefined
-      } as any);
-    } else {
-      handleUpdateConfig(index, resetState as any);
-    }
-
-    if (activeSimulationIndex === index) {
-      if (onAudioRenderingModeChange) onAudioRenderingModeChange('anechoic');
-      if (onClearIR) onClearIR();
-    }
-  }, [simulationConfigs, activeSimulationIndex, handleUpdateConfig, onAudioRenderingModeChange, onClearIR]);
-
   // Speckle Material Assignments Handler (for SimulationSetup)
-  // If the card is already completed and materials *actually changed*, auto-reset to before-simulation state.
-  // On mount/restore the hook re-emits the same persisted assignments — skip reset in that case.
+  // A completed card keeps its results when materials change: the new assignments
+  // are part of its generation signature, so the edit surfaces "Regenerate".
   const handleSpeckleMaterialAssignments = useCallback((index: number, assignments: Record<string, string>, layerName: string | null, geometryObjectIds: string[], scatteringAssignments: Record<string, number>) => {
-    const config = simulationConfigs[index];
     // Pause acousticsSimulation temporal so this config-sync never becomes its own undo step.
     // Material assignment undo is owned entirely by acousticMaterial store.
     const acousticsTemporalPause = () => useAcousticsSimulationStore.temporal.getState().pause();
@@ -1159,33 +1113,6 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       autoDetected: acousticSel.autoDetected,
     };
 
-    if (config && config.state === 'completed') {
-      // Compare with existing persisted assignments to detect actual changes
-      const existing = (config as any).speckleMaterialAssignments as Record<string, string> | undefined;
-      const existingScattering = (config as any).speckleScatteringAssignments as Record<string, number> | undefined;
-
-      const materialsChanged = JSON.stringify(existing ?? {}) !== JSON.stringify(assignments);
-      const scatteringChanged = JSON.stringify(existingScattering ?? {}) !== JSON.stringify(scatteringAssignments);
-
-      if (materialsChanged || scatteringChanged) {
-        acousticsTemporalPause();
-        resetSimulation(index);
-        setTimeout(() => {
-          handleUpdateConfig(index, {
-            speckleMaterialAssignments: assignments,
-            speckleLayerName: layerName,
-            speckleGeometryObjectIds: geometryObjectIds,
-            speckleScatteringAssignments: scatteringAssignments,
-            speckleAcousticSelection: acousticSelectionSnapshot,
-          } as any);
-          acousticsTemporalResume();
-        }, 0);
-        return;
-      }
-      // Same assignments — just a restore from mount, skip reset
-      return;
-    }
-
     acousticsTemporalPause();
     handleUpdateConfig(index, {
       speckleMaterialAssignments: assignments,
@@ -1195,7 +1122,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       speckleAcousticSelection: acousticSelectionSnapshot,
     } as any);
     acousticsTemporalResume();
-  }, [handleUpdateConfig, simulationConfigs, resetSimulation]);
+  }, [handleUpdateConfig]);
 
   // Auto-Select IR logic - use refs to avoid infinite loops
   // Store callbacks in refs to avoid dependency issues
@@ -1590,7 +1517,8 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         />
     ) : null;
 
-    // After Content - results + hidden setup (keeps effects mounted for filtering/coloring)
+    // After Content - results. The setup editors (which also keep the material
+    // filtering/coloring effects mounted) live in the Card's settings section.
     // Build display name maps from current soundscapeData and receivers for the IR label override.
     // Collapse variants to one representative per prompt so a multi-copy sound counts as ONE
     // simulation source (one position, one IR per receiver) in the source count and saved positions.
@@ -2105,8 +2033,6 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             </div>
           )} */}
           {config.type === 'import-irs' ? importIrsContent : simResultContent}
-          {/* Hidden: keeps SpeckleSurfaceMaterialsSection mounted for filtering/coloring effects */}
-          <div className="hidden">{simulationSetup}</div>
         </>
     ) : undefined;
 
@@ -2164,15 +2090,26 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             onUpdateConfig={(idx, updates) => handleUpdateConfig(idx, updates)}
             onRemove={() => {
               if (!onRemoveSimulationConfig) return;
-              if (!isCompleted) { onRemoveSimulationConfig(index); return; }
+              // Floating cards already confirmed through their bottom-right trash button.
+              if (!isCompleted || floating) { onRemoveSimulationConfig(index); return; }
               // Generated results are costly to recompute — confirm inside the (expanded) card.
               setConfirmRemoveIndex(index);
               if (!isExpanded) setExpandedCardIndex(index);
             }}
-            onReset={() => resetSimulation(index)}
             onDismissError={(idx) => handleUpdateConfig(idx, { error: null } as any)}
             beforeContent={beforeContent}
             afterContent={afterContent}
+            // Completed ray-tracing / wave-based cards: editable settings + Regenerate
+            settingsContent={isSimulationType && isCompleted ? simulationSetup : undefined}
+            settingsDirty={isSimulationType && isCompleted && isGenerationDirty(config)}
+            onRegenerate={isSimulationType ? () => runSimulation(index) : undefined}
+            onRevertSettings={isSimulationType ? () => {
+              // Settings + material assignments of the last run (materials re-sync
+              // into the Object Explorer through SpeckleSurfaceMaterialsSection).
+              const patch = getGenerationRevertPatch(config);
+              if (patch) handleUpdateConfig(index, patch as Partial<SimulationConfig>);
+            } : undefined}
+            modifiedSettings={isSimulationType && isCompleted ? getModifiedGenerationFields(config) : undefined}
             onReduce={floating?.onReduce}
             // Power: ready cards (completed / resonance) switch their auralization on/off
             onTogglePower={(isCompleted || config.type === 'resonance') && onSetActiveSimulation
@@ -2180,7 +2117,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
               : undefined}
             isPoweredOn={activeSimulationIndex === index}
             closeButtonTitle="Remove simulation"
-            resetButtonTitle="Reset simulation"
+            removeConfirmMessage={isCompleted ? 'Remove this simulation and its results?' : 'Remove this simulation?'}
             customButtons={customButtons.length > 0 ? customButtons : undefined}
             // Simulation action button props (for choras/pyroomacoustics)
             onRun={isSimulationType ? async () => await runSimulation(index) : undefined}
@@ -2291,10 +2228,10 @@ function simRuntime(config: SimulationConfig): { isRunning: boolean; progress: n
 
 /**
  * Top-right column of simulation bubbles.
- * Click: a ready (completed / resonance) card that isn't active → activate only;
- * the active card, or a card that still needs configuring → open / reduce its
- * card. The card itself floats beside the column (no wrapper) with a "−" and a
- * power button (auralization off / on) in its header.
+ * Click: open / reduce the card only. Ready (completed / resonance) bubbles
+ * carry a power button in their hover flyout (auralization on / off); the card
+ * floats beside the column (no wrapper) with the same power button and a "−"
+ * in its header.
  */
 function AcousticsBubbles({
   simulationConfigs,
@@ -2308,50 +2245,50 @@ function AcousticsBubbles({
   renderCard,
 }: AcousticsBubblesProps) {
   const [addMenu, setAddMenu] = useState<{ x: number; y: number } | null>(null);
+  const columnSpace = useBubbleColumnSpace();
+  const simulationCount = simulationConfigs.length;
+
+  // Acoustics and Listeners share the right edge's height budget.
+  useEffect(() => {
+    useUIStore.getState().setBubbleColumnCount('acoustics', simulationCount);
+    return () => useUIStore.getState().setBubbleColumnCount('acoustics', 0);
+  }, [simulationCount]);
 
   useDismissOnSceneClick(onReduce, openIndex !== null);
 
   const isReady = (config: SimulationConfig) => config.state === 'completed' || config.type === 'resonance';
 
   const handleClick = (index: number) => {
-    const config = simulationConfigs[index];
-    if (!config) return;
-    if (isReady(config) && activeSimulationIndex !== index) {
-      onSetActiveSimulation?.(index);
-    } else if (openIndex === index) {
-      onReduce();
-    } else {
-      onOpen(index);
-    }
+    if (openIndex === index) onReduce();
+    else onOpen(index);
   };
 
   const openConfig = openIndex !== null ? simulationConfigs[openIndex] : undefined;
   const columnTop = SIMPLE_MODE.RIGHT_TOP_OFFSET + BUBBLE_LABEL_HEIGHT;
+  const runningIndex = simulationConfigs.findIndex((c) => simRuntime(c).isRunning);
+  const focusIndex = openIndex ?? activeSimulationIndex ?? (runningIndex >= 0 ? runningIndex : null);
 
   return (
     <>
       <BubbleHeading style={{ right: SIMPLE_MODE.EDGE_MARGIN, top: SIMPLE_MODE.RIGHT_TOP_OFFSET }}>
         Acoustics
       </BubbleHeading>
-      <div
-        className="bubble-column"
-        style={{
-          right: SIMPLE_MODE.EDGE_MARGIN,
-          top: columnTop,
-          gap: SIMPLE_MODE.BUBBLE_GAP,
-          alignItems: 'flex-end',
-          zIndex: SIMPLE_MODE.Z_INDEX,
-        }}
-      >
-        {simulationConfigs.map((config, index) => {
+      <BubbleScrollColumn
+        availablePx={columnSpace.acoustics}
+        focusIndex={focusIndex}
+        align="flex-end"
+        labelSide="left"
+        style={{ right: SIMPLE_MODE.EDGE_MARGIN, top: columnTop, zIndex: SIMPLE_MODE.Z_INDEX }}
+        items={simulationConfigs.map((config, index) => {
           const rt = simRuntime(config);
           const label = config.display_name || CARD_TYPE_LABELS[config.type] || 'Simulation';
           const isActive = activeSimulationIndex === index;
+          const action = openIndex === index ? 'click to reduce' : 'click to open';
           const detail = rt.isRunning
             ? rt.status || 'Running…'
-            : isActive
-              ? 'Active — click to open'
-              : isReady(config) ? 'Click to activate' : 'Not simulated yet — click to set up';
+            : isReady(config)
+              ? `${isActive ? 'Active' : 'Off'} — ${action}`
+              : `Not simulated yet — ${action}`;
           return (
             <Bubble
               key={config.id ?? index}
@@ -2364,19 +2301,25 @@ function AcousticsBubbles({
               status={rt.isRunning ? 'running' : rt.error ? 'error' : 'idle'}
               progress={rt.progress / 100}
               onClick={() => handleClick(index)}
+              onTogglePower={isReady(config) && onSetActiveSimulation
+                ? () => onSetActiveSimulation(isActive ? null : index)
+                : undefined}
+              powerTitle={isActive ? 'Disable simulation' : 'Enable simulation'}
             />
           );
         })}
-        <BubbleAddButton
-          label="Add acoustic simulation"
-          labelSide="left"
-          active={addMenu !== null}
-          onClick={(e) => {
-            const rect = e.currentTarget.getBoundingClientRect();
-            setAddMenu({ x: rect.left, y: rect.bottom + SIMPLE_MODE.BUBBLE_GAP });
-          }}
-        />
-      </div>
+        addButton={
+          <BubbleAddButton
+            label="Add acoustic simulation"
+            labelSide="left"
+            active={addMenu !== null}
+            onClick={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              setAddMenu({ x: rect.left, y: rect.bottom + SIMPLE_MODE.BUBBLE_GAP });
+            }}
+          />
+        }
+      />
 
       {addMenu && (
         <ContextMenu

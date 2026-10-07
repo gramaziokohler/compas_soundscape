@@ -65,7 +65,7 @@ export function TtsLanguageInput({ value, onChange, placeholder, inputRef, style
         }}
         onBlur={(e) => commit(e.currentTarget.value)}
         placeholder={placeholder}
-        className="w-full px-2 py-1 text-xs rounded bg-secondary-lighter text-foreground border border-secondary-light focus:outline-none focus:border-primary transition-colors"
+        className="w-full px-2 py-1 text-xs rounded bg-secondary-lighter text-foreground border border-secondary-light focus:outline-none focus:border-primary transition-colors [&::-webkit-calendar-picker-indicator]:hidden"
         style={{ borderRadius: `${UI_BORDER_RADIUS.SM}px`, ...style }}
       />
       <datalist id={TTS_LANGUAGE.DATALIST_ID}>

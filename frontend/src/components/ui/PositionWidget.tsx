@@ -5,6 +5,8 @@ import { estimatePrefixedNumberFieldWidth } from "@/components/ui/numberFieldSiz
 
 /** Matches NumberField's own default display precision. */
 const POSITION_PRECISION = 2;
+const POSITION_STEP = 0.1;
+const POSITION_AXES = ["x", "y", "z"] as const;
 
 export interface PositionWidgetProps {
   /** Current world position; missing axes default to 0. */
@@ -17,10 +19,19 @@ export interface PositionWidgetProps {
   disabledTitle?: string;
   /** When true, recolors the inputs for legibility on a solid-blue generated card. */
   onBlueBackground?: boolean;
+  /** Row label (default "Position"). */
+  label?: string;
+  /** Per-axis prefix letters (default x / y / z). */
+  axisLabels?: readonly [string, string, string];
+  /** Input step (default 0.1). */
+  step?: number;
+  /** Display decimals (default 2). */
+  precision?: number;
 }
 
 /**
- * Shared x/y/z position editor used by sound cards and single-listener cards.
+ * Shared three-value editor: x/y/z position on sound cards and single-listener
+ * cards, and (with `label` / `axisLabels`) the listener's yaw/pitch/roll.
  *
  * Usage:
  * ```tsx
@@ -36,6 +47,10 @@ export function PositionWidget({
   disabled = false,
   disabledTitle,
   onBlueBackground = false,
+  label = "Position",
+  axisLabels = POSITION_AXES,
+  step = POSITION_STEP,
+  precision = POSITION_PRECISION,
 }: PositionWidgetProps) {
   return (
     <div
@@ -46,22 +61,22 @@ export function PositionWidget({
         className={`text-[10px] mb-1 ${onBlueBackground ? "" : "text-secondary-hover"}`}
         style={onBlueBackground ? { color: "var(--color-on-blue-muted)" } : undefined}
       >
-        Position
+        {label}
       </span>
       <div className="position-widget">
-      {(["x", "y", "z"] as const).map((axis, axisIdx) => {
+      {axisLabels.map((axis, axisIdx) => {
         const val = position?.[axisIdx] ?? 0;
         return (
           <NumberField
             key={axis}
             prefix={axis}
             value={val}
-            step={0.1}
+            step={step}
             disabled={disabled}
             onBlueBackground={onBlueBackground}
-            precision={POSITION_PRECISION}
+            precision={precision}
             containerStyle={{
-              width: estimatePrefixedNumberFieldWidth(val, POSITION_PRECISION),
+              width: estimatePrefixedNumberFieldWidth(val, precision),
               opacity: disabled ? 0.4 : 1,
               // `ch` on the wrapper must match the mono input font so width tracks digits.
               fontFamily: "var(--font-mono)",

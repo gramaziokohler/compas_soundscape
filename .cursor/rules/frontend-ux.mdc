@@ -22,7 +22,9 @@ Rules:
    IR → `audioRenderingMode` effect. `RightSidebar` keeps an identical element tree in both modes;
    only conditional slots (`{!bubbles && …}`) and styles change. Keep it that way.
 2. In Simple mode the left `Sidebar` is unmounted, so `SimpleSoundscapes` owns
-   `activeSoundParentIndex` / `isInSoundsStep` (auto-selects a generated scene).
+   `activeSoundParentIndex` / `isInSoundsStep` (repairs a stale selection). "No scene powered" =
+   `activeSoundParentIndex: null` **and** `isInSoundsStep: false` (shows no sounds) — a null parent
+   inside the Sounds step would show every scene's sounds instead.
 3. The scene pipeline lives in `sceneWorkflowStore` and only **sequences existing store actions**
    (`handleAnalyze`, `handleScenarioAnalyze`, page's `handleSendAnalysisToGeneration`,
    `handleGenerateFiltered`). Add pipeline behaviour to those actions, not to the workflow store.
@@ -32,12 +34,18 @@ Rules:
 6. Scene panel body = the real `SoundGenerationSection`; build its props with
    `buildSoundGenerationSectionProps` (`components/layout/sidebar/soundSectionProps.ts`), shared
    with `Sidebar`.
-7. **Circle clicks:** an inactive circle → activate only (select the scene for the DAW, enable the
-   auralization, go to the listener); the active circle → open / reduce its card. Unfinished scenes
-   open their workflow view. Acoustics / listener cards float directly (no wrapper panel) with a `−`
-   in the Card header (`Card.onReduce`). Simulation cards switch their auralization off / on with the
-   header power button (`Card.onTogglePower`, both modes); listeners stop via the ⋮ menu, and an
-   active single listener with its card reduced shows a warning `BubbleExitButton` ("Leave FPS view").
+7. **Circle clicks only expand / reduce** the circle's card — never a side effect. Unfinished
+   scenes open their workflow view. Powering is a separate control: ready circles pass
+   `Bubble.onTogglePower`, which turns the hover label into a flyout with a power button (joined to
+   the circle by a CSS `::before` hover bridge — no timers). The same power button sits in the
+   expanded card header (`Card.onTogglePower` / `BubblePanel.onTogglePower`); "on" =
+   `.power-btn--on` (solid card color, inverted icon; on-blue disc on generated cards). Scenes: one
+   powered scene at most, none allowed. Simulations: auralization on / off. Listeners: single = FPS
+   view, grid = show its points; one powered listener at a time. Floating cards (Simple mode,
+   `Card.onReduce` set) keep `−` always visible and move remove to a bottom-right trash
+   (`DeleteConfirmButton`, confirmation stacked above it); `BubblePanel` does the same. A powered
+   single listener with its card closed shows a red `BubbleExitButton` ("Leave FPS view"), and the
+   user's first FPS entry ever shows `FpsHelpPopup` (once per user via `useOneTimeHint`).
 8. **Circle states** (`components/ui/Bubble.tsx`, all circles): pending = frosted + muted icon;
    `ready` = primary border + icon; `ready` + `selected` = solid primary, inverted icon.
    Listener circles use `tone="listener"` (the listener card's warning color, headphones icon).
@@ -47,7 +55,12 @@ Rules:
    `<aside>` is `display: contents` in bubble mode.
 10. Panels reduce on a plain click on the 3D scene (`useDismissOnSceneClick`) — not on drags, UI
     clicks, active viewer modes, or clicks that selected something.
-11. Mode switch → Expert expands the left sidebar on the selected scene's Sounds step; → Simple
+11. **Columns never overflow** — every bubble column goes through `BubbleScrollColumn` with a budget
+    from `useBubbleColumnSpace` (lifts with the docked DAW; Acoustics + Listeners share the right
+    edge). Overflow renders a window of bubbles between "N more" arrow pills (wheel / drag / click);
+    the selected / active / open bubble is the `focusIndex` and stays in view. It slices instead of
+    clipping (`overflow`/`clip-path` would cut hover labels and the bubbles' backdrop blur).
+12. Mode switch → Expert expands the left sidebar on the selected scene's Sounds step; → Simple
     reopens the panel of the scene the expert sidebar showed (`pendingSimpleFocus`).
 
 ## Scene Bottom Bar
@@ -168,6 +181,16 @@ Components should render differently based on whether a sound has been generated
 | ----- | --------- | -- |
 | Before generation | Sound ID not in `generatedSounds` (soundscapeStore) | Generation button + pending badge |
 | After generation | Sound ID in `generatedSounds` | WaveSurfer waveform player + re-generate option |
+
+Generated `Card`s have **no header Reset button**. Their collapsible "Change … settings" section
+(`SettingsSummary`) shows the pending-state editors via `settingsContent`, in a bordered box styled
+like a pending card. Editing one adds **Regenerate** at the bottom of that box (scrolled into view;
+clicking it folds the section), a warning-coloured reload icon right of the title that reverts
+(`settingsDirty` / `onRevertSettings` / `onRegenerate`), and a warning-coloured "*" on the edited
+labels — new editors should pass `modified={useIsFieldModified()(key)}` to `RangeSlider` /
+`ToggleField` or render `<ModifiedMark />` (keys from `getModifiedGenerationFields`).
+Types where regenerating makes no sense (upload, sample-audio, import-irs, audio / model analysis)
+keep the read-only `getSettingsRows` recap. See ARCHITECTURE.md § Generated-Card Settings & Regenerate.
 
 `isInSoundsStep` (uiStore) must be `true` before rendering any generated sound content.
 

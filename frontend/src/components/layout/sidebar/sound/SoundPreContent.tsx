@@ -6,7 +6,14 @@ import { SoundCardBody } from './SoundCardBody';
 import { SearchBar } from '@/components/ui/SearchBar';
 import { useCatalogBrowse, type CatalogBrowseState, type CatalogBrowseActions } from '@/hooks/useCatalogBrowse';
 
-interface SoundPreContentProps extends SoundConfigContentProps {}
+interface SoundPreContentProps extends SoundConfigContentProps {
+  /**
+   * Render only the generation settings (no position widget). Used inside a
+   * generated card's settings section, where SoundResultContent already owns
+   * the generated sound's position.
+   */
+  settingsOnly?: boolean;
+}
 
 /**
  * SoundPreContent
@@ -21,11 +28,12 @@ interface SoundPreContentProps extends SoundConfigContentProps {}
  *      sliders are collapsed under an "Additional settings" toggle inside
  *      TextToAudioMode.
  *
- * This is the `beforeContent` for the Sound Card component.
+ * This is the `beforeContent` for the Sound Card component, and (with
+ * `settingsOnly`) the editable settings of a generated card.
  * SoundResultContent is the `afterContent`.
  */
 export function SoundPreContent(props: SoundPreContentProps) {
-  const { config, index, onUpdateConfig, ...configProps } = props;
+  const { config, index, onUpdateConfig, settingsOnly = false, ...configProps } = props;
 
   // ── Derive shared-control values from config ──────────────────────────────
   const volumeDbfs = config.dbfs ?? DEFAULT_DBFS;
@@ -93,8 +101,8 @@ export function SoundPreContent(props: SoundPreContentProps) {
       volumeDbfs={volumeDbfs}
       position={displayedPosition}
       entityIndex={entityIndex}
-      onUpdatePosition={handleUpdatePosition}
-      onUnlinkEntity={handleUnlinkEntity}
+      onUpdatePosition={settingsOnly ? undefined : handleUpdatePosition}
+      onUnlinkEntity={settingsOnly ? undefined : handleUnlinkEntity}
       storeContext="soundscape"
     />
   );

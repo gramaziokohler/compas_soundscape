@@ -6,6 +6,7 @@
  */
 
 import type { DrawnArea } from './area-drawing';
+import type { GridPlacementMode } from './receiver';
 import type { IRAcousticParameters } from './audio';
 
 /** Global generation settings for a soundscape session */
@@ -135,6 +136,8 @@ export interface SoundscapeGridListener {
   selectedObjectIds: string[];
   boundingBox: { min: number[]; max: number[] } | null;
   points: number[][];
+  placementMode?: GridPlacementMode;
+  drawnArea?: DrawnArea | null;
 }
 
 /** Serializable impulse response metadata for persistence */
@@ -252,10 +255,14 @@ export interface SoundscapeData {
   resonance_audio_config?: SoundscapeResonanceAudioConfig;
   // Per-iteration variant/entity links (keyed by `${soundId}-${iterationIndex}`)
   iteration_links?: Record<string, SoundscapeIterationLink>;
+  /** Per-clip trim overrides (0–1 of the source buffer), keyed `${soundId}-${iterationIndex}`. */
+  iteration_trims?: Record<string, { start: number; end: number }>;
   /** Sound IDs currently muted in the DAW timeline. */
   muted_sounds?: string[];
   /** Sound ID currently soloed in the DAW timeline (null = none). */
   soloed_sound?: string | null;
+  /** Variant sound IDs of every soloed DAW track (supersedes soloed_sound). */
+  soloed_sounds?: string[];
   /** Solver-excluded iteration indices per sound ID (from audioControls). */
   excluded_iterations?: Record<string, number[]>;
   /** Reason per excluded iteration, keyed `${soundId}-${iterationIndex}`. */

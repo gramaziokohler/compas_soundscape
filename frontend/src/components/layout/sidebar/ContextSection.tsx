@@ -76,7 +76,6 @@ export interface ContextSectionProps {
   onUpdateConfig: (index: number, updates: Partial<AnalysisConfig>) => void;
   onRun: (index: number) => void;
   onStop: () => void;
-  onReset: (index: number) => void;
   onTogglePromptSelection: (configIndex: number, promptId: string) => void;
   onSendToSoundGeneration: () => void;
   /** Advance to step 1 (Usage). Receives the original card index and its title. */
@@ -105,7 +104,6 @@ export function ContextSection({
   onUpdateConfig,
   onRun,
   onStop,
-  onReset,
   onTogglePromptSelection,
   onSendToSoundGeneration,
   onAdvanceToUsage,
@@ -508,11 +506,9 @@ export function ContextSection({
           showIndex={true}
           canRemove={true}
           closeButtonTitle="Remove"
-          resetButtonTitle="Reset to configuration UI"
           onToggleExpand={(i) => onToggleExpand(i)}
           onUpdateConfig={(i, updates) => onUpdateConfig(originalIndex, updates)}
           onRemove={() => onRemoveConfig(originalIndex)}
-          onReset={() => onReset(originalIndex)}
           error={config.error || null}
           onDismissError={() => onUpdateConfig(originalIndex, { error: null })}
           beforeContent={getBeforeContent(config, originalIndex)}
@@ -560,7 +556,6 @@ export function ContextSection({
       getCardVersion,
       onUpdateConfig,
       onRemoveConfig,
-      onReset,
       onRun,
       onStop,
       onSendToSoundGeneration,

@@ -782,6 +782,11 @@ SPECKLE_PROJECT_NAME = "soundscape-viewer"
 # Supported File Formats for Speckle Upload
 SPECKLE_SUPPORTED_FORMATS = ["3dm", "obj", "ifc"]
 
+# Bundle → legacy re-materialization after ingestion runs in a background thread
+# pool so ingestion status polls return immediately (stage "materializing").
+SPECKLE_MATERIALIZE_WORKERS = 1
+SPECKLE_MATERIALIZING_MESSAGE = "Preparing the model for the viewer..."
+
 # ============================================================================
 # Soundscape Data Persistence Configuration
 # ============================================================================

@@ -23,6 +23,7 @@ interface SceneVolumeButtonProps {
 export function SceneVolumeButton({ audioOrchestrator }: SceneVolumeButtonProps) {
   const volume = useAudioControlsStore((s) => s.masterVolume);
   const handleChange = useAudioControlsStore((s) => s.setMasterVolume);
+  const toggleMute = useAudioControlsStore((s) => s.toggleMasterMute);
   const [isHovering, setIsHovering] = useState(false);
 
   useEffect(() => {
@@ -47,9 +48,10 @@ export function SceneVolumeButton({ audioOrchestrator }: SceneVolumeButtonProps)
         </div>
       )}
       <BarButton
-        onClick={() => handleChange(muted ? DEFAULT_MASTER_VOLUME : 0)}
+        onClick={toggleMute}
         warning={muted}
         title={muted ? 'Unmute' : 'Master volume (click to mute)'}
+        shortcut="MUTE"
         icon={
           muted ? (
             <Icon>

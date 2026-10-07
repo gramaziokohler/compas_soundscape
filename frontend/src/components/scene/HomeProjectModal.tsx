@@ -3,9 +3,11 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { apiService } from '@/services/api';
 import { Spinner } from '@/components/ui/Spinner';
+import { CardButton, CloseIcon } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Notice } from '@/components/ui/Notice';
 import { UI_BORDER_RADIUS } from '@/utils/constants';
+import { useBackdropDismiss } from '@/hooks/useBackdropDismiss';
 
 interface HomeProjectSummary {
   model_id: string;
@@ -81,6 +83,8 @@ export function HomeProjectModal({
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
 
+  const backdropProps = useBackdropDismiss(onClose);
+
   if (!open) return null;
 
   const trimmed = name.trim();
@@ -94,9 +98,11 @@ export function HomeProjectModal({
 
   return (
     <div
+      role="dialog"
+      aria-modal="true"
       className="absolute inset-0 z-50 flex items-center justify-center pointer-events-auto"
       style={{ backgroundColor: 'color-mix(in srgb, var(--background) 62%, transparent)' }}
-      onClick={onClose}
+      {...backdropProps}
     >
       <div
         className="frosted-surface backdrop-blur-lg backdrop-saturate-150 shadow-lg"
@@ -107,18 +113,10 @@ export function HomeProjectModal({
           background: 'var(--color-overlay-bg)',
           padding: 14,
         }}
-        onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between">
           <p className="text-sm font-semibold text-foreground">No-model project</p>
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-xs text-secondary-hover hover:text-foreground px-1"
-            title="Close"
-          >
-            ×
-          </button>
+          <CardButton icon={<CloseIcon />} title="Close" onClick={onClose} variant="close" />
         </div>
 
         <div className="flex flex-col gap-1 mt-3">

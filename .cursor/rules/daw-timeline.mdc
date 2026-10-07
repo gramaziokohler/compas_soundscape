@@ -10,18 +10,19 @@ globs: frontend/src/components/audio/daw/**,frontend/src/components/audio/WaveSu
 ```
 DAWDock.tsx                  ← bottom-docked shell: state, gestures, context menu, connection lines
   ├─ DAWToolbar.tsx          ← transport, timecode, snap select, zoom, export dropdown, bake banner
-  ├─ DAWRuler.tsx            ← adaptive tick ladder, drag-scrub, shift-drag loop region
+  ├─ DAWRuler.tsx            ← adaptive tick ladder, click-to-seek, drag = loop region, double-click loop = remove
   ├─ DAWTrackHead.tsx        ← per-track: color badge, name, sub-label, M/S, fader, kebab menu
   ├─ DAWLane.tsx             ← per-track clip lane (grid background, overlap detection)
-  │    └─ DAWClip.tsx        ← one clip block (cached-peaks canvas, name label, badges)
-  ├─ DAWClipMenu.tsx         ← right-click context menu (variant / linked-entity override)
-  └─ DAWStatusBar.tsx        ← top strip: duration, counts, snap, zoom %, export, sample rate
+  │    └─ DAWClip.tsx        ← one clip block (cached-peaks canvas, name label, badges, edge trim handles)
+  ├─ DAWClipMenu.tsx         ← right-click context menu (variant / linked-entity override, reset clip trim)
+  └─ DAWBarControls.tsx      ← snap / zoom % / export, portaled by DAWDock into SceneBottomBar (right of "Timeline") while expanded; dock height auto-fits up to 1/3 of the window, manual drag up to 1/2
                                 (no transport — play/stop live in the scene bottom bar)
 ```
 
 Supporting hooks/utils, all in `frontend/src/components/audio/daw/`:
 `useDawView.ts` (zoom / snap mode / dock height — see "Zoom Auto-Fit" below), `useClipSelection.ts` (click / ctrl / shift / marquee
 selection), `useClipGesture.ts` (drag, group drag, duplicate — one store commit per gesture),
+`useClipTrimGesture.ts` (per-clip edge trim + reset), `daw-trim.ts` (pure trim math),
 `daw-snap.ts` (pure snap resolution: off / 0.1 / 0.5 / 1 / smart + edge magnetism).
 
 Kept unchanged: `DAWMiniTransport.tsx` (compact bar shown when the dock is collapsed),
@@ -45,12 +46,32 @@ construct/compare it.
 
 ## No Lock Toggle — Every Track Is Draggable
 
-The old interval/timestamps lock button is gone. Dragging (or deleting) a clip on a track still in
-`'interval'` scheduling mode auto-converts it to `'timestamps'` first via
-`ensureTimestampsMode()` (exported from `useClipGesture.ts`), freezing the currently displayed
-positions before applying the move. The track head shows a small `auto` chip while a track is
-still in `'interval'` mode. `soundSchedulingModes` and `bakeOrchestrateSchedule` in
-`audioControlsStore` are unchanged.
+The old interval/timestamps lock button is gone. A track with no `soundTimestamps` entry is "auto"
+(its clips are derived from the interval default). Dragging, trimming or deleting one of its clips
+first freezes the displayed positions into an explicit schedule via `ensureTrackMaterialized()`
+(exported from `useClipGesture.ts`). The track head shows a small `auto` chip while a track is
+still auto.
+
+## Per-Clip Trim (edge drag)
+
+Each clip's left/right edge can be dragged to trim that one iteration (`useClipTrimGesture.ts`).
+
+- **Storage:** `audioControlsStore.iterationTrims[clipKey] = { start, end }` — fractions (0–1) of the
+  clip's *variant* source buffer. A clip trim **overrides** the variant's card trim
+  (`soundTrims[variantSoundId]`); clips without one follow the card trim.
+- **One resolver:** `resolveIterationTrim()` (`lib/audio/utils/iteration-trim.ts`) is used by the DAW
+  drawing (`timeline-utils`), live playback (`build-score`) and WAV export — never read
+  `soundTrims` directly for a clip.
+- **Anchored audio:** a left-edge trim moves the clip start with the trim start (one
+  `setIterationTrim(…, newStartSec)` commit = one undo entry) and clears that clip's orchestrate
+  trigger, like a manual drag. A right-edge trim only changes the end.
+- **Ripple:** `setIterationTrim` re-bakes; the solver's `iterationDurations` makes `after()` /
+  `alignEnd()` dependents and same-track serialization follow the trimmed length.
+- **Keys move with clips:** `iterationTrims` uses the same keys as `iterationLinks`, so every
+  insert/remove must remap both (`remapIterationKeys` in `lib/audio/utils/iteration-keys.ts`).
+  Duplicate/paste pass `readClipTrimCopy()` to `remapIterationLinksForInsert` so the copy keeps the
+  trim (and its variant). Changing a clip's variant drops its trim. Resetting a track to auto drops them too.
+- Persisted: undo history, localStorage, and `soundscape.json` (`iteration_trims`).
 
 ## Waveform Rendering — Cached Peaks, No WaveSurfer in the Dock
 
@@ -71,11 +92,11 @@ Single source of truth for all runtime playback state. Import from `@/store` bar
 | Field | Type | Purpose |
 | ----- | ---- | ------- |
 | `soundVolumes` | `Record<soundId, number>` | Per-sound volume, dBFS |
-| `soundTimestamps` | `Record<soundId, number[]>` | Explicit clip start times (seconds), 'timestamps' mode |
-| `soundSchedulingModes` | `Record<soundId, 'interval' \| 'timestamps'>` | Per-track scheduling mode |
+| `soundTimestamps` | `Record<soundId, number[]>` | Explicit clip start times (seconds); no entry = auto track |
 | `mutedSounds` | `Set<soundId>` | Muted sound IDs |
-| `soloedSound` | `soundId \| null` | Exclusively audible sound (`null` = none) |
+| `soloedSounds` | `Set<soundId>` | Every variant id of each soloed track (multi-solo; empty = none). Resolve audibility with `isSoundSilenced` (`lib/audio/utils/mute-solo.ts`) |
 | `iterationLinks` | `Record<clipKey, IterationLink>` | Per-clip variant/entity overrides |
+| `iterationTrims` | `Record<clipKey, TrimRange>` | Per-clip trim overrides (see Per-Clip Trim) |
 | `timelineDurationMs` | `number` | Total timeline length in milliseconds |
 
 `handleTimestampsChange`/`handleTimestampsChangeBatch` never sort — free drag and overlap are safe.
@@ -92,7 +113,7 @@ TOA), exposed via the export dropdown in `DAWToolbar.tsx`.
 | ------------ | ------------- |
 | Per-track UI (mute/solo/fader/kebab) | `DAWTrackHead.tsx` |
 | Per-clip visual | `DAWClip.tsx` |
-| Drag / snap / selection behaviour | `useClipGesture.ts`, `useClipSelection.ts`, `daw-snap.ts` — do not split gesture math across components |
+| Drag / trim / snap / selection behaviour | `useClipGesture.ts`, `useClipTrimGesture.ts`, `useClipSelection.ts`, `daw-snap.ts`, `daw-trim.ts` — do not split gesture math across components |
 | Global control (transport, zoom, export) | `DAWToolbar.tsx` + new field in `audioControlsStore` if it's persisted state |
 | New export format | `SoundscapeExporter.ts` + expose option in `DAWToolbar.tsx` |
 

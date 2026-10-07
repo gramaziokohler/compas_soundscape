@@ -10,6 +10,9 @@
   --background: #edece3;
   --foreground: #1c1d21;
 
+  /* Range-slider thumb diameter — shared by .c-slider thumbs and RangeSlider marker offsets */
+  --slider-thumb-size: 10px;
+
   /* ConfirmDialog "default" variant background tint (not on a blue card) */
   --color-confirm-tint: #ffffff;
 
@@ -588,6 +591,29 @@ canvas {
   color: var(--color-on-blue);
 }
 
+/* Scroll pill at either end of an overflowing bubble column (BubbleScrollColumn) */
+.bubble--scroll {
+  border-radius: 999px;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+.bubble--scroll:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.bubble--scroll:disabled:hover {
+  transform: none;
+  color: var(--color-secondary-hover);
+}
+.bubble-scroll-window {
+  display: flex;
+  flex-direction: inherit;
+  align-items: inherit;
+  gap: inherit;
+}
+
 /* Home stage prompt — "Upload a 3D model or start below" (HomeUploadPrompt) */
 .home-prompt {
   margin: 0;
@@ -607,14 +633,14 @@ canvas {
   color: var(--color-primary-hover);
 }
 
-/* Exit (warning) circle beside an active bubble — e.g. "Leave FPS view" */
+/* Exit (error-red) circle beside an active bubble — e.g. "Leave FPS view" */
 .bubble--exit {
   background: var(--sidebar-bg);
-  border: 1.5px solid var(--color-warning);
-  color: var(--color-warning);
+  border: 1.5px solid var(--color-error);
+  color: var(--color-error);
 }
 .bubble--exit:hover {
-  background: var(--color-warning);
+  background: var(--color-error);
   color: var(--color-on-blue);
 }
 
@@ -623,23 +649,94 @@ canvas {
   position: absolute;
   top: 50%;
   display: flex;
-  flex-direction: column;
-  gap: 1px;
+  align-items: center;
+  gap: 8px;
+  width: max-content;
   max-width: 260px;
+  border-radius: 12px;
   opacity: 0;
   pointer-events: none;
   transform: translateY(-50%);
   transition: opacity 0.15s ease;
   z-index: 1;
 }
-.bubble-wrap:hover .bubble-label {
+.bubble-wrap:hover .bubble-label,
+.bubble-wrap:has(:focus-visible) .bubble-label {
   opacity: 1;
 }
 .bubble-label--right { left: calc(100% + 10px); }
-.bubble-label--left  { right: calc(100% + 10px); }
+.bubble-label--left  { right: calc(100% + 10px); flex-direction: row-reverse; }
+.bubble-label__text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+/* Flyout (ready bubbles): the label holds a power button next to the bubble.
+ * Keyboard focus shows it via :has(:focus-visible) — not :focus-within, which
+ * would keep it open after a mouse click left focus on the power button.
+ * The ::before bridge spans the gap so the pointer can travel from the bubble
+ * to the flyout without the hover ending — no timers needed. */
+.bubble-label--interactive.bubble-label--right { padding: 4px 11px 4px 4px; }
+.bubble-label--interactive.bubble-label--left  { padding: 4px 4px 4px 11px; }
+.bubble-wrap:hover .bubble-label--interactive,
+.bubble-wrap:has(:focus-visible) .bubble-label--interactive {
+  pointer-events: auto;
+}
+.bubble-label--interactive::before {
+  content: "";
+  position: absolute;
+  top: -6px;
+  bottom: -6px;
+  width: 14px;
+}
+.bubble-label--interactive.bubble-label--right::before { right: 100%; }
+.bubble-label--interactive.bubble-label--left::before  { left: 100%; }
+
+.bubble-power {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  cursor: pointer;
+  color: var(--color-secondary-hover);
+  background: var(--color-secondary-lighter);
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.bubble-power:hover {
+  color: var(--foreground);
+  background: var(--color-secondary-light);
+}
+.bubble-label--listener .power-btn--on { --power-on-bg: var(--color-warning); }
+
+/* Power "on" — solid accent background, inverted icon (bubble flyout, scene
+ * panel header, Card header). --power-on-bg follows the card color when set.
+ * On a solid-blue generated card it inverts to an on-blue disc (see
+ * .on-blue-btn.power-btn--on at the end of the card button rules). */
+.power-btn--on {
+  --power-on-bg: var(--card-color, var(--color-primary));
+  --power-on-fg: var(--color-on-blue);
+}
+.power-btn--on,
+.power-btn--on:hover,
+.bubble-panel__icon-btn.power-btn--on:hover:not(:disabled) {
+  background: var(--power-on-bg);
+  color: var(--power-on-fg);
+}
+.power-btn--on:hover {
+  filter: brightness(1.08);
+}
+/* Full scene titles wrap (up to 4 lines) instead of ending in an ellipsis. */
 .bubble-label__title {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 .bubble-label__detail {
   font-size: 10px;
@@ -699,6 +796,45 @@ canvas {
   overflow-y: auto;
   padding: 4px 10px 10px;
 }
+.bubble-panel__footer {
+  display: flex;
+  justify-content: flex-end;
+  flex-shrink: 0;
+  padding: 0 10px 8px;
+}
+
+/* Trash button + its confirmation popover (DeleteConfirmButton) — bottom-right
+ * of Simple-mode cards / panels; the confirmation stacks right above it. */
+.delete-confirm {
+  position: relative;
+  display: flex;
+}
+.delete-confirm__popover {
+  position: fixed;
+  border-radius: 6px;
+  box-shadow: var(--shadow-lg);
+}
+.delete-confirm__btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  cursor: pointer;
+  color: var(--color-secondary-hover);
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.delete-confirm__btn:hover:not(:disabled),
+.delete-confirm__btn--open {
+  color: var(--color-error);
+  background: var(--color-error-light);
+}
+.delete-confirm__btn--on-blue { color: var(--color-on-blue-muted); }
+.delete-confirm__btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 
 /* A card shown directly (acoustics / listener bubbles) — no wrapper surface */
 .bubble-card-host {
@@ -757,6 +893,30 @@ canvas {
 .bubble-chip--icon {
   padding: 2px 5px;
 }
+.bubble-chip:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.bubble-chip:disabled:hover {
+  color: var(--color-secondary-hover);
+}
+/* Exact-value input of an EditableCycleChip (double-clicked chip). */
+.bubble-chip__input {
+  width: 4ch;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: none;
+  outline: none;
+  text-align: right;
+  -moz-appearance: textfield;
+}
+.bubble-chip__input::-webkit-inner-spin-button,
+.bubble-chip__input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
 .bubble-send {
   display: flex;
   align-items: center;
@@ -789,6 +949,32 @@ canvas {
   font-size: 10px;
   color: var(--color-secondary-hover);
 }
+/* Expanded AI thinking (components/ui/ThinkingDisclosure.tsx) — fixed height, scrolls */
+.bubble-thinking {
+  margin-top: 4px;
+  padding: 6px 8px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--color-secondary-hover);
+  background: var(--color-border);
+  border: 1px solid var(--color-overlay-border);
+  border-radius: 6px;
+}
+.bubble-thinking__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--color-secondary-hover);
+  transition: color 0.15s ease;
+}
+.bubble-thinking__toggle:hover {
+  color: var(--foreground);
+}
 .bubble-progress {
   height: 3px;
   border-radius: 2px;
@@ -799,6 +985,57 @@ canvas {
   height: 100%;
   background: var(--color-primary);
   transition: width 0.4s ease;
+}
+
+/* Viewer right-click command menu (ActionMenu) */
+.action-menu {
+  position: fixed;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  padding: 6px;
+  font-size: 13px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 10px;
+  box-shadow: var(--shadow-lg);
+  color: var(--foreground);
+}
+.action-menu__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 6px;
+  text-align: left;
+  color: var(--foreground);
+  cursor: pointer;
+  transition: background-color 0.1s ease;
+}
+.action-menu__row:hover:not(:disabled),
+.action-menu__row:focus-visible {
+  background: var(--color-secondary-light);
+  outline: none;
+}
+.action-menu__row:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.action-menu__icon {
+  flex-shrink: 0;
+  color: var(--color-secondary-hover);
+}
+.action-menu__label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.action-menu__separator {
+  height: 1px;
+  margin: 6px -6px;
+  background: var(--color-border);
 }
 
 /* Multi-level dropdown (NestedMenu) */
@@ -921,6 +1158,28 @@ canvas {
   background: var(--color-border-strong);
   margin: 0 4px;
 }
+.bar-mode-toggle {
+  display: flex;
+  padding: 2px;
+  gap: 2px;
+  border-radius: 6px;
+  background: var(--color-secondary-lighter);
+  border: 1px solid var(--color-border);
+}
+.bar-mode-toggle__btn {
+  padding: 2px 8px;
+  font-size: 11px;
+  border-radius: 4px;
+  color: var(--color-secondary-hover);
+  transition: background-color 0.15s, color 0.15s;
+}
+.bar-mode-toggle__btn:hover {
+  color: var(--foreground);
+}
+.bar-mode-toggle__btn[data-active='true'] {
+  background: var(--color-border);
+  color: var(--foreground);
+}
 .scene-bottom-bar__brand {
   display: flex;
   align-items: center;
@@ -963,6 +1222,14 @@ canvas {
 .bar-btn--active {
   color: var(--color-blue-text);
   background: var(--color-blue-tint);
+}
+.bar-btn--primary,
+.bar-btn--primary.bar-btn--active {
+  color: var(--color-on-blue);
+  background: var(--color-primary);
+}
+.bar-btn--primary:hover:not(:disabled) {
+  background: var(--color-primary-hover);
 }
 .bar-btn--warning {
   color: var(--color-warning);
@@ -1007,6 +1274,12 @@ canvas {
 .bar-play:hover {
   background: var(--color-primary-hover);
 }
+/* Bare Home page with edits but no saved project yet (SceneBottomBar) */
+.bar-unsaved {
+  font-size: 10px;
+  white-space: nowrap;
+  color: var(--color-warning);
+}
 .bar-time {
   font-family: var(--font-mono);
   font-size: 11px;
@@ -1029,24 +1302,91 @@ canvas {
 }
 .bar-shortcut-row {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   font-size: 11px;
-  padding: 2px 0;
+  padding: 3px 0;
 }
-.bar-shortcut-row kbd {
-  font-family: var(--font-mono);
+.bar-shortcut-row__label {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.bar-shortcut-row__hint {
   font-size: 10px;
   color: var(--color-secondary-hover);
+}
+/* Key chip group — shortcuts popover + ShortcutTooltip (components/ui/ShortcutKeys.tsx) */
+.kbd-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+}
+.kbd-group__or {
+  font-size: 9px;
+  color: var(--color-secondary-hover);
+  margin: 0 2px;
+}
+.kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1;
+  color: var(--foreground);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-bottom-width: 2px;
+  border-radius: 4px;
   white-space: nowrap;
+}
+/* Hover tooltip with action name + key chips (components/ui/ShortcutTooltip.tsx) */
+.shortcut-tooltip {
+  position: fixed;
+  z-index: 10050;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px 8px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg);
+  color: var(--foreground);
+  pointer-events: none;
+  animation: shortcut-tooltip-in 0.12s ease-out;
+}
+@keyframes shortcut-tooltip-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.shortcut-tooltip__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.shortcut-tooltip__label {
+  font-size: 11px;
+  font-weight: 500;
+}
+.shortcut-tooltip__hint {
+  font-size: 10px;
+  line-height: 1.35;
+  color: var(--color-secondary-hover);
 }
 .bar-popover__title {
   font-size: 9px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--color-secondary-hover);
+  color: var(--color-primary);
   margin: 6px 0 2px;
 }
 /* Low-output helper hint (components/scene/LowOutputHintPopover.tsx) — rises
@@ -1120,6 +1460,29 @@ canvas {
 .bar-hint__close:hover {
   background: var(--color-secondary-light);
 }
+/* First-time FPS helper (components/scene/FpsHelpPopup.tsx) — a .bar-hint
+   fixed to the left of the FPS listener bubble, vertically centered on it. */
+.bar-hint.fps-hint {
+  position: fixed;
+  bottom: auto;
+  transform: translateY(-50%);
+  border-left-color: var(--color-error);
+  animation: fps-hint-in 0.2s ease-out;
+}
+@keyframes fps-hint-in {
+  from { opacity: 0; transform: translate(6px, -50%); }
+  to   { opacity: 1; transform: translate(0, -50%); }
+}
+.fps-hint__controls {
+  margin-top: 6px;
+}
+.fps-hint__keys {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  color: var(--color-secondary-hover);
+}
 
 /* ==========================================================================
    Card design system — shared presentation classes (token-only)
@@ -1164,6 +1527,48 @@ canvas {
 
 /* Expanded body of a collapsible/disclosure group. */
 .card-collapse-body { margin-top: var(--card-gap-collapse); }
+/* Editable settings inside a generated card's settings section (SettingsSummary
+   with children): a "card inside a card" that looks exactly like a pending
+   card — surface fill, border, page text. The .card-generated on-blue overrides
+   below stop at this box (`:not(.card-settings-inset *)`). */
+.card-settings-inset {
+  background: var(--color-surface);
+  color: var(--foreground);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: var(--card-inset);
+}
+/* Small reload icon right of a generated card's "Change … settings" title —
+   reverts the edited settings; warning-coloured like the "*" marks. */
+.settings-revert-btn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 9999px;
+  color: var(--color-warning);
+  transition: background-color 150ms, color 150ms;
+}
+.settings-revert-btn:hover {
+  color: var(--color-warning-light);
+  background: var(--color-blue-chip-bg);
+}
+/* "*" on a settings label whose value changed since the last generation. */
+.modified-mark {
+  color: color-mix(in srgb, var(--color-warning) 80%, var(--color-warning-light));
+  font-weight: 700;
+  margin-left: 2px;
+}
+.modified-mark--corner {
+  position: absolute;
+  top: 2px;
+  right: 6px;
+  margin-left: 0;
+  z-index: 1;
+  pointer-events: none;
+}
 
 /* Small info/caption line under a card title (collapsed info, version). */
 .card-title-info { margin-top: var(--card-gap-info); }
@@ -1263,13 +1668,13 @@ canvas {
   border-color: var(--color-border);
   color: var(--foreground);
 }
-.card-generated .material-select .select-trigger {
+.card-generated .material-select .select-trigger:not(.card-settings-inset *) {
   background: var(--color-secondary-lighter);
   border-color: var(--color-border);
   color: var(--foreground);
 }
 .material-select .select-trigger svg,
-.card-generated .material-select .select-trigger svg {
+.card-generated .material-select .select-trigger svg:not(.card-settings-inset *) {
   color: var(--color-text-3);
 }
 .select-menu {
@@ -1362,8 +1767,8 @@ canvas {
 .c-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 10px;
-  height: 10px;
+  width: var(--slider-thumb-size);
+  height: var(--slider-thumb-size);
   border-radius: 50%;
   background: var(--slider-color, var(--color-primary));
   cursor: pointer;
@@ -1371,8 +1776,8 @@ canvas {
   box-shadow: 0 0 0 1px var(--slider-color, var(--color-primary));
 }
 .c-slider::-moz-range-thumb {
-  width: 10px;
-  height: 10px;
+  width: var(--slider-thumb-size);
+  height: var(--slider-thumb-size);
   border-radius: 50%;
   background: var(--slider-color, var(--color-primary));
   cursor: pointer;
@@ -1515,6 +1920,13 @@ canvas {
 .on-blue-btn { color: var(--color-on-blue-muted); }
 .on-blue-btn:hover { color: var(--color-on-blue); background: rgba(0, 0, 0, 0.2); }
 .on-blue-btn.close:hover { color: var(--color-error); background: var(--color-error-light); }
+.on-blue-btn.power-btn--on,
+.on-blue-btn.power-btn--on:hover {
+  --power-on-bg: var(--color-on-blue);
+  --power-on-fg: var(--color-primary);
+  background: var(--power-on-bg);
+  color: var(--power-on-fg);
+}
 
 /* Go-to-listener target icon on simulation result cards */
 .goto-listener-btn:hover {
@@ -1625,188 +2037,188 @@ canvas {
 .card-generated {
   color: var(--color-on-blue);
 }
-.card-generated .text-foreground {
+.card-generated .text-foreground:not(.card-settings-inset *) {
   color: var(--color-on-blue);
 }
-.card-generated .text-secondary-hover,
-.card-generated .text-text-3,
-.card-generated .text-neutral-400,
-.card-generated .text-neutral-500,
-.card-generated .text-neutral-300 {
+.card-generated .text-secondary-hover:not(.card-settings-inset *),
+.card-generated .text-text-3:not(.card-settings-inset *),
+.card-generated .text-neutral-400:not(.card-settings-inset *),
+.card-generated .text-neutral-500:not(.card-settings-inset *),
+.card-generated .text-neutral-300:not(.card-settings-inset *) {
   color: var(--color-on-blue-muted);
 }
-.card-generated .xyz-input {
+.card-generated .xyz-input:not(.card-settings-inset *) {
   background: var(--color-blue-chip-bg);
   border-color: var(--color-on-blue-faint);
   color: var(--color-on-blue);
 }
-.card-generated .xyz-input:focus {
+.card-generated .xyz-input:focus:not(.card-settings-inset *) {
   border-color: var(--color-on-blue);
   background: var(--color-blue-chip-bg);
 }
-.card-generated .select-trigger {
+.card-generated .select-trigger:not(.card-settings-inset *) {
   background: var(--color-blue-chip-bg);
   border-color: var(--color-on-blue-faint);
   color: var(--color-on-blue);
 }
-.card-generated .text-select-opt {
+.card-generated .text-select-opt:not(.card-settings-inset *) {
   color: var(--color-on-blue);
 }
-.card-generated .text-select-opt:hover:not(:disabled):not(.active),
-.card-generated .text-select-opt.active {
+.card-generated .text-select-opt:hover:not(:disabled):not(.active):not(.card-settings-inset *),
+.card-generated .text-select-opt.active:not(.card-settings-inset *) {
   color: var(--color-on-blue);
 }
-.card-generated .text-select-opt.active {
+.card-generated .text-select-opt.active:not(.card-settings-inset *) {
   border-color: var(--color-on-blue);
 }
-.card-generated .select-trigger svg {
+.card-generated .select-trigger svg:not(.card-settings-inset *) {
   color: var(--color-on-blue-muted);
 }
-.card-generated .c-slider {
+.card-generated .c-slider:not(.card-settings-inset *) {
   background: linear-gradient(
     to right,
     var(--color-on-blue) var(--slider-fill, 0%),
     var(--color-blue-chip-bg) var(--slider-fill, 0%)
   );
 }
-.card-generated .c-slider::-webkit-slider-thumb {
+.card-generated .c-slider:not(.card-settings-inset *)::-webkit-slider-thumb {
   background: var(--color-on-blue);
   border-color: transparent;
   box-shadow: 0 0 0 1px var(--color-on-blue-faint);
 }
-.card-generated .c-slider::-moz-range-thumb {
+.card-generated .c-slider:not(.card-settings-inset *)::-moz-range-thumb {
   background: var(--color-on-blue);
   border-color: transparent;
   box-shadow: 0 0 0 1px var(--color-on-blue-faint);
 }
-.card-generated .c-slider::-moz-range-track {
+.card-generated .c-slider:not(.card-settings-inset *)::-moz-range-track {
   background: var(--color-blue-chip-bg);
 }
-.card-generated .c-slider::-moz-range-progress {
+.card-generated .c-slider:not(.card-settings-inset *)::-moz-range-progress {
   background: var(--color-on-blue);
 }
-.card-generated .tag {
+.card-generated .tag:not(.card-settings-inset *) {
   background: var(--color-blue-chip-bg);
   color: var(--color-on-blue-muted);
   border-color: var(--color-on-blue-faint);
 }
-.card-generated .tag.on {
+.card-generated .tag.on:not(.card-settings-inset *) {
   background: var(--color-blue-chip-bg);
   color: var(--color-on-blue);
   border-color: var(--color-on-blue);
 }
-.card-generated .tag.add {
+.card-generated .tag.add:not(.card-settings-inset *) {
   background: transparent;
   border-color: var(--color-on-blue-muted);
   color: var(--color-on-blue);
 }
-.card-generated .tag.add:hover {
+.card-generated .tag.add:hover:not(.card-settings-inset *) {
   background: var(--color-blue-chip-bg);
   border-color: var(--color-on-blue);
   color: var(--color-on-blue);
 }
-.card-generated .btn-primary {
+.card-generated .btn-primary:not(.card-settings-inset *) {
   background: var(--color-on-blue);
   color: var(--color-primary);
 }
-.card-generated .btn-primary:hover {
+.card-generated .btn-primary:hover:not(.card-settings-inset *) {
   background: color-mix(in srgb, var(--color-primary) 12%, var(--color-on-blue));
 }
-.card-generated .ck {
+.card-generated .ck:not(.card-settings-inset *) {
   border-color: var(--color-on-blue-faint);
   background: var(--color-blue-chip-bg);
 }
-.card-generated .ck.checked {
+.card-generated .ck.checked:not(.card-settings-inset *) {
   background: var(--color-on-blue);
   border-color: var(--color-on-blue);
   color: var(--color-primary);
 }
-.card-generated .ck-row > span:last-child {
+.card-generated .ck-row > span:last-child:not(.card-settings-inset *) {
   color: var(--color-on-blue-muted);
 }
-.card-generated .ck-row.checked > span:last-child {
+.card-generated .ck-row.checked > span:last-child:not(.card-settings-inset *) {
   color: var(--color-on-blue);
 }
-.card-generated .toggle-row__label {
+.card-generated .toggle-row__label:not(.card-settings-inset *) {
   color: var(--color-on-blue-muted);
 }
-.card-generated .toggle-row.checked .toggle-row__label {
+.card-generated .toggle-row.checked .toggle-row__label:not(.card-settings-inset *) {
   color: var(--color-on-blue);
 }
-.card-generated .toggle-switch {
+.card-generated .toggle-switch:not(.card-settings-inset *) {
   border-color: var(--color-on-blue-faint);
   background: var(--color-blue-chip-bg);
 }
-.card-generated .toggle-switch.checked {
+.card-generated .toggle-switch.checked:not(.card-settings-inset *) {
   background: var(--color-on-blue);
   border-color: var(--color-on-blue);
 }
-.card-generated .toggle-switch::after {
+.card-generated .toggle-switch:not(.card-settings-inset *)::after {
   background: var(--color-primary);
   box-shadow: none;
 }
-.card-generated .toggle-switch.checked::after {
+.card-generated .toggle-switch.checked:not(.card-settings-inset *)::after {
   background: var(--color-primary);
 }
 /* FX chip sits on the solid-blue generated card where the default primary
  * variant text (#002aff) is unreadable — keep it on-blue. Hover lightens the
  * recessed chip; enabled flips it to a solid white fill (white works on the
  * blue card in both light and dark mode). */
-.card-generated .fx-badge {
+.card-generated .fx-badge:not(.card-settings-inset *) {
   background: var(--color-blue-chip-bg);
   border-color: var(--color-on-blue-faint);
   color: var(--color-on-blue-muted);
   transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
-.card-generated .fx-badge:hover {
+.card-generated .fx-badge:hover:not(.card-settings-inset *) {
   background: color-mix(in srgb, var(--color-on-blue) 20%, transparent);
   border-color: var(--color-on-blue);
   color: var(--color-on-blue);
 }
-.card-generated .fx-badge--enabled {
+.card-generated .fx-badge--enabled:not(.card-settings-inset *) {
   background: var(--color-on-blue);
   border-color: var(--color-on-blue);
   color: var(--color-primary);
 }
-.card-generated .fx-badge--enabled:hover {
+.card-generated .fx-badge--enabled:hover:not(.card-settings-inset *) {
   background: color-mix(in srgb, var(--color-primary) 14%, var(--color-on-blue));
   border-color: var(--color-on-blue);
   color: var(--color-primary);
 }
-.card-generated .gen-status {
+.card-generated .gen-status:not(.card-settings-inset *) {
   color: var(--color-on-blue-muted);
 }
-.card-generated .gen-status .stop {
+.card-generated .gen-status .stop:not(.card-settings-inset *) {
   background: var(--color-on-blue);
 }
-.card-generated .gen-status .stop:hover {
+.card-generated .gen-status .stop:hover:not(.card-settings-inset *) {
   background: var(--color-on-blue-muted);
 }
-.card-generated .progress-track {
+.card-generated .progress-track:not(.card-settings-inset *) {
   background: var(--color-on-blue-faint);
 }
-.card-generated .progress-fill {
+.card-generated .progress-fill:not(.card-settings-inset *) {
   background: var(--color-on-blue);
 }
-.card-generated .ws-play {
+.card-generated .ws-play:not(.card-settings-inset *) {
   background: var(--color-on-blue) !important;
   color: var(--color-primary) !important;
   border-color: transparent !important;
 }
-.card-generated .ws-stop {
+.card-generated .ws-stop:not(.card-settings-inset *) {
   background: var(--color-blue-chip-bg) !important;
   color: var(--color-on-blue-muted) !important;
   border-color: var(--color-on-blue-faint) !important;
 }
-.card-generated .ws-stop.ws-stop--live {
+.card-generated .ws-stop.ws-stop--live:not(.card-settings-inset *) {
   background: var(--color-on-blue) !important;
   color: var(--color-error) !important;
 }
-.card-generated .info-trigger {
+.card-generated .info-trigger:not(.card-settings-inset *) {
   color: var(--color-on-blue-muted);
   border-color: var(--color-on-blue-faint);
 }
-.card-generated .info-trigger:hover {
+.card-generated .info-trigger:hover:not(.card-settings-inset *) {
   color: var(--color-on-blue);
   background: var(--color-blue-chip-bg);
 }

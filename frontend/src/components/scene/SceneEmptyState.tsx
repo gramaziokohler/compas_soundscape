@@ -6,6 +6,7 @@ import { SpeckleModelBrowser } from '@/components/scene/SpeckleModelBrowser';
 import { useTextGenerationStore } from '@/store';
 import { MODEL_FILE_EXTENSIONS } from '@/utils/constants';
 import { Spinner } from '@/components/ui/Spinner';
+import { CardButton, CloseIcon } from '@/components/ui/Card';
 
 interface SpeckleModelSelectData {
   model_id: string;
@@ -60,14 +61,7 @@ export function SceneEmptyState({
       <div className="flex items-center justify-between mb-2">
         <span className="text-xs font-medium text-foreground">Load model</span>
         {onClose && (
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-xs text-secondary-hover hover:text-foreground px-1"
-            title="Close"
-          >
-            ×
-          </button>
+          <CardButton icon={<CloseIcon />} title="Close" onClick={onClose} variant="close" />
         )}
       </div>
 

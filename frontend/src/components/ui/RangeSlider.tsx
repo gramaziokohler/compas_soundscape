@@ -2,6 +2,7 @@
 
 import type { CSSProperties } from "react";
 import { NumberField } from "./NumberField";
+import { ModifiedMark } from "./ModifiedMark";
 import { decimalsFromStep, estimateFieldWidthCh } from "./numberFieldSizing";
 
 interface RangeSliderProps {
@@ -38,6 +39,10 @@ interface RangeSliderProps {
    * Used to flag the exact points where a value would clip / mute (e.g. IR gain).
    */
   markers?: Array<{ value: number; label: string; tone?: 'primary' | 'warning' | 'error' }>;
+  /** Tooltip on the slider track itself; replaces the default double-click-reset hint. */
+  sliderTitle?: string;
+  /** Flags the label with a "*" — value changed since the card was generated. */
+  modified?: boolean;
 }
 
 /** Floor width for the slider track itself — below this it wraps to its own line instead of shrinking further. */
@@ -93,6 +98,8 @@ export function RangeSlider({
   onBlueBackground = false,
   defaultValue,
   markers,
+  modified = false,
+  sliderTitle,
 }: RangeSliderProps) {
   const resolvedPrecision = precision ?? decimalsFromStep(step);
   const resolvedFormatValue =
@@ -174,6 +181,11 @@ export function RangeSlider({
     return Math.min(100, Math.max(0, ((clamped - min) / (max - min)) * 100));
   };
 
+  // A native range thumb's centre travels from thumb/2 to width − thumb/2, not 0 → 100%,
+  // so markers are mapped onto that inset span to line up with the thumb at the same value.
+  const markerLeft = (v: number): string =>
+    `calc(var(--slider-thumb-size) / 2 + (100% - var(--slider-thumb-size)) * ${markerPercent(v) / 100})`;
+
   const hasMarkers = !!(markers && markers.length > 0);
 
   return (
@@ -194,6 +206,7 @@ export function RangeSlider({
           style={onBlueBackground ? { color: 'var(--color-on-blue-muted)' } : { color: 'var(--color-secondary-hover)' }}
         >
           {label}
+          {modified && <ModifiedMark />}
         </span>
         <div className="flex items-center gap-1 flex-1">
           <div
@@ -214,14 +227,14 @@ export function RangeSlider({
                 disabled={disabled}
                 className={`c-slider w-full ${disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
                 style={sliderStyle}
-                title={defaultValue !== undefined ? `Double-click to reset (${resolvedFormatValue(defaultValue)})` : hoverText}
+                title={sliderTitle ?? (defaultValue !== undefined ? `Double-click to reset (${resolvedFormatValue(defaultValue)})` : hoverText)}
               />
               {markers?.map((m, i) => (
                 <span
                   key={`marker-tick-${i}`}
                   aria-hidden
                   className="absolute top-0 bottom-0 pointer-events-none"
-                  style={{ left: `${markerPercent(m.value)}%`, width: 1, backgroundColor: markerToneColor(m.tone) }}
+                  style={{ left: markerLeft(m.value), width: 1, backgroundColor: markerToneColor(m.tone) }}
                 />
               ))}
             </div>
@@ -231,7 +244,7 @@ export function RangeSlider({
                   <span
                     key={`marker-label-${i}`}
                     className="absolute -translate-x-1/2 whitespace-nowrap text-[9px] leading-none"
-                    style={{ left: `${markerPercent(m.value)}%`, top: 2, color: markerToneColor(m.tone) }}
+                    style={{ left: markerLeft(m.value), top: 2, color: markerToneColor(m.tone) }}
                   >
                     {m.label}
                   </span>

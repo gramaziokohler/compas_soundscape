@@ -51,3 +51,34 @@ export interface SpeckleModelLatestVersion {
   source_application?: string;
   message?: string;
 }
+
+/** Response from GET /api/speckle/ingestion/{ingestion_id} */
+export interface SpeckleIngestionStatus {
+  status: string | null;
+  /** App-side stage: Speckle status plus the "materializing" bundle → legacy step. */
+  stage: 'queued' | 'processing' | 'materializing' | 'success' | 'failed';
+  progress_message: string | null;
+  /** 0–1 fraction while processing; null when Speckle reports no percentage. */
+  progress: number | null;
+  /** converting | packing | bundling | publishing */
+  phase: string | null;
+  attempt: number | null;
+  version_id: string | null;
+  object_id: string | null;
+  error: string | null;
+}
+
+/** Client-side stages of a model upload, from file POST to viewer load. */
+export type SpeckleUploadStage = 'uploading' | 'queued' | 'processing' | 'materializing' | 'loading';
+
+/** Live progress of a model upload, surfaced in the scene loading overlay. */
+export interface SpeckleUploadProgress {
+  stage: SpeckleUploadStage;
+  /** Speckle's own progress message (e.g. "Converting geometry"). */
+  message: string | null;
+  /** 0–1 fraction; null = indeterminate. */
+  progress: number | null;
+  phase: string | null;
+  /** Speckle conversion attempt — ≥ 2 means the job was restarted. */
+  attempt: number | null;
+}

@@ -5,6 +5,7 @@ import { pauseStore, commitStore, globalUndo, globalRedo, useAudioControlsStore,
 import { TTS_VOICES, TTS_DEFAULT_VOICE } from '@/utils/constants';
 import { useTtsSpeechLines } from '@/hooks/useTtsSpeechLines';
 import { CardSelect } from '@/components/ui/CardSelect';
+import { ModifiedMark, ModifiedCornerMark, useIsFieldModified } from '@/components/ui/ModifiedMark';
 import { Settings2 } from 'lucide-react';
 
 export interface TextToSpeechModeProps {
@@ -17,10 +18,13 @@ export function TextToSpeechMode({ config, index, onUpdateConfig }: TextToSpeech
   const { onPromptChange } = useTtsSpeechLines(config, index, onUpdateConfig);
   const ttsLanguage = useAudioControlsStore((s) => s.ttsLanguage);
   const openAdvancedSettingsAt = useUIStore((s) => s.openAdvancedSettingsAt);
+  const isModified = useIsFieldModified();
 
   return (
     <div className="card-stack--md">
 
+      <div className="relative">
+      <ModifiedCornerMark show={isModified('prompt')} />
       <textarea
         value={config.prompt}
         onChange={(e) => onPromptChange(e.target.value)}
@@ -44,9 +48,10 @@ export function TextToSpeechMode({ config, index, onUpdateConfig }: TextToSpeech
         className="w-full h-20 p-2 text-xs rounded-lg bg-secondary-lighter text-foreground border border-secondary-light focus:border-primary focus:ring-1 focus:ring-primary outline-none resize-none"
         rows={3}
       />
+      </div>
 
       <div className="flex items-center gap-2">
-        <label className="text-xs text-foreground/70 whitespace-nowrap">Voice:</label>
+        <label className="text-xs text-foreground/70 whitespace-nowrap">Voice{isModified('voice_name') && <ModifiedMark />}:</label>
         <CardSelect
           value={config.voice_name || TTS_DEFAULT_VOICE}
           onChange={(v) => onUpdateConfig(index, 'voice_name', v)}

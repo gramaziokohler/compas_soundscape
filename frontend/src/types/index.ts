@@ -241,6 +241,8 @@ export interface SoundGenerationConfig {
   };
   /** Scenario pipeline reference for an "incomplete" card (foley+speech only, pre-orchestrate). */
   scenarioSource?: import('./analysis').ScenarioSource;
+  /** Generation-input snapshot captured when the card was generated (see `utils/generationSignature.ts`). Transient. */
+  generatedSignature?: string;
 }
 
 /** A sound selected from the Google Sound Library catalog */

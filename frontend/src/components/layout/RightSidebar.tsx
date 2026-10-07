@@ -10,7 +10,7 @@ import { useVerticalResize } from '@/hooks/useVerticalResize';
 import { useViewportScale } from '@/hooks/useViewportScale';
 import { AcousticsSection } from '@/components/layout/sidebar/AcousticsSection';
 import { ListenersSection } from '@/components/layout/sidebar/ListenersSection';
-import type { ReceiverData, GridListenerData } from '@/types/receiver';
+import type { ReceiverData, GridListenerData, ListenerExpandRequest } from '@/types/receiver';
 import type { ImpulseResponseMetadata, ResonanceAudioConfig, AuralizationConfig } from '@/types/audio';
 import type { SelectedGeometry, AcousticMaterial } from '@/types/materials';
 import type { CompasGeometry, EntityData, SoundEvent } from '@/types';
@@ -75,7 +75,10 @@ interface RightSidebarProps {
   onSetActiveSimulation?: (index: number | null) => void;
   onUpdateSimulationName?: (index: number, name: string) => void;
   onIRHover?: (sourceId: string | null, receiverId: string | null) => void;
+  /** Power a single listener on / off (listener card power button). */
   onGoToReceiver?: (receiverId: string) => void;
+  /** Acoustics IR-group "go to listener": powers it on and expands its card. */
+  onAcousticsGoToReceiver?: (receiverId: string) => void;
   fpsExitTrigger?: number;
   isFPSModeActive?: boolean;
   forcedActiveGroupId?: string | null;
@@ -93,12 +96,13 @@ interface RightSidebarProps {
   onAddGridListener: () => void;
   onDeleteGridListener: (id: string) => void;
   onComputeBounds: (objectIds: string[]) => { min: [number, number, number]; max: [number, number, number] } | null;
-  expandedGridListenerId: string | null;
-  onExpandedGridListenerChange: (id: string | null) => void;
+  /** Powered grid listener (points shown), or null. */
+  activeGridListenerId: string | null;
+  onToggleGridListenerPower: (id: string) => void;
   onExitFPS?: () => void;
-  forcedExpandedListenerId?: string | null;
-  collapseListenerCardTrigger?: number;
-  listenerOrientation: { x: number; y: number; z: number };
+  /** Powered single listener (FPS view), or null. */
+  poweredListenerId?: string | null;
+  listenerExpandRequest?: ListenerExpandRequest | null;
 }
 
 export function RightSidebar({
@@ -142,6 +146,7 @@ export function RightSidebar({
   onUpdateSimulationName,
   onIRHover,
   onGoToReceiver,
+  onAcousticsGoToReceiver,
   fpsExitTrigger,
   isFPSModeActive,
   forcedActiveGroupId,
@@ -158,12 +163,11 @@ export function RightSidebar({
   onAddGridListener,
   onDeleteGridListener,
   onComputeBounds,
-  expandedGridListenerId,
-  onExpandedGridListenerChange,
+  activeGridListenerId,
+  onToggleGridListenerPower,
   onExitFPS,
-  forcedExpandedListenerId,
-  collapseListenerCardTrigger,
-  listenerOrientation,
+  poweredListenerId,
+  listenerExpandRequest,
 }: RightSidebarProps) {
   const { isExpanded, requestExpand, requestCollapse, simulationAreaRatio, setSimulationAreaRatio, convolutionHintNonce } = useRightSidebarStore();
   const [isHandleHovered, setIsHandleHovered] = useState(false);
@@ -394,7 +398,7 @@ export function RightSidebar({
             onUpdateSimulationConfig={onUpdateSimulationConfig}
             onSetActiveSimulation={onSetActiveSimulation}
             onUpdateSimulationName={onUpdateSimulationName}
-            onGoToReceiver={onGoToReceiver}
+            onGoToReceiver={onAcousticsGoToReceiver ?? onGoToReceiver}
             fpsExitTrigger={fpsExitTrigger}
             isFPSModeActive={isFPSModeActive}
             forcedActiveGroupId={forcedActiveGroupId}
@@ -448,12 +452,12 @@ export function RightSidebar({
             onAddGridListener={onAddGridListener}
             onDeleteGridListener={onDeleteGridListener}
             onComputeBounds={onComputeBounds}
-            expandedGridListenerId={expandedGridListenerId}
-            onExpandedGridListenerChange={onExpandedGridListenerChange}
+            poweredListenerId={poweredListenerId ?? null}
+            activeGridListenerId={activeGridListenerId}
+            onToggleGridListenerPower={onToggleGridListenerPower}
             onExitFPS={onExitFPS}
-            forcedExpandedId={forcedExpandedListenerId}
-            collapseAllTrigger={collapseListenerCardTrigger}
-            listenerOrientation={listenerOrientation}
+            isFPSModeActive={isFPSModeActive}
+            listenerExpandRequest={listenerExpandRequest}
           />
         </div>
         </div>

@@ -5,6 +5,8 @@ import type { TextAnalysisConfig, AnalyzeModelConfig } from '@/types/analysis';
 import { NUM_SOUNDS_MAX, NUM_SOUNDS_MIN, DEFAULT_NUM_SOUNDS } from '@/utils/constants';
 import { RangeSlider } from '@/components/ui/RangeSlider';
 import { Notice } from '@/components/ui/Notice';
+import { OptionToggle } from '@/components/ui/OptionToggle';
+import { AreaDrawingBanner } from '@/components/ui/AreaDrawingBanner';
 import { useAreaDrawing } from '@/hooks/useAreaDrawing';
 import {
   pauseStore,
@@ -15,6 +17,7 @@ import {
   useAnalysisPreviewStore,
 } from '@/store';
 import { useBatchedSlider } from '@/hooks/useBatchedSlider';
+import { ModifiedMark, useIsFieldModified } from '@/components/ui/ModifiedMark';
 
 /**
  * TextContextContent Component
@@ -59,6 +62,8 @@ export function TextContextContent({
     parent?.type === 'model-analysis' &&
     !!(parent as AnalyzeModelConfig).analysisResult?.analysisId;
 
+  const isModified = useIsFieldModified();
+
   const mode: PlacementMode = config.drawnArea
     ? 'area'
     : config.useAnalysisResult
@@ -97,33 +102,13 @@ export function TextContextContent({
     onUpdateConfig(index, { useAnalysisResult: next === 'analysis' });
   };
 
-  const optionStyle = (active: boolean, tone: 'primary' | 'warning') => ({
-    backgroundColor: active
-      ? tone === 'warning'
-        ? 'var(--color-warning-light)'
-        : 'var(--color-primary-lighter)'
-      : 'var(--color-secondary-lighter)',
-    borderColor: active
-      ? tone === 'warning'
-        ? 'var(--color-warning)'
-        : 'var(--color-primary)'
-      : 'var(--color-secondary-light)',
-    borderWidth: '1px',
-    borderStyle: 'solid' as const,
-    color: active
-      ? tone === 'warning'
-        ? 'var(--color-warning)'
-        : 'var(--color-blue-text)'
-      : 'var(--color-secondary-hover)',
-    cursor: 'pointer',
-  });
-
   return (
     <div className="card-stack">
       {/* Text input field */}
       <div>
         <label htmlFor={`text-input-${index}`} className="text-xxs font-medium card-label text-neutral-500">
           {mode === 'analysis' ? 'Additional description (optional)' : 'Text Description'}
+          {isModified('textInput') && <ModifiedMark />}
         </label>
         <textarea
           id={`text-input-${index}`}
@@ -165,6 +150,7 @@ export function TextContextContent({
       {/* Number of sounds */}
       <RangeSlider
         label="Number of sounds"
+        modified={isModified('numSounds')}
         value={config.numSounds ?? NUM_SOUNDS_MIN}
         min={NUM_SOUNDS_MIN}
         max={NUM_SOUNDS_MAX}
@@ -179,45 +165,33 @@ export function TextContextContent({
       <div className="card-field">
         <label className="text-xxs font-medium card-label text-neutral-500">
           Sound placement
+          {(isModified('drawnArea') || isModified('useAnalysisResult')) && <ModifiedMark />}
         </label>
-        <div className="flex gap-1.5">
-          <button
-            type="button"
-            onClick={() => selectMode('random')}
-            className="flex-1 px-2 py-1.5 text-xs rounded transition-colors"
-            style={optionStyle(mode === 'random', 'primary')}
-            title="Distribute sounds randomly inside the model bounding box"
-          >
-            Random
-          </button>
-          <button
-            type="button"
-            onClick={() => selectMode('area')}
-            className="flex-1 px-2 py-1.5 text-xs rounded transition-colors"
-            style={optionStyle(mode === 'area' || isDrawingThisCard, 'warning')}
-            title="Draw a polygon in the viewer and place sounds inside it"
-          >
-            Draw area
-          </button>
-          <button
-            type="button"
-            onClick={() => hasParentAnalysis && selectMode('analysis')}
-            disabled={!hasParentAnalysis}
-            className="flex-1 px-2 py-1.5 text-xs rounded transition-colors"
-            style={{
-              ...optionStyle(mode === 'analysis', 'primary'),
-              opacity: hasParentAnalysis ? 1 : 0.5,
-              cursor: hasParentAnalysis ? 'pointer' : 'not-allowed',
-            }}
-            title={
-              hasParentAnalysis
+        <OptionToggle<PlacementMode>
+          value={isDrawingThisCard ? 'area' : mode}
+          onChange={selectMode}
+          options={[
+            {
+              value: 'random',
+              label: 'Random',
+              title: 'Distribute sounds randomly inside the model bounding box',
+            },
+            {
+              value: 'area',
+              label: 'Draw area',
+              tone: 'warning',
+              title: 'Draw a polygon in the viewer and place sounds inside it',
+            },
+            {
+              value: 'analysis',
+              label: '3D analysis',
+              disabled: !hasParentAnalysis,
+              title: hasParentAnalysis
                 ? 'Link prompts to objects from the parent 3D model analysis'
-                : 'No 3D model analysis available on this card’s parent context'
-            }
-          >
-            3D analysis
-          </button>
-        </div>
+                : 'No 3D model analysis available on this card’s parent context',
+            },
+          ]}
+        />
         <p className="text-xxs text-neutral-500">
           {mode === 'area' || isDrawingThisCard
             ? 'Sounds are placed inside the drawn area.'
@@ -228,26 +202,7 @@ export function TextContextContent({
       </div>
 
       {/* Drawing mode banner */}
-      {isDrawingThisCard && (
-        <div
-          className="text-xs p-2 rounded-md flex items-start justify-between gap-2"
-          style={{ backgroundColor: 'var(--color-warning-light)', color: 'var(--color-warning)' }}
-        >
-          <span>
-            Click to place points. Press <kbd className="px-1 py-0.5 rounded text-xs font-mono" style={{ backgroundColor: 'var(--color-warning-light)' }}>Enter</kbd> or right-click to undo last point.
-          </span>
-          <button
-            onClick={confirmDrawing}
-            className="shrink-0 px-2 py-0.5 rounded text-xs font-medium cursor-pointer"
-            style={{
-              backgroundColor: 'var(--color-warning)',
-              color: 'var(--color-on-blue)',
-            }}
-          >
-            Validate
-          </button>
-        </div>
-      )}
+      {isDrawingThisCard && <AreaDrawingBanner onConfirm={confirmDrawing} onCancel={cancelDrawing} />}
 
       {/* Area status indicator */}
       {hasArea && !isDrawingThisCard && (

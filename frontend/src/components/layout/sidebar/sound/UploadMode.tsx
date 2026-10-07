@@ -107,6 +107,7 @@ export function UploadMode({
             isPlaying={isPreviewPlaying}
             silent={silent}
             onPlayPause={() => onPreviewPlayPause?.()}
+            showShortcuts
             onStop={(ws) => {
               if (ws) ws.seekTo(0);
               onPreviewStop?.();

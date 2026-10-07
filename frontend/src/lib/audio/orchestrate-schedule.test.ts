@@ -223,3 +223,29 @@ describe('solveOrchestrateSchedule — authored fallback', () => {
     expect(r.byEntry[key('s', 'Emma_1')].timestamps).toEqual([36, 40, 46]);
   });
 });
+
+describe('solveOrchestrateSchedule — per-iteration duration overrides (DAW clip trims)', () => {
+  it('after() follows a trimmed parent iteration', () => {
+    const result = solveOrchestrateSchedule([
+      entry({ entryId: 'door', expressions: ['00:00'], variantDurations: [3], iterationDurations: [1.5] }),
+      entry({ entryId: 'steps', expressions: ['after(door)'] }),
+    ]);
+    expect(result.byEntry[key('s', 'steps')].timestamps).toEqual([1.5]);
+  });
+
+  it('alignEnd() uses the trimmed length of the aligned iteration', () => {
+    const result = solveOrchestrateSchedule([
+      entry({ entryId: 'chair', expressions: ['00:10'], variantDurations: [2] }),
+      entry({ entryId: 'before', expressions: ['alignEnd(chair)'], variantDurations: [1], iterationDurations: [0.5] }),
+    ]);
+    expect(result.byEntry[key('s', 'before')].timestamps).toEqual([9.5]);
+  });
+
+  it('ignores null overrides (falls back to the variant duration)', () => {
+    const result = solveOrchestrateSchedule([
+      entry({ entryId: 'door', expressions: ['00:00'], variantDurations: [3], iterationDurations: [null] }),
+      entry({ entryId: 'steps', expressions: ['after(door)'] }),
+    ]);
+    expect(result.byEntry[key('s', 'steps')].timestamps).toEqual([3]);
+  });
+});

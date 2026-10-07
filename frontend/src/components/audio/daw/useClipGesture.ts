@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useRef, useState } from 'react';
-import { useAudioControlsStore } from '@/store/audioControlsStore';
+import { useAudioControlsStore, type ClipTrimCopy } from '@/store/audioControlsStore';
 import { useSoundscapeStore } from '@/store/soundscapeStore';
 import type { TimelineSound } from '@/types/audio';
 import { resolveSnap, type SnapMode } from './daw-snap';
@@ -35,8 +35,8 @@ interface UseClipGestureArgs {
   onClickResolved: (clipKey: string, e: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }) => void;
 }
 
-const CLICK_THRESHOLD_PX = 3;
-const SNAP_MAGNET_PX = 6;
+export const CLICK_THRESHOLD_PX = 3;
+export const SNAP_MAGNET_PX = 6;
 
 /**
  * Freeze an "auto" track (no `soundTimestamps` entry yet — its clips are derived
@@ -54,6 +54,18 @@ export function ensureTrackMaterialized(soundsRef: React.RefObject<TimelineSound
     : undefined;
   if (!explicitTsSec) return;
   state.handleTimestampsChange(soundId, explicitTsSec);
+}
+
+/**
+ * Snapshot a clip's trim override (and the variant it is relative to) so a
+ * duplicate / paste of it plays the same trimmed window. `undefined` when the
+ * clip has no trim override.
+ */
+export function readClipTrimCopy(soundId: string, iterationIndex: number): ClipTrimCopy | undefined {
+  const { iterationTrims, iterationLinks } = useAudioControlsStore.getState();
+  const key = `${soundId}-${iterationIndex}`;
+  const trim = iterationTrims[key];
+  return trim ? { trim: { ...trim }, variantIndex: iterationLinks[key]?.variantIndex } : undefined;
 }
 
 /** Drag / group-drag / duplicate for DAW clips. One instance lives in DAWDock. */
@@ -173,7 +185,9 @@ export function useClipGesture({
         const { clearOrchestrateTrigger } = useSoundscapeStore.getState();
 
         if (gesture.duplicate) {
-          gesture.dragged.forEach((d) => {
+          // Snapshot before inserting — each insert shifts later indices on the track.
+          const trimCopies = gesture.dragged.map((d) => readClipTrimCopy(d.soundId, d.iterationIndex));
+          gesture.dragged.forEach((d, di) => {
             ensureTrackMaterialized(soundsRef, d.soundId);
             const current = useAudioControlsStore.getState().soundTimestamps[d.soundId] ?? [];
             const newStartSec = parseFloat(((Math.max(0, d.startMs + actualDeltaMs)) / 1000).toFixed(3));
@@ -183,7 +197,7 @@ export function useClipGesture({
             }
             const newTs = [...current];
             newTs.splice(insertAt, 0, newStartSec);
-            store.remapIterationLinksForInsert(d.soundId, insertAt);
+            store.remapIterationLinksForInsert(d.soundId, insertAt, trimCopies[di]);
             store.handleTimestampsChange(d.soundId, newTs);
           });
           return;

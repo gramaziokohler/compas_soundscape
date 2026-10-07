@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { useAudioControlsStore } from '@/store';
 import { getPreviewLevel } from '@/lib/audio/previewRegistry';
+import { isSoundSilenced } from '@/lib/audio/utils/mute-solo';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
 import type { SoundEvent } from '@/types';
 
@@ -49,7 +50,7 @@ export function useSpecklePlayingVisuals({
   // though its source is still technically "playing" in the orchestrator
   // (mute is applied as a zero gain, so getPlayingSourceIds still reports it).
   const mutedSounds = useAudioControlsStore((s) => s.mutedSounds);
-  const soloedSound = useAudioControlsStore((s) => s.soloedSound);
+  const soloedSounds = useAudioControlsStore((s) => s.soloedSounds);
 
   useEffect(() => {
     if (!isViewerReady) return;
@@ -67,17 +68,13 @@ export function useSpecklePlayingVisuals({
       idToPrompt.set(s.id, (s as { prompt_index?: number }).prompt_index ?? 0);
     });
 
-    // Prompt indices that are actually audible. Under solo, only the soloed
-    // track is audible; otherwise any track with a non-muted variant is.
+    // Prompt indices that are actually audible. Under solo, only soloed
+    // tracks are audible; otherwise any track with a non-muted variant is.
     const audiblePrompt = new Set<number>();
     (soundscapeData ?? []).forEach((s) => {
       if ((s as { isPending?: boolean }).isPending) return;
       const pi = (s as { prompt_index?: number }).prompt_index ?? 0;
-      if (soloedSound !== null) {
-        if (s.id === soloedSound) audiblePrompt.add(pi);
-      } else if (!mutedSounds.has(s.id)) {
-        audiblePrompt.add(pi);
-      }
+      if (!isSoundSilenced(s.id, mutedSounds, soloedSounds)) audiblePrompt.add(pi);
     });
 
     const clearAll = () => {
@@ -153,9 +150,7 @@ export function useSpecklePlayingVisuals({
       const shadowCasters: string[] = [];
       (soundscapeData ?? []).forEach((s) => {
         if ((s as { isPending?: boolean }).isPending) return;
-        const idMuted = mutedSounds.has(s.id)
-          || (soloedSound !== null && s.id !== soloedSound);
-        soundSphereManager.setSourceMuted(s.id, idMuted);
+        soundSphereManager.setSourceMuted(s.id, isSoundSilenced(s.id, mutedSounds, soloedSounds));
       });
       soundSphereManager.getSoundSphereMeshes().forEach((mesh) => {
         const ev = mesh.userData.soundEvent as SoundEvent | undefined;
@@ -189,5 +184,5 @@ export function useSpecklePlayingVisuals({
       hadPlayingRef.current = false;
       useSpeckleEngineStore.getState().viewer?.requestRender();
     };
-  }, [isViewerReady, audioOrchestrator, showPlayingHighlight, isDarkMode, soundscapeData, previewingSoundId, mutedSounds, soloedSound]);
+  }, [isViewerReady, audioOrchestrator, showPlayingHighlight, isDarkMode, soundscapeData, previewingSoundId, mutedSounds, soloedSounds]);
 }

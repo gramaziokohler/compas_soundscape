@@ -34,6 +34,8 @@ interface DrawingState {
   planeOrigin: THREE.Vector3 | null;
   planeNormal: THREE.Vector3 | null;
   isSnapped: boolean;
+  /** Points removed by undoPoint(), re-added by redoPoint(); cleared by a new click. */
+  redoStack: { vertex: PolygonVertex; projected: THREE.Vector3 }[];
 }
 
 interface AreaVisuals {
@@ -131,6 +133,7 @@ export class AreaDrawingManager {
       planeOrigin: null,
       planeNormal: null,
       isSnapped: false,
+      redoStack: [],
     };
 
     // Create cursor indicator
@@ -237,6 +240,7 @@ export class AreaDrawingManager {
       normal: [normal.x, normal.y, normal.z],
     });
     this.state.projected3D.push(projected);
+    this.state.redoStack = [];
 
     // Add visual point marker
     this.addPointMarker(projected);
@@ -256,39 +260,61 @@ export class AreaDrawingManager {
     return this.closePolygon();
   }
 
-  /**
-   * Handle right-click: remove the last point or cancel if no points left.
-   */
-  handleRightClick(event: MouseEvent): void {
-    if (!this.state) return;
-    event.preventDefault();
+  /** Whether a placed point can be undone. */
+  get canUndoPoint(): boolean {
+    return (this.state?.vertices.length ?? 0) > 0;
+  }
 
-    if (this.state.vertices.length > 0) {
-      this.state.vertices.pop();
-      this.state.projected3D.pop();
+  /** Whether an undone point can be re-placed. */
+  get canRedoPoint(): boolean {
+    return (this.state?.redoStack.length ?? 0) > 0;
+  }
 
-      // Remove last point marker
-      const markers = this.previewGroup.children.filter(
-        (c) => c.userData.isPointMarker
-      );
-      if (markers.length > 0) {
-        const last = markers[markers.length - 1];
-        this.previewGroup.remove(last);
-        this.disposeObject(last);
-      }
+  /** Remove the last placed point (Ctrl+Z while drawing). */
+  undoPoint(): void {
+    if (!this.state || this.state.vertices.length === 0) return;
 
-      // If no more plane anchors, reset plane
-      if (this.state.vertices.length === 0) {
-        this.state.planeOrigin = null;
-        this.state.planeNormal = null;
-      }
+    const vertex = this.state.vertices.pop()!;
+    const projected = this.state.projected3D.pop()!;
+    this.state.redoStack.push({ vertex, projected });
 
-      this.updatePreviewLine(null);
-      this.updatePreviewFill(null);
-      this.requestRender();
-    } else {
-      this.cancelDrawing();
+    // Remove last point marker
+    const markers = this.previewGroup.children.filter((c) => c.userData.isPointMarker);
+    const last = markers[markers.length - 1];
+    if (last) {
+      this.previewGroup.remove(last);
+      this.disposeObject(last);
     }
+
+    // The first point anchors the drawing plane — reset it with the last point.
+    if (this.state.vertices.length === 0) {
+      this.state.planeOrigin = null;
+      this.state.planeNormal = null;
+    }
+
+    this.refreshAfterPointChange();
+  }
+
+  /** Re-place the last undone point (Ctrl+Y / Ctrl+Shift+Z while drawing). */
+  redoPoint(): void {
+    if (!this.state || this.state.redoStack.length === 0) return;
+
+    const { vertex, projected } = this.state.redoStack.pop()!;
+    if (this.state.vertices.length === 0) {
+      this.state.planeOrigin = new THREE.Vector3(...vertex.position);
+      this.state.planeNormal = new THREE.Vector3(...vertex.normal);
+    }
+    this.state.vertices.push(vertex);
+    this.state.projected3D.push(projected);
+    this.addPointMarker(projected);
+
+    this.refreshAfterPointChange();
+  }
+
+  private refreshAfterPointChange(): void {
+    this.updatePreviewLine(null);
+    this.updatePreviewFill(null);
+    this.requestRender();
   }
 
   /**
@@ -305,6 +331,11 @@ export class AreaDrawingManager {
    */
   get isDrawing(): boolean {
     return this.state !== null;
+  }
+
+  /** Number of points placed on the polygon being drawn (0 when not drawing). */
+  get pointCount(): number {
+    return this.state?.projected3D.length ?? 0;
   }
 
   /**

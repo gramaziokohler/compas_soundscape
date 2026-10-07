@@ -41,6 +41,7 @@ import { TransformControls } from 'three/examples/jsm/controls/TransformControls
 import type { Viewer, CameraController } from '@speckle/viewer';
 import { ObjectLayers } from '@speckle/viewer';
 import type { SpeckleSceneAdapter } from './speckle-scene-adapter';
+import { CustomSelectionHighlight } from './custom-selection-highlight';
 
 /**
  * SpeckleDragHandler class
@@ -59,8 +60,9 @@ export class SpeckleDragHandler {
   private lastGizmoPosition: THREE.Vector3 = new THREE.Vector3();
   private isInitialized: boolean = false;
   
-  // Current selection
+  // Current selection (several objects share one gizmo in a multi-selection)
   private selectedObjects: THREE.Object3D[] = [];
+  private selectionHighlight: CustomSelectionHighlight | null = null;
   private isDragging: boolean = false;
   private justFinishedDragging: boolean = false;
 
@@ -94,6 +96,7 @@ export class SpeckleDragHandler {
     if (this.isInitialized) return;
     this.dummyAnchor.layers.set(ObjectLayers.PROPS);
     this.viewer.getRenderer().scene.add(this.dummyAnchor);
+    this.selectionHighlight = new CustomSelectionHighlight(this.viewer.getRenderer().scene);
     this.initGizmo();
   }
 
@@ -177,14 +180,12 @@ export class SpeckleDragHandler {
     // Calculate the delta movement
     const anchorPos = this.dummyAnchor.position.clone();
 
-    // Surface-constrained markers: instead of applying the free gizmo delta,
-    // re-project the marker onto the linked object's surface. The gizmo stays
-    // as the handle; only the snap point drives the object position.
-    if (this.selectedObjects.some((o) => this.isSurfaceMarker(o))) {
-      for (const obj of this.selectedObjects) {
-        if (this.isSurfaceMarker(obj)) this.snapMarkerToSurface(obj);
-        else obj.position.add(anchorPos.clone().sub(this.lastGizmoPosition));
-      }
+    // Single surface-constrained marker: instead of applying the free gizmo
+    // delta, re-project the marker onto the linked object's surface. The gizmo
+    // stays as the handle; only the snap point drives the object position.
+    const single = this.selectedObjects.length === 1 ? this.selectedObjects[0] : null;
+    if (single && this.isSurfaceMarker(single)) {
+      this.snapMarkerToSurface(single, this.dummyAnchor.position, true);
       this.lastGizmoPosition.copy(this.dummyAnchor.position);
       if (this.onDragCallback) {
         this.onDragCallback(this.selectedObjects, new THREE.Vector3());
@@ -193,10 +194,15 @@ export class SpeckleDragHandler {
       return;
     }
 
-    // Apply translation to all selected objects
+    // Apply translation to all selected objects. In a multi-selection, surface
+    // markers follow the delta and are then re-snapped onto their surface; if
+    // no surface lies under the moved point, the marker stays where it was.
     const delta = anchorPos.clone().sub(this.lastGizmoPosition);
     for (const obj of this.selectedObjects) {
       obj.position.add(delta);
+      if (this.isSurfaceMarker(obj) && !this.snapMarkerToSurface(obj, obj.position, false)) {
+        obj.position.sub(delta);
+      }
     }
 
     // Update last position
@@ -252,11 +258,13 @@ export class SpeckleDragHandler {
 
   /**
    * Snap a surface marker to the linked object's surface by raycasting from the
-   * camera through the gizmo anchor's screen position. Only hits on the marker's
-   * linked object ids are accepted; the marker is oriented to the hit normal.
+   * camera through `probe`'s screen position (the gizmo anchor for a single
+   * marker, the marker's own moved position in a multi-selection). Only hits on
+   * the marker's linked object ids are accepted; the marker is oriented to the
+   * hit normal. `moveAnchor` re-centers the gizmo on the snapped marker.
    * @returns true when a surface hit was applied.
    */
-  private snapMarkerToSurface(object: THREE.Object3D): boolean {
+  private snapMarkerToSurface(object: THREE.Object3D, probe: THREE.Vector3, moveAnchor: boolean): boolean {
     const allowed = this.collectAllowedRenderIds(object);
     if (allowed.size === 0) return false;
 
@@ -264,7 +272,7 @@ export class SpeckleDragHandler {
     const camera = renderer.renderingCamera;
     if (!camera) return false;
 
-    const ndc = this.dummyAnchor.position.clone().project(camera);
+    const ndc = probe.clone().project(camera);
     let hits: any[] = [];
     try {
       hits = renderer.intersections.intersect(
@@ -303,8 +311,10 @@ export class SpeckleDragHandler {
       // Lift slightly off the surface so the marker ring does not z-fight it.
       object.position.copy(point).addScaledVector(normal, 0.01);
       object.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal);
-      this.dummyAnchor.position.copy(object.position);
-      this.lastGizmoPosition.copy(this.dummyAnchor.position);
+      if (moveAnchor) {
+        this.dummyAnchor.position.copy(object.position);
+        this.lastGizmoPosition.copy(this.dummyAnchor.position);
+      }
       return true;
     }
     return false;
@@ -315,28 +325,37 @@ export class SpeckleDragHandler {
       this.init();
     }
 
-    if (objects.length === 0) {
+    const unique = Array.from(new Set(objects));
+    if (unique.length === 0) {
       this.deselectObjects();
       return;
     }
 
-    const object = objects[0];
-    this.selectedObjects = [object];
-    if (object.userData?.isSurfaceMarker) {
-      // Invisible marker proxy — its own position IS the anchor (an empty group
-      // has no AABB, so Box3.getCenter would be NaN).
-      this.dummyAnchor.position.copy(object.position);
-    } else {
-      const box = new THREE.Box3().setFromObject(object);
-      const center = box.getCenter(new THREE.Vector3());
-      this.dummyAnchor.position.copy(center);
-    }
+    // One shared gizmo at the selection's center moves every selected object.
+    this.selectedObjects = unique;
+    this.dummyAnchor.position.copy(this.computeSelectionCenter());
     this.lastGizmoPosition.copy(this.dummyAnchor.position);
+    this.selectionHighlight?.set(unique);
 
     if (this.transformControls) {
-      this.configureGizmoAxes(object);
+      this.configureGizmoAxes(unique);
       this.transformControls.attach(this.dummyAnchor);
     }
+  }
+
+  /** Gizmo anchor point for one object. */
+  private objectCenter(object: THREE.Object3D): THREE.Vector3 {
+    // Invisible marker proxy — its own position IS the anchor (an empty group
+    // has no AABB, so Box3.getCenter would be NaN).
+    if (object.userData?.isSurfaceMarker) return object.position.clone();
+    return new THREE.Box3().setFromObject(object).getCenter(new THREE.Vector3());
+  }
+
+  /** Average of the selected objects' centers (the object's own center for a single selection). */
+  private computeSelectionCenter(): THREE.Vector3 {
+    const center = new THREE.Vector3();
+    for (const object of this.selectedObjects) center.add(this.objectCenter(object));
+    return center.divideScalar(Math.max(1, this.selectedObjects.length));
   }
 
   /**
@@ -345,12 +364,13 @@ export class SpeckleDragHandler {
    * has no meaning and only invites the user to pull the light off the surface.
    * The normal is probed from the actual surface hit (world space) rather than
    * assumed from a fixed up-axis, so it works regardless of the model's Y/Z
-   * convention.
+   * convention. A multi-selection always shows all three axes.
    */
-  private configureGizmoAxes(object: THREE.Object3D): void {
+  private configureGizmoAxes(objects: THREE.Object3D[]): void {
     const tc = this.transformControls;
     if (!tc) return;
-    if (object.userData?.isSurfaceMarker) {
+    const object = objects.length === 1 ? objects[0] : null;
+    if (object?.userData?.isSurfaceMarker) {
       const normal = this.probeSurfaceNormal(object);
       if (normal) {
         const ax = Math.abs(normal.x);
@@ -418,6 +438,7 @@ export class SpeckleDragHandler {
 
   public deselectObjects(): void {
     this.selectedObjects = [];
+    this.selectionHighlight?.clear();
     if (this.transformControls) {
       this.transformControls.showX = true;
       this.transformControls.showY = true;
@@ -427,19 +448,17 @@ export class SpeckleDragHandler {
   }
 
   /**
-   * Reposition the gizmo anchor onto the currently selected object's current
-   * center.  Called every frame so the gizmo follows its object when the
-   * position changes from another controller (e.g. undo/redo, external drag)
-   * instead of floating detached at the previous position.
-   * No-op while the user is dragging.
+   * Reposition the gizmo anchor onto the current selection's center.  Called
+   * every frame so the gizmo follows its objects when their positions change
+   * from another controller (e.g. undo/redo, external drag) instead of floating
+   * detached at the previous position. Multi-selection outlines are refreshed
+   * too (objects are screen-space scaled). Anchor sync is skipped while dragging.
    */
   public syncAnchorToSelection(): void {
-    if (this.isDragging || this.selectedObjects.length === 0) return;
-    const object = this.selectedObjects[0];
-    if (!object) return;
-    const center = object.userData?.isSurfaceMarker
-      ? object.position.clone()
-      : new THREE.Box3().setFromObject(object).getCenter(new THREE.Vector3());
+    if (this.selectedObjects.length === 0) return;
+    this.selectionHighlight?.update();
+    if (this.isDragging) return;
+    const center = this.computeSelectionCenter();
     if (this.dummyAnchor.position.distanceTo(center) > 0.0001) {
       this.dummyAnchor.position.copy(center);
       this.dummyAnchor.updateMatrixWorld();
@@ -498,6 +517,7 @@ export class SpeckleDragHandler {
 
   public dispose(): void {
     this.deselectObjects();
+    this.selectionHighlight = null;
 
     if (this.transformControls) {
       const scene = this.adapter.getScene();

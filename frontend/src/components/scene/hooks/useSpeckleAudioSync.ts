@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { useAudioControlsStore } from '@/store/audioControlsStore';
 import { DEFAULT_DBFS } from '@/utils/constants';
+import { isSoundSilenced } from '@/lib/audio/utils/mute-solo';
 import type { SoundEvent } from '@/types';
 
 export function useSpeckleAudioSync({
@@ -9,14 +10,14 @@ export function useSpeckleAudioSync({
   soundscapeData,
   soundVolumes,
   mutedSounds,
-  soloedSound,
+  soloedSounds,
   globalSoundSpeed,
 }: {
   audioOrchestrator: any;
   soundscapeData: SoundEvent[] | null;
   soundVolumes: Record<string, number>;
   mutedSounds: Set<string>;
-  soloedSound: string | null;
+  soloedSounds: Set<string>;
   globalSoundSpeed: number;
 }) {
   // Calibration anchor: every generated/processed WAV is normalized to this
@@ -64,15 +65,11 @@ export function useSpeckleAudioSync({
       const soundSphereManager = coordinator?.getSoundSphereManager();
 
       // Per-prompt effective mute: a card is dimmed when ANY of its variants is
-      // muted, or when solo mode is active and none of its variants is soloed.
+      // muted, or when solo mode is active and its track is not soloed.
       const promptMuted = new Map<number, boolean>();
 
       soundscapeData.forEach((soundEvent) => {
-        let shouldBeMuted = mutedSounds.has(soundEvent.id);
-
-        if (soloedSound !== null) {
-          shouldBeMuted = soundEvent.id !== soloedSound;
-        }
+        const shouldBeMuted = isSoundSilenced(soundEvent.id, mutedSounds, soloedSounds);
 
         audioOrchestrator.setSourceMute(soundEvent.id, shouldBeMuted);
         soundSphereManager?.setSourceMuted(soundEvent.id, shouldBeMuted);
@@ -86,7 +83,7 @@ export function useSpeckleAudioSync({
         soundSphereManager?.setPromptMuted(promptIdx, muted);
       });
     }
-  }, [mutedSounds, soloedSound, soundscapeData, audioOrchestrator]);
+  }, [mutedSounds, soloedSounds, soundscapeData, audioOrchestrator]);
 
   // ============================================================================
   // Effect - Speed of Sound

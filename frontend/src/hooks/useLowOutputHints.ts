@@ -17,11 +17,11 @@ interface UseLowOutputHintsOptions {
 /**
  * Low-Output Hints Hook
  *
- * While the scene is playing, samples the final (post-limiter) output level and,
- * when it stays below `LOW_OUTPUT_HINT.LOW_OUTPUT_DBFS` for `SUSTAIN_MS`, asks
+ * For `LOW_OUTPUT_HINT.CHECK_WINDOW_MS` after Play is pressed, samples the final
+ * (post-limiter) output level and, when it stays below `LOW_OUTPUT_DBFS` for `SUSTAIN_MS`, asks
  * `diagnoseLowOutput` why: suspended audio, master volume, mute/solo, quiet
  * tracks, out-of-simulation sounds, low-energy IRs, or a far-away camera.
- * The hint clears once the output recovers past `RECOVER_OUTPUT_DBFS`.
+ * The hint clears once the output recovers past `RECOVER_OUTPUT_DBFS`, or after `DISPLAY_MS`.
  * Dismissed hints stay hidden for the rest of the session.
  *
  * @returns The current hint (or null), plus apply/dismiss handlers.
@@ -48,7 +48,14 @@ export function useLowOutputHints({
     }
 
     audioOrchestrator.resetOutputLevel();
+    const startedAt = performance.now();
     const timer = setInterval(() => {
+      // Only diagnose right after Play is pressed; a shown hint lingers via DISPLAY_MS.
+      if (performance.now() - startedAt > LOW_OUTPUT_HINT.CHECK_WINDOW_MS) {
+        clearInterval(timer);
+        return;
+      }
+
       const diag = audioOrchestrator.getOutputDiagnostics();
       if (!diag) return;
 
@@ -78,6 +85,13 @@ export function useLowOutputHints({
     return () => clearInterval(timer);
   }, [isPlaying, audioOrchestrator]);
 
+  // Auto-hide a shown hint so it never stays up for the whole playback.
+  useEffect(() => {
+    if (!hint) return;
+    const timeout = setTimeout(() => setHint(null), LOW_OUTPUT_HINT.DISPLAY_MS);
+    return () => clearTimeout(timeout);
+  }, [hint]);
+
   /** Hide the hint and wait a full sustain period before re-diagnosing. */
   const settle = useCallback(() => {
     lowSinceRef.current = null;
@@ -101,7 +115,7 @@ export function useLowOutputHints({
         audio.setMasterVolume(AUDIO_CONTROL.MASTER_VOLUME.RESET);
         break;
       case 'unmute-all':
-        audio.restoreMuteSolo([], null);
+        audio.restoreMuteSolo([], []);
         break;
       case 'open-timeline':
         onOpenTimeline();

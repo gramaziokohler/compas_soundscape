@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useAnalysisStore, useSoundscapeStore, useSceneWorkflowStore } from '@/store';
 import type { SoundScene } from '@/types/sceneWorkflow';
-import { getSceneSoundIndices, getSceneTitle, isSoundConfigGenerated } from '@/utils/sceneWorkflow';
+import { getSceneFullTitle, getSceneSoundIndices, getSceneTitle, isSoundConfigGenerated } from '@/utils/sceneWorkflow';
 
 /**
  * Sound scenes shown as bubbles in Simple mode.
@@ -35,10 +35,12 @@ export function useSoundScenes(): SoundScene[] {
       const isScenario = config.type === 'scenario';
       if (!isScenario && indices.length === 0 && !(usageIndex in runs)) return;
 
+      const fallback = `Scene ${scenes.length + 1}`;
       scenes.push({
         usageIndex,
         contextIndex: parent ?? null,
-        title: getSceneTitle(config, `Scene ${scenes.length + 1}`),
+        title: getSceneTitle(config, fallback),
+        fullTitle: getSceneFullTitle(config, fallback),
         isScenario,
         soundCount: indices.length,
         generatedCount: indices.filter((i) => isSoundConfigGenerated(soundConfigs, generatedSounds, i)).length,

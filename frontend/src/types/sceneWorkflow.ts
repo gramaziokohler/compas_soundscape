@@ -11,9 +11,6 @@ export type UIMode = 'simple' | 'expert';
 /** Pipeline steps, in execution order. */
 export type SceneWorkflowStep = 'analyze' | 'scenario' | 'foley' | 'generate';
 
-/** Speed/precision preset picked in the prompt composer. */
-export type SceneQuality = 'fast' | 'precise';
-
 /** A reference image attached in the composer (fed to model analysis as a screenshot). */
 export interface SceneReferenceImage {
   name: string;
@@ -24,7 +21,6 @@ export interface SceneReferenceImage {
 /** Options chosen in the prompt composer for one scene. */
 export interface SceneWorkflowOptions {
   includeSpeech: boolean;
-  quality: SceneQuality;
   /** Length of the generated scene timeline (ms). */
   durationMs: number;
   /** Text-to-audio model used for the generate step (AUDIO_MODEL_* constant). */
@@ -75,6 +71,8 @@ export interface SoundScene {
   usageIndex: number;
   contextIndex: number | null;
   title: string;
+  /** Untrimmed title (the full prompt when the scene was created from one). */
+  fullTitle: string;
   isScenario: boolean;
   soundCount: number;
   generatedCount: number;

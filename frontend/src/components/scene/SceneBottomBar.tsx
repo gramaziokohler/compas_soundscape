@@ -1,13 +1,15 @@
 'use client';
 
 import { BarButton } from '@/components/ui/BarButton';
+import { ShortcutTooltip } from '@/components/ui/ShortcutTooltip';
 import { Icon, RefreshIcon } from '@/components/ui/Icon';
 import { NotificationCenter } from '@/components/ui/NotificationCenter';
 import { UndoRedoToolbar } from '@/components/ui/UndoRedoToolbar';
 import { SceneShortcutsButton } from '@/components/scene/SceneShortcutsButton';
 import { LowOutputHintPopover } from '@/components/scene/LowOutputHintPopover';
 import { SceneVolumeButton } from '@/components/scene/SceneVolumeButton';
-import { useSceneWorkflowStore, useUIStore } from '@/store';
+import { useSceneWorkflowStore, useUIStore, selectHasSaveTarget } from '@/store';
+import { useHomeStageHasWork } from '@/hooks/useHomeStageHasWork';
 import { SCENE_BOTTOM_BAR } from '@/utils/constants';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
 
@@ -61,11 +63,12 @@ export interface SceneBottomBarProps {
  *
  * Full-width frosted control strip docked to the bottom edge. Groups every
  * scene-level control by intent:
- *   left   — app: home, "Simple" (Expert mode only — the full Simple/Expert
- *            choice lives in Settings › Display), undo/redo, save
- *   center — playback of the selected scene: play/pause, stop, time, timeline;
+ *   left   — app: home, undo/redo, save
+ *   center — playback of the selected scene: play/pause, stop, time, timeline,
+ *            plus snap / zoom / export while the DAW is expanded (portaled by DAWDock);
  *            a low-output hint pops above it when playback is too quiet
- *   right  — view: volume, reset view, refresh, Object Explorer / load model;
+ *   right  — view: Simple / Detailed interface toggle, volume, show/hide sounds & listeners,
+ *            reset view, refresh, Object Explorer / load model;
  *            then help & system: shortcuts, notifications, settings
  * The docked DAW opens above it; sidebars stop at its top edge.
  *
@@ -86,6 +89,12 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
   } = props;
   const isExpert = useUIStore((s) => s.uiMode === 'expert');
   const switchUIMode = useSceneWorkflowStore((s) => s.switchUIMode);
+  const soundsAndListenersVisible = useUIStore((s) => s.showSoundSpheres || s.showSceneListeners);
+  const toggleSoundsAndListeners = useUIStore((s) => s.toggleSoundsAndListenersVisible);
+  // Bare Home page (no model, no saved project) never autosaves — flag edits.
+  const hasSaveTarget = useUIStore(selectHasSaveTarget);
+  const homeStageHasWork = useHomeStageHasWork();
+  const showUnsavedHint = !hasSaveTarget && homeStageHasWork;
 
   return (
     <div
@@ -104,20 +113,6 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
         >
           Sound is blue
         </button>
-        {isExpert && (
-          <BarButton
-            onClick={() => switchUIMode('simple')}
-            title="Back to Simple mode"
-            label="Simple"
-            icon={
-              <svg width={ICON} height={ICON} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-                <circle cx="7" cy="7" r="3" />
-                <circle cx="7" cy="17" r="3" />
-                <circle cx="17" cy="12" r="3" />
-              </svg>
-            }
-          />
-        )}
         <div className="scene-bottom-bar__sep" />
         <UndoRedoToolbar />
         {isViewerReady && onSaveSoundscape && !enableAutoSave && (
@@ -135,6 +130,9 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
             }
           />
         )}
+        {isViewerReady && showUnsavedHint && (
+          <span className="bar-unsaved" role="status">progress not saved</span>
+        )}
       </div>
 
       {/* ── Center: playback ── */}
@@ -147,27 +145,30 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
               timelineOpen={showTimeline}
               onOpenTimeline={onToggleTimeline}
             />
-            <button
-              type="button"
-              className="bar-play"
-              onClick={isPlaying ? onPause : onPlay}
-              title={isPlaying ? 'Pause' : 'Play the scene'}
-              aria-label={isPlaying ? 'Pause' : 'Play'}
-            >
-              {isPlaying ? (
-                <svg width={ICON} height={ICON} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                  <rect x="6" y="5" width="4" height="14" rx="1" />
-                  <rect x="14" y="5" width="4" height="14" rx="1" />
-                </svg>
-              ) : (
-                <svg width={ICON} height={ICON} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                  <path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z" />
-                </svg>
-              )}
-            </button>
+            <ShortcutTooltip shortcut="PLAY_PAUSE" label={isPlaying ? 'Pause' : 'Play the scene'}>
+              <button
+                type="button"
+                className="bar-play"
+                onClick={isPlaying ? onPause : onPlay}
+                aria-label={isPlaying ? 'Pause' : 'Play'}
+                aria-keyshortcuts="Space"
+              >
+                {isPlaying ? (
+                  <svg width={ICON} height={ICON} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <rect x="6" y="5" width="4" height="14" rx="1" />
+                    <rect x="14" y="5" width="4" height="14" rx="1" />
+                  </svg>
+                ) : (
+                  <svg width={ICON} height={ICON} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z" />
+                  </svg>
+                )}
+              </button>
+            </ShortcutTooltip>
             <BarButton
               onClick={onStop}
               title="Stop"
+              shortcut="STOP"
               icon={
                 <svg width={ICON} height={ICON} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                   <rect x="6" y="6" width="12" height="12" rx="1.5" />
@@ -188,15 +189,64 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
                 </svg>
               }
             />
+            {/* The expanded DAW dock portals its snap / zoom / export controls here.
+                Absolutely placed just past the group's right edge, so it never widens
+                the centred playback group — the play button stays put on expand. */}
+            {showTimeline && (
+              <div
+                id={SCENE_BOTTOM_BAR.DAW_CONTROLS_SLOT_ID}
+                className="scene-bottom-bar__group"
+                style={{ position: 'absolute', left: '100%', top: 0, bottom: 0, paddingLeft: SCENE_BOTTOM_BAR.GROUP_GAP }}
+              />
+            )}
           </>
         )}
       </div>
 
       {/* ── Right: view tools, then help & system ── */}
       <div className="scene-bottom-bar__group" style={{ justifySelf: 'end' }}>
+        <div className="bar-mode-toggle" role="group" aria-label="User interface level of detail" title="User interface level of detail">
+          {(['simple', 'expert'] as const).map((mode) => {
+            const selected = (mode === 'expert') === isExpert;
+            return (
+              <button
+                key={mode}
+                type="button"
+                className="bar-mode-toggle__btn"
+                data-active={selected}
+                aria-pressed={selected}
+                onClick={() => { if (!selected) switchUIMode(mode); }}
+              >
+                {mode === 'simple' ? 'Simple' : 'Detailed'}
+              </button>
+            );
+          })}
+        </div>
         {isViewerReady && (
           <>
             <SceneVolumeButton audioOrchestrator={audioOrchestrator} />
+            <BarButton
+              onClick={toggleSoundsAndListeners}
+              active={soundsAndListenersVisible}
+              shortcut="TOGGLE_SOUNDS_LISTENERS"
+              title={soundsAndListenersVisible ? 'Hide sounds & listeners' : 'Show sounds & listeners'}
+              icon={
+                <Icon>
+                  {soundsAndListenersVisible ? (
+                    <>
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                      <circle cx="12" cy="12" r="3" />
+                    </>
+                  ) : (
+                    <>
+                      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+                      <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+                      <line x1="1" y1="1" x2="23" y2="23" />
+                    </>
+                  )}
+                </Icon>
+              }
+            />
             <BarButton
               onClick={onResetZoom}
               title="Reset camera view"
@@ -219,6 +269,7 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
                 id="load-speckle-model-button"
                 onClick={onToggleLoadModel}
                 active={showLoadModelPanel}
+                primary
                 title="Load a Speckle model"
                 label="Load model"
                 icon={
@@ -231,6 +282,7 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
               />
             ) : (
               <BarButton
+                id={SCENE_BOTTOM_BAR.OBJECT_EXPLORER_BUTTON_ID}
                 onClick={onToggleExplorer}
                 active={showObjectExplorer}
                 title={showObjectExplorer ? 'Close Object Explorer' : 'Open Object Explorer — model layers and objects'}

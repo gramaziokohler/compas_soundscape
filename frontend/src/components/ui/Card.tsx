@@ -8,8 +8,12 @@ import { useNameEditing } from '@/utils/useNameEditing';
 import { GenerateButton, type GenerateStatus } from '@/components/ui/GenerateButton';
 import { VariantsBar } from '@/components/ui/VariantsBar';
 import { Notice } from '@/components/ui/Notice';
-import { SettingsSummary, getSettingsTitle, getSettingsRows } from '@/components/ui/SettingsSummary';
+import { SettingsSummary, getSettingsTitle, getSettingsRows, getEditableSettingsTitle } from '@/components/ui/SettingsSummary';
 import { InfoPopover } from '@/components/ui/InfoPopover';
+import { DeleteConfirmButton } from '@/components/ui/DeleteConfirmButton';
+import { OptionalShortcutTooltip, ariaKeyShortcuts } from '@/components/ui/ShortcutTooltip';
+import { isModEnter, isTypingTarget } from '@/lib/shortcuts/keyboard-utils';
+import type { ShortcutId } from '@/utils/constants';
 
 /**
  * Card Component
@@ -35,7 +39,6 @@ import { InfoPopover } from '@/components/ui/InfoPopover';
  *   onToggleExpand={handleToggle}
  *   onUpdateConfig={handleUpdate}
  *   onRemove={handleRemove}
- *   onReset={handleReset}
  *   beforeContent={<ScenarioContent ... />}
  *   afterContent={<AnalysisResultContent ... />}
  * />
@@ -78,6 +81,8 @@ export function getCardDefaultName<TConfig extends CardBaseConfig>(
 // Card Component
 // ============================================================================
 
+const DEFAULT_POWER_TITLES = { on: 'Disable simulation', off: 'Enable simulation' };
+
 export function Card<TConfig extends CardBaseConfig>({
   config,
   index,
@@ -96,7 +101,8 @@ export function Card<TConfig extends CardBaseConfig>({
   showIndex = true,
   canRemove = true,
   closeButtonTitle = 'Remove',
-  resetButtonTitle = 'Reset to configuration',
+  closeButtonShortcut,
+  removeConfirmMessage,
   customButtons,
   headerPrefix,
   footerPrefix,
@@ -114,12 +120,12 @@ export function Card<TConfig extends CardBaseConfig>({
   onToggleExpand,
   onUpdateConfig,
   onRemove,
-  onReset,
   onDismissError,
   onDoubleClickCard,
   onReduce,
   onTogglePower,
   isPoweredOn = false,
+  powerTitles = DEFAULT_POWER_TITLES,
   beforeContent,
   afterContent,
   loadingContent,
@@ -128,8 +134,12 @@ export function Card<TConfig extends CardBaseConfig>({
   variants,
   showVariantsPreGen = false,
   showVariantsPostGen = false,
-  promptAction,
   showSettingsSummary = true,
+  settingsContent,
+  settingsDirty = false,
+  onRegenerate,
+  onRevertSettings,
+  modifiedSettings,
   beforeSettingsSummary,
   description,
 }: CardProps<TConfig>) {
@@ -173,6 +183,9 @@ export function Card<TConfig extends CardBaseConfig>({
   // surface card.
   const isReduced = isGenerated && !isExpanded;
   const isGeneratedActive = isGenerated && !isReduced;
+  // Floating (Simple-mode) card: reduce always visible in the header, remove
+  // moves to a confirmed trash button at the bottom right.
+  const isFloating = !!onReduce;
 
   // Build Tailwind class names
   const cardClassName = [
@@ -228,11 +241,6 @@ export function Card<TConfig extends CardBaseConfig>({
     onRemove(index);
   }, [index, onRemove]);
 
-  const handleResetClick = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    onReset(index);
-  }, [index, onReset]);
-
   // Double-click on the card body (outside the header) → zoom to sphere.
   // Skips interactive elements (buttons, inputs, sliders, links) so content UI still works.
   const handleCardDoubleClick = useCallback((e: React.MouseEvent) => {
@@ -282,6 +290,37 @@ export function Card<TConfig extends CardBaseConfig>({
     : hasResult
       ? 'done'
       : 'idle';
+  // A generated card whose settings were edited since generation offers
+  // "Regenerate" (+ "Revert") inside its settings box.
+  const canRegenerate = hasResult && settingsDirty && !!onRegenerate && !isRunning;
+  const runAction = canRegenerate ? onRegenerate : generateStatus === 'idle' ? onRun : undefined;
+  // Ctrl/Cmd+Enter in any text field inside the card = click the Generate /
+  // Run / Regenerate button. Only while that button is actually clickable.
+  const canSubmitFromKeyboard = isExpanded && !!runAction && !actionButtonDisabled;
+
+  // Settings section open state — owned here so Regenerate can fold it away.
+  const [settingsExpanded, setSettingsExpanded] = useState(false);
+  const regenerateBarRef = useRef<HTMLDivElement>(null);
+
+  // When an edit first surfaces Regenerate, bring it into view if the card
+  // overflows its scroll container ('nearest' = no scroll when already visible).
+  useEffect(() => {
+    if (!canRegenerate || !settingsExpanded) return;
+    regenerateBarRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [canRegenerate, settingsExpanded]);
+
+  const handleRunAction = useCallback(async () => {
+    if (canRegenerate) setSettingsExpanded(false);
+    await runAction?.();
+  }, [runAction, canRegenerate]);
+  const handleCardKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.defaultPrevented || !isModEnter(e) || !isTypingTarget(e.target)) return;
+    if (!canSubmitFromKeyboard) return;
+    e.preventDefault();
+    e.stopPropagation();
+    void handleRunAction();
+  }, [canSubmitFromKeyboard, handleRunAction]);
+
   const showFooterPrefix = !!footerPrefix && generateStatus !== 'generating';
   const showFooterSuffix = !!footerSuffix && generateStatus !== 'generating';
   const showFooterExtras = showFooterPrefix || showFooterSuffix;
@@ -306,6 +345,7 @@ export function Card<TConfig extends CardBaseConfig>({
       className={cardClassName}
       onDoubleClick={handleCardDoubleClick}
       onContextMenu={handleContextMenu}
+      onKeyDown={handleCardKeyDown}
       style={{
         ...cardColorStyle,
         ...(isGeneratedActive ? { backgroundColor: 'color-mix(in srgb, var(--color-primary) 72%, var(--color-surface))' } : {}),
@@ -353,9 +393,9 @@ export function Card<TConfig extends CardBaseConfig>({
           <div className="flex-shrink-0 self-start">
             <CardButton
               icon={<PowerIcon />}
-              title={isPoweredOn ? 'Disable simulation' : 'Enable simulation'}
+              title={isPoweredOn ? powerTitles.on : powerTitles.off}
               onClick={(e) => { e.stopPropagation(); onTogglePower(); }}
-              variant={isPoweredOn ? 'primary' : 'default'}
+              active={isPoweredOn}
               onBlueBackground={isGeneratedActive}
             />
           </div>
@@ -431,7 +471,7 @@ export function Card<TConfig extends CardBaseConfig>({
             title can use the full bar; when they appear the title truncates to fit.
             self-start keeps them aligned with the title row (higher) instead of
             centered against the taller title+version block. */}
-        <div className="flex items-center gap-1 flex-shrink-0 w-0 overflow-hidden opacity-0 pointer-events-none self-start group-hover:w-auto group-hover:opacity-100 group-hover:pointer-events-auto focus-within:w-auto focus-within:opacity-100 focus-within:pointer-events-auto">
+        <div className={`flex items-center gap-1 flex-shrink-0 self-start ${isFloating ? '' : 'w-0 overflow-hidden opacity-0 pointer-events-none group-hover:w-auto group-hover:opacity-100 group-hover:pointer-events-auto focus-within:w-auto focus-within:opacity-100 focus-within:pointer-events-auto'}`}>
           {/* Reduce button — floating (Simple-mode) cards fold back into their bubble */}
           {onReduce && (
             <CardButton
@@ -443,23 +483,13 @@ export function Card<TConfig extends CardBaseConfig>({
             />
           )}
 
-          {/* Reset button - only show if result exists */}
-          {hasResult && (
-            <CardButton
-              icon={<ResetIcon />}
-              title={resetButtonTitle}
-              onClick={handleResetClick}
-              variant="default"
-              onBlueBackground={isGeneratedActive}
-            />
-          )}
-
-          {/* Close button */}
-          {canRemove && (
+          {/* Close button (floating cards use the bottom-right trash instead) */}
+          {canRemove && !isFloating && (
             <CardButton
               icon={<CloseIcon />}
               title={closeButtonTitle}
               onClick={handleRemoveClick}
+              shortcut={isExpanded ? closeButtonShortcut : undefined}
               variant="close"
               onBlueBackground={isGeneratedActive}
             />
@@ -498,14 +528,34 @@ export function Card<TConfig extends CardBaseConfig>({
             )}
           </div>
 
-          {/* Read-only recap — always pinned below scrollable content, above the footer bar */}
+          {/* Settings section — editable settings (settingsContent) or a read-only
+              recap, pinned below scrollable content, above the footer bar */}
           {beforeSettingsSummary}
           {showSettingsSummary && hasResult && (
             <SettingsSummary
-              title={getSettingsTitle(config)}
-              rows={getSettingsRows(config)}
-              promptAction={promptAction}
-            />
+              title={settingsContent ? getEditableSettingsTitle(config) : getSettingsTitle(config)}
+              rows={settingsContent ? [] : getSettingsRows(config)}
+              modifiedFields={modifiedSettings}
+              expanded={settingsExpanded}
+              onExpandedChange={setSettingsExpanded}
+              onRevert={canRegenerate ? onRevertSettings : undefined}
+              footer={canRegenerate ? (
+                <div ref={regenerateBarRef}>
+                    <GenerateButton
+                      shortcut={canSubmitFromKeyboard ? 'SUBMIT_PROMPT' : undefined}
+                      status="idle"
+                      progress={0}
+                      label="Regenerate"
+                      isAi={actionIsAi}
+                      disabled={actionButtonDisabled}
+                      disabledReason={actionButtonDisabledReason}
+                      onGenerate={handleRunAction}
+                    />
+                </div>
+              ) : undefined}
+            >
+              {settingsContent}
+            </SettingsSummary>
           )}
         </div>
       )}
@@ -527,6 +577,7 @@ export function Card<TConfig extends CardBaseConfig>({
           {showFooterPrefix ? footerPrefix : null}
           <div className={showFooterExtras ? 'min-w-0 flex-1' : undefined}>
             <GenerateButton
+              shortcut={canSubmitFromKeyboard && generateStatus === 'idle' ? 'SUBMIT_PROMPT' : undefined}
               status={generateStatus}
               progress={progress}
               statusText={status}
@@ -534,13 +585,25 @@ export function Card<TConfig extends CardBaseConfig>({
               isAi={actionIsAi}
               disabled={actionButtonDisabled}
               disabledReason={actionButtonDisabledReason}
-              onGenerate={onRun}
+              onGenerate={onRun ? handleRunAction : undefined}
               onStop={onCancel}
               doneLabel={doneActionLabel}
               onDoneAction={onDoneAction}
             />
           </div>
           {showFooterSuffix ? footerSuffix : null}
+        </div>
+      )}
+
+      {/* Floating cards: confirmed remove, bottom-right */}
+      {isFloating && canRemove && (
+        <div className="flex justify-end">
+          <DeleteConfirmButton
+            title={closeButtonTitle}
+            message={removeConfirmMessage ?? `${closeButtonTitle}?`}
+            onConfirm={() => onRemove(index)}
+            onBlueBackground={isGeneratedActive}
+          />
         </div>
       )}
       </div>
@@ -686,53 +749,42 @@ export interface CardButtonProps {
   onClick: (e: React.MouseEvent) => void;
   disabled?: boolean;
   variant?: 'default' | 'close' | 'primary';
+  /** "On" state (e.g. power): solid card-color background, inverted icon. */
+  active?: boolean;
   /** Recolors the icon for legibility on a solid-blue generated card. */
   onBlueBackground?: boolean;
+  /** Keyboard shortcut — replaces the native title with a ShortcutTooltip. */
+  shortcut?: ShortcutId;
 }
 
-export function CardButton({ icon, title, onClick, disabled = false, variant = 'default', onBlueBackground = false }: CardButtonProps) {
+export function CardButton({ icon, title, onClick, disabled = false, variant = 'default', active = false, onBlueBackground = false, shortcut }: CardButtonProps) {
   const variantClasses = {
     default: 'text-secondary-hover hover:bg-secondary-light hover:text-foreground',
     close: 'text-secondary-hover hover:bg-error-light hover:text-error',
     primary: 'text-primary hover:bg-primary-light hover:text-primary',
   };
 
-  return (
+  const button = (
     <button
       onClick={onClick}
       disabled={disabled}
       className={`w-5 h-5 flex items-center justify-center rounded-full transition-colors ${
-        onBlueBackground ? `on-blue-btn ${variant === 'close' ? 'close' : ''}` : variantClasses[variant]
-      } ${disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
-      title={title}
+        onBlueBackground ? `on-blue-btn ${variant === 'close' ? 'close' : ''}` : active ? '' : variantClasses[variant]
+      } ${active ? 'power-btn--on' : ''} ${disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
+      title={shortcut ? undefined : title}
+      aria-label={title}
+      aria-pressed={active || undefined}
+      aria-keyshortcuts={ariaKeyShortcuts(shortcut)}
     >
       {icon}
     </button>
   );
+  return <OptionalShortcutTooltip shortcut={shortcut} label={title}>{button}</OptionalShortcutTooltip>;
 }
 
 // ============================================================================
 // Icons
 // ============================================================================
-
-function ResetIcon() {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      className="w-3 h-3"
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth={4}
-        d="M10 19l-7-7m0 0l7-7m-7 7h18"
-      />
-    </svg>
-  );
-}
 
 function PowerIcon() {
   return (

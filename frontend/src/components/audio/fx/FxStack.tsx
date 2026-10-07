@@ -15,6 +15,8 @@ interface FxStackProps {
   onBypass: (instanceId: string, enabled: boolean) => void;
   onParamsLive: (instanceId: string, params: FxParams) => void;
   onStructuralChange: () => void;
+  /** Speech (TTS) sound — Stable Audio effects are disabled in the add menu. */
+  isSpeech?: boolean;
 }
 
 /** Row header region (px from the top) that initiates a drag. */
@@ -28,7 +30,7 @@ interface DragState {
 }
 
 export function FxStack({
-  soundId, chain, analyser, sampleRate, onBypass, onParamsLive, onStructuralChange,
+  soundId, chain, analyser, sampleRate, onBypass, onParamsLive, onStructuralChange, isSpeech = false,
 }: FxStackProps) {
   const expandedId = useSoundFxStore((s) => s.expandedId);
   const addInstance = useSoundFxStore((s) => s.addInstance);
@@ -192,6 +194,7 @@ export function FxStack({
         ))}
       </div>
       <FxAddMenu
+        disableStableAudio={isSpeech}
         onAdd={(type) => {
           addInstance(soundId, type);
           onStructuralChange();

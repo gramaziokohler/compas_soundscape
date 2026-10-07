@@ -6,10 +6,11 @@
  */
 
 import { AUDIO_TIMELINE } from '@/utils/constants';
-import type { TimelineSound, SoundMetadata, IterationLink } from '@/types/audio';
+import type { TimelineSound, SoundMetadata, IterationLink, TrimRange } from '@/types/audio';
 import type { SoundEvent } from '@/types';
 import { resolveVariantSoundIdByPrompt } from '@/lib/audio/utils/variant-sound-id';
 import { resolveSoundAudioUrl } from '@/lib/audio/utils/resolve-sound-url';
+import { resolveIterationTrim, trimmedDuration } from '@/lib/audio/utils/iteration-trim';
 
 /** Per-iteration audio URL + duration derived from the assigned variant's loaded buffer. */
 function getIterationVariantInfo(
@@ -18,10 +19,11 @@ function getIterationVariantInfo(
   soundMetadata: Map<string, SoundMetadata>,
   primaryMetadata: SoundMetadata,
   iterationLinks: Record<string, IterationLink> | undefined,
-  soundTrims: Record<string, { start: number; end: number }> | undefined,
+  soundTrims: Record<string, TrimRange> | undefined,
   fallbackDurationMs: number,
   soundEvents?: SoundEvent[],
-): { audioUrl: string; durationMs: number; trim?: { start: number; end: number } } {
+  iterationTrims?: Record<string, TrimRange>,
+): { audioUrl: string; durationMs: number; trim?: TrimRange; sourceDurationMs?: number } {
   const link = iterationLinks?.[`${primarySoundId}-${iterationIndex}`];
   const variantIdx = link?.variantIndex ?? 0;
   // Resolve by explicit prompt_index + copy_index grouping (works for every id
@@ -41,18 +43,20 @@ function getIterationVariantInfo(
   // Trim is PER-VARIANT: each copy has its own trim (set from the sound card), so
   // use the resolved variant's trim. Reading the primary's trim here applied
   // variant A's trim to every clip regardless of which variant the iteration plays.
-  const trim = soundTrims?.[variantId];
+  // A DAW clip trim on this iteration overrides the variant's card trim.
+  const trim = resolveIterationTrim(primarySoundId, iterationIndex, variantId, iterationTrims, soundTrims);
   let durationMs = fallbackDurationMs;
+  let sourceDurationMs: number | undefined;
   if (variantMeta?.buffer) {
-    const bufMs = variantMeta.buffer.duration * 1000;
-    durationMs = trim ? bufMs * (trim.end - trim.start) : bufMs;
+    sourceDurationMs = variantMeta.buffer.duration * 1000;
+    durationMs = trimmedDuration(sourceDurationMs, trim);
   }
 
   const audioUrl =
     (eventOverride ? resolveSoundAudioUrl(eventOverride) : undefined) ||
     variantMeta?.soundEvent.url ||
     primaryMetadata.soundEvent.url;
-  return { audioUrl, durationMs, trim };
+  return { audioUrl, durationMs, trim, sourceDurationMs };
 }
 
 /**
@@ -251,12 +255,13 @@ export function extractTimelineSoundsFromData(
   soundMetadata: Map<string, SoundMetadata>,
   timelineDuration: number = AUDIO_TIMELINE.DEFAULT_DURATION_MS,
   soundEvents?: SoundEvent[],
-  soundTrims?: Record<string, { start: number; end: number }>,
+  soundTrims?: Record<string, TrimRange>,
   soundTimestamps?: Record<string, number[]>,
   soundIterationDurations?: Record<string, number[]>,
   iterationLinks?: Record<string, IterationLink>,
   excludedIterations?: Record<string, number[]>,
   exclusionReasons?: Record<string, string>,
+  iterationTrims?: Record<string, TrimRange>,
 ): TimelineSound[] {
   const timelineSounds: TimelineSound[] = [];
 
@@ -351,6 +356,7 @@ export function extractTimelineSoundsFromData(
         soundTrims,
         soundDurationMs,
         soundEvents,
+        iterationTrims,
       );
       return info.durationMs > 0 ? info.durationMs / 1000 : undefined;
     };
@@ -394,7 +400,8 @@ export function extractTimelineSoundsFromData(
     const iterationOriginalIndices: number[] = [];
     const iterationDurationsMs: number[] = [];
     const iterationAudioUrls: string[] = [];
-    const iterationTrims: ({ start: number; end: number } | undefined)[] = [];
+    const resolvedTrims: (TrimRange | undefined)[] = [];
+    const iterationSourceDurationsMs: (number | undefined)[] = [];
     for (let idx = 0; idx < rawMs.length && iterations.length < AUDIO_TIMELINE.MAX_ITERATIONS_TO_DISPLAY; idx++) {
       if (excludedIdxs.includes(idx)) continue;
       const ms = rawMs[idx];
@@ -412,10 +419,12 @@ export function extractTimelineSoundsFromData(
           soundTrims,
           fallbackDur,
           soundEvents,
+          iterationTrims,
         );
         iterationDurationsMs.push(variantInfo.durationMs);
         iterationAudioUrls.push(variantInfo.audioUrl);
-        iterationTrims.push(variantInfo.trim);
+        resolvedTrims.push(variantInfo.trim);
+        iterationSourceDurationsMs.push(variantInfo.sourceDurationMs);
       }
     }
 
@@ -476,7 +485,8 @@ export function extractTimelineSoundsFromData(
       scheduledIterationOriginalIndices: iterationOriginalIndices,
       iterationDurationsMs,
       iterationAudioUrls,
-      iterationTrims,
+      iterationTrims: resolvedTrims,
+      iterationSourceDurationsMs,
       audioUrl: audioUrl || undefined,
       trimStartFraction: trim?.start,
       trimEndFraction: trim?.end,

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import type { SoundGenerationConfig } from '@/types';
 import { RangeSlider } from '@/components/ui/RangeSlider';
 import { ToggleField } from '@/components/ui/ToggleField';
+import { ModifiedMark, ModifiedCornerMark, useIsFieldModified } from '@/components/ui/ModifiedMark';
 import { ChevronDown, ChevronRight, SlidersHorizontal } from 'lucide-react';
 import { pauseStore, commitStore, globalUndo, globalRedo, useUIStore } from '@/store';
 import { useBatchedSlider } from '@/hooks/useBatchedSlider';
@@ -57,6 +58,7 @@ export function TextToAudioSliders({
   const isElevenLabs = audioModel === AUDIO_MODEL_ELEVENLABS;
   const isSA3 = audioModel === AUDIO_MODEL_SA3;
   const isBackground = normalizeSoundCategory(config.category) === 'background';
+  const isModified = useIsFieldModified();
 
   const durationSlider = useBatchedSlider<number>('soundscape', (v) =>
     onUpdateConfig(index, 'duration', v),
@@ -77,6 +79,7 @@ export function TextToAudioSliders({
         {isElevenLabs ? (
           <RangeSlider
             label="Prompt influence"
+            modified={isModified('prompt_influence')}
             value={config.prompt_influence ?? DEFAULT_PROMPT_INFLUENCE}
             min={PROMPT_INFLUENCE_MIN}
             max={PROMPT_INFLUENCE_MAX}
@@ -91,6 +94,7 @@ export function TextToAudioSliders({
         ) : (
           <RangeSlider
             label="Duration"
+            modified={isModified('duration')}
             value={config.duration}
             min={1}
             max={30}
@@ -107,6 +111,7 @@ export function TextToAudioSliders({
         {isSA3 ? (
           <RangeSlider
             label="Guidance"
+            modified={isModified('guidance_scale')}
             value={config.guidance_scale ?? STABLE_AUDIO_DEFAULT_GUIDANCE}
             min={STABLE_AUDIO_GUIDANCE_MIN}
             max={STABLE_AUDIO_GUIDANCE_MAX}
@@ -121,6 +126,7 @@ export function TextToAudioSliders({
         ) : !isElevenLabs && (
           <RangeSlider
             label="Guidance"
+            modified={isModified('guidance_scale')}
             value={config.guidance_scale ?? DEFAULT_GUIDANCE_SCALE}
             min={0}
             max={10}
@@ -139,12 +145,14 @@ export function TextToAudioSliders({
             checked={config.loop ?? isBackground}
             onChange={(v) => onUpdateConfig(index, 'loop', v)}
             label="Loopable"
+            modified={isModified('loop')}
             badge={isBackground ? 'Background' : undefined}
           />
         )}
 
         <RangeSlider
           label="Variants"
+          modified={isModified('seed_copies')}
           value={config.seed_copies}
           min={1}
           max={MAX_SEED_COPIES}
@@ -161,6 +169,9 @@ export function TextToAudioSliders({
   );
 }
 
+/** Config fields edited by TextToAudioSliders. */
+const SLIDER_FIELDS = ['duration', 'guidance_scale', 'prompt_influence', 'loop', 'seed_copies'];
+
 /** Collapsible "Additional settings" panel wrapping the generation sliders. */
 export function AdditionalSettings({
   config,
@@ -169,6 +180,9 @@ export function AdditionalSettings({
 }: Omit<TextToAudioModeProps, 'hideSliders'>) {
   const [isExpanded, setIsExpanded] = useState(false);
   const openAdvancedSettingsAt = useUIStore((s) => s.openAdvancedSettingsAt);
+  const isModified = useIsFieldModified();
+  // Flag the collapsed group when one of its sliders was edited since generation.
+  const hasModifiedSlider = SLIDER_FIELDS.some(isModified);
 
   return (
     <div className="mt-0">
@@ -177,7 +191,7 @@ export function AdditionalSettings({
         className="flex items-center gap-1.5 w-full text-left text-xs text-secondary-hover hover:text-foreground transition-colors"
       >
         {isExpanded ? <ChevronDown size={11} className="shrink-0" /> : <ChevronRight size={11} className="shrink-0" />}
-        <span>Additional settings</span>
+        <span>Additional settings{hasModifiedSlider && <ModifiedMark />}</span>
       </button>
       {isExpanded && (
         <div className="card-collapse-body">
@@ -198,9 +212,12 @@ export function AdditionalSettings({
 
 export function TextToAudioMode({ config, index, onUpdateConfig, hideSliders }: TextToAudioModeProps) {
   const applyNoiseReduction = useSoundscapeStore((s) => s.applyNoiseReduction);
+  const isModified = useIsFieldModified();
 
   return (
     <>
+      <div className="relative">
+      <ModifiedCornerMark show={isModified('prompt')} />
       <textarea
         value={config.prompt}
         onChange={(e) => onUpdateConfig(index, 'prompt', e.target.value)}
@@ -224,6 +241,7 @@ export function TextToAudioMode({ config, index, onUpdateConfig, hideSliders }: 
         className="w-full h-16 p-2 text-xs rounded-lg bg-secondary-lighter text-foreground border border-secondary-light focus:border-primary focus:ring-1 focus:ring-primary outline-none"
         rows={2}
       />
+      </div>
 
       {hideSliders ? (
         <AdditionalSettings config={config} index={index} onUpdateConfig={onUpdateConfig} />

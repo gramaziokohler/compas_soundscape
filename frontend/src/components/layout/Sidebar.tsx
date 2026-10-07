@@ -53,6 +53,12 @@ export function Sidebar(props: SidebarProps) {
   // during initial load. ContextSection auto-advances when analysis configs
   // load asynchronously after mount, which would clobber the persisted step.
   const isInitializingRef = useRef(true);
+  // True once the mount effect has restored step/indices from the stores —
+  // effects that depend on the restored step must not run on the first commit.
+  const [stateRestored, setStateRestored] = useState(false);
+  // One-shot per mount (i.e. per switch to Detailed mode): expand the active
+  // context card when the sidebar lands on the Context step.
+  const contextAutoExpandDoneRef = useRef(false);
 
   // Switching wizard steps (Context/Usage/Sounds) unmounts the outgoing section,
   // which destroys its WaveSurfer instance(s) — must stop any active preview
@@ -95,8 +101,7 @@ export function Sidebar(props: SidebarProps) {
     const ctxIdx = useCardFlowStore.getState().activeContextOriginalIndex;
     setActiveContextOriginalIndex(ctxIdx);
     const usgIdx = useCardFlowStore.getState().activeUsageOriginalIndex;
-    setActiveUsageOriginalIndex(usgIdx);
-    if (savedStep === 0 && ctxIdx !== null) {
+    setActiveUsageOriginalIndex(usgIdx);    if (savedStep === 0 && ctxIdx !== null) {
       setContextExpandedOriginalIndex(ctxIdx);
     } else if (savedStep === 1 && usgIdx !== null) {
       setUsageExpandedOriginalIndex(usgIdx);
@@ -108,16 +113,24 @@ export function Sidebar(props: SidebarProps) {
       }
     }
 
-    // A Simple-mode scene workflow is mid-run (user just switched to Expert):
-    // the persisted step/indices were written by the workflow — don't let the
-    // content-based load guard override them.
-    if (useSceneWorkflowStore.getState().activeUsageIndex !== null) {
+    // The user just switched here from Simple mode with a scene run (running,
+    // queued or finished) or an open scene circle: the persisted step/indices
+    // were written for that scene — don't let the content-based load guard
+    // override them (it would fall back to Context with nothing expanded while
+    // the scene has no sound cards yet).
+    const workflow = useSceneWorkflowStore.getState();
+    if (
+      workflow.activeUsageIndex !== null ||
+      workflow.openSimplePanel !== null ||
+      Object.keys(workflow.runs).length > 0
+    ) {
       hasInteractedRef.current = true;
     }
 
     // Clear the initializing guard after a delay so ContextSection's
     // auto-advance can work normally for user-added cards after load.
     setTimeout(() => { isInitializingRef.current = false; }, 1000);
+    setStateRestored(true);
   }, []);
 
   // Sync currentStep → uiStore for refresh survival
@@ -152,6 +165,45 @@ export function Sidebar(props: SidebarProps) {
     );
     return idx >= 0 ? idx : null;
   }
+
+  function isContextCardIndex(i: number | null | undefined): i is number {
+    if (typeof i !== 'number' || i < 0 || i >= props.analysisConfigs.length) return false;
+    const c = props.analysisConfigs[i];
+    return (
+      SIDEBAR_CONTEXT_TYPES.includes(c.type as CardType) &&
+      !(c.type === 'freeform' && (c as any).parentContextOriginalIndex !== undefined)
+    );
+  }
+
+  // The context card the user is working in: the active one, else the active
+  // usage card's parent, else the first context card (null when none exist).
+  function resolveActiveContextIndex(): number | null {
+    if (isContextCardIndex(activeContextOriginalIndex)) return activeContextOriginalIndex;
+    if (activeUsageOriginalIndex !== null && activeUsageOriginalIndex >= 0) {
+      const parentCtx = (props.analysisConfigs[activeUsageOriginalIndex] as any)?.parentContextOriginalIndex;
+      if (isContextCardIndex(parentCtx)) return parentCtx;
+    }
+    return getFirstContextIndex();
+  }
+
+  // Switching to Detailed mode (Sidebar mount) onto the Context step always
+  // shows the active context card expanded. Waits for the configs to load
+  // (refresh) and runs once, so a manual collapse afterwards is respected.
+  useEffect(() => {
+    if (!stateRestored || contextAutoExpandDoneRef.current) return;
+    // Landed elsewhere (Usage/Sounds): later navigation is not a mode switch.
+    // The load guard expands the context itself if it falls back to Context.
+    if (currentStep !== 0 || contextExpandedOriginalIndex !== null) {
+      contextAutoExpandDoneRef.current = true;
+      return;
+    }
+    const ctx = resolveActiveContextIndex();
+    if (ctx === null) return;
+    contextAutoExpandDoneRef.current = true;
+    setActiveContextOriginalIndex(ctx);
+    setContextExpandedOriginalIndex(ctx);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stateRestored, currentStep, props.analysisConfigs]);
 
   function getFirstUsageChildIndex(parentContextIndex: number | null): number | null {
     const isUsage = (c: AnalysisConfig) =>
@@ -573,7 +625,11 @@ export function Sidebar(props: SidebarProps) {
           setActiveContextOriginalIndex(getFirstContextIndex());
         }
       } else {
-        setActiveContextOriginalIndex(getFirstContextIndex());
+        // Landing on Context (e.g. right after a switch to Detailed mode):
+        // keep the active context card if valid, and always show it expanded.
+        const ctx = resolveActiveContextIndex();
+        setActiveContextOriginalIndex(ctx);
+        setContextExpandedOriginalIndex(ctx);
       }
       setCurrentStep(step);
       setIsExpanded(true);
@@ -1154,7 +1210,6 @@ export function Sidebar(props: SidebarProps) {
               onUpdateConfig={props.onUpdateAnalysisConfig}
               onRun={props.onAnalyze}
               onStop={props.onStop}
-              onReset={props.onResetAnalysis}
               onTogglePromptSelection={props.onTogglePromptSelection}
               onSendToSoundGeneration={props.onSendToSoundGeneration}
               onAdvanceToUsage={advanceToUsage}
@@ -1176,7 +1231,6 @@ export function Sidebar(props: SidebarProps) {
               onUpdateConfig={props.onUpdateAnalysisConfig}
               onRun={props.onAnalyze}
               onStop={props.onStop}
-              onReset={props.onResetAnalysis}
               onTogglePromptSelection={props.onTogglePromptSelection}
               onSendToSoundGeneration={props.onSendToSoundGeneration}
               onAdvanceToSounds={handleUsageSendToSounds}

@@ -26,6 +26,8 @@ export interface DAWClipMenuProps {
   onApplyVariantToAll: () => void;
   /** Fill every iteration of this track with the currently linked entity. */
   onApplyEntityToAll: () => void;
+  /** Present when the clip has its own DAW trim — drops it back to the card trim. */
+  onResetTrim?: () => void;
   onClose: () => void;
 }
 
@@ -48,6 +50,7 @@ export function DAWClipMenu({
   onPickEntity,
   onApplyVariantToAll,
   onApplyEntityToAll,
+  onResetTrim,
   onClose,
 }: DAWClipMenuProps) {
   const [submenuOpen, setSubmenuOpen] = useState<'variants' | 'entities' | null>(null);
@@ -128,7 +131,7 @@ export function DAWClipMenu({
         </div>
       )}
 
-      {variants.length <= 1 && linkedEntities.length === 0 && (
+      {variants.length <= 1 && linkedEntities.length === 0 && !onResetTrim && (
         <div style={{ padding: '8px 12px', color: 'var(--color-text-3)', fontStyle: 'italic', cursor: 'default', textAlign: 'center' }}>
           No variants or linked objects
         </div>
@@ -197,6 +200,19 @@ export function DAWClipMenu({
               Apply linked object to all iterations
             </div>
           )}
+        </div>
+      )}
+
+      {onResetTrim && (
+        <div style={{ borderTop: '1px solid var(--color-border)', marginTop: '4px', paddingTop: '4px' }}>
+          <div
+            style={{ padding: '6px 12px', cursor: 'pointer', color: 'var(--foreground)', whiteSpace: 'nowrap' }}
+            onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--color-border)')}
+            onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+            onClick={() => { onResetTrim(); onClose(); }}
+          >
+            Reset clip trim
+          </div>
         </div>
       )}
     </div>

@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Play, Sparkles } from 'lucide-react';
+import { OptionalShortcutTooltip, ariaKeyShortcuts } from '@/components/ui/ShortcutTooltip';
+import type { ShortcutId } from '@/utils/constants';
 
 /**
  * GenerateButton Component
@@ -61,6 +63,8 @@ export interface GenerateButtonProps {
   doneLabel?: string;
   /** Click handler for the done-state continue action */
   onDoneAction?: () => void;
+  /** Keyboard shortcut for the idle action — shown in a ShortcutTooltip instead of the native title. */
+  shortcut?: ShortcutId;
 }
 
 /** How long the disabled-click error message stays visible before fading back to the label */
@@ -78,6 +82,7 @@ export function GenerateButton({
   onStop,
   doneLabel,
   onDoneAction,
+  shortcut,
 }: GenerateButtonProps) {
   // Disabled-click feedback: flash the reason in red, then return to the label.
   const [showDisabledMsg, setShowDisabledMsg] = useState(false);
@@ -152,6 +157,29 @@ export function GenerateButton({
 
   // idle
   if (!onGenerate) return null;
+  const idleButton = (
+    <button
+      className="btn-primary"
+      onClick={handleIdleClick}
+      aria-disabled={disabled}
+      disabled={disabled}
+      title={shortcut ? undefined : (disabled ? (disabledReason || label) : label)}
+      aria-label={disabled ? (disabledReason || label) : label}
+      aria-keyshortcuts={ariaKeyShortcuts(shortcut)}
+    >
+      <span>{label}</span>
+      {isAi ? (
+        <Sparkles
+          size={13}
+          fill="currentColor"
+          strokeWidth={1}
+          style={{ width: 13, height: 13 }}
+        />
+      ) : (
+        <Play size={11} fill="currentColor" />
+      )}
+    </button>
+  );
   return (
     <div>
       {showDisabledMsg && (
@@ -162,26 +190,7 @@ export function GenerateButton({
           {disabledReason || 'Not available'}
         </div>
       )}
-      <button
-        className="btn-primary"
-        onClick={handleIdleClick}
-        aria-disabled={disabled}
-        disabled={disabled}
-        title={disabled ? (disabledReason || label) : label}
-        aria-label={disabled ? (disabledReason || label) : label}
-      >
-        <span>{label}</span>
-        {isAi ? (
-          <Sparkles
-            size={13}
-            fill="currentColor"
-            strokeWidth={1}
-            style={{ width: 13, height: 13 }}
-          />
-        ) : (
-          <Play size={11} fill="currentColor" />
-        )}
-      </button>
+      <OptionalShortcutTooltip shortcut={shortcut} label={label}>{idleButton}</OptionalShortcutTooltip>
     </div>
   );
 }

@@ -25,12 +25,22 @@ export interface AreaDrawingStoreState {
   areaVisualStates: Map<number, AreaVisualState>;
   isDrawing: boolean;
   drawingCardIndex: number | null;
+  /**
+   * Grid listener being drawn for (mutually exclusive with drawingCardIndex).
+   * Its polygon is stored on the grid listener itself, not in drawnAreas.
+   */
+  drawingGridListenerId: string | null;
   /** Increments on any state change — use as useEffect dependency. */
   version: number;
   /** Set to true when the sidebar "Validate" button or Enter key requests polygon close. */
   pendingConfirm: boolean;
+  /** Points placed on the polygon being drawn — gates the sidebar "Validate" button. */
+  drawingPointCount: number;
 
   startDrawing: (cardIndex: number) => void;
+  /** Start drawing a boundary polygon for a grid listener. */
+  startGridDrawing: (gridListenerId: string) => void;
+  /** Leave drawing mode (also used once a grid-listener polygon is committed). */
   cancelDrawing: () => void;
   finishDrawing: (cardIndex: number, area: DrawnArea) => void;
   removeArea: (cardIndex: number) => void;
@@ -38,6 +48,8 @@ export interface AreaDrawingStoreState {
   getArea: (cardIndex: number) => DrawnArea | undefined;
   hasArea: (cardIndex: number) => boolean;
   requestConfirmDrawing: () => void;
+  /** Mirror the viewer's point count (does not bump `version`: that would restart drawing). */
+  setDrawingPointCount: (count: number) => void;
   clearConfirmDrawing: () => void;
   /**
    * Rebuild the runtime area map from persisted analysis configs. Called after
@@ -55,19 +67,49 @@ export const useAreaDrawingStore = create<AreaDrawingStoreState>()(
         areaVisualStates: new Map(),
         isDrawing: false,
         drawingCardIndex: null,
+        drawingGridListenerId: null,
         version: 0,
         pendingConfirm: false,
+        drawingPointCount: 0,
 
         startDrawing: (cardIndex) =>
           set(
-            (s) => ({ isDrawing: true, drawingCardIndex: cardIndex, version: s.version + 1 }),
+            (s) => ({
+              isDrawing: true,
+              drawingCardIndex: cardIndex,
+              drawingGridListenerId: null,
+              pendingConfirm: false,
+              drawingPointCount: 0,
+              version: s.version + 1,
+            }),
             false,
             'areaDrawing/startDrawing',
           ),
 
+        startGridDrawing: (gridListenerId) =>
+          set(
+            (s) => ({
+              isDrawing: true,
+              drawingCardIndex: null,
+              drawingGridListenerId: gridListenerId,
+              pendingConfirm: false,
+              drawingPointCount: 0,
+              version: s.version + 1,
+            }),
+            false,
+            'areaDrawing/startGridDrawing',
+          ),
+
         cancelDrawing: () =>
           set(
-            (s) => ({ isDrawing: false, drawingCardIndex: null, version: s.version + 1 }),
+            (s) => ({
+              isDrawing: false,
+              drawingCardIndex: null,
+              drawingGridListenerId: null,
+              pendingConfirm: false,
+              drawingPointCount: 0,
+              version: s.version + 1,
+            }),
             false,
             'areaDrawing/cancelDrawing',
           ),
@@ -82,6 +124,8 @@ export const useAreaDrawingStore = create<AreaDrawingStoreState>()(
                 areaVisualStates,
                 isDrawing: false,
                 drawingCardIndex: null,
+                drawingGridListenerId: null,
+                drawingPointCount: 0,
                 version: s.version + 1,
               };
             },
@@ -115,6 +159,9 @@ export const useAreaDrawingStore = create<AreaDrawingStoreState>()(
         getArea: (cardIndex) => get().drawnAreas.get(cardIndex),
 
         hasArea: (cardIndex) => get().drawnAreas.has(cardIndex),
+
+        setDrawingPointCount: (count) =>
+          set({ drawingPointCount: count }, false, 'areaDrawing/setDrawingPointCount'),
 
         requestConfirmDrawing: () =>
           set({ pendingConfirm: true }, false, 'areaDrawing/requestConfirmDrawing'),

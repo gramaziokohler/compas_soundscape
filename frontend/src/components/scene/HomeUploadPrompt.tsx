@@ -28,7 +28,7 @@ export function HomeUploadPrompt({ style }: HomeUploadPromptProps) {
         className="home-prompt__link"
         onClick={() => useUIStore.getState().setShowLoadModelPanel(true)}
       >
-        Upload
+        Load
       </button>{' '}
       a 3D model or start below
     </p>

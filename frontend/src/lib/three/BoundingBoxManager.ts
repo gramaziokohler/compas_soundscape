@@ -55,6 +55,8 @@ export class BoundingBoxManager {
   public activeGumball: THREE.Mesh | null = null;
   /** True while a gumball resize drag is in progress. Set by useSpeckleBoundingBoxGumball.ts. */
   public isDragging = false;
+  /** Face (material key) whose arrow is being dragged; null when idle. */
+  private draggedFace: string | null = null;
   /** True for a short window after a gumball drag ends, so the native 'click' that
    *  follows the drag release (SpeckleEventBridge.handleCanvasClick) can be suppressed. */
   public justFinishedDragging = false;
@@ -345,11 +347,15 @@ export class BoundingBoxManager {
         8
       );
 
-      const colorNormal = getCssColorHex('--color-primary');
-      const colorHover = getCssColorHex('--color-primary-hover');
+      // Same orange as the listener (receiver) accent; yellow on hover, deep orange while dragging.
+      const colorNormal = getCssColorHex('--color-receiver');
+      const colorHover = getCssColorHex('--color-warning');
+      const colorDrag = getCssColorHex('--color-warning-hover');
+      // The group is rebuilt every drag frame, so the dragged face keeps its drag color.
+      const isDraggedFace = this.isDragging && this.draggedFace === faceConfig.material;
 
       const mat = new THREE.MeshBasicMaterial({
-        color: colorNormal,
+        color: isDraggedFace ? colorDrag : colorNormal,
         depthTest: false,
         depthWrite: false,
         transparent: true,
@@ -384,6 +390,7 @@ export class BoundingBoxManager {
          faceNormal: faceConfig.normal,
          originalColor: colorNormal,
          hoverColor: colorHover,
+         dragColor: colorDrag,
          visualArrowMaterial: mat
       };
 
@@ -504,6 +511,16 @@ export class BoundingBoxManager {
    */
   public setDragging(dragging: boolean): void {
     this.isDragging = dragging;
+    this.draggedFace = dragging ? (this.activeGumball?.userData.faceName ?? null) : null;
+    // Recolor the dragged arrow now; on release reset every arrow (the hovered
+    // mesh may have been rebuilt mid-drag, so don't rely on activeGumball).
+    this.gumballHandles.forEach((h) => {
+      const mat = h.userData.visualArrowMaterial;
+      if (!mat) return;
+      const isDragged = dragging && h.userData.faceName === this.draggedFace;
+      mat.color.setHex(isDragged ? h.userData.dragColor : h.userData.originalColor);
+    });
+    if (!dragging) this.activeGumball = null;
     if (this.justFinishedDraggingTimer) {
       clearTimeout(this.justFinishedDraggingTimer);
       this.justFinishedDraggingTimer = null;

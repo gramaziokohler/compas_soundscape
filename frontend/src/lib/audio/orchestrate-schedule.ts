@@ -33,6 +33,12 @@ export interface SolverEntryInput {
   variants: number[];
   /** Duration per 0-based variant copy index; `null` = not available. */
   variantDurations: (number | null)[];
+  /**
+   * Optional per-iteration duration override (seconds, parallel to `expressions`)
+   * — set when a DAW clip trim gives one iteration its own length. Missing/null
+   * entries fall back to the iteration's variant duration.
+   */
+  iterationDurations?: (number | null | undefined)[];
   /** False while durations are still theoretical (pre-generation) → defer. */
   durationsKnown?: boolean;
   /** Existing manual timestamps (seconds) — kept for unanchored iterations. */
@@ -96,6 +102,8 @@ function parseAbsolute(expr: string): number | null {
 }
 
 function durationAt(entry: SolverEntryInput, iterIdx: number): number | null {
+  const override = entry.iterationDurations?.[iterIdx];
+  if (override !== null && override !== undefined) return override;
   const variantIdx = (entry.variants[iterIdx] ?? 1) - 1;
   const d = entry.variantDurations[variantIdx] ?? entry.variantDurations[0];
   return d === null || d === undefined ? null : d;

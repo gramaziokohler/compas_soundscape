@@ -8,9 +8,13 @@ import { DashedAddButton } from '@/components/ui/DashedAddButton';
 
 interface FxAddMenuProps {
   onAdd: (type: FxType) => void;
+  /** Greys out the Stable Audio effects (generative models don't suit speech). */
+  disableStableAudio?: boolean;
 }
 
-export function FxAddMenu({ onAdd }: FxAddMenuProps) {
+const STABLE_AUDIO_SPEECH_DISABLED_TITLE = 'Not available for speech (TTS) sounds';
+
+export function FxAddMenu({ onAdd, disableStableAudio = false }: FxAddMenuProps) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -86,30 +90,37 @@ export function FxAddMenu({ onAdd }: FxAddMenuProps) {
             borderRadius: 6,
           }}
         >
-          {FX_TYPES.map((type) => (
-            <button
-              key={type}
-              type="button"
-              className="inline-flex items-center gap-1 text-[10px] leading-none px-2 py-1 rounded-full transition-colors"
-              style={{
-                border: '1px solid var(--color-border-strong)',
-                color: 'var(--color-secondary-hover)',
-                background: 'transparent',
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.color = 'var(--color-primary)';
-                e.currentTarget.style.borderColor = 'var(--color-primary)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.color = 'var(--color-secondary-hover)';
-                e.currentTarget.style.borderColor = 'var(--color-border-strong)';
-              }}
-              onClick={() => { onAdd(type); setOpen(false); }}
-            >
-              {isStableAudioFx(type) && <Sparkles size={10} />}
-              {FX_TYPE_LABELS[type]}
-            </button>
-          ))}
+          {FX_TYPES.map((type) => {
+            const disabled = disableStableAudio && isStableAudioFx(type);
+            return (
+              <button
+                key={type}
+                type="button"
+                disabled={disabled}
+                title={disabled ? STABLE_AUDIO_SPEECH_DISABLED_TITLE : undefined}
+                className={`inline-flex items-center gap-1 text-[10px] leading-none px-2 py-1 rounded-full transition-colors ${disabled ? 'opacity-40 cursor-not-allowed' : ''}`}
+                style={{
+                  border: '1px solid var(--color-border-strong)',
+                  color: 'var(--color-secondary-hover)',
+                  background: 'transparent',
+                }}
+                onMouseEnter={(e) => {
+                  if (disabled) return;
+                  e.currentTarget.style.color = 'var(--color-primary)';
+                  e.currentTarget.style.borderColor = 'var(--color-primary)';
+                }}
+                onMouseLeave={(e) => {
+                  if (disabled) return;
+                  e.currentTarget.style.color = 'var(--color-secondary-hover)';
+                  e.currentTarget.style.borderColor = 'var(--color-border-strong)';
+                }}
+                onClick={() => { onAdd(type); setOpen(false); }}
+              >
+                {isStableAudioFx(type) && <Sparkles size={10} />}
+                {FX_TYPE_LABELS[type]}
+              </button>
+            );
+          })}
         </div>,
         document.body,
       )}

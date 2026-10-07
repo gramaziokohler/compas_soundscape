@@ -26,6 +26,7 @@ import type { ChorasSimulationConfig } from '@/types/acoustics';
 import { RangeSlider } from '@/components/ui/RangeSlider';
 import { CardSelect } from '@/components/ui/CardSelect';
 import { AcousticMaterialsSummary } from './AcousticMaterialsSummary';
+import { ModifiedMark, useIsFieldModified } from '@/components/ui/ModifiedMark';
 
 interface ChorasSimulationSettingsProps {
   config: ChorasSimulationConfig;
@@ -38,6 +39,9 @@ export function ChorasSimulationSettings({
 }: ChorasSimulationSettingsProps) {
   const settings = config.settings;
   const isRunning = config.isRunning;
+  const isModified = useIsFieldModified();
+  const isSettingModified = (field: keyof ChorasSimulationConfig['settings']) =>
+    isModified(`settings.${field}`);
 
   const handleSettingChange = (
     field: keyof ChorasSimulationConfig['settings'],
@@ -54,7 +58,7 @@ export function ChorasSimulationSettings({
       {/* Method selector */}
       <div>
         <label className="text-xs card-label text-neutral-700">
-          Method
+          Method{isSettingModified('simulation_method') && <ModifiedMark />}
         </label>
         <CardSelect
           value={settings.simulation_method}
@@ -80,6 +84,7 @@ export function ChorasSimulationSettings({
           {/* Upper frequency limit */}
           <RangeSlider
             label="Upper frequency"
+            modified={isSettingModified('dg_freq_upper_limit')}
             value={settings.dg_freq_upper_limit}
             min={CHORAS_DG_FREQ_UPPER_MIN}
             max={CHORAS_DG_FREQ_UPPER_MAX}
@@ -93,6 +98,7 @@ export function ChorasSimulationSettings({
           {/* Polynomial order */}
           <RangeSlider
             label="Polynomial order"
+            modified={isSettingModified('dg_poly_order')}
             value={settings.dg_poly_order}
             min={CHORAS_DG_POLY_ORDER_MIN}
             max={CHORAS_DG_POLY_ORDER_MAX}
@@ -105,6 +111,7 @@ export function ChorasSimulationSettings({
           {/* Points per wavelength */}
           <RangeSlider
             label="Points/wavelength"
+            modified={isSettingModified('dg_ppw')}
             value={settings.dg_ppw}
             min={CHORAS_DG_PPW_MIN}
             max={CHORAS_DG_PPW_MAX}
@@ -117,6 +124,7 @@ export function ChorasSimulationSettings({
           {/* CFL number */}
           <RangeSlider
             label="CFL number"
+            modified={isSettingModified('dg_cfl')}
             value={settings.dg_cfl}
             min={CHORAS_DG_CFL_MIN}
             max={CHORAS_DG_CFL_MAX}
@@ -128,7 +136,7 @@ export function ChorasSimulationSettings({
         </>
       )}
 
-      <AcousticMaterialsSummary />
+      <AcousticMaterialsSummary modified={isModified('materials')} />
     </div>
   );
 }

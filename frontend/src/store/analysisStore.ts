@@ -54,6 +54,7 @@ import { useSpeckleStore } from './speckleStore';
 import { useUIStore } from './uiStore';
 import { useFileUploadStore } from './fileUploadStore';
 import { remapLinkedCardIndices } from './cardIndexLinks';
+import { captureGenerationSignature } from '@/utils/generationSignature';
 import type { IndexMapper } from '@/utils/cardIndexRemap';
 import {
   createInsertionIndexMapper,
@@ -178,6 +179,7 @@ async function pollLlmJob(
       useAnalysisStore.setState({
         analysisStatus: s.status || '',
         analysisProgress: typeof s.progress === 'number' ? s.progress : 0,
+        analysisThinking: typeof s.partial?.thinking === 'string' ? s.partial.thinking : '',
       });
       if (s.partial && onPartial) onPartial(s.partial as LlmPartial);
     },
@@ -467,6 +469,8 @@ export interface AnalysisStoreState {
    *  reloaded (missing on the server, or decode failure). Not in zundo history. */
   audioRehydrateFailedConfigs: Set<number>;
   analysisStatus: string;
+  /** Full thinking text of the running LLM agent (live, not persisted). */
+  analysisThinking: string;
   analysisProgress: number;
   analyzingConfigIndex: number | null;
 
@@ -538,6 +542,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
         rehydratingAudioConfigs: new Set<number>(),
         audioRehydrateFailedConfigs: new Set<number>(),
         analysisStatus: '',
+        analysisThinking: '',
         analysisProgress: 0,
         analyzingConfigIndex: null,
 
@@ -975,7 +980,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           const signal = _analysisAbortController.signal;
 
           set(
-            { isAnalyzing: true, analysisError: null, analyzingConfigIndex: index, analysisStatus: '' },
+            { isAnalyzing: true, analysisError: null, analyzingConfigIndex: index, analysisStatus: '', analysisThinking: '' },
             false,
             'analysis/analyzeStart',
           );
@@ -1222,6 +1227,10 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                     existing >= 0
                       ? s.analysisResults.map((r, i) => (i === existing ? newResult : r))
                       : [...s.analysisResults, newResult],
+                  // Snapshot the inputs this result was made from (drives "Regenerate").
+                  analysisConfigs: s.analysisConfigs.map((c, i) =>
+                    i === index ? { ...c, ...captureGenerationSignature(config) } : c,
+                  ),
                 };
               },
               false,
@@ -1238,7 +1247,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             }
           } finally {
             _analysisAbortController = null;
-            set({ isAnalyzing: false, analysisStatus: '', analysisProgress: 0, analyzingConfigIndex: null }, false, 'analysis/analyzeEnd');
+            set({ isAnalyzing: false, analysisStatus: '', analysisThinking: '', analysisProgress: 0, analyzingConfigIndex: null }, false, 'analysis/analyzeEnd');
           }
         },
 
@@ -1258,7 +1267,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             apiService.cancelJob(jobId).catch(() => {});
           }
           _llmJobIds.clear();
-          set({ isAnalyzing: false, analysisStatus: '', analysisProgress: 0, analyzingConfigIndex: null }, false, 'analysis/stop');
+          set({ isAnalyzing: false, analysisStatus: '', analysisThinking: '', analysisProgress: 0, analyzingConfigIndex: null }, false, 'analysis/stop');
         },
 
         handleTogglePromptSelection: (configIndex, promptId) =>
@@ -1632,7 +1641,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           _analysisAbortController = new AbortController();
 
           set(
-            { isAnalyzing: true, analysisError: null, analyzingConfigIndex: index, analysisStatus: 'Analyzing 3D model...' },
+            { isAnalyzing: true, analysisError: null, analyzingConfigIndex: index, analysisStatus: 'Analyzing 3D model...', analysisThinking: '' },
             false,
             'analysis/analyzeModelStart',
           );
@@ -1913,7 +1922,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             }
           } finally {
             _analysisAbortController = null;
-            set({ isAnalyzing: false, analysisStatus: '', analysisProgress: 0, analyzingConfigIndex: null }, false, 'analysis/analyzeModelEnd');
+            set({ isAnalyzing: false, analysisStatus: '', analysisThinking: '', analysisProgress: 0, analyzingConfigIndex: null }, false, 'analysis/analyzeModelEnd');
           }
         },
 
@@ -2071,6 +2080,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             isAnalyzing: false,
             analysisError: null,
             analysisStatus: '',
+            analysisThinking: '',
             analysisProgress: 0,
             analyzingConfigIndex: null,
             rehydratingAudioConfigs: new Set<number>(),
@@ -2091,6 +2101,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                 analysisError: null,
                 analyzingConfigIndex: index,
                 analysisStatus: 'Imagining usage scenarios…',
+                analysisThinking: '',
                 analysisProgress: 0,
               },
               false,
@@ -2196,6 +2207,8 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
               display_name: scenarios?.[0]?.title,
               scenarioResult: { scenarios, scenarioId },
               scenarioId,
+              // Snapshot the inputs this scenario was made from (drives "Regenerate").
+              ...captureGenerationSignature(config),
             } as Partial<ScenarioConfig>);
           } catch (e) {
             if (e instanceof Error && e.name === 'AbortError') return;
@@ -2204,7 +2217,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           } finally {
             if (ownedRun) {
               set(
-                { isAnalyzing: false, analysisStatus: '', analysisProgress: 0, analyzingConfigIndex: null },
+                { isAnalyzing: false, analysisStatus: '', analysisThinking: '', analysisProgress: 0, analyzingConfigIndex: null },
                 false,
                 'analysis/scenarioEnd',
               );
@@ -2363,6 +2376,7 @@ export function applyRecoveredLlmResult(kind: string, configIndex: number, resul
       display_name: scenarios?.[0]?.title,
       scenarioResult: { scenarios, scenarioId },
       scenarioId,
+      ...captureGenerationSignature(config),
     } as Partial<ScenarioConfig>);
     return;
   }
@@ -2394,6 +2408,7 @@ export function resumeLlmJob(jobId: string, configIndex: number | undefined, kin
     isAnalyzing: true,
     analyzingConfigIndex: configIndex ?? null,
     analysisStatus: 'Resuming…',
+    analysisThinking: '',
   });
   _llmJobIds.add(jobId);
   const controller = startPolling({
@@ -2402,6 +2417,7 @@ export function resumeLlmJob(jobId: string, configIndex: number | undefined, kin
       useAnalysisStore.setState({
         analysisStatus: s.status || '',
         analysisProgress: typeof s.progress === 'number' ? s.progress : 0,
+        analysisThinking: typeof s.partial?.thinking === 'string' ? s.partial.thinking : '',
       });
       if (configIndex != null && kind === 'analyze_3dmodel' && s.partial) {
         applyRecoveredLlmResult(kind, configIndex, {
@@ -2428,6 +2444,7 @@ export function resumeLlmJob(jobId: string, configIndex: number | undefined, kin
       useAnalysisStore.setState({
         isAnalyzing: false,
         analysisStatus: '',
+        analysisThinking: '',
         analysisProgress: 0,
         analyzingConfigIndex: null,
       });

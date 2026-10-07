@@ -9,8 +9,8 @@
  *        changes so that playAll / stopAll / handleVariantChange / handleVolumeChange
  *        have the correct sound list available.
  *
- * zundo partializes on: soundVolumes, soundTrims, soundTimestamps, selectedVariants,
- *                       mutedSounds, soloedSound  (the "user-facing" config — excludes play state).
+ * zundo partializes on: soundVolumes, soundTrims, iterationTrims, soundTimestamps, selectedVariants,
+ *                       mutedSounds, soloedSounds  (the "user-facing" config — excludes play state).
  *
  * Scheduling is purely timestamp-driven: `soundTimestamps[soundId]` is the only stored
  * schedule. A track with NO entry is an "auto" track — the timeline derives a default
@@ -22,7 +22,9 @@ import { create } from 'zustand';
 import { temporal } from 'zundo';
 import { devtools, persist, createJSONStorage } from 'zustand/middleware';
 import type { SoundState, SoundGenerationConfig } from '@/types';
-import type { IterationLink } from '@/types/audio';
+import type { IterationLink, TrimRange } from '@/types/audio';
+import { iterationKey, remapIterationKeys, clearIterationKeysForSound } from '@/lib/audio/utils/iteration-keys';
+import { trimmedDuration } from '@/lib/audio/utils/iteration-trim';
 import { parseSoundCopyIndex } from '@/lib/audio/utils/variant-sound-id';
 import { isParamExpression } from '@/lib/audio/utils/trigger-ref';
 import { solveOrchestrateSchedule, scheduleEntryKey } from '@/lib/audio/orchestrate-schedule';
@@ -78,15 +80,46 @@ function resolveTrackSoundIds(sounds: any[], soundId: string): string[] {
   return ids.length > 0 ? ids : [soundId];
 }
 
+/**
+ * A clip trim is a fraction of its variant's buffer — once a clip switches to a
+ * different variant (different length/content) the old trim is meaningless, so
+ * drop it for every key whose `variantIndex` actually changes.
+ */
+function dropTrimsOnVariantChange(
+  trims: Record<string, TrimRange>,
+  prevLinks: Record<string, IterationLink>,
+  keys: string[],
+  link: Partial<IterationLink>,
+): Record<string, TrimRange> {
+  if (link.variantIndex === undefined) return trims;
+  const stale = keys.filter(
+    (k) => trims[k] && (prevLinks[k]?.variantIndex ?? 0) !== link.variantIndex,
+  );
+  if (stale.length === 0) return trims;
+  const next = { ...trims };
+  stale.forEach((k) => delete next[k]);
+  return next;
+}
+
+
+/** A clip's trim override + the variant it is relative to, carried onto a duplicate/paste. */
+export interface ClipTrimCopy {
+  trim: TrimRange;
+  variantIndex?: number;
+}
 
 export interface AudioControlsStoreState {
   // ── State ──
   individualSoundStates: Record<string, SoundState>;
   selectedVariants: Record<number, number>;
   soundVolumes: Record<string, number>;
-  soundTrims: Record<string, { start: number; end: number }>;
+  soundTrims: Record<string, TrimRange>;
   mutedSounds: Set<string>;
-  soloedSound: string | null;
+  /**
+   * Every variant sound id of each soloed track (several tracks may be soloed).
+   * Non-empty = solo mode: only these ids are audible (see isSoundSilenced).
+   */
+  soloedSounds: Set<string>;
   previewingSoundId: string | null;
   /** Fixed timeline length in milliseconds — both visual and audio are bounded to this. */
   timelineDurationMs: number;
@@ -145,6 +178,13 @@ export interface AudioControlsStoreState {
    * Stores variant and/or entity overrides for individual DAW blocks.
    */
   iterationLinks: Record<string, IterationLink>;
+  /**
+   * Per-clip trim overrides set by dragging a DAW clip's edges. Key =
+   * `${soundId}-${iterationIndex}` (same keys as iterationLinks, remapped with
+   * them on insert/remove). Fractions (0–1) of the clip's variant source buffer;
+   * an entry REPLACES that variant's card trim (`soundTrims`) for this clip only.
+   */
+  iterationTrims: Record<string, TrimRange>;
 
   // ── Sync ──
   syncGeneratedSounds: (sounds: any[]) => void;
@@ -158,8 +198,20 @@ export interface AudioControlsStoreState {
   /** Apply timestamp updates for multiple tracks in a single store commit — one undo entry per gesture, instead of one per affected track. */
   handleTimestampsChangeBatch: (updates: Record<string, number[]>) => void;
   handleRemoveTimestamp: (soundId: string, iterationIndex: number) => void;
-  /** Shift iterationLinks for one track so a newly-inserted clip at `insertAt` doesn't silently reassign existing overrides. */
-  remapIterationLinksForInsert: (soundId: string, insertAt: number) => void;
+  /**
+   * Shift iterationLinks + iterationTrims for one track so a newly-inserted clip at
+   * `insertAt` doesn't silently reassign existing overrides. `copy` (read from the
+   * source clip, see `readClipTrimCopy`) gives the new clip the same trim — and the
+   * variant that trim is relative to — so duplicate / paste keep the trim.
+   */
+  remapIterationLinksForInsert: (soundId: string, insertAt: number, copy?: ClipTrimCopy) => void;
+  /**
+   * Set (or clear with `null`) one clip's trim override. When `newStartSec` is
+   * given, that iteration's timestamp is written in the SAME commit (left-edge
+   * trims move the clip start) — one undo entry. Re-bakes orchestrate schedules
+   * so trigger-linked dependents follow the clip's new length.
+   */
+  setIterationTrim: (soundId: string, iterationIndex: number, trim: TrimRange | null, newStartSec?: number) => void;
   setIterationLink: (soundId: string, iterationIndex: number, link: Partial<IterationLink>) => void;
   /** Apply one override (variant / entity) to every listed iteration of a track in a single store commit. */
   setIterationLinkForAllIterations: (soundId: string, iterationIndices: number[], link: Partial<IterationLink>) => void;
@@ -172,7 +224,7 @@ export interface AudioControlsStoreState {
   breakIterationTriggerLink: (soundId: string, iterationIndex: number, promptIndex: number) => void;
   handleMute: (soundId: string) => void;
   handleSolo: (soundId: string) => void;
-  setSoundTrim: (soundId: string, trim: { start: number; end: number }) => void;
+  setSoundTrim: (soundId: string, trim: TrimRange) => void;
   /**
    * Toggle "loopable" for a generated sound. Turning it on runs the client-side
    * loop analysis against `url`, then narrows the sound's trim to the detected
@@ -209,6 +261,8 @@ export interface AudioControlsStoreState {
   /** Master output volume (0..1). Session-only; mirrored onto the AudioOrchestrator by SceneVolumeButton. */
   masterVolume: number;
   setMasterVolume: (volume: number) => void;
+  /** Mute (volume 0) or restore the default master volume — bottom-bar button and `M` shortcut. */
+  toggleMasterMute: () => void;
   /** Set actual buffer duration for a sound — called by SoundSphereManager on buffer load. */
   setSoundBufferDuration: (soundId: string, durationSec: number) => void;
   /** Set generation-in-progress flag — gates bake during active generation. */
@@ -260,7 +314,8 @@ export interface AudioControlsStoreState {
    */
   clearSoundTimestampsFor: (soundIds: string[]) => void;
   restoreIterationLinks: (links: Record<string, IterationLink>) => void;
-  restoreMuteSolo: (mutedSoundIds: string[], soloedSoundId: string | null) => void;
+  restoreIterationTrims: (trims: Record<string, TrimRange>) => void;
+  restoreMuteSolo: (mutedSoundIds: string[], soloedSoundIds: string[]) => void;
   /**
    * Snapshot of the LAST orchestrator-produced schedule (per-track timestamps +
    * iteration links), captured right after an orchestrate bake. "Reset track"
@@ -289,9 +344,10 @@ export interface AudioControlsStoreState {
 export const audioControlsPartialize = (state: AudioControlsStoreState) => ({
   soundVolumes: { ...state.soundVolumes },
   soundTrims: { ...state.soundTrims },
+  iterationTrims: { ...state.iterationTrims },
   selectedVariants: { ...state.selectedVariants },
   mutedSounds: new Set(state.mutedSounds),
-  soloedSound: state.soloedSound,
+  soloedSounds: new Set(state.soloedSounds),
   timelineDurationMs: state.timelineDurationMs,
   globalBaseDbfs: state.globalBaseDbfs,
   maximumFoleySounds: state.maximumFoleySounds,
@@ -334,7 +390,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
         soundVolumes: {},
         soundTrims: {},
         mutedSounds: new Set(),
-        soloedSound: null,
+        soloedSounds: new Set(),
         previewingSoundId: null,
         timelineDurationMs: AUDIO_PLAYBACK.TIMELINE_FIXED_DURATION_MS,
         globalBaseDbfs: DEFAULT_DBFS,
@@ -358,6 +414,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
         playAllNonce: 0,
         _generationInProgress: false,
         iterationLinks: {},
+        iterationTrims: {},
         orchestrateResult: null,
 
         // ── Sync ──
@@ -488,70 +545,82 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
               const timestamps = state.soundTimestamps[soundId] ?? [];
               const newTimestamps = timestamps.filter((_, i) => i !== iterationIndex);
 
-              // Remap iterationLinks so overrides on iterations AFTER the removed one
-              // keep following their own clip instead of being silently reassigned by
-              // the array-index shift — this was one of two root causes of variant/
-              // entity overrides appearing to "revert" after deleting an earlier clip.
-              const prefix = `${soundId}-`;
-              const remapped: Record<string, IterationLink> = {};
-              Object.entries(state.iterationLinks).forEach(([key, link]) => {
-                if (!key.startsWith(prefix)) {
-                  remapped[key] = link;
-                  return;
-                }
-                const idx = parseInt(key.slice(prefix.length), 10);
-                if (Number.isNaN(idx)) {
-                  remapped[key] = link;
-                  return;
-                }
-                if (idx === iterationIndex) return; // dropped with the removed clip
-                const newIdx = idx > iterationIndex ? idx - 1 : idx;
-                remapped[`${soundId}-${newIdx}`] = link;
-              });
+              // Remap iterationLinks/iterationTrims so overrides on iterations AFTER
+              // the removed one keep following their own clip instead of being
+              // silently reassigned by the array-index shift — this was one of two
+              // root causes of variant/entity overrides appearing to "revert" after
+              // deleting an earlier clip. The removed clip's own overrides drop.
+              const shiftDown = (idx: number) =>
+                idx === iterationIndex ? null : idx > iterationIndex ? idx - 1 : idx;
 
               return {
                 soundTimestamps: { ...state.soundTimestamps, [soundId]: newTimestamps },
-                iterationLinks: remapped,
+                iterationLinks: remapIterationKeys(state.iterationLinks, soundId, shiftDown),
+                iterationTrims: remapIterationKeys(state.iterationTrims, soundId, shiftDown),
               };
             },
             false,
             'audio/handleRemoveTimestamp',
           ),
 
-        remapIterationLinksForInsert: (soundId, insertAt) =>
+        remapIterationLinksForInsert: (soundId, insertAt, copy) =>
           set(
             (state) => {
-              // Shift every iterationLink at/after `insertAt` up by one index — used
+              // Shift every override at/after `insertAt` up by one index — used
               // when a new clip (e.g. from duplicate) is spliced into the middle of a
               // track's timestamp array, so existing overrides keep following their
               // own clip instead of the array-index shift silently reassigning them.
-              const prefix = `${soundId}-`;
-              const remapped: Record<string, IterationLink> = {};
-              Object.entries(state.iterationLinks).forEach(([key, link]) => {
-                if (!key.startsWith(prefix)) {
-                  remapped[key] = link;
-                  return;
+              const shiftUp = (idx: number) => (idx >= insertAt ? idx + 1 : idx);
+              const iterationTrims = remapIterationKeys(state.iterationTrims, soundId, shiftUp);
+              const iterationLinks = remapIterationKeys(state.iterationLinks, soundId, shiftUp);
+              if (copy) {
+                const newKey = iterationKey(soundId, insertAt);
+                iterationTrims[newKey] = { ...copy.trim };
+                // The trim is relative to the source clip's variant buffer, so the
+                // copy must play that same variant for the trim to stay valid.
+                if (copy.variantIndex !== undefined) {
+                  iterationLinks[newKey] = { ...iterationLinks[newKey], variantIndex: copy.variantIndex };
                 }
-                const idx = parseInt(key.slice(prefix.length), 10);
-                if (Number.isNaN(idx)) {
-                  remapped[key] = link;
-                  return;
-                }
-                const newIdx = idx >= insertAt ? idx + 1 : idx;
-                remapped[`${soundId}-${newIdx}`] = link;
-              });
-              return { iterationLinks: remapped };
+              }
+              return { iterationLinks, iterationTrims };
             },
             false,
             'audio/remapIterationLinksForInsert',
           ),
 
+        setIterationTrim: (soundId, iterationIndex, trim, newStartSec) => {
+          set(
+            (state) => {
+              const key = iterationKey(soundId, iterationIndex);
+              const iterationTrims = { ...state.iterationTrims };
+              if (trim) iterationTrims[key] = { start: trim.start, end: trim.end };
+              else delete iterationTrims[key];
+              if (newStartSec === undefined) return { iterationTrims };
+              const timestamps = [...(state.soundTimestamps[soundId] ?? [])];
+              timestamps[iterationIndex] = parseFloat(Math.max(0, newStartSec).toFixed(3));
+              return {
+                iterationTrims,
+                soundTimestamps: { ...state.soundTimestamps, [soundId]: timestamps },
+              };
+            },
+            false,
+            'audio/setIterationTrim',
+          );
+          // Trigger-linked dependents (after / alignEnd) follow the new clip length.
+          if (get()._soundConfigs.some(c => c.orchestrateMeta)) {
+            get().bakeOrchestrateSchedule();
+          }
+        },
+
         setIterationLink: (soundId, iterationIndex, link) =>
           set(
             (state) => {
-              const key = `${soundId}-${iterationIndex}`;
+              const key = iterationKey(soundId, iterationIndex);
               const existing = state.iterationLinks[key] ?? {};
-              return { iterationLinks: { ...state.iterationLinks, [key]: { ...existing, ...link } } };
+              return {
+                iterationLinks: { ...state.iterationLinks, [key]: { ...existing, ...link } },
+                iterationTrims: dropTrimsOnVariantChange(state.iterationTrims, state.iterationLinks, [key], link),
+              };
             },
             false,
             'audio/setIterationLink',
@@ -562,11 +631,14 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             (state) => {
               if (iterationIndices.length === 0) return {};
               const next = { ...state.iterationLinks };
-              for (const iterationIndex of iterationIndices) {
-                const key = `${soundId}-${iterationIndex}`;
+              const keys = iterationIndices.map((i) => iterationKey(soundId, i));
+              for (const key of keys) {
                 next[key] = { ...(next[key] ?? {}), ...link };
               }
-              return { iterationLinks: next };
+              return {
+                iterationLinks: next,
+                iterationTrims: dropTrimsOnVariantChange(state.iterationTrims, state.iterationLinks, keys, link),
+              };
             },
             false,
             'audio/setIterationLinkForAllIterations',
@@ -577,7 +649,11 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             (state) => {
               const key = `${soundId}-${iterationIndex}`;
               const { [key]: _removed, ...rest } = state.iterationLinks;
-              return { iterationLinks: rest };
+              return {
+                iterationLinks: rest,
+                // Without a link the clip plays variant A again.
+                iterationTrims: dropTrimsOnVariantChange(state.iterationTrims, state.iterationLinks, [key], { variantIndex: 0 }),
+              };
             },
             false,
             'audio/clearIterationLink',
@@ -585,13 +661,10 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
 
         clearAllIterationLinksForSound: (soundId) =>
           set(
-            (state) => {
-              const prefix = `${soundId}-`;
-              const filtered = Object.fromEntries(
-                Object.entries(state.iterationLinks).filter(([k]) => !k.startsWith(prefix)),
-              );
-              return { iterationLinks: filtered };
-            },
+            (state) => ({
+              iterationLinks: clearIterationKeysForSound(state.iterationLinks, soundId),
+              iterationTrims: clearIterationKeysForSound(state.iterationTrims, soundId),
+            }),
             false,
             'audio/clearAllIterationLinksForSound',
           ),
@@ -668,13 +741,9 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
               } else {
                 trackIds.forEach((id) => newMuted.add(id));
               }
-              return {
-                mutedSounds: newMuted,
-                soloedSound:
-                  state.soloedSound && trackIds.includes(state.soloedSound)
-                    ? null
-                    : state.soloedSound,
-              };
+              const newSoloed = new Set(state.soloedSounds);
+              trackIds.forEach((id) => newSoloed.delete(id));
+              return { mutedSounds: newMuted, soloedSounds: newSoloed };
             },
             false,
             'audio/handleMute',
@@ -683,18 +752,21 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
         handleSolo: (soundId) =>
           set(
             (state) => {
-              // Track-level: clearing mute must drop every variant copy, otherwise
-              // a mute→solo→unsolo cycle would leave the track half-muted.
+              // Track-level and additive: soloing toggles every variant copy of
+              // this track (so per-iteration variant overrides stay audible) and
+              // leaves other soloed tracks soloed. Clearing mute must drop every
+              // variant copy, otherwise a mute→solo→unsolo cycle would leave the
+              // track half-muted.
               const sounds = state._generatedSounds.length > 0
                 ? state._generatedSounds
                 : useSoundscapeStore.getState().generatedSounds;
               const trackIds = resolveTrackSoundIds(sounds, soundId);
               const newMuted = new Set(state.mutedSounds);
               trackIds.forEach((id) => newMuted.delete(id));
-              return {
-                mutedSounds: newMuted,
-                soloedSound: state.soloedSound === soundId ? null : soundId,
-              };
+              const newSoloed = new Set(state.soloedSounds);
+              const isSoloed = trackIds.some((id) => newSoloed.has(id));
+              trackIds.forEach((id) => (isSoloed ? newSoloed.delete(id) : newSoloed.add(id)));
+              return { mutedSounds: newMuted, soloedSounds: newSoloed };
             },
             false,
             'audio/handleSolo',
@@ -839,6 +911,13 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
         setMasterVolume: (volume) =>
           set({ masterVolume: volume }, false, 'audio/setMasterVolume'),
 
+        toggleMasterMute: () =>
+          set(
+            (state) => ({ masterVolume: state.masterVolume === 0 ? AUDIO_CONTROL.MASTER_VOLUME.RESET : 0 }),
+            false,
+            'audio/toggleMasterMute',
+          ),
+
         setOrchestrateIterationLinks: (configs) => {
           const { _generatedSounds, iterationLinks } = get();
 
@@ -908,8 +987,19 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             if (!freshSoundIds.has(sid)) filteredExisting[k] = v;
           });
 
+          // Clip trims on re-linked tracks survive only where the iteration still
+          // exists and keeps the same variant (the trim is relative to its buffer).
+          const iterationTrims: Record<string, TrimRange> = {};
+          Object.entries(get().iterationTrims).forEach(([k, v]) => {
+            const dash = k.lastIndexOf('-');
+            const sid = dash > 0 ? k.substring(0, dash) : k;
+            const sameVariant = freshLinks[k] !== undefined
+              && (iterationLinks[k]?.variantIndex ?? 0) === (freshLinks[k].variantIndex ?? 0);
+            if (!freshSoundIds.has(sid) || sameVariant) iterationTrims[k] = v;
+          });
+
           set(
-            { iterationLinks: { ...filteredExisting, ...freshLinks } },
+            { iterationLinks: { ...filteredExisting, ...freshLinks }, iterationTrims },
             false,
             'audio/setOrchestrateIterationLinks',
           );
@@ -929,7 +1019,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
           setTimeout(() => {
           if (bakeId !== _pendingBakeId) return; // superseded — the newer bake will run the pending callback
 
-          const { _soundConfigs, _generatedSounds, soundTrims, soundTimestamps, soundBufferDurations, soundIterationDurations } = get();
+          const { _soundConfigs, _generatedSounds, soundTrims, iterationTrims, soundTimestamps, soundBufferDurations, soundIterationDurations } = get();
 
           if (!_soundConfigs.some(c => c.orchestrateMeta)) {
             _pendingBakeNotify = false;
@@ -966,6 +1056,8 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             meta: NonNullable<SoundGenerationConfig['orchestrateMeta']>;
             /** Duration per variant copy (0-based). null = not yet generated. */
             variantDurations: (number | null)[];
+            /** Per-iteration duration from a DAW clip trim (null = use the variant's). */
+            iterationDurations: (number | null)[];
             /** Resolved start time per expression/iteration slot. null = not yet resolved. */
             timestamps: (number | null)[];
             /** Iteration indices the solver excluded (unsatisfiable constraint). */
@@ -986,6 +1078,14 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
           // scenario sets can never collide.
           const entryMap = new Map<string, EntryInfo>();
 
+          /** Played length (s) of iteration `i`: its clip-trim override, else its variant's. */
+          const iterDurationSec = (entry: EntryInfo, i: number): number => {
+            const override = entry.iterationDurations[i];
+            if (override !== null && override !== undefined) return override;
+            const variantIdx = (entry.meta.variants[i] ?? 1) - 1;
+            return entry.variantDurations[variantIdx] ?? entry.variantDurations[0] ?? 0;
+          };
+
           _soundConfigs.forEach((config, configIndex) => {
             const meta = config.orchestrateMeta;
             if (!meta) return;
@@ -999,6 +1099,8 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             const generatedForConfig = _generatedSounds.filter((s: any) => s.prompt_index === configIndex);
             const numCopies = Math.max(1, config.seed_copies ?? 1);
             const variantDurations: (number | null)[] = new Array(numCopies).fill(null);
+            // Untrimmed length per copy — DAW clip trims are fractions of this.
+            const rawVariantDurations: (number | null)[] = new Array(numCopies).fill(null);
 
             generatedForConfig.forEach((s: any) => {
               // Prefer the REAL decoded buffer duration over the requested/reported
@@ -1012,16 +1114,13 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
               // Trim values are FRACTIONS (0-1) of the buffer, so the effective
               // duration is `rawDur * (end - start)` — matching timeline-utils.
               const trim = soundId ? soundTrims[soundId] : undefined;
-              let effectiveDur = rawDur;
-              if (trim) {
-                const startFrac = Math.max(0, Math.min(1, trim.start ?? 0));
-                const endFrac = trim.end > 0 ? Math.min(1, trim.end) : 1;
-                effectiveDur = Math.max(0, rawDur * (endFrac - startFrac));
-              }
+              const effectiveDur = trimmedDuration(rawDur, trim);
               if (copyIdx >= 0 && copyIdx < variantDurations.length) {
                 variantDurations[copyIdx] = effectiveDur;
+                rawVariantDurations[copyIdx] = rawDur;
               }
               if (variantDurations[0] === null) variantDurations[0] = effectiveDur;
+              if (rawVariantDurations[0] === null) rawVariantDurations[0] = rawDur;
             });
 
             // Durations are only "known" once EVERY generated copy has a decoded
@@ -1041,11 +1140,21 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             // (MM:SS or seconds) keep the track sequenced instead of dropping it.
             const editedTimestamps = soundId ? soundTimestamps[soundId] : undefined;
             const authoredTimestamps = (meta.timestamps ?? []).map((t) => parseAuthoredSeconds(t));
+            // A DAW clip trim gives that one iteration its own length, so after() /
+            // alignEnd() dependents and same-track serialization follow the trim.
+            const iterationDurations = expressions.map((_, i): number | null => {
+              const clipTrim = soundId && !isBackground ? iterationTrims[iterationKey(soundId, i)] : undefined;
+              if (!clipTrim) return null;
+              const variantIdx = (meta.variants[i] ?? 1) - 1;
+              const raw = rawVariantDurations[variantIdx] ?? rawVariantDurations[0];
+              return raw ? trimmedDuration(raw, clipTrim) : null;
+            });
             entryMap.set(scheduleEntryKey(meta.orchestrateId, meta.entryId), {
               configIndex,
               soundId,
               meta,
               variantDurations,
+              iterationDurations,
               timestamps: new Array(expressions.length).fill(null),
               excludedIndices: [],
               durationsKnown: isBackground ? true : durationsKnown,
@@ -1083,6 +1192,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
                 delays,
                 variants: entry.meta.variants ?? [],
                 variantDurations: entry.variantDurations,
+                iterationDurations: entry.iterationDurations,
                 durationsKnown: entry.durationsKnown,
                 manualTimestamps: entry.manualTimestamps,
               };
@@ -1103,10 +1213,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             entryMap.forEach((entry) => {
               if (entry.isBackground) return;
               const exprs = entry.meta.trigger.expression;
-              const durations = entry.timestamps.map((_, i) => {
-                const variantIdx = (entry.meta.variants[i] ?? 1) - 1;
-                return (entry.variantDurations[variantIdx] ?? entry.variantDurations[0] ?? 0) as number;
-              });
+              const durations = entry.timestamps.map((_, i) => iterDurationSec(entry, i));
               const paramFlags = entry.timestamps.map((_, i) => isParamExpression(exprs[i]));
               const result = serializeTrackOverlaps(entry.timestamps, durations, paramFlags);
               entry.timestamps = result.starts;
@@ -1260,7 +1367,8 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
           let anyChange = false;
           let maxResolvedSec = 0; // track furthest resolved timestamp for auto-extending
 
-          entryMap.forEach(({ soundId, timestamps, meta, variantDurations, excludedIndices, isBackground }) => {
+          entryMap.forEach((entry) => {
+            const { soundId, timestamps, meta, excludedIndices, isBackground } = entry;
             // Backgrounds own their loop downstream — never write their schedule.
             if (!soundId || isBackground) return;
 
@@ -1285,9 +1393,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             // Track the furthest real timestamp to potentially extend the timeline
             finalTs.forEach((t, i) => {
               if (t < UNRESOLVED) {
-                const variantIdx = (meta.variants[i] ?? 1) - 1;
-                const dur = variantDurations[variantIdx] ?? variantDurations[0] ?? 0;
-                maxResolvedSec = Math.max(maxResolvedSec, t + (dur as number));
+                maxResolvedSec = Math.max(maxResolvedSec, t + iterDurationSec(entry, i));
               }
             });
 
@@ -1320,14 +1426,13 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
           // Compute per-iteration durations (ms) so each DAW block shows its
           // actual variant length rather than the primary copy's length.
           const newIterDurations = { ...soundIterationDurations };
-          entryMap.forEach(({ soundId, timestamps, meta, variantDurations, isBackground }) => {
+          entryMap.forEach((entry) => {
+            const { soundId, timestamps, isBackground } = entry;
             if (!soundId || isBackground) return;
             const UNRESOLVED_CHECK = 999999;
             const iterDursMs = timestamps.map((t, i) => {
               if (t === null || t >= UNRESOLVED_CHECK) return 0;
-              const variantIdx = (meta.variants[i] ?? 1) - 1;
-              const dur = variantDurations[variantIdx] ?? variantDurations[0] ?? 0;
-              return (dur as number) * 1000;
+              return iterDurationSec(entry, i) * 1000;
             });
             newIterDurations[soundId] = iterDursMs;
           });
@@ -1509,7 +1614,12 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
           set(
             (state) => {
               const { [soundId]: _removed, ...rest } = state.soundTimestamps;
-              return { soundTimestamps: rest };
+              // Back to the auto loop: iteration indices are regenerated, so clip
+              // trims keyed by the old indices no longer belong to any clip.
+              return {
+                soundTimestamps: rest,
+                iterationTrims: clearIterationKeysForSound(state.iterationTrims, soundId),
+              };
             },
             false,
             'audio/clearSoundTimestampsEntry',
@@ -1524,7 +1634,9 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
               const soundIterationDurations = { ...state.soundIterationDurations };
               const excludedIterations = { ...state.excludedIterations };
               const exclusionReasons = { ...state.exclusionReasons };
+              let iterationTrims = state.iterationTrims;
               drop.forEach((id) => {
+                iterationTrims = clearIterationKeysForSound(iterationTrims, id);
                 delete soundTimestamps[id];
                 delete soundIterationDurations[id];
                 delete excludedIterations[id];
@@ -1532,7 +1644,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
                   if (k.startsWith(`${id}-`)) delete exclusionReasons[k];
                 });
               });
-              return { soundTimestamps, soundIterationDurations, excludedIterations, exclusionReasons };
+              return { soundTimestamps, soundIterationDurations, excludedIterations, exclusionReasons, iterationTrims };
             },
             false,
             'audio/clearSoundTimestampsFor',
@@ -1569,9 +1681,23 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             'audio/restoreIterationLinks',
           ),
 
-        restoreMuteSolo: (mutedSoundIds, soloedSoundId) =>
+        restoreIterationTrims: (trims) =>
           set(
-            { mutedSounds: new Set(mutedSoundIds), soloedSound: soloedSoundId },
+            { iterationTrims: trims },
+            false,
+            'audio/restoreIterationTrims',
+          ),
+
+        restoreMuteSolo: (mutedSoundIds, soloedSoundIds) =>
+          set(
+            (state) => {
+              // Expand to whole tracks: legacy saves stored a single variant id.
+              const sounds = state._generatedSounds.length > 0
+                ? state._generatedSounds
+                : useSoundscapeStore.getState().generatedSounds;
+              const soloedSounds = new Set(soloedSoundIds.flatMap((id) => resolveTrackSoundIds(sounds, id)));
+              return { mutedSounds: new Set(mutedSoundIds), soloedSounds };
+            },
             false,
             'audio/restoreMuteSolo',
           ),
@@ -1593,13 +1719,15 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
                 for (const [k, v] of Object.entries(obj)) if (!remove.has(k)) next[k] = v;
                 return next;
               };
-              const keepLinks = (obj: Record<string, IterationLink>): Record<string, IterationLink> => {
-                const next: Record<string, IterationLink> = {};
+              const keepLinks = <T,>(obj: Record<string, T>): Record<string, T> => {
+                const next: Record<string, T> = {};
                 for (const [k, v] of Object.entries(obj)) if (!remove.has(stripIteration(k))) next[k] = v;
                 return next;
               };
               const newMuted = new Set(state.mutedSounds);
               soundIds.forEach((id) => newMuted.delete(id));
+              const newSoloed = new Set(state.soloedSounds);
+              soundIds.forEach((id) => newSoloed.delete(id));
               const prunedOrchestrateResult = state.orchestrateResult
                 ? {
                     timestamps: keep(state.orchestrateResult.timestamps),
@@ -1620,9 +1748,10 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
                 soundTrims: keep(state.soundTrims),
                 soundLoopable: keep(state.soundLoopable),
                 iterationLinks: keepLinks(state.iterationLinks),
+                iterationTrims: keepLinks(state.iterationTrims),
                 orchestrateResult: prunedOrchestrateResult,
                 mutedSounds: newMuted,
-                soloedSound: state.soloedSound && remove.has(state.soloedSound) ? null : state.soloedSound,
+                soloedSounds: newSoloed,
               };
             },
             false,
@@ -1671,6 +1800,8 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
               return {
                 soundTimestamps: { ...state.soundTimestamps, [soundId]: [...savedTs] },
                 iterationLinks: restoredLinks,
+                // The orchestrator result carries no clip trims — reset reverts them too.
+                iterationTrims: clearIterationKeysForSound(state.iterationTrims, soundId),
               };
             },
             false,
@@ -1686,10 +1817,12 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
       equality: (past, current) =>
         JSON.stringify(past.soundVolumes) === JSON.stringify(current.soundVolumes) &&
         JSON.stringify(past.soundTrims) === JSON.stringify(current.soundTrims) &&
+        JSON.stringify(past.iterationTrims) === JSON.stringify(current.iterationTrims) &&
         JSON.stringify(past.selectedVariants) === JSON.stringify(current.selectedVariants) &&
         past.mutedSounds.size === current.mutedSounds.size &&
         [...past.mutedSounds].every((id) => current.mutedSounds.has(id)) &&
-        past.soloedSound === current.soloedSound &&
+        past.soloedSounds.size === current.soloedSounds.size &&
+        [...past.soloedSounds].every((id) => current.soloedSounds.has(id)) &&
         past.timelineDurationMs === current.timelineDurationMs &&
         past.globalBaseDbfs === current.globalBaseDbfs &&
         JSON.stringify(past.soundTimestamps) === JSON.stringify(current.soundTimestamps) &&
@@ -1707,13 +1840,19 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
       return {
         ...persistable,
         mutedSounds: [...(state.mutedSounds || [])],
+        soloedSounds: [...(state.soloedSounds || [])],
       } as any;
     },
-    merge: (persisted: any, current: AudioControlsStoreState) => ({
-      ...current,
-      ...persisted,
-      mutedSounds: new Set<string>(persisted.mutedSounds || []),
-    }),
+    merge: (persisted: any, current: AudioControlsStoreState) => {
+      // Legacy single-solo key (pre multi-solo) — superseded by soloedSounds.
+      const { soloedSound: legacySolo, ...rest } = persisted ?? {};
+      return {
+        ...current,
+        ...rest,
+        mutedSounds: new Set<string>(rest.mutedSounds || []),
+        soloedSounds: new Set<string>(rest.soloedSounds || (legacySolo ? [legacySolo] : [])),
+      };
+    },
   },
 ),
 );

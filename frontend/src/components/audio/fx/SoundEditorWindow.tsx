@@ -9,7 +9,9 @@ import {
   useSoundscapeStore,
   useUIStore,
 } from '@/store';
-import { API_BASE_URL, DEFAULT_DBFS, UI_BORDER_RADIUS } from '@/utils/constants';
+import { API_BASE_URL, DEFAULT_DBFS, FLOATING_WINDOW, UI_BORDER_RADIUS, normalizeSoundCategory } from '@/utils/constants';
+import { useFloatingWindow } from '@/hooks/useFloatingWindow';
+import { ResizeHandles } from '@/components/ui/ResizeHandles';
 import { apiService } from '@/services/api';
 import { invalidatePeaks } from '@/lib/audio/peaks-cache';
 import { decodeAudioFile } from '@/lib/audio/utils/audio-file-decoder';
@@ -117,6 +119,11 @@ export function SoundEditorWindow() {
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
   const chainRef = useRef(chain);
   chainRef.current = chain;
+  const { rect, startDrag, startResize } = useFloatingWindow({
+    storageKey: FLOATING_WINDOW.SOUND_EDITOR_STORAGE_KEY,
+    defaultSize: FLOATING_WINDOW.SOUND_EDITOR_DEFAULT_SIZE,
+    active: !!soundId && !!event,
+  });
 
   // The waveform/preview follows the last processed server-rendered stage when
   // enabled and ready; bypassing it reverts to the original sound.
@@ -302,22 +309,29 @@ export function SoundEditorWindow() {
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[60] flex items-center justify-center"
-      style={{ backgroundColor: 'color-mix(in srgb, var(--background) 62%, transparent)' }}
-      onClick={() => setSoundEditorSoundId(null)}
+      role="dialog"
+      aria-label="Sound editor"
+      className="fixed inset-0 z-[60] pointer-events-none"
     >
       <div
-        className="frosted-surface backdrop-blur-lg backdrop-saturate-150 shadow-lg flex flex-col"
+        className="frosted-surface backdrop-blur-lg backdrop-saturate-150 shadow-lg flex flex-col pointer-events-auto absolute"
         style={{
-          width: 'min(92vw, 52rem)',
-          maxHeight: 'min(88dvh, 44rem)',
+          left: rect?.x ?? 0,
+          top: rect?.y ?? 0,
+          width: rect?.w ?? FLOATING_WINDOW.SOUND_EDITOR_DEFAULT_SIZE.w,
+          height: rect?.h ?? FLOATING_WINDOW.SOUND_EDITOR_DEFAULT_SIZE.h,
+          visibility: rect ? 'visible' : 'hidden',
           border: '1px solid var(--color-overlay-border)',
           borderRadius: `${UI_BORDER_RADIUS.LG}px`,
           background: 'var(--color-overlay-bg)',
         }}
-        onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: '1px solid var(--color-border)' }}>
+        <ResizeHandles onStart={startResize} />
+        <div
+          className="flex items-center justify-between px-4 py-3 cursor-move select-none touch-none"
+          style={{ borderBottom: '1px solid var(--color-border)' }}
+          onPointerDown={startDrag}
+        >
           <div className="min-w-0">
             <p className="text-sm font-semibold text-foreground truncate">
               {event.display_name || 'Sound'}
@@ -419,6 +433,7 @@ export function SoundEditorWindow() {
             onBypass={(id, enabled) => engineRef.current?.setInstanceBypass(id, enabled)}
             onParamsLive={(id: string, params: FxParams) => engineRef.current?.updateInstanceParams(id, params)}
             onStructuralChange={rebuild}
+            isSpeech={normalizeSoundCategory(event?.category) === 'speech'}
           />
         </div>
 

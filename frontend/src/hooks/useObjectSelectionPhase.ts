@@ -25,8 +25,7 @@ import { useSpeckleStore } from '@/store';
  *     onCommit: (ids) => { ...; return true; },
  *     onEnterSelecting: () => { /* clear prior meshes *\/ },
  *   });
- *
- * <HelperHint text={isSelecting ? 'Hold shift to select multiple objects, press Enter when finished.' : null} />
+
  * ```
  */
 export function useObjectSelectionPhase({

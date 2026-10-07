@@ -21,6 +21,7 @@ import { useAnalysisStore, useAudioControlsStore, useSoundscapeStore, usePositio
 import { useSpeckleEngineStore } from "@/store/speckleEngineStore";
 import { useUIStore } from "@/store/uiStore";
 import { useServiceVersions } from "@/hooks/useServiceVersions";
+import { useSoundCardShortcutTargets, getPreGenPreviewKey } from "@/components/layout/sidebar/sound/useSoundCardShortcutTargets";
 import {
   AUDIO_MODEL_AUDIOLDM2,
   AUDIO_MODEL_ELEVENLABS,
@@ -31,6 +32,7 @@ import {
   SOUND_CATEGORIES,
   normalizeSoundCategory,
 } from "@/utils/constants";
+import { getGenerationSignature, getModifiedGenerationFields, isGenerationDirty } from '@/utils/generationSignature';
 
 /**
  * SoundGenerationSection Component
@@ -120,7 +122,6 @@ export function SoundGenerationSection({
   isLinkingEntity = false,
   linkingConfigIndex = null,
   useSpeckleViewer = false,
-  onResetSound,
   onSelectSoundCard,
   selectedCardIndex = null,
   onSoundCardCollapsed,
@@ -163,6 +164,8 @@ export function SoundGenerationSection({
   const regeneratingIndices         = useSoundscapeStore((s) => s.regeneratingIndices);
   const regeneratingVariantIndices  = useSoundscapeStore((s) => s.regeneratingVariantIndices);
   const regenerateVariantInPlace    = useSoundscapeStore((s) => s.regenerateVariantInPlace);
+  const handleRegenerateConfig      = useSoundscapeStore((s) => s.handleRegenerateConfig);
+  const revertGenerationSettings    = useSoundscapeStore((s) => s.revertGenerationSettings);
   const orchestrateSoundsEnabled    = useSoundscapeStore((s) => s.orchestrateSoundsEnabled);
   const setOrchestrateSoundsEnabled = useSoundscapeStore((s) => s.setOrchestrateSoundsEnabled);
   const reorchestrateTimeline       = useSoundscapeStore((s) => s.reorchestrateTimeline);
@@ -219,7 +222,7 @@ export function SoundGenerationSection({
   const onSolo               = useAudioControlsStore((s) => s.handleSolo);
   const onVariantChange      = useAudioControlsStore((s) => s.handleVariantChange);
   const mutedSounds          = useAudioControlsStore((s) => s.mutedSounds);
-  const soloedSound          = useAudioControlsStore((s) => s.soloedSound);
+  const soloedSounds         = useAudioControlsStore((s) => s.soloedSounds);
   const soundVolumes         = useAudioControlsStore((s) => s.soundVolumes);
   const selectedVariants     = useAudioControlsStore((s) => s.selectedVariants);
   const previewingSoundId    = useAudioControlsStore((s) => s.previewingSoundId);
@@ -292,14 +295,6 @@ export function SoundGenerationSection({
     });
     return map;
   }, [generatedSounds]);
-
-  // Handle reset (convert generated sound back to generation UI)
-  const handleReset = useCallback((index: number) => {
-    const sound = getGeneratedSound(index);
-    if (sound && onResetSound) {
-      onResetSound(sound.id, index);
-    }
-  }, [getGeneratedSound, onResetSound]);
 
   // Validate if a sound config has valid settings for generation
   const isConfigValid = useCallback((config: SoundGenerationConfig): boolean => {
@@ -496,6 +491,17 @@ export function SoundGenerationSection({
     }
   }, [setExpandedSoundCardIndex, filteredCardItems, onSoundCardCollapsed]);
 
+  // Keyboard shortcuts: Space previews the expanded card, Alt+↑/↓ / Esc / Delete / F
+  useSoundCardShortcutTargets({
+    expandedIndex,
+    filteredCardItems,
+    isSoundGenerated,
+    getGeneratedSound,
+    onExpandedIndexChange: handleExpandedIndexChange,
+    onRemoveConfig,
+    onZoomToCard: triggerZoomToSoundCard,
+  });
+
   // Available card types for add button dropdown (sound types only)
   const availableTypes: CardTypeOption[] = useMemo(() => [
     { type: 'text-to-audio', label: CARD_TYPE_LABELS['text-to-audio'], enabled: true },
@@ -566,9 +572,9 @@ export function SoundGenerationSection({
     const variants = getVariantsForPrompt(originalIndex);
     const selectedVariantIdx = getSelectedVariantIdx(originalIndex);
     const isMuted = generatedSound ? mutedSounds.has(generatedSound.id) : false;
-    const isSoloed = generatedSound ? soloedSound === generatedSound.id : false;
-    // When any sound is soloed, dim all other generated cards the same way as muted
-    const isEffectivelyMuted = isMuted || (!!soloedSound && isGenerated && !isSoloed);
+    const isSoloed = generatedSound ? soloedSounds.has(generatedSound.id) : false;
+    // When any track is soloed, dim every non-soloed generated card the same way as muted
+    const isEffectivelyMuted = isMuted || (soloedSounds.size > 0 && isGenerated && !isSoloed);
 
     // Build custom menu items
     const customButtons: CustomMenuItem[] = [];
@@ -1110,7 +1116,7 @@ export function SoundGenerationSection({
 
     // Pre-gen (upload / sample-audio) preview shares the global previewingSoundId
     // field with generated-sound previews, so starting one always stops the other.
-    const preGenPreviewKey = `pregen:${originalIndex}`;
+    const preGenPreviewKey = getPreGenPreviewKey(originalIndex);
     const isPreGenPreviewPlaying = previewingSoundId === preGenPreviewKey;
     const isThisCardPreviewPlaying = isGenerated ? previewingSoundId === generatedSound?.id : isPreGenPreviewPlaying;
 
@@ -1130,6 +1136,30 @@ export function SoundGenerationSection({
       ? 'Regenerating...'
       : (soundGenCardStatus[originalIndex] ?? 'Pending…');
 
+    // Generated cards expose their pending-state editors in the settings section
+    // and offer "Regenerate" once edited — except uploaded / bundled audio,
+    // which has nothing to regenerate (read-only recap instead).
+    const isRegenerableType = getGenerationSignature(config) !== null;
+    const renderSoundSettings = (settingsOnly: boolean) => (
+      <SoundPreContent
+        config={config}
+        index={originalIndex}
+        settingsOnly={settingsOnly}
+        isSoundGenerating={isSoundGenerating}
+        isLinkingEntity={isLinkingEntity}
+        linkingConfigIndex={linkingConfigIndex}
+        onUpdateConfig={onUpdateConfig}
+        onUploadAudio={onUploadAudio}
+        onClearUploadedAudio={onClearUploadedAudio}
+        onLibrarySearch={onLibrarySearch}
+        onLibrarySoundSelect={onLibrarySoundSelect}
+        onCatalogSoundSelect={onCatalogSoundSelect}
+        isPreviewPlaying={isPreGenPreviewPlaying}
+        onPreviewPlayPause={() => onPreviewPlayPause(preGenPreviewKey)}
+        onPreviewStop={() => onPreviewStop(preGenPreviewKey)}
+      />
+    );
+
     return (
       <div key={originalIndex} style={{ position: 'relative' }}>
       <Card
@@ -1148,7 +1178,7 @@ export function SoundGenerationSection({
         showIndex={true}
         canRemove={true}
         closeButtonTitle="Remove sound"
-        resetButtonTitle="Reset to configuration UI"
+        closeButtonShortcut="DELETE_CARD"
         customButtons={customButtons.length > 0 ? customButtons : undefined}
         error={config.error || null}
         onDismissError={() => onUpdateConfig(originalIndex, 'error', '')}
@@ -1156,7 +1186,6 @@ export function SoundGenerationSection({
         onDoubleClickCard={() => triggerZoomToSoundCard(originalIndex)}
         onUpdateConfig={(_i, updates) => handleUpdateConfig(originalIndex, updates)}
         onRemove={() => onRemoveConfig(originalIndex)}
-        onReset={() => handleReset(originalIndex)}
         onRun={async () => onGenerateSingle(originalIndex)}
         onCancel={onStopGeneration}
         actionButtonLabel="Generate sound"
@@ -1170,32 +1199,18 @@ export function SoundGenerationSection({
         variants={cardVariants}
         showVariantsPreGen={showVariantsPreGen}
         showVariantsPostGen={showVariantsPostGen}
-        promptAction={(isGenerated && (isTextToAudioType || isTtsType) && generatedSound) ? {
-          onRegenerate: (newPrompt) => regenerateVariantInPlace(originalIndex, selectedVariantIdx, newPrompt),
-          isRegenerating: isRegeneratingVariant || cardGenerating,
-        } : undefined}
+        settingsContent={isRegenerableType ? renderSoundSettings(true) : undefined}
+        settingsDirty={isGenerated && isGenerationDirty(config)}
+        onRegenerate={isRegenerableType ? () => handleRegenerateConfig(originalIndex) : undefined}
+        onRevertSettings={isRegenerableType ? () => revertGenerationSettings(originalIndex) : undefined}
+        modifiedSettings={isGenerated && isRegenerableType ? getModifiedGenerationFields(config) : undefined}
         beforeContent={isGenerated ? undefined : (
           <>
             {!isCurrentlyLinking && linkedEntitiesDisplay}
             {unlinkConfirmDialog}
             {metaBadgeRow}
             {linkingBar}
-            <SoundPreContent
-              config={config}
-              index={originalIndex}
-              isSoundGenerating={isSoundGenerating}
-              isLinkingEntity={isLinkingEntity}
-              linkingConfigIndex={linkingConfigIndex}
-              onUpdateConfig={onUpdateConfig}
-              onUploadAudio={onUploadAudio}
-              onClearUploadedAudio={onClearUploadedAudio}
-              onLibrarySearch={onLibrarySearch}
-              onLibrarySoundSelect={onLibrarySoundSelect}
-              onCatalogSoundSelect={onCatalogSoundSelect}
-              isPreviewPlaying={isPreGenPreviewPlaying}
-              onPreviewPlayPause={() => onPreviewPlayPause(preGenPreviewKey)}
-              onPreviewStop={() => onPreviewStop(preGenPreviewKey)}
-            />
+            {renderSoundSettings(false)}
           </>
         )}
         afterContent={!isGenerated || !generatedSound ? undefined : (
@@ -1233,7 +1248,7 @@ export function SoundGenerationSection({
     getSelectedVariantIdx,
     getCollapsedInfo,
     mutedSounds,
-    soloedSound,
+    soloedSounds,
     modelEntities.length,
     useSpeckleViewer,
     isLinkingEntity,
@@ -1245,7 +1260,6 @@ export function SoundGenerationSection({
     availableTypes,
     handleUpdateConfig,
     onRemoveConfig,
-    handleReset,
     handleSwitchCardType,
     onUpdateConfig,
     onUploadAudio,
@@ -1274,6 +1288,8 @@ export function SoundGenerationSection({
     regeneratingIndices,
     regeneratingVariantIndices,
     regenerateVariantInPlace,
+    handleRegenerateConfig,
+    revertGenerationSettings,
     onRegenerateSingle,
     onDeleteVariant,
     audioModel,
