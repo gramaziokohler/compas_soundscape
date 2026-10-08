@@ -448,6 +448,57 @@ PYROOMACOUSTICS_CUSTOM_MATERIALS = {
     },    
 }
 PYROOMACOUSTICS_MESH_WELD_TOLERANCE = 1e-4  # Vertex merge tolerance in meters (0.1 mm) for welding connected meshes
+
+# Simulation mesh preparation (services/simulation_mesh_service.py)
+# The welded mesh is oriented from the AIR side: diffuse random-walk rays are
+# shot from every source/receiver that sits inside the model, each face records
+# which side was hit, and the result decides the pyroomacoustics normal
+# (pointing away from the air), two-sided surfaces and hidden faces. The same
+# preparation runs in the preflight check and in the simulation, so what the
+# user inspects is exactly what is simulated.
+# User-tunable mesh preparation settings (Advanced settings > Acoustics). Units
+# match the UI (millimetres / degrees); the backend clamps to these ranges.
+SIM_MESH_WELD_TOLERANCE_MM_DEFAULT = PYROOMACOUSTICS_MESH_WELD_TOLERANCE * 1000.0
+SIM_MESH_WELD_TOLERANCE_MM_MAX = 50.0
+SIM_MESH_MERGE_COPLANAR_DEFAULT = True
+SIM_MESH_COPLANAR_ANGLE_DEG_DEFAULT = 1.0
+SIM_MESH_COPLANAR_ANGLE_DEG_MAX = 10.0
+SIM_MESH_COPLANAR_DISTANCE_MM_DEFAULT = 1.0
+SIM_MESH_COPLANAR_DISTANCE_MM_MAX = 20.0
+SIM_MESH_DETECT_TWO_SIDED_DEFAULT = True
+SIM_MESH_VISIBILITY_QUALITY_DEFAULT = "standard"
+SIM_MESH_VISIBILITY_QUALITY_FACTORS = {"fast": 0.4, "standard": 1.0, "thorough": 2.5}
+SIM_MESH_ENCLOSING_OBJECT_MIN_FACES = 4        # Loose-face objects smaller than this are never "closed boxes"
+SIM_MESH_ENCLOSING_OBJECT_MAX_FACES = 5000     # Skip the (quadratic) closed-box test above this
+SIM_MESH_ENCLOSING_OBJECT_MIN_SHARE = 0.8      # Share of faces with an unambiguous inside for a closed box
+
+SIM_MESH_MIN_TRIANGLE_AREA_M2 = 1e-8          # Drop sliver triangles below this area
+SIM_MESH_RAY_SEED = 1234                      # Fixed RNG seed -> deterministic preparation
+SIM_MESH_RAY_TEST_BUDGET = 1.5e9              # Max ray-triangle tests for the visibility walk
+SIM_MESH_RAYS_PER_SEED_MAX = 4000             # Upper bound on random-walk rays per air seed
+SIM_MESH_RAYS_PER_SEED_MIN = 200              # Lower bound (kept even for very heavy meshes)
+SIM_MESH_WALK_BOUNCES = 12                    # Diffuse bounces per random-walk ray
+SIM_MESH_RAY_EPSILON_M = 1e-5                 # Self-intersection offset for re-emitted rays
+SIM_MESH_TWO_SIDED_MIN_HITS = 2               # Hits needed on the minority side to call a face two-sided
+SIM_MESH_TWO_SIDED_MIN_FRACTION = 0.1         # ...and its share of the face's hits
+SIM_MESH_SEED_OUTSIDE_ESCAPE_FRACTION = 0.5   # Primary-ray escape share above which a seed is outside the model
+SIM_MESH_SEED_LEAKY_ESCAPE_FRACTION = 0.02    # Primary-ray escape share above which a seed sees an opening
+SIM_MESH_INTERIOR_OBJECT_MAX_DEPTH_M = 1.0    # Outward probe distance below which an air-facing face is an interior object
+SIM_MESH_LEAK_RAYS_MAX = 60                   # Escaping rays returned for display
+SIM_MESH_LEAK_RAY_DISPLAY_LENGTH_M = 2.0      # Length of a displayed escaping ray past its exit point
+
+# Simulation preflight (services/simulation_preflight_service.py)
+PREFLIGHT_SURFACE_ERROR_DISTANCE_M = 0.05     # Source/receiver closer than this to a surface -> error
+PREFLIGHT_LEAK_WARNING_FRACTION = 0.005       # Escaping-ray share above which leaks are a warning
+PREFLIGHT_LEAK_ERROR_FRACTION = 0.05          # ...and above which they are an error
+PREFLIGHT_HOLE_LEAK_MATCH_DISTANCE_M = 0.5    # Max ray-to-hole distance to attribute a leak to a hole
+PREFLIGHT_ISM_PATHS_WARNING = 2e7             # Estimated image-source candidates above which ISM is slow
+PREFLIGHT_ISM_PATHS_ERROR = 5e8               # ...and above which it is impractical
+PREFLIGHT_MODEL_DIAGONAL_MIN_M = 1.0          # Smaller model bounding box -> units probably wrong
+PREFLIGHT_MODEL_DIAGONAL_MAX_M = 1000.0       # Larger model bounding box -> units probably wrong
+PREFLIGHT_MAX_LISTED_ITEMS = 25               # Max objects listed per issue
+PREFLIGHT_MAX_ISSUE_FACE_IDS = 5000           # Max face ids attached to one issue (for highlighting)
+PREFLIGHT_PAYLOAD_DECIMALS = 4                # Vertex rounding in the preview payload (0.1 mm)
 PYROOMACOUSTICS_SAMPLE_RATE = 44100  # Sample rate -- uses n_bands = math.floor(np.log2(SAMPLE_RATE / BASE_FREQUENCY))
 PYROOMACOUSTICS_USE_RAND_ISM = False  # Use randomized ISM for better realism
 PYROOMACOUSTICS_IR_TRIM_THRESHOLD = 0.01  # Fraction of peak amplitude below which trailing IR samples are trimmed
@@ -488,6 +539,7 @@ TEMP_PARENT_DIR = str(BACKEND_DIR / "temp")
 TEMP_UPLOADS_DIR = str(BACKEND_DIR / "temp" / "uploads")
 TEMP_LIBRARY_DIR = str(BACKEND_DIR / "temp" / "library_downloads")
 TEMP_SIMULATIONS_DIR = str(BACKEND_DIR / "temp" / "simulations")
+PREFLIGHT_PAYLOAD_DIR = str(BACKEND_DIR / "temp" / "simulations" / "preflight")  # + /<workspace id>/preflight_<id>.json
 TEMP_STATIC_DIR = str(BACKEND_DIR / "temp" / "static")
 TEMP_ANALYSIS_DIR = str(BACKEND_DIR / "temp" / "analysis")
 
@@ -853,7 +905,7 @@ TEMP_JANITOR_INTERVAL_S = int(os.environ.get("TEMP_JANITOR_INTERVAL_S", "3600"))
 # Job types (queue names in Redis)
 JOB_TYPE_SOUND = "sound"
 JOB_TYPE_SA3 = "sa3"
-JOB_TYPE_PYROOMACOUSTICS = "pyroomacoustics"
+JOB_TYPE_PYROOMACOUSTICS = "pyroomacoustics"  # also carries the geometry preflight (variant "pyroomacoustics_preflight")
 JOB_TYPE_SED = "sed"
 JOB_TYPE_LOOP = "loop"
 JOB_TYPE_CHORAS = "choras"

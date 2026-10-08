@@ -23,9 +23,10 @@ import {
   DEFAULT_LISTENER_ORIENTATION,
 } from '@/utils/constants';
 import { applyColorTheme, type ColorThemePreference } from '@/utils/color-theme';
-import { SIMPLE_MODE } from '@/utils/constants';
+import { SIMPLE_MODE, SIMULATION_MESH_SETTINGS_DEFAULTS } from '@/utils/constants';
 import type { UIMode } from '@/types/sceneWorkflow';
 import type { SpeckleUploadProgress } from '@/types/speckle-models';
+import type { SimulationMeshSettings } from '@/types/simulationPreflight';
 
 /** One-shot request for the expert left sidebar to jump to a wizard step/card. */
 export interface SidebarNavCommand {
@@ -165,6 +166,10 @@ export interface UIStoreState {
   setGlobalSoundSpeed: (v: number) => void;
   globalMeshLc: number;
   setGlobalMeshLc: (v: number) => void;
+  /** Simulation mesh preparation (weld / merge / two-sided) for every engine. */
+  simulationMeshSettings: SimulationMeshSettings;
+  setSimulationMeshSettings: (patch: Partial<SimulationMeshSettings>) => void;
+  resetSimulationMeshSettings: () => void;
 
   // ── Listener orientation (FPS look-at offset from receiver; survives refresh) ─
   listenerOrientation: { x: number; y: number; z: number };
@@ -434,6 +439,15 @@ export const useUIStore = create<UIStoreState>()(
       setGlobalSoundSpeed: (v) => set({ globalSoundSpeed: v }, false, 'ui/setGlobalSoundSpeed'),
       globalMeshLc: CHORAS_DE_DEFAULT_LC,
       setGlobalMeshLc: (v) => set({ globalMeshLc: v }, false, 'ui/setGlobalMeshLc'),
+      simulationMeshSettings: { ...SIMULATION_MESH_SETTINGS_DEFAULTS },
+      setSimulationMeshSettings: (patch) =>
+        set(
+          (s) => ({ simulationMeshSettings: { ...s.simulationMeshSettings, ...patch } }),
+          false,
+          'ui/setSimulationMeshSettings',
+        ),
+      resetSimulationMeshSettings: () =>
+        set({ simulationMeshSettings: { ...SIMULATION_MESH_SETTINGS_DEFAULTS } }, false, 'ui/resetSimulationMeshSettings'),
       listenerOrientation: { ...DEFAULT_LISTENER_ORIENTATION },
       setListenerOrientation: (orientation) =>
         set({ listenerOrientation: orientation }, false, 'ui/setListenerOrientation'),

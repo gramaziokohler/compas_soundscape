@@ -4,6 +4,7 @@ import { useMemo, type ReactNode } from 'react';
 import { useAnalysisStore, useSceneWorkflowStore, useSoundscapeStore } from '@/store';
 import type { SceneProgress, SceneWorkflowStep, SoundScene } from '@/types/sceneWorkflow';
 import { SceneSettingsSummary } from './SceneSettingsSummary';
+import { AnalysisGroupsControls, ScenarioHighlightControls } from './SceneStepHighlights';
 import { ThinkingDisclosure } from '@/components/ui/ThinkingDisclosure';
 import { SIMPLE_MODE } from '@/utils/constants';
 import {
@@ -52,7 +53,6 @@ function StepIcon({ state }: { state: StepState }) {
 export interface SceneWorkflowDetailProps {
   scene: SoundScene;
   progress: SceneProgress;
-  onOpenExpert: () => void;
   /** Open the scene's sound cards (shown once some sounds exist). */
   onShowSounds: () => void;
 }
@@ -62,14 +62,16 @@ export interface SceneWorkflowDetailProps {
  *
  * Live view of a scene's pipeline: the four steps with their state, a one-line
  * detail taken from the step's card (objects found, scenario events, proposed
- * foley/speech, per-sound generation status), and Stop / Resume actions.
+ * foley/speech, per-sound generation status), and — once the Analyze / Scenario
+ * steps are done — their 3D highlight toggles and result lists. Stop / Resume
+ * live in the panel footer (SceneWorkflowActions).
  *
  * Usage:
  * ```tsx
- * <SceneWorkflowDetail scene={scene} progress={progress} onOpenExpert={toExpert} onShowSounds={showSounds} />
+ * <SceneWorkflowDetail scene={scene} progress={progress} onShowSounds={showSounds} />
  * ```
  */
-export function SceneWorkflowDetail({ scene, progress, onOpenExpert, onShowSounds }: SceneWorkflowDetailProps) {
+export function SceneWorkflowDetail({ scene, progress, onShowSounds }: SceneWorkflowDetailProps) {
   const analysisConfigs = useAnalysisStore((s) => s.analysisConfigs);
   const soundConfigs = useSoundscapeStore((s) => s.soundConfigs);
   const generatedSounds = useSoundscapeStore((s) => s.generatedSounds);
@@ -81,11 +83,6 @@ export function SceneWorkflowDetail({ scene, progress, onOpenExpert, onShowSound
   const isOrchestrating = useSoundscapeStore((s) => s.isOrchestrating);
   const orchestrateThinking = useSoundscapeStore((s) => s.orchestrateThinking);
   const run = useSceneWorkflowStore((s) => s.runs[scene.usageIndex]);
-  const isQueuedOrRunning = useSceneWorkflowStore(
-    (s) => s.activeUsageIndex === scene.usageIndex || s.queue.includes(scene.usageIndex),
-  );
-  const stopScene = useSceneWorkflowStore((s) => s.stopScene);
-  const resumeScene = useSceneWorkflowStore((s) => s.resumeScene);
 
   const scenario = analysisConfigs[scene.usageIndex];
   const context = scene.contextIndex !== null ? analysisConfigs[scene.contextIndex] : undefined;
@@ -169,6 +166,12 @@ export function SceneWorkflowDetail({ scene, progress, onOpenExpert, onShowSound
                   {step === 'generate' && orchestrating ? SIMPLE_MODE.ORCHESTRATE_LABEL : SIMPLE_MODE.STEP_LABELS[step]}
                 </div>
                 {detail && <div className="bubble-step__meta line-clamp-2">{detail}</div>}
+                {step === 'analyze' && (state === 'done' || state === 'reused') && scene.contextIndex !== null && (
+                  <AnalysisGroupsControls contextIndex={scene.contextIndex} />
+                )}
+                {step === 'scenario' && state === 'done' && (
+                  <ScenarioHighlightControls usageIndex={scene.usageIndex} />
+                )}
                 {state === 'running' && (
                   <>
                     <div className="bubble-progress mt-1">
@@ -202,30 +205,59 @@ export function SceneWorkflowDetail({ scene, progress, onOpenExpert, onShowSound
         </ul>
       )}
 
-      <div className="flex items-center gap-2 flex-wrap pt-1">
-        {isQueuedOrRunning ? (
-          <button type="button" className="bubble-chip" onClick={() => stopScene(scene.usageIndex)}>
-            {progress.status === 'queued' ? 'Cancel' : 'Stop'}
-          </button>
-        ) : (
-          scene.isScenario && progress.status !== 'done' && (
-            <button type="button" className="bubble-chip bubble-chip--on" onClick={() => resumeScene(scene.usageIndex)}>
-              {progress.status === 'error' ? 'Retry' : 'Resume'}
-            </button>
-          )
-        )}
-        {scene.soundCount > 0 && (
+      {scene.soundCount > 0 && (
+        <div className="flex items-center gap-2 flex-wrap pt-1">
           <button type="button" className="bubble-chip" onClick={onShowSounds}>
             Show sounds
           </button>
-        )}
-        <button type="button" className="bubble-chip" onClick={onOpenExpert}>
-          Open in expert mode
-        </button>
-      </div>
+        </div>
+      )}
 
       <SceneSettingsSummary usageIndex={scene.usageIndex} />
 
     </div>
+  );
+}
+
+export interface SceneWorkflowActionsProps {
+  scene: SoundScene;
+  progress: SceneProgress;
+  onOpenExpert: () => void;
+}
+
+/**
+ * SceneWorkflowActions Component
+ *
+ * Stop / Cancel / Resume / Retry and "Open in detailed mode" — rendered in the
+ * workflow panel's footer, right of the trash button.
+ *
+ * Usage:
+ * ```tsx
+ * <BubblePanel footerActions={<SceneWorkflowActions scene={scene} progress={progress} onOpenExpert={toExpert} />} … />
+ * ```
+ */
+export function SceneWorkflowActions({ scene, progress, onOpenExpert }: SceneWorkflowActionsProps) {
+  const isQueuedOrRunning = useSceneWorkflowStore(
+    (s) => s.activeUsageIndex === scene.usageIndex || s.queue.includes(scene.usageIndex),
+  );
+  const stopScene = useSceneWorkflowStore((s) => s.stopScene);
+  const resumeScene = useSceneWorkflowStore((s) => s.resumeScene);
+  return (
+    <>
+      {isQueuedOrRunning ? (
+        <button type="button" className="bubble-chip" onClick={() => stopScene(scene.usageIndex)}>
+          {progress.status === 'queued' ? 'Cancel' : 'Stop'}
+        </button>
+      ) : (
+        scene.isScenario && progress.status !== 'done' && (
+          <button type="button" className="bubble-chip bubble-chip--on" onClick={() => resumeScene(scene.usageIndex)}>
+            {progress.status === 'error' ? 'Retry' : 'Resume'}
+          </button>
+        )
+      )}
+      <button type="button" className="bubble-chip" onClick={onOpenExpert}>
+        Open in detailed mode
+      </button>
+    </>
   );
 }

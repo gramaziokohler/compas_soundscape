@@ -10,6 +10,7 @@ import type {
   SpeckleUploadProgress,
 } from '@/types/speckle-models';
 import type { SoundscapeSavePayload, SoundscapeSaveResponse, SoundscapeLoadResponse, SoundscapeStats } from '@/types/soundscape';
+import type { PreflightJobResult, PreflightPayload, SimulationEngine, SimulationMeshSettings } from '@/types/simulationPreflight';
 
 /**
  * Enhanced error handling for API calls
@@ -1341,7 +1342,8 @@ export const apiService = {
       receiver_id: string;
     }>,
     geometryObjectIds?: string[],
-    objectScattering?: Record<string, number>
+    objectScattering?: Record<string, number>,
+    meshSettings?: SimulationMeshSettings,
   ): Promise<{ simulation_id: string } & { job_id: string }> {
     try {
       const formData = new FormData();
@@ -1368,6 +1370,7 @@ export const apiService = {
       }
 
       formData.append('source_receiver_pairs', JSON.stringify(sourceReceiverPairs));
+      if (meshSettings) formData.append('mesh_settings', JSON.stringify(meshSettings));
 
       const response = await fetchWithErrorHandling(
         `${API_BASE_URL}/api/pyroomacoustics/run-simulation-speckle`,
@@ -1421,6 +1424,89 @@ export const apiService = {
    */
   async cancelPyroomacousticsSimulation(simulationId: string): Promise<void> {
     await cancelUnifiedJob(simulationId);
+  },
+
+  // ─── Simulation geometry preflight ─────────────────────────────────────────
+
+  /**
+   * Enqueue a geometry preflight: the backend prepares the exact simulation
+   * mesh (weld, air-side orientation, two-sided detection, merge) and analyses
+   * it. Returns the job id; poll with getSimulationPreflightStatus().
+   */
+  async runSimulationPreflight(params: {
+    engine: SimulationEngine;
+    projectId: string;
+    modelId: string;
+    objectMaterials: Record<string, string>;
+    layerName: string;
+    geometryObjectIds?: string[];
+    objectScattering?: Record<string, number>;
+    sourceReceiverPairs: Array<{
+      source_position: number[];
+      receiver_position: number[];
+      source_id: string;
+      receiver_id: string;
+    }>;
+    maxOrder?: number;
+    rayTracing?: boolean;
+    meshSettings: SimulationMeshSettings;
+  }): Promise<{ job_id: string }> {
+    const formData = new FormData();
+    formData.append('engine', params.engine);
+    formData.append('speckle_project_id', params.projectId);
+    formData.append('speckle_version_id', params.modelId);
+    formData.append('object_materials', JSON.stringify(params.objectMaterials));
+    formData.append('layer_name', params.layerName);
+    if (params.geometryObjectIds?.length) {
+      formData.append('geometry_object_ids', JSON.stringify(params.geometryObjectIds));
+    }
+    formData.append('object_scattering', JSON.stringify(params.objectScattering ?? {}));
+    formData.append('source_receiver_pairs', JSON.stringify(params.sourceReceiverPairs));
+    if (params.maxOrder !== undefined) formData.append('max_order', String(params.maxOrder));
+    if (params.rayTracing !== undefined) formData.append('ray_tracing', String(params.rayTracing));
+    formData.append('mesh_settings', JSON.stringify(params.meshSettings));
+
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/simulation/preflight-speckle`,
+      { method: 'POST', body: formData },
+      'Run geometry preflight'
+    );
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: 'Geometry check failed' }));
+      throw new Error(err.detail || 'Geometry check failed');
+    }
+    return response.json();
+  },
+
+  /** Poll a geometry preflight job (unified GET /api/jobs/{id}). */
+  async getSimulationPreflightStatus(jobId: string): Promise<{
+    progress: number;
+    status: string;
+    completed: boolean;
+    cancelled: boolean;
+    error: string | null;
+    result: PreflightJobResult | null;
+  }> {
+    const job = await getUnifiedJobStatus(jobId);
+    return toLegacyJobStatus(job);
+  },
+
+  /** Fetch the preview payload of a finished preflight. */
+  async getSimulationPreflightPayload(preflightId: string): Promise<PreflightPayload> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/simulation/preflight/${preflightId}`,
+      undefined,
+      'Load geometry preview'
+    );
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: 'Geometry preview not found' }));
+      throw new Error(err.detail || 'Geometry preview not found');
+    }
+    return response.json();
+  },
+
+  async cancelSimulationPreflight(jobId: string): Promise<void> {
+    await cancelUnifiedJob(jobId);
   },
 
   /**
@@ -1512,6 +1598,7 @@ export const apiService = {
       receiver_id: string;
     }>,
     geometryObjectIds?: string[],
+    meshSettings?: SimulationMeshSettings,
   ): Promise<{ simulation_id: string } & { job_id: string }> {
     try {
       const formData = new FormData();
@@ -1521,6 +1608,7 @@ export const apiService = {
       formData.append('object_materials', JSON.stringify(objectMaterials));
       formData.append('layer_name', layerName);
       formData.append('simulation_method', settings.simulation_method);
+      if (meshSettings) formData.append('mesh_settings', JSON.stringify(meshSettings));
 
       if (settings.de_c0 !== undefined) formData.append('de_c0', String(settings.de_c0));
       if (settings.de_lc !== undefined) formData.append('de_lc', String(settings.de_lc));

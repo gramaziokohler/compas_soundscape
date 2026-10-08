@@ -2056,6 +2056,48 @@ export const PYROOMACOUSTICS_SCATTERING_MAX = 1.0; // Maximum scattering (diffus
 export const PYROOMACOUSTICS_DEFAULT_ENABLE_GRID = false; // Grid simulation disabled by default
 
 // ============================================================================
+// Simulation mesh preparation + geometry preflight
+// (mirrors backend/config/constants.py SIM_MESH_* / MeshPrepSettings)
+// ============================================================================
+
+/** Defaults of Advanced settings > Acoustics > Simulation geometry. */
+export const SIMULATION_MESH_SETTINGS_DEFAULTS = {
+  weld_tolerance_mm: 0.1,
+  merge_coplanar: true,
+  coplanar_angle_deg: 1.0,
+  coplanar_distance_mm: 1.0,
+  detect_two_sided: true,
+  visibility_quality: 'standard',
+} as const;
+
+/** Slider ranges of the simulation geometry settings (backend clamps to the same). */
+export const SIMULATION_MESH_SETTINGS_RANGES = {
+  WELD_TOLERANCE_MM: { MIN: 0, MAX: 50, STEP: 0.1 },
+  COPLANAR_ANGLE_DEG: { MIN: 0.1, MAX: 10, STEP: 0.1 },
+  COPLANAR_DISTANCE_MM: { MIN: 0.1, MAX: 20, STEP: 0.1 },
+} as const;
+
+export const SIMULATION_PREFLIGHT = {
+  POLL_INTERVAL_MS: 800,
+  /** Render order above the Speckle model, below sound spheres' labels. */
+  RENDER_ORDER: 9800,
+  FACE_OPACITY: 0.92,
+  GHOST_FACE_OPACITY: 0.35,
+  EDGE_OPACITY: 0.35,
+  /** Pull the preview in front of the coincident Speckle surfaces. */
+  POLYGON_OFFSET_FACTOR: -1,
+  POLYGON_OFFSET_UNITS: -4,
+  LEAK_DASH_SIZE_M: 0.15,
+  LEAK_GAP_SIZE_M: 0.1,
+  /** Padding (m) around an issue when the camera frames it. */
+  FOCUS_PADDING_M: 1.5,
+  /** Fit factor passed to CameraController.setCameraView. */
+  FOCUS_FIT: 1.2,
+  /** Max objects listed under an issue in the panel. */
+  MAX_LISTED_OBJECTS: 6,
+} as const;
+
+// ============================================================================
 // Choras (DE/DG Wave Simulation) Configuration
 // ============================================================================
 

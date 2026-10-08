@@ -27,6 +27,8 @@ export interface BubblePanelProps {
   powerTitle?: string;
   /** Disable the remove button (e.g. while a workflow runs). */
   removeDisabledReason?: string;
+  /** Extra footer buttons, rendered right of the trash button. */
+  footerActions?: ReactNode;
   /** Panel positioning (fixed/absolute coordinates) supplied by the owning column. */
   style?: CSSProperties;
   width?: number | string;
@@ -39,7 +41,8 @@ export interface BubblePanelProps {
  *
  * Floating frosted panel that a Simple-mode bubble expands into. Compact header
  * (power, title, optional actions, reduce) over a scrollable, clamped-fluid
- * body, and a bottom-right trash button that confirms before removing.
+ * body, and a bottom-right trash button that confirms before removing
+ * (optional `footerActions` sit right of it).
  *
  * Usage:
  * ```tsx
@@ -65,6 +68,7 @@ export function BubblePanel({
   removeTitle = "Remove",
   removeConfirmMessage,
   removeDisabledReason,
+  footerActions,
   onTogglePower,
   powered = false,
   powerTitle,
@@ -116,14 +120,17 @@ export function BubblePanel({
         </header>
       )}
       <div className="bubble-panel__body">{children}</div>
-      {onRemove && (
+      {(onRemove || footerActions) && (
         <footer className="bubble-panel__footer">
-          <DeleteConfirmButton
-            title={removeTitle}
-            message={removeConfirmMessage ?? `${removeTitle}?`}
-            onConfirm={onRemove}
-            disabledReason={removeDisabledReason}
-          />
+          {onRemove && (
+            <DeleteConfirmButton
+              title={removeTitle}
+              message={removeConfirmMessage ?? `${removeTitle}?`}
+              onConfirm={onRemove}
+              disabledReason={removeDisabledReason}
+            />
+          )}
+          {footerActions}
         </footer>
       )}
     </section>

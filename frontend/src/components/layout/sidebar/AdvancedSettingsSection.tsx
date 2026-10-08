@@ -28,6 +28,7 @@ import { useServiceVersions } from "@/hooks/useServiceVersions";
 import { useAudioControlsStore } from "@/store/audioControlsStore";
 import { useUIStore, selectHasSaveTarget, type AdvancedSettingsFocusTarget } from "@/store/uiStore";
 import { CollaborationPanel } from "@/components/layout/CollaborationPanel";
+import { SimulationGeometrySettings } from "@/components/layout/sidebar/advanced/SimulationGeometrySettings";
 import { OutputDeviceSelector } from "@/components/audio/OutputDeviceSelector";
 import type { ColorThemePreference } from "@/utils/color-theme";
 import {
@@ -133,7 +134,7 @@ type SettingKey =
   | 'label-sprites' | 'hovering-highlight' | 'sound-spheres' | 'playing-highlight' | 'listeners' | 'ground-grid'
   | 'appearance'
   | 'grid-spacing' | 'grid-color' | 'grid-labels'
-  | 'sound-speed' | 'mesh-length'
+  | 'sound-speed' | 'mesh-length' | 'simulation-geometry'
   | 'tokens'
   | 'llm-model' | 'tts-model' | 'tts-language' | 'audio-model'
   | 'diffusion-steps' | 'negative-prompt' | 'noise-reduction' | 'trim-silence'
@@ -163,6 +164,7 @@ const SETTINGS: SettingEntry[] = [
   { section: 'acoustic', key: 'sound-speed', terms: ['sound speed', 'speed', 'velocity'] },
   { section: 'acoustic', key: 'mesh-length', terms: ['mesh length', 'lc', 'characteristic length', 'mesh'] },
   { section: 'acoustic', key: 'listener-orientation', terms: ['listener orientation', 'orientation', 'listener', 'x', 'y', 'z'] },
+  { section: 'acoustic', key: 'simulation-geometry', terms: ['simulation geometry', 'weld', 'tolerance', 'coplanar', 'merge', 'two-sided', 'double-sided', 'orientation', 'preflight', 'geometry check'] },
 
   { section: 'tokens', key: 'tokens', terms: ['speckle', 'google', 'openai', 'anthropic', 'elevenlabs', 'token', 'api key', 'project name', 'apply tokens'] },
 
@@ -823,6 +825,11 @@ export function AdvancedSettingsSection({
                       onChange={(v) => onListenerOrientationChange({ ...listenerOrientation, [axis]: v })}
                     />
                   ))}
+                </CollapsibleGroup>
+              )}
+              {isVisible('simulation-geometry') && (
+                <CollapsibleGroup title="Simulation geometry" forceExpanded={isSearchActive}>
+                  <SimulationGeometrySettings />
                 </CollapsibleGroup>
               )}
             </div>

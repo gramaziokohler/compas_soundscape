@@ -28,8 +28,13 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
+
+from models.schemas import MeshPrepSettings
 from services.choras_service import ChorasService
-from services.speckle_service import SpeckleService
+from services.simulation_geometry_loader import load_speckle_simulation_geometry
+from services.simulation_mesh_service import MeshPrepOptions, SimulationMeshService
+from utils.geometry import seeds_from_pairs
 from utils.speckle_geometry_mapper import (
     build_choras_temp_dir,
     build_material_absorption_dict,
@@ -159,6 +164,7 @@ def run_choras_simulation(
     source_receiver_pairs: list,
     simulation_name: str,
     temp_dir: str,
+    mesh_settings: Optional[dict] = None,
 ) -> None:
     """Full Choras DE/DG pipeline, runs in a subprocess.
 
@@ -175,33 +181,44 @@ def run_choras_simulation(
     sys.stdout = capture
 
     try:
-        _write_progress(progress_file, 2, "Authenticating with Speckle...")
-        speckle_service = SpeckleService()
-        if not speckle_service.authenticate():
-            raise RuntimeError("Failed to authenticate with Speckle")
-
-        _write_progress(progress_file, 5, "Fetching Speckle geometry...")
-        geometry_data = speckle_service.get_model_geometry(
-            project_id=speckle_project_id,
-            version_id_or_object_id=speckle_version_id,
-            layer_name=layer_name,
-            object_ids_filter=object_ids_filter,
+        inputs = load_speckle_simulation_geometry(
+            speckle_project_id, speckle_version_id, layer_name, object_ids_filter,
+            object_materials_dict,
+            progress=lambda v, st: _write_progress(progress_file, v, st),
         )
-        if not geometry_data:
-            raise RuntimeError("Failed to retrieve geometry from Speckle")
 
-        vertices: list = geometry_data["vertices"]
-        faces: list = geometry_data["faces"]
-        object_ids: list = geometry_data["object_ids"]
-        object_face_ranges: dict = geometry_data["object_face_ranges"]
-        if not vertices or not faces:
-            raise RuntimeError("No geometry found in Speckle layer")
+        # Same preparation as the preflight (weld, drop unassigned faces, no
+        # pruning, air-side orientation). Coplanar merging is off: gmsh needs
+        # conforming triangle edges between neighbouring surfaces.
+        settings = MeshPrepSettings(**(mesh_settings or {})).model_copy(update={"merge_coplanar": False})
+        seeds = [s["position"] for s in seeds_from_pairs(source_receiver_pairs)]
+        mesh = SimulationMeshService.prepare(
+            inputs.vertices, inputs.faces, inputs.object_face_ranges,
+            inputs.face_materials, None, seeds, MeshPrepOptions.from_settings(settings),
+        )
+        if len(mesh.faces) == 0:
+            raise RuntimeError("No surfaces with a material assigned — nothing to simulate.")
+
+        # Regroup the prepared triangles contiguously per object so the .geo
+        # writer can emit one Physical Surface per Speckle object id.
+        order = np.argsort(mesh.face_object, kind="stable")
+        faces_sorted = mesh.faces[order]
+        obj_sorted = mesh.face_object[order]
+        object_ids: list[str] = []
+        object_face_ranges: dict[str, list[int]] = {}
+        object_materials_resolved: dict[str, str] = {}
+        for obj in np.unique(obj_sorted):
+            idx = np.flatnonzero(obj_sorted == obj)
+            obj_id = mesh.objects[obj] if obj >= 0 else "unassigned_object"
+            object_ids.append(obj_id)
+            object_face_ranges[obj_id] = [int(idx[0]), int(idx[-1])]
+            object_materials_resolved[obj_id] = mesh.face_material[int(order[idx[0]])]
 
         sim_dir = build_choras_temp_dir(simulation_id)
         geo_path = sim_dir / "room.geo"
         write_geo_from_mesh(
-            vertices=vertices,
-            faces=faces,
+            vertices=mesh.vertices.tolist(),
+            faces=faces_sorted.tolist(),
             object_ids=object_ids,
             object_face_ranges=object_face_ranges,
             geo_file_path=str(geo_path),
@@ -209,7 +226,7 @@ def run_choras_simulation(
 
         absorption_coefficients = build_material_absorption_dict(
             object_ids=object_ids,
-            object_material_names=object_materials_dict,
+            object_material_names=object_materials_resolved,
             frequencies=frequencies,
         )
 

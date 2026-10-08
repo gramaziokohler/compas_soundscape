@@ -7,75 +7,20 @@ import { RangeSlider } from '@/components/ui/RangeSlider';
 import { ToggleField } from '@/components/ui/ToggleField';
 import { useAnalysisStore, useCardFlowStore, useScenarioPreviewStore, useSpeckleStore } from '@/store';
 import { pauseStore, commitStore } from '@/store';
-import type { ScenarioPreviewParcours, ScenarioPreviewStop } from '@/store';
 import { ScenarioResultContent } from './ScenarioResultContent';
 import { AUDIO_PLAYBACK, SCENARIO_TIMELINE } from '@/utils/constants';
+import {
+  ID_HEX_DOT_RE,
+  OBJECT_REF_RE,
+  buildScenarioPreview,
+  extractIdsFromToken,
+} from '@/utils/scenarioObjectRefs';
 import { ModifiedMark, useIsFieldModified } from '@/components/ui/ModifiedMark';
 
 // ─── Object-reference renderer ────────────────────────────────────────────────
 
-/**
- * Matches an optional-quoted name followed by one or more IDs in parentheses.
- * Handles both comma-separated and " and "-separated multiple IDs, plus "e.g.," prefix:
- *   "Office Chair (id:abc...)"                         — single ID
- *   "Chairs (id:abc..., id:def...)"                   — comma-separated
- *   "Chairs (id:abc... and id:def...)"                — and-separated (LLM output style)
- *   "Chairs and Stools (e.g., id:abc..., id:def...)"  — "and" in name + e.g. prefix
- * The first word may be any letter case; subsequent words must be capitalized OR connected
- * via "and" to a capitalized word (to avoid greedily consuming lowercase words like "the").
- * Handles optional space after "id:" e.g. (id: abc...).
- */
-const OBJECT_REF_RE = /['"]?([A-Za-z][A-Za-z]*(?:\s+(?:and\s+[A-Z][A-Za-z]*|[A-Z][A-Za-z]*))*)['"]?(?:\s*\([^)]*\))?\s*\((?:e\.g\.,\s*)?(?:\w+:\s*(?:id:\s*)?)?[0-9a-fA-F]+(?:\s*(?:,|and)\s*(?:\w+:\s*(?:id:\s*)?)?[0-9a-fA-F]+)*\)/g;
-const ID_HEX_RE = /[0-9a-fA-F]{8,}/g;
-/** Normalize dot-separated object refs (LLM hallucination): Doors.hexid → Doors (id:hexid) */
-const ID_HEX_DOT_RE = /\b([A-Z][A-Za-z0-9]+(?:\s+[A-Z][A-Za-z0-9]+)*)\.([0-9a-fA-F]{24,64})\b/g;
-
-/** Extract all hex IDs from the full matched token (including the parenthesised id-list). */
-function extractIdsFromToken(raw: string): string[] {
-  return Array.from(raw.matchAll(ID_HEX_RE), (m) => m[0]);
-}
-
-/** Extract the object IDs referenced in a single scenario event description (same regex as ScenarioTextRenderer). */
-function extractEventObjectIds(description: string): string[] {
-  const ids: string[] = [];
-  const normalizedText = (description ?? '').replace(ID_HEX_DOT_RE, '$1 (id:$2)');
-  const re = new RegExp(OBJECT_REF_RE.source, 'g');
-  let match: RegExpExecArray | null;
-  while ((match = re.exec(normalizedText)) !== null) {
-    for (const id of extractIdsFromToken(match[0])) {
-      if (id && !ids.includes(id)) ids.push(id);
-    }
-  }
-  return ids;
-}
-
-/** All object-ID references in event order, WITHOUT deduplication — one parcours
- *  stop per occurrence, so repeated objects produce repeated waypoints. */
-function extractEventObjectOccurrences(description: string): string[] {
-  const ids: string[] = [];
-  const normalizedText = (description ?? '').replace(ID_HEX_DOT_RE, '$1 (id:$2)');
-  const re = new RegExp(OBJECT_REF_RE.source, 'g');
-  let match: RegExpExecArray | null;
-  while ((match = re.exec(normalizedText)) !== null) {
-    ids.push(...extractIdsFromToken(match[0]));
-  }
-  return ids;
-}
-
-/** Collect every object ID referenced in the scenario event descriptions (same regex as ScenarioTextRenderer). */
-function extractScenarioObjectIds(scenarioResult: ScenarioConfig['scenarioResult']): string[] {
-  const ids: string[] = [];
-  for (const scenario of scenarioResult?.scenarios ?? []) {
-    for (const event of scenario.events ?? []) {
-      for (const id of extractEventObjectIds(event.description)) {
-        if (!ids.includes(id)) ids.push(id);
-      }
-    }
-  }
-  return ids;
-}
-
-function ScenarioTextRenderer({ text }: { text: string }) {
+/** Event text with hoverable / zoomable object references ("Name (id:…)"). */
+export function ScenarioTextRenderer({ text }: { text: string }) {
   const { highlightObjectForHover, clearHoverHighlight, zoomToObjectById } = useSpeckleStore();
 
   const parts = useMemo(() => {
@@ -124,7 +69,7 @@ function ScenarioTextRenderer({ text }: { text: string }) {
 // ─── Timestamp formatter ──────────────────────────────────────────────────────
 
 /** "00:20-00:45" or "00:20" → "0:20 - 0:45" / "0:20" */
-function formatTimestampRange(ts: string): string {
+export function formatTimestampRange(ts: string): string {
   const range = ts.match(/^(\d+):(\d{2})[–\-](\d+):(\d{2})$/);
   if (range) {
     return `${parseInt(range[1])}:${range[2]}\u2013${parseInt(range[3])}:${range[4]}`;
@@ -216,42 +161,11 @@ export function ScenarioAfterView({ config, index }: { config: ScenarioConfig; i
   const setPreview = useScenarioPreviewStore((s) => s.setPreview);
   const clearPreview = useScenarioPreviewStore((s) => s.clearPreview);
 
-  // Object IDs referenced anywhere in the scenario event descriptions
-  // (same source as the hover highlight in ScenarioTextRenderer).
-  const scenarioObjectIds = useMemo(
-    () => extractScenarioObjectIds(config.scenarioResult),
-    [config.scenarioResult],
-  );
-
+  // Objects referenced in the event descriptions (same source as the hover
+  // highlight in ScenarioTextRenderer) + one parcours stop per reference.
   useEffect(() => {
-    const objectIds = [...scenarioObjectIds];
-    // Parcours: one stop per OBJECT REFERENCE in the event descriptions, in
-    // textual order (an object mentioned more than once yields repeated stops).
-    // The scene hook places each stop at that object's bounds center, so every
-    // arrow connects one object to the next referenced object.
-    const parcours: ScenarioPreviewParcours = [];
-    for (const scenario of config.scenarioResult?.scenarios ?? []) {
-      const stops: ScenarioPreviewStop[] = [];
-      for (const event of scenario.events ?? []) {
-        for (const id of extractEventObjectOccurrences(event.description)) {
-          stops.push({ id });
-        }
-      }
-      // Fallback: add foley-involved objects (which the viewer can always resolve)
-      // when the scenario descriptions carry no object references.
-      const foleyScenario = config.foleyResult?.scenarios.find(
-        (fs) => fs.scenario_title === scenario.title,
-      );
-      for (const evt of foleyScenario?.sound_events ?? []) {
-        for (const id of evt.objectsInvolved ?? []) {
-          if (id && !objectIds.includes(id)) objectIds.push(id);
-        }
-      }
-      if (stops.length > 0) parcours.push(stops);
-    }
-
-    setPreview({ objectIds, parcours });
-  }, [scenarioObjectIds, config.foleyResult, setPreview]);
+    setPreview(buildScenarioPreview({ scenarioResult: config.scenarioResult, foleyResult: config.foleyResult }));
+  }, [config.scenarioResult, config.foleyResult, setPreview]);
 
   // Clear the viewer preview when the card collapses (component unmounts)
   useEffect(() => () => clearPreview(), [clearPreview]);

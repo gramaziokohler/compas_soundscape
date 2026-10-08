@@ -163,6 +163,19 @@ export function getAnalysisGroupColor(index: number): string {
 }
 
 /**
+ * Viewer color groups for model-analysis object groups (one color per group,
+ * groups without objects dropped). `only` restricts the result to one group.
+ */
+export function buildAnalysisColorGroups(
+  objects: ReadonlyArray<{ object_ids?: Record<string, unknown> }>,
+  only?: number,
+): { objectIds: string[]; color: string }[] {
+  return objects
+    .map((obj, i) => ({ objectIds: Object.keys(obj.object_ids ?? {}), color: getAnalysisGroupColor(i) }))
+    .filter((g, i) => g.objectIds.length > 0 && (only === undefined || i === only));
+}
+
+/**
  * Convert a dBFS value to linear gain (0 dBFS → 1.0).
  * formula: 10^(dbfs/20)
  */

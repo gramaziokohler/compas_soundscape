@@ -21,6 +21,7 @@ import { useSpeckleViewerInit } from '@/components/scene/hooks/useSpeckleViewerI
 import { useSpeckleFPS } from '@/components/scene/hooks/useSpeckleFPS';
 import { useSpeckleAreaDrawing } from '@/components/scene/hooks/useSpeckleAreaDrawing';
 import { useSpeckleAnalysisPreview } from '@/components/scene/hooks/useSpeckleAnalysisPreview';
+import { useSpeckleSimulationPreflight } from '@/components/scene/hooks/useSpeckleSimulationPreflight';
 import { useSpeckleSelection } from '@/components/scene/hooks/useSpeckleSelection';
 import { useSpeckleTimeline } from '@/components/scene/hooks/useSpeckleTimeline';
 import { useSpeckleAudioSync } from '@/components/scene/hooks/useSpeckleAudioSync';
@@ -446,6 +447,9 @@ export function SpeckleScene({
 
   // ── Analysis Result Preview (text-card result phase) ──
   useSpeckleAnalysisPreview({ isViewerReady });
+
+  // ── Simulation geometry preflight preview (pre-simulation check) ──
+  useSpeckleSimulationPreflight({ isViewerReady });
 
   // ── Object Selection ──
   useSpeckleSelection({

@@ -41,9 +41,11 @@ from fastapi import Request
 from fastapi.responses import FileResponse
 from models.schemas import PyroomacousticsGeometryRequest
 from models.schemas import JobEnqueueResponse
+from models.schemas import MeshPrepSettings
 from pydantic import BaseModel
 from services.job_store import job_store
 from services.pyroomacoustics_service import PyroomacousticsService
+from utils.request_parsing import parse_mesh_settings
 
 router = APIRouter(prefix="/api")
 
@@ -162,6 +164,7 @@ async def run_simulation_speckle(
     simulation_mode: str = Form(PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE),
     sound_speed: float = Form(DEFAULT_SPEED_OF_SOUND),
     source_receiver_pairs: str = Form(...),
+    mesh_settings: Optional[str] = Form(None),
 ):
     """
     Validate basic params and enqueue the simulation.  Returns {job_id,
@@ -176,6 +179,7 @@ async def run_simulation_speckle(
         object_materials_dict = json.loads(object_materials)
         object_ids_filter = json.loads(geometry_object_ids) if geometry_object_ids else None
         object_scattering_dict: dict[str, float] = json.loads(object_scattering) if object_scattering else {}
+        mesh_prep = parse_mesh_settings(mesh_settings)
 
         if simulation_mode not in (PYROOMACOUSTICS_SIMULATION_MODE_MONO, PYROOMACOUSTICS_SIMULATION_MODE_FOA):
             raise HTTPException(status_code=400, detail=f"Invalid simulation mode: {simulation_mode}")
@@ -224,6 +228,7 @@ async def run_simulation_speckle(
                 simulation_name=simulation_name,
                 rir_output_dir=str(RIR_OUTPUT_DIR),
                 temp_dir=str(TEMP_DIR),
+                mesh_settings=mesh_prep.model_dump(),
             ),
         }
 
@@ -381,6 +386,7 @@ async def run_simulation_geometry(body: PyroomacousticsGeometryRequest, http_req
                 simulation_name=req.simulation_name,
                 rir_output_dir=str(RIR_OUTPUT_DIR),
                 temp_dir=str(TEMP_DIR),
+                mesh_settings=(req.mesh_settings or MeshPrepSettings()).model_dump(),
             ),
         }
 

@@ -39,9 +39,12 @@ import { RangeSlider } from '@/components/ui/RangeSlider';
 import { ToggleField } from '@/components/ui/ToggleField';
 import { apiService } from '@/services/api';
 import { CARD_TYPE_LABELS } from '@/types/card';
-import { useSpeckleStore, useAcousticsSimulationStore, useReceiversStore, useGridListenersStore, useAudioControlsStore, useSoundscapeStore, useAcousticLayerStore, useRightSidebarStore, notifyError, resolveSimulationLayerName, resolveSimulationGeometryObjectIds, toBackendGeometryIds } from '@/store';
+import { useSpeckleStore, useAcousticsSimulationStore, useReceiversStore, useGridListenersStore, useAudioControlsStore, useSoundscapeStore, useAcousticLayerStore, useRightSidebarStore, notifyError } from '@/store';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { useUIStore } from '@/store/uiStore';
+import { useSimulationPreflightStore, type RunPreflightArgs } from '@/store';
+import { buildSimulationGeometryRequest, simulationRequestSignature, speckleCardFields, type BuildResult } from '@/utils/simulationRequest';
+import type { SimulationEngine } from '@/types/simulationPreflight';
 
 // Content Components
 import { ResonanceContent } from '@/components/layout/sidebar/acoustics/ResonanceContent';
@@ -604,6 +607,67 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ==========================================================================
+  // Pre-simulation phase: shared request + geometry preflight
+  // ==========================================================================
+  // Mesh settings are subscribed so a settings change re-renders the cards and
+  // marks their preflight result as outdated.
+  const simulationMeshSettings = useUIStore((s) => s.simulationMeshSettings);
+  /** Card whose run was stopped by preflight errors (awaiting "Run anyway"). */
+  const [preflightBlockedIndex, setPreflightBlockedIndex] = useState<number | null>(null);
+
+  /** Geometry inputs of a card — identical for the run and its preflight. */
+  const buildCardRequest = useCallback((config: SimulationConfig): BuildResult => {
+    if (!speckleData?.url) return { ok: false, error: 'No Speckle data' };
+    const fields = speckleCardFields(config);
+    return buildSimulationGeometryRequest({
+      materialAssignments: fields.speckleMaterialAssignments,
+      scatteringAssignments: config.type === 'pyroomacoustics' ? fields.speckleScatteringAssignments : undefined,
+      layerName: fields.speckleLayerName,
+      persistedGeometryIds: fields.speckleGeometryObjectIds,
+      speckleUrl: speckleData.url,
+      receivers: allReceivers,
+      sounds: activeSoundscapeData,
+      selectedVariants: useAudioControlsStore.getState().selectedVariants,
+      materialPrefix: config.type === 'choras' ? /^choras_/ : /^pyroom_/,
+    });
+  }, [speckleData, allReceivers, activeSoundscapeData]);
+
+  /** Preflight job arguments (incl. the staleness signature) of a card. */
+  const buildPreflightArgs = useCallback(
+    (config: SimulationConfig): { ok: true; args: RunPreflightArgs } | { ok: false; error: string } => {
+      const built = buildCardRequest(config);
+      if (!built.ok) return built;
+      const engine: SimulationEngine = config.type === 'choras' ? 'choras' : 'pyroomacoustics';
+      const pySettings = config.type === 'pyroomacoustics' ? config.settings : null;
+      const extra = { maxOrder: pySettings?.max_order, rayTracing: pySettings?.ray_tracing };
+      return {
+        ok: true,
+        args: {
+          configId: config.id,
+          engine,
+          request: built.request,
+          meshSettings: simulationMeshSettings,
+          signature: simulationRequestSignature(engine, built.request, simulationMeshSettings, extra),
+          ...extra,
+        },
+      };
+    },
+    [buildCardRequest, simulationMeshSettings],
+  );
+
+  /** "Check geometry" button of a card. */
+  const runPreflightForCard = useCallback((config: SimulationConfig) => {
+    const prepared = buildPreflightArgs(config);
+    if (!prepared.ok) {
+      notifyError(prepared.error, 'warning');
+      return;
+    }
+    const store = useSimulationPreflightStore.getState();
+    store.setPreviewConfig(config.id);
+    void store.runPreflight(prepared.args);
+  }, [buildPreflightArgs]);
+
   /**
    * Run Choras simulation.
    * Starts the simulation (returns immediately with simulation_id),
@@ -622,65 +686,21 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     }
 
     const settings = config.settings;
-    const speckleMaterialAssignments = (config as any).speckleMaterialAssignments || {};
-
-    if (Object.keys(speckleMaterialAssignments).length === 0) {
-      handleUpdateConfig(index, { error: 'Assign materials first' } as any);
+    const built = buildCardRequest(config);
+    if (!built.ok) {
+      handleUpdateConfig(index, { error: built.error } as any);
       return;
     }
+    const {
+      projectId, modelId, layerName, objectMaterials, geometryObjectIds,
+      sourceReceiverPairs, uniqueSourcePositions, sourceSoundToPosKey,
+    } = built.request;
 
     handleUpdateConfig(index, { isRunning: true, progress: 0, status: 'Initializing...', error: null } as any);
 
     const receiversList = allReceivers;
-    const soundscape = activeSoundscapeData;
 
     try {
-      // Group sounds by position to deduplicate source-receiver pairs.
-      // Variants of one source (same prompt_index) collapse to a single simulated source.
-      const sourceSounds = collapseVariantsToOne(
-        soundscape,
-        useAudioControlsStore.getState().selectedVariants,
-      );
-      const { uniquePositions: uniqueSourcePositions, soundToPosKey: sourceSoundToPosKey } = groupSoundsByPosition(sourceSounds);
-
-      // Build source-receiver pairs: unique source positions × receivers
-      const sourceReceiverPairs: Array<{
-        source_position: number[];
-        receiver_position: number[];
-        source_id: string;
-        receiver_id: string;
-      }> = [];
-      for (const [posKey, pos] of uniqueSourcePositions) {
-        for (const receiver of receiversList) {
-          sourceReceiverPairs.push({
-            source_position: pos,
-            receiver_position: receiver.position,
-            source_id: posKey,
-            receiver_id: receiver.id
-          });
-        }
-      }
-
-      // Prepare object materials (strip prefix)
-      const objectMaterials: Record<string, string> = {};
-      Object.entries(speckleMaterialAssignments).forEach(([objectId, materialId]) => {
-        objectMaterials[objectId] = (materialId as string).replace(/^choras_/, '');
-      });
-
-      // Parse Speckle URL for project/model IDs
-      const urlMatch = speckleData.url.match(/\/projects\/([^\/]+)\/models\/([^\/\?#]+)/);
-      if (!urlMatch) throw new Error('Invalid Speckle URL');
-      const projectId = urlMatch[1];
-      const modelId = urlMatch[2];
-
-      // Scope the simulation to the live acoustic region (the user-selected
-      // region), not the whole material-assignment map. Fall back to the
-      // persisted material ids only when no region is defined.
-      const regionGeometryIds = resolveSimulationGeometryObjectIds();
-      const persistedGeometryIds = (config as any).speckleGeometryObjectIds as string[] | undefined;
-      const geometryObjectIds = regionGeometryIds.length > 0
-        ? regionGeometryIds
-        : (persistedGeometryIds ? toBackendGeometryIds(persistedGeometryIds) : persistedGeometryIds);
 
       // Override per-card fields with global acoustic parameters from uiStore
       const { globalSoundSpeed, globalMeshLc } = useUIStore.getState();
@@ -696,11 +716,12 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         projectId,
         modelId,
         objectMaterials,
-        resolveSimulationLayerName((config as any).speckleLayerName),
+        layerName,
         config.display_name || 'Simulation',
         mergedSettings,
         sourceReceiverPairs,
-        geometryObjectIds
+        geometryObjectIds,
+        useUIStore.getState().simulationMeshSettings,
       );
 
       // Store the running simulation ID so the cancel handler can reach it
@@ -808,73 +829,34 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     }
 
     const settings = config.settings;
-    const speckleMaterialAssignments = (config as any).speckleMaterialAssignments || {};
-
-    if (Object.keys(speckleMaterialAssignments).length === 0) {
-      handleUpdateConfig(index, { error: 'Assign materials first' } as any);
+    const built = buildCardRequest(config);
+    if (!built.ok) {
+      handleUpdateConfig(index, { error: built.error } as any);
       return;
     }
+    const {
+      projectId, modelId, layerName, objectMaterials, geometryObjectIds, objectScattering,
+      sourceReceiverPairs, uniqueSourcePositions, sourceSoundToPosKey,
+    } = built.request;
 
     handleUpdateConfig(index, { isRunning: true, progress: 0, status: 'Submitting...', error: null } as any);
 
     const receiversList = allReceivers;
-    const soundscape = activeSoundscapeData;
 
     try {
-      // Group sounds by position to deduplicate source-receiver pairs.
-      // Variants of one source (same prompt_index) collapse to a single simulated source.
-      const sourceSounds = collapseVariantsToOne(
-        soundscape,
-        useAudioControlsStore.getState().selectedVariants,
-      );
-      const { uniquePositions: uniqueSourcePositions, soundToPosKey: sourceSoundToPosKey } = groupSoundsByPosition(sourceSounds);
-
-      // Build source-receiver pairs: unique source positions × receivers
-      const sourceReceiverPairs: any[] = [];
-      for (const [posKey, pos] of uniqueSourcePositions) {
-        for (const receiver of receiversList) {
-          sourceReceiverPairs.push({
-            source_position: pos,
-            receiver_position: receiver.position,
-            source_id: posKey,
-            receiver_id: receiver.id
-          });
-        }
-      }
-
-      // Prepare object materials (strip prefix)
-      const objectMaterials: Record<string, string> = {};
-      Object.entries(speckleMaterialAssignments).forEach(([objectId, materialId]) => {
-        objectMaterials[objectId] = (materialId as string).replace(/^pyroom_/, '');
-      });
-
-      // Parse Speckle URL for project/model IDs
-      const urlMatch = speckleData.url.match(/\/projects\/([^\/]+)\/models\/([^\/\?#]+)/);
-      if (!urlMatch) throw new Error('Invalid Speckle URL');
-      const projectId = urlMatch[1];
-      const modelId = urlMatch[2];
-
-      // Scope the simulation to the live acoustic region (the user-selected
-      // region), not the whole material-assignment map. Fall back to the
-      // persisted material ids only when no region is defined.
-      const regionGeometryIds = resolveSimulationGeometryObjectIds();
-      const persistedGeometryIds = (config as any).speckleGeometryObjectIds as string[] | undefined;
-      const geometryObjectIds = regionGeometryIds.length > 0
-        ? regionGeometryIds
-        : (persistedGeometryIds ? toBackendGeometryIds(persistedGeometryIds) : persistedGeometryIds);
-      const speckleScatteringAssignments = (config as any).speckleScatteringAssignments as Record<string, number> | undefined;
 
       // Start simulation — returns immediately with simulation_id
       const { simulation_id } = await apiService.runPyroomacousticsSimulationSpeckle(
         projectId,
         modelId,
         objectMaterials,
-        resolveSimulationLayerName((config as any).speckleLayerName),
+        layerName,
         config.display_name || 'Simulation',
         { ...settings, sound_speed: useUIStore.getState().globalSoundSpeed },
         sourceReceiverPairs,
         geometryObjectIds,
-        speckleScatteringAssignments || {}
+        objectScattering,
+        useUIStore.getState().simulationMeshSettings,
       );
 
       // Store running simulation ID so the cancel handler can reach it
@@ -972,9 +954,9 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   }, [simulationConfigs, speckleData, allReceivers, activeSoundscapeData, handleUpdateConfig, onIRImported]);
 
   /**
-   * Run simulation for the given config index
+   * Start the engine run for the given config index (no geometry check).
    */
-  const runSimulation = useCallback(async (index: number) => {
+  const dispatchSimulation = useCallback(async (index: number) => {
     const config = simulationConfigs[index];
     if (!config) return;
 
@@ -984,6 +966,42 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       await runPyroomSimulation(index);
     }
   }, [simulationConfigs, runChorasSimulation, runPyroomSimulation]);
+
+  /**
+   * Run simulation for the given config index.
+   *
+   * Pre-simulation phase: re-uses the card's geometry preflight when it was
+   * computed for exactly the current inputs, otherwise runs it first. Errors
+   * stop the run, expand the card on its preflight panel and ask "Run anyway";
+   * warnings never block. A preflight that itself fails (e.g. busy worker)
+   * does not block either: the simulation reports its own errors.
+   */
+  const runSimulation = useCallback(async (index: number) => {
+    const config = simulationConfigs[index];
+    if (!config) return;
+    setPreflightBlockedIndex((cur) => (cur === index ? null : cur));
+
+    if (config.type === 'choras' || config.type === 'pyroomacoustics') {
+      const prepared = buildPreflightArgs(config);
+      if (prepared.ok) {
+        const store = useSimulationPreflightStore.getState();
+        let entry = store.entries[config.id];
+        if (!entry || entry.status !== 'done' || entry.signature !== prepared.args.signature) {
+          handleUpdateConfig(index, { isRunning: true, progress: 0, status: 'Checking geometry...', error: null } as any);
+          entry = await store.runPreflight(prepared.args);
+          handleUpdateConfig(index, { isRunning: false, status: 'Idle', progress: 0 } as any);
+          if (entry.status === 'idle') return; // cancelled from the card
+        }
+        if (entry.status === 'done' && (entry.summary?.n_errors ?? 0) > 0) {
+          store.setPreviewConfig(config.id);
+          setExpandedCardIndex(index);
+          setPreflightBlockedIndex(index);
+          return;
+        }
+      }
+    }
+    await dispatchSimulation(index);
+  }, [simulationConfigs, buildPreflightArgs, handleUpdateConfig, dispatchSimulation]);
 
   /**
    * Cancel a running simulation.
@@ -1006,6 +1024,12 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       } else {
         apiService.cancelChorasSimulation(config.currentSimulationRunId).catch(console.error);
       }
+    }
+
+    // Stop a pre-simulation geometry check still in flight for this card
+    const preflightStore = useSimulationPreflightStore.getState();
+    if (config && preflightStore.entries[config.id]?.status === 'running') {
+      preflightStore.cancelPreflight(config.id);
     }
 
     handleUpdateConfig(index, { isRunning: false, status: 'Cancelled', progress: 0, currentSimulationRunId: null } as any);
@@ -1480,6 +1504,13 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         ? pyroomMaterials
         : [];
 
+    // Input signature of this card right now (marks an older preflight as outdated)
+    const preflightSignature = (() => {
+      if (!isSimulationType) return null;
+      const prepared = buildPreflightArgs(config);
+      return prepared.ok ? prepared.args.signature : null;
+    })();
+
     // Simulation setup component — always rendered for non-resonance types
     // so that settings stay available regardless of completion state
     const simulationSetup = config.type !== 'resonance' && config.type !== 'import-irs' ? (
@@ -1496,6 +1527,17 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             }
             onUpdateConfig={(updates) => handleUpdateConfig(index, updates)}
             onIsolationChange={(ids) => handleUpdateConfig(index, { speckleIsolatedObjectIds: ids } as any)}
+            preflight={isSimulationType ? {
+              currentSignature: preflightSignature,
+              onRun: () => runPreflightForCard(config),
+              runBlocked: preflightBlockedIndex === index,
+              onRunAnyway: () => {
+                setPreflightBlockedIndex(null);
+                void dispatchSimulation(index);
+              },
+              onDismissBlocked: () => setPreflightBlockedIndex(null),
+              disabled: isRunning,
+            } : undefined}
         />
     ) : null;
 

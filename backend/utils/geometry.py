@@ -3,7 +3,7 @@
 
 import numpy as np
 
-from typing import Iterable, Optional
+from typing import Any, Callable, Iterable, Optional
 
 
 def canonical_object_id(obj_id) -> str:
@@ -52,42 +52,46 @@ def resolve_object_id(obj_id, available_ids: Iterable[str]) -> Optional[str]:
 
 
 
-def fix_outward_winding(vertices: list, faces: list) -> list:
+def map_object_values_to_faces(
+    values_by_object: dict,
+    object_face_ranges: dict,
+    cast: Optional[Callable[[Any], Any]] = None,
+) -> tuple[dict[int, Any], int, int]:
     """
-    Ensure every face's vertex order produces an outward-pointing normal.
+    Expand per-object values (material id, scattering...) to per-face values
+    using the geometry's ``{object_id: [start_face, end_face]}`` ranges.
 
-    pyroomacoustics wall normals are derived from face corner ordering, so
-    inconsistent winding produces inverted reflection planes.  This flips each
-    face whose normal points toward the room interior (toward the mesh
-    centroid), assuming a roughly convex room volume.
-
-    Args:
-        vertices: List of [x, y, z] coordinates (metres).
-        faces: List of face vertex index lists, mutated in place.
-
-    Returns:
-        The same ``faces`` list, with reversed vertex order where needed.
+    Object ids are resolved with :func:`resolve_object_id` (viewer ``#n``
+    suffixes, case). Returns ``(face_values, n_matched, n_skipped)``.
     """
-    if not faces:
-        return faces
-
-    verts = np.asarray(vertices, dtype=np.float64)
-    if verts.ndim != 2 or verts.shape[0] == 0:
-        return faces
-
-    centroid = verts.mean(axis=0)
-    n_flipped = 0
-
-    for face in faces:
-        if len(face) < 3:
+    face_values: dict[int, Any] = {}
+    matched = skipped = 0
+    for obj_id, value in values_by_object.items():
+        resolved = resolve_object_id(obj_id, object_face_ranges)
+        if resolved is None:
+            skipped += 1
             continue
-        pts = verts[face]
-        normal = np.cross(pts[1] - pts[0], pts[2] - pts[0])
-        to_center = centroid - pts.mean(axis=0)
-        if np.dot(normal, to_center) > 0:
-            face.reverse()
-            n_flipped += 1
+        matched += 1
+        start, end = object_face_ranges[resolved]
+        v = cast(value) if cast else value
+        for face_idx in range(int(start), int(end) + 1):
+            face_values[face_idx] = v
+    return face_values, matched, skipped
 
-    if n_flipped:
-        print(f"Winding fix: flipped {n_flipped} face(s) to outward normals")
-    return faces
+
+def seeds_from_pairs(pairs: list[dict]) -> list[dict]:
+    """
+    Unique sources then receivers of source/receiver pairs, in first-seen
+    order: ``[{"id", "kind", "position"}]``. Used as the air seeds of the
+    simulation mesh preparation.
+    """
+    seen: dict[tuple[str, str], dict] = {}
+    for pair in pairs:
+        for kind in ("source", "receiver"):
+            key = (kind, str(pair[f"{kind}_id"]))
+            if key not in seen:
+                seen[key] = {"id": key[1], "kind": kind, "position": [float(x) for x in pair[f"{kind}_position"]]}
+    sources = [v for (k, _), v in seen.items() if k == "source"]
+    receivers = [v for (k, _), v in seen.items() if k == "receiver"]
+    return sources + receivers
+

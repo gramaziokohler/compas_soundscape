@@ -799,6 +799,9 @@ canvas {
 .bubble-panel__footer {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
   flex-shrink: 0;
   padding: 0 10px 8px;
 }
@@ -892,6 +895,33 @@ canvas {
 }
 .bubble-chip--icon {
   padding: 2px 5px;
+}
+/* Expandable result list under a scene workflow step (analysis groups, scenario events). */
+.bubble-step__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+  max-height: min(180px, 25dvh);
+  overflow-y: auto;
+}
+.bubble-step__list-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  text-align: left;
+  cursor: pointer;
+}
+.bubble-step__list-row:hover {
+  background: var(--color-blue-tint);
+}
+.bubble-step__swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex-shrink: 0;
 }
 .bubble-chip:disabled {
   opacity: 0.45;

@@ -25,17 +25,26 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
-from config.constants import PYROOMACOUSTICS_DEFAULT_SCATTERING
 from config.constants import PYROOMACOUSTICS_IR_TRIM_THRESHOLD
 from config.constants import PYROOMACOUSTICS_SAMPLE_RATE
 from config.constants import PYROOMACOUSTICS_SIMULATION_MODE_FOA
 from config.constants import PYROOMACOUSTICS_SIMULATION_MODE_MONO
+from models.schemas import MeshPrepSettings
 from scipy.io import wavfile
+from services.pyroomacoustics_room_builder import build_room, pra_supports_two_sided, room_offset
 from services.pyroomacoustics_service import PyroomacousticsService
-from services.speckle_service import SpeckleService
+from services.simulation_geometry_loader import load_speckle_simulation_geometry
+from services.simulation_mesh_service import MeshPrepOptions, SimulationMeshService
+from services.simulation_preflight_service import (
+    ENGINE_PYROOMACOUSTICS,
+    PreflightContext,
+    SeedMeta,
+    SimulationPreflightService,
+    summarize,
+)
 from utils.acoustic_measurement import AcousticMeasurement
 from utils.audio_processing import trim_ir
-from utils.geometry import fix_outward_winding, resolve_object_id
+from utils.geometry import seeds_from_pairs
 
 
 def _atomic_replace(src: str, dst: str) -> None:
@@ -74,8 +83,10 @@ def _run_pyroomacoustics_compute_loop(
     pairs_data: list,
     vertices: list,
     faces: list,
-    face_material_map: Optional[dict],
+    object_face_ranges: dict,
+    face_material_map: dict,
     face_scattering_map: Optional[dict],
+    mesh_settings: Optional[dict],
     simulation_mode: str,
     max_order: int,
     ray_tracing: bool,
@@ -92,26 +103,48 @@ def _run_pyroomacoustics_compute_loop(
     Shared per-source compute pipeline used by both the Speckle worker and the
     direct-geometry worker.
 
-    Welds the mesh ONCE, then runs one room.compute_rir() per unique source
-    (with all receivers for that source).  Progress is reported via atomic
-    JSON file writes; result/error is written to result_file on exit.
+    Prepares the simulation mesh ONCE (weld, air-side orientation, two-sided
+    detection, coplanar merge — identical to the geometry preflight), then
+    runs one room.compute_rir() per unique source (with all receivers for
+    that source). Progress is reported via atomic JSON file writes;
+    result/error is written to result_file on exit.
     """
-    # ── Weld mesh ONCE ─────────────────────────────────────────────────────
-    _write_progress(progress_file, 18, "Welding mesh...")
-    welded_vertices, welded_faces, welded_face_materials, welded_face_scattering = (
-        PyroomacousticsService.weld_mesh(
-            vertices,
-            faces,
-            face_material_map if face_material_map else None,
-            face_scattering_map,
-        )
+    # ── Prepare the simulation mesh ONCE ───────────────────────────────────
+    _write_progress(progress_file, 15, "Preparing simulation mesh (weld, orientation, merge)...")
+    seed_meta = seeds_from_pairs(pairs_data)
+    mesh = SimulationMeshService.prepare(
+        vertices, faces, object_face_ranges, face_material_map, face_scattering_map,
+        [s["position"] for s in seed_meta],
+        MeshPrepOptions.from_settings(MeshPrepSettings(**(mesh_settings or {}))),
     )
-
-    # pyroomacoustics derives each wall's reflection plane from its corner
-    # winding. Speckle/Rhino meshes routinely arrive wound inward, which makes
-    # pra cull every reflection and return a direct-path-only (near-zero) RIR.
-    # Normalize to outward normals once, on the welded faces (idempotent).
-    fix_outward_winding(welded_vertices, welded_faces)
+    analysis = SimulationPreflightService.analyze(mesh, PreflightContext(
+        engine=ENGINE_PYROOMACOUSTICS,
+        seeds=[SeedMeta(**s) for s in seed_meta],
+        pairs=[(str(p["source_id"]), str(p["receiver_id"])) for p in pairs_data],
+        max_order=max_order,
+        ray_tracing=ray_tracing,
+        two_sided_supported=pra_supports_two_sided(),
+    ))
+    geometry_diagnostics = {
+        **summarize(analysis.issues),
+        "issues": [
+            {"severity": i.severity, "code": i.code, "title": i.title}
+            for i in analysis.issues if i.severity != "info"
+        ],
+        "stats": {**mesh.stats, "air_volume_m3": mesh.air_volume_m3,
+                  "air_volume_method": mesh.air_volume_method},
+    }
+    print(
+        f"[{simulation_id[:8]}] Simulation mesh: {len(mesh.faces)} faces -> {len(mesh.walls)} walls, "
+        f"{mesh.stats['flipped_faces']} flipped, {mesh.stats['two_sided_faces']} two-sided, "
+        f"air volume {mesh.air_volume_m3:.1f} m^3 ({mesh.air_volume_method}); "
+        f"{geometry_diagnostics['n_errors']} error(s), {geometry_diagnostics['n_warnings']} warning(s)"
+    )
+    for issue in analysis.issues:
+        if issue.severity != "info":
+            print(f"  [{issue.severity}] {issue.title}")
+    # pra walls are float32: build around the model centre, shift positions too.
+    offset = room_offset(mesh)
 
     # ── Group pairs by source ───────────────────────────────────────────────
     num_channels = 1 if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_MONO else 4
@@ -137,29 +170,25 @@ def _run_pyroomacoustics_compute_loop(
         n_pairs_this_source = len(source_pairs)
         pair_label_start = pair_counter + 1
         pair_label_end = pair_counter + n_pairs_this_source
+        # Prefix every status line with the pair range so overall progress is
+        # always visible, e.g. "Pair 2/14: Ray tracing source 1/1 ..."
+        if n_pairs_this_source == 1:
+            pair_label = f"Pair {pair_label_start}/{total_pairs}"
+        else:
+            pair_label = f"Pairs {pair_label_start}-{pair_label_end}/{total_pairs}"
 
         prog_build = 20 + src_idx * 70 // n_sources
         _write_progress(
             progress_file,
             prog_build,
-            f"Building room (pair {pair_label_start}/{total_pairs})...",
+            f"{pair_label}: Building room...",
         )
 
-        # Build fresh room from pre-welded mesh (skip weld for speed)
-        room = PyroomacousticsService.build_room_from_geometry(
-            vertices=welded_vertices,
-            faces=welded_faces,
-            face_materials=welded_face_materials,
-            face_scattering=welded_face_scattering,
-            max_order=max_order,
-            ray_tracing=ray_tracing,
-            air_absorption=air_absorption,
-            sound_speed=sound_speed,
-            skip_weld=True,
-        )
+        # Fresh room per source from the prepared walls
+        room = build_room(mesh, offset, max_order, ray_tracing, air_absorption, sound_speed)
 
         # Single source per room
-        room.add_source(source_position)
+        room.add_source((np.asarray(source_position, dtype=float) - offset).tolist())
 
         # Add all unique receivers for this source
         receiver_local_indices: dict[str, int] = {}
@@ -168,7 +197,9 @@ def _run_pyroomacoustics_compute_loop(
             if r_id not in receiver_local_indices:
                 receiver_local_indices[r_id] = len(receiver_local_indices)
                 PyroomacousticsService.add_receiver_to_room(
-                    room, pair_dict["receiver_position"], simulation_mode
+                    room,
+                    (np.asarray(pair_dict["receiver_position"], dtype=float) - offset).tolist(),
+                    simulation_mode,
                 )
 
         if ray_tracing:
@@ -178,11 +209,7 @@ def _run_pyroomacoustics_compute_loop(
         # slice is compute (reported from inside compute_rir) and the last 20%
         # is IR export, so progress never goes backwards between sources.
         prog_rir = prog_build
-        if n_pairs_this_source == 1:
-            rir_status = f"Computing pair {pair_label_start}/{total_pairs}..."
-        else:
-            rir_status = f"Computing pairs {pair_label_start}-{pair_label_end}/{total_pairs}..."
-        _write_progress(progress_file, prog_rir, rir_status)
+        _write_progress(progress_file, prog_rir, f"{pair_label}: Computing RIR...")
 
         # Realtime progress from inside compute_rir(): the library reports a
         # fraction in [0, 1] within THIS source (image sources -> chunked ray
@@ -190,7 +217,7 @@ def _run_pyroomacoustics_compute_loop(
         # slice of the worker's 20% -> 90% band (the tail is reserved for export).
         def _progress_callback(fraction, text):
             value = int(20 + 70.0 * (src_idx + 0.8 * fraction) / max(1, n_sources))
-            _write_progress(progress_file, min(value, 90), text)
+            _write_progress(progress_file, min(value, 90), f"{pair_label}: {text}")
 
         # Blocking — subprocess is hard-killed here if cancelled
         room.compute_rir(progress_callback=_progress_callback)
@@ -257,7 +284,7 @@ def _run_pyroomacoustics_compute_loop(
             _write_progress(
                 progress_file,
                 min(export_value, 90),
-                f"Exporting pair {current_pair}/{total_pairs}...",
+                f"Pair {current_pair}/{total_pairs}: Exporting IR...",
             )
 
             ir_filename = f"sim_{simulation_id}_src_{source_id}_rcv_{receiver_id}.wav"
@@ -304,6 +331,7 @@ def _run_pyroomacoustics_compute_loop(
     }
     if header_meta:
         results_json.update(header_meta)
+    results_json["geometry_diagnostics"] = geometry_diagnostics
     with open(tmp_dir / results_filename, "w") as f:
         json.dump(results_json, f, indent=2)
 
@@ -343,6 +371,7 @@ def run_pyroomacoustics_simulation(
     simulation_name: str = "",
     rir_output_dir: str = "",
     temp_dir: str = "",
+    mesh_settings: Optional[dict] = None,
 ) -> None:
     """
     Full pyroomacoustics simulation pipeline, runs in a subprocess.
@@ -352,90 +381,33 @@ def run_pyroomacoustics_simulation(
     to result_file on exit.
     """
     try:
-        # ── Phase 1: Speckle auth + geometry fetch ────────────────────────────
-        _write_progress(progress_file, 2, "Authenticating with Speckle...")
-        speckle_service = SpeckleService()
-        if not speckle_service.authenticate():
-            raise RuntimeError("Failed to authenticate with Speckle")
-
-        _write_progress(progress_file, 5, "Fetching Speckle geometry...")
-        geometry_data = speckle_service.get_model_geometry(
-            project_id=speckle_project_id,
-            version_id_or_object_id=speckle_version_id,
-            layer_name=layer_name,
-            object_ids_filter=object_ids_filter,
+        # ── Phase 1-2: Speckle geometry + per-face materials / scattering ────
+        inputs = load_speckle_simulation_geometry(
+            speckle_project_id, speckle_version_id, layer_name, object_ids_filter,
+            object_materials_dict, object_scattering_dict,
+            progress=lambda v, st: _write_progress(progress_file, v, st),
         )
-        if not geometry_data:
-            raise RuntimeError("Failed to retrieve geometry from Speckle")
-
-        vertices = geometry_data.get("vertices", [])
-        faces = geometry_data.get("faces", [])
-        object_face_ranges: dict = geometry_data.get("object_face_ranges", {})
-
-        if not vertices or not faces:
-            if object_ids_filter:
-                raise RuntimeError(
-                    f"No geometry found for the {len(object_ids_filter)} object IDs sent from the frontend. "
-                    f"Ensure the objects have mesh display values in Speckle."
-                )
-            raise RuntimeError(
-                f"No valid geometry found in Speckle layer '{layer_name}'. "
-                f"Ensure the layer contains mesh objects with display values."
-            )
-
-        geometry_units = geometry_data.get("units", "m")
         print(
-            f"[{simulation_id[:8]}] Geometry: {len(vertices)} vertices, "
-            f"{len(faces)} faces, {len(object_face_ranges)} objects "
-            f"(source units: '{geometry_units}', vertices converted to meters)"
+            f"[{simulation_id[:8]}] Geometry: {len(inputs.vertices)} vertices, "
+            f"{len(inputs.faces)} faces, {len(inputs.object_face_ranges)} objects "
+            f"(source units: '{inputs.units}', vertices converted to meters); "
+            f"materials: {inputs.n_material_matched} object(s) matched, "
+            f"{inputs.n_material_skipped} skipped"
         )
 
-        # ── Phase 2: Material + scattering mapping ────────────────────────────
-        _write_progress(progress_file, 12, "Processing materials...")
-        face_material_map: dict[int, str] = {}
-        n_material_matched = 0
-        n_material_skipped = 0
-        for obj_id, material_id in object_materials_dict.items():
-            resolved = resolve_object_id(obj_id, object_face_ranges)
-            if resolved is None:
-                n_material_skipped += 1
-                print(f"  Warning: object '{obj_id}' not in geometry — skipping material")
-                continue
-            n_material_matched += 1
-            start_face, end_face = object_face_ranges[resolved]
-            for face_idx in range(start_face, end_face + 1):
-                face_material_map[face_idx] = material_id
-        print(
-            f"[{simulation_id[:8]}] Material map: {n_material_matched} object(s) matched "
-            f"({len(face_material_map)} faces), {n_material_skipped} skipped"
-        )
-
-        face_scattering_map: Optional[dict[int, float]] = None
-        if ray_tracing:
-            face_scattering_map = {}
-            for obj_id, scatter_val in object_scattering_dict.items():
-                resolved = resolve_object_id(obj_id, object_face_ranges)
-                if resolved is None:
-                    continue
-                start_face, end_face = object_face_ranges[resolved]
-                for face_idx in range(start_face, end_face + 1):
-                    face_scattering_map[face_idx] = float(scatter_val)
-            print(
-                f"[{simulation_id[:8]}] Scattering map: {len(face_scattering_map)} faces assigned, "
-                f"rest default={PYROOMACOUSTICS_DEFAULT_SCATTERING}"
-            )
-
-        # ── Phase 3: Shared compute loop (welds + per-source compute_rir) ────
+        # ── Phase 3: Shared compute loop (mesh prep + per-source compute_rir) ─
         _run_pyroomacoustics_compute_loop(
             simulation_id=simulation_id,
             progress_file=progress_file,
             result_file=result_file,
             simulation_name=simulation_name,
             pairs_data=pairs_data,
-            vertices=vertices,
-            faces=faces,
-            face_material_map=face_material_map,
-            face_scattering_map=face_scattering_map,
+            vertices=inputs.vertices,
+            faces=inputs.faces,
+            object_face_ranges=inputs.object_face_ranges,
+            face_material_map=inputs.face_materials,
+            face_scattering_map=inputs.face_scattering,
+            mesh_settings=mesh_settings,
             simulation_mode=simulation_mode,
             max_order=max_order,
             ray_tracing=ray_tracing,
@@ -484,6 +456,7 @@ def run_pyroomacoustics_simulation_from_geometry(
     simulation_name: str = "",
     rir_output_dir: str = "",
     temp_dir: str = "",
+    mesh_settings: Optional[dict] = None,
 ) -> None:
     """
     Direct-geometry pyroomacoustics pipeline, runs in a subprocess.
@@ -513,63 +486,48 @@ def run_pyroomacoustics_simulation_from_geometry(
         if not sources or not receivers:
             raise RuntimeError("No sources or receivers in the geometry payload.")
 
-        # ── Phase 2: Material + scattering mapping (skip unassigned faces) ────
+        # ── Phase 2: Group faces per material group (unassigned are dropped) ──
+        # Faces are regrouped contiguously so each group becomes one "object"
+        # with a face range, exactly like Speckle geometry; faces outside any
+        # material-bearing group are dropped (same rule as the Speckle path).
         _write_progress(progress_file, 12, "Processing materials...")
-
-        group_material: dict[int, object] = {}
-        group_scattering: dict[int, float] = {}
-        face_to_group: dict[int, str] = {}
+        grouped_faces: list[list[int]] = []
+        object_face_ranges: dict[str, list[int]] = {}
+        face_material_map: dict[int, object] = {}
+        face_scattering_map: dict[int, float] = {}
+        group_scattering: dict[str, float] = {}
         for group_id, face_indices in face_groups.items():
             material = materials.get(group_id)
             if material is None:
                 print(f"  Skipping group '{group_id}': no material assigned")
                 continue
             if isinstance(material, dict) and material.get("coeffs"):
-                # Pre-resolved per-band coefficients (material `name` path) —
-                # create_room_from_mesh feeds these straight to pra.Material.
-                group_material[group_id] = material
+                # Pre-resolved per-band coefficients (material `name` path).
+                value = material
             else:
-                group_material[group_id] = float(material.get("absorption", 1.0))
+                value = float(material.get("absorption", 1.0))
             if material.get("scattering") is not None:
                 group_scattering[group_id] = float(material["scattering"])
+            start_idx = len(grouped_faces)
             for face_idx in face_indices:
-                face_to_group[face_idx] = group_id
+                new_idx = len(grouped_faces)
+                grouped_faces.append(faces[face_idx])
+                face_material_map[new_idx] = value
+                if group_id in group_scattering:
+                    face_scattering_map[new_idx] = group_scattering[group_id]
+            if len(grouped_faces) > start_idx:
+                object_face_ranges[str(group_id)] = [start_idx, len(grouped_faces) - 1]
 
-        # Faces not present in any material-bearing group are skipped entirely.
-        kept_faces: list[list[int]] = []
-        face_material_map: dict[int, object] = {}
-        face_scattering_map: Optional[dict[int, float]] = None
-        if ray_tracing:
-            face_scattering_map = {}
-        for old_idx, face in enumerate(faces):
-            group_id = face_to_group.get(old_idx)
-            if group_id is None:
-                print(f"  Skipping face {old_idx}: no material assigned")
-                continue
-            new_idx = len(kept_faces)
-            kept_faces.append(face)
-            face_material_map[new_idx] = group_material[group_id]
-            if face_scattering_map is not None and group_id in group_scattering:
-                face_scattering_map[new_idx] = group_scattering[group_id]
-
-        if not kept_faces:
-            raise RuntimeError("No faces remained after skipping unassigned material groups.")
-
-        # A closed room volume needs at least 4 triangular faces.
-        if len(kept_faces) < 4:
+        if len(grouped_faces) < 4:
             raise RuntimeError(
-                f"Only {len(kept_faces)} face(s) remain after skipping unassigned material "
-                "groups — a room needs at least 4. Check that every wall/ceiling/floor mesh "
-                "has a material assigned."
+                f"Only {len(grouped_faces)} face(s) have a material — a room needs at least 4. "
+                "Check that every wall/ceiling/floor mesh has a material assigned."
             )
-
-        # Outward-winding normalization happens in the shared compute loop, after
-        # welding (see _run_pyroomacoustics_compute_loop).
 
         print(
             f"[{simulation_id[:8]}] Geometry: {len(vertices)} vertices, "
-            f"{len(kept_faces)}/{len(faces)} faces kept "
-            f"(dropped {len(faces) - len(kept_faces)} with no material), "
+            f"{len(grouped_faces)}/{len(faces)} faces kept "
+            f"(dropped {len(faces) - len(grouped_faces)} with no material), "
             f"{len(sources)} sources, {len(receivers)} receivers"
         )
 
@@ -592,9 +550,11 @@ def run_pyroomacoustics_simulation_from_geometry(
             simulation_name=simulation_name,
             pairs_data=pairs_data,
             vertices=vertices,
-            faces=kept_faces,
+            faces=grouped_faces,
+            object_face_ranges=object_face_ranges,
             face_material_map=face_material_map,
             face_scattering_map=face_scattering_map,
+            mesh_settings=mesh_settings,
             simulation_mode=simulation_mode,
             max_order=max_order,
             ray_tracing=ray_tracing,

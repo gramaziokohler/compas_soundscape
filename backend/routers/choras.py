@@ -25,6 +25,7 @@ from fastapi.responses import FileResponse
 from services.choras_service import ChorasService
 from services.job_store import job_store
 from models.schemas import JobEnqueueResponse
+from utils.request_parsing import parse_mesh_settings
 from config.constants import (
     CHORAS_RIR_DIR,
     CHORAS_TEMP_DIR,
@@ -135,6 +136,7 @@ async def run_choras_simulation_speckle(
     dg_cfl: float = Form(CHORAS_DG_DEFAULT_CFL),
     # ── Source-receiver pairs ─────────────────────────────────────────────────
     source_receiver_pairs: str = Form(...),        # JSON string
+    mesh_settings: Optional[str] = Form(None),     # JSON: MeshPrepSettings
 ):
     """
     Start a Choras (DE or DG) acoustic simulation from a Speckle model.
@@ -160,6 +162,7 @@ async def run_choras_simulation_speckle(
 
         if not pairs_data:
             raise HTTPException(status_code=400, detail="source_receiver_pairs is empty")
+        mesh_prep = parse_mesh_settings(mesh_settings)
 
         frequencies = CHORAS_DEFAULT_FREQUENCIES
         de_settings = {
@@ -193,6 +196,7 @@ async def run_choras_simulation_speckle(
                 source_receiver_pairs=pairs_data,
                 simulation_name=simulation_name,
                 temp_dir=str(TEMP_DIR),
+                mesh_settings=mesh_prep.model_dump(),
             ),
         }
 

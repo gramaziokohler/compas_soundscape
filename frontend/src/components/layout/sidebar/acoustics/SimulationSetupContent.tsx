@@ -2,7 +2,8 @@
  * SimulationSetupContent Component
  *
  * Wrapper component for simulation setup UI.
- * Shows the simulation-specific settings (Choras or Pyroomacoustics).
+ * Shows the simulation-specific settings (Choras or Pyroomacoustics) and the
+ * pre-simulation geometry check.
  * Source / listener / material counts live in the card footer (SimulationSummaryBar).
  *
  * Also mounts the headless SpeckleSurfaceMaterialsSection so the acoustic
@@ -17,6 +18,7 @@
 import { SpeckleSurfaceMaterialsSection } from '@/components/acoustics/SpeckleSurfaceMaterialsSection';
 import { ChorasSimulationSettings } from './ChorasSimulationSettings';
 import { PyroomAcousticsSimulationSettings } from './PyroomAcousticsSimulationSettings';
+import { SimulationPreflightPanel, type PreflightPanelControl } from './SimulationPreflightPanel';
 import type { SimulationConfig, ChorasSimulationConfig, PyroomAcousticsSimulationConfig } from '@/types/acoustics';
 import type { AcousticMaterial } from '@/types/materials';
 import type { Viewer } from '@speckle/viewer';
@@ -36,6 +38,8 @@ interface SimulationSetupContentProps {
   onMaterialAssignmentsChange: (assignments: Record<string, string>, layerName: string | null, geometryObjectIds: string[], scatteringAssignments: Record<string, number>) => void;
   onUpdateConfig: (updates: Partial<SimulationConfig>) => void;
   onIsolationChange?: (ids: string[] | null) => void;
+  /** Pre-simulation geometry check wiring (Choras / pyroomacoustics cards). */
+  preflight?: PreflightPanelControl;
 }
 
 /**
@@ -53,6 +57,7 @@ export function SimulationSetupContent({
   onMaterialAssignmentsChange,
   onUpdateConfig,
   onIsolationChange,
+  preflight,
 }: SimulationSetupContentProps) {
   // Extract persisted Speckle state from config
   const initialAssignments = (config as any).speckleMaterialAssignments as Record<string, string> | undefined;
@@ -93,6 +98,15 @@ export function SimulationSetupContent({
         <PyroomAcousticsSimulationSettings
           config={config as PyroomAcousticsSimulationConfig}
           onUpdateConfig={(updates) => onUpdateConfig(updates as Partial<SimulationConfig>)}
+        />
+      )}
+
+      {/* Pre-simulation geometry check: the exact mesh the engine will use */}
+      {preflight && (config.type === 'pyroomacoustics' || config.type === 'choras') && (
+        <SimulationPreflightPanel
+          configId={config.id}
+          engine={config.type}
+          {...preflight}
         />
       )}
 

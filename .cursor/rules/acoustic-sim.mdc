@@ -1,6 +1,6 @@
 ---
 description: Room acoustics simulation — pyroomacoustics and Choras FEM/DG solver, plus applying simulation results to sounds (IR matching, muting, IR panel, mismatch coloring)
-globs: backend/services/pyroomacoustics_service.py,backend/services/choras_service.py,backend/services/choras_job.py,backend/choras_backend/**,backend/routers/pyroomacoustics.py,backend/routers/choras.py,backend/workers/**,backend/routers/jobs.py,backend/utils/acoustic_measurement.py,backend/utils/speckle_geometry_mapper.py,backend/services/pyroomacoustics_worker.py,frontend/src/lib/audio/AudioOrchestrator.ts,frontend/src/lib/audio/modes/AmbisonicIRMode.ts,frontend/src/components/layout/sidebar/AcousticsSection.tsx,frontend/src/components/audio/ImpulseResponseUpload.tsx,frontend/src/components/scene/hooks/useSpeckleSimulationMismatch.ts,frontend/src/components/scene/hooks/useSpeckleSoundHighlight.ts
+globs: backend/services/pyroomacoustics_service.py,backend/services/pyroomacoustics_room_builder.py,backend/services/simulation_mesh_service.py,backend/services/simulation_preflight_service.py,backend/services/simulation_preflight_worker.py,backend/services/simulation_geometry_loader.py,backend/utils/mesh_*.py,backend/utils/air_visibility.py,backend/utils/preflight_payload.py,backend/routers/simulation_preflight.py,frontend/src/components/layout/sidebar/acoustics/SimulationPreflightPanel.tsx,frontend/src/lib/three/simulation-mesh-*.ts,frontend/src/store/simulationPreflightStore.ts,frontend/src/utils/simulationRequest.ts,backend/services/choras_service.py,backend/services/choras_job.py,backend/choras_backend/**,backend/routers/pyroomacoustics.py,backend/routers/choras.py,backend/workers/**,backend/routers/jobs.py,backend/utils/acoustic_measurement.py,backend/utils/speckle_geometry_mapper.py,backend/services/pyroomacoustics_worker.py,frontend/src/lib/audio/AudioOrchestrator.ts,frontend/src/lib/audio/modes/AmbisonicIRMode.ts,frontend/src/components/layout/sidebar/AcousticsSection.tsx,frontend/src/components/audio/ImpulseResponseUpload.tsx,frontend/src/components/scene/hooks/useSpeckleSimulationMismatch.ts,frontend/src/components/scene/hooks/useSpeckleSoundHighlight.ts
 ---
 
 # Acoustic Simulation Rules
@@ -37,12 +37,12 @@ POST /api/pyroomacoustics/run-simulation-speckle
   CPU worker: python -m workers.worker_main --role cpu  leases queue:cpu
     └─ spawns a child process running pyroomacoustics_worker.run_pyroomacoustics_simulation()
        (Speckle fetch + room build + compute_rir) — hard-killable on cancel
-      1. SpeckleService.get_model_geometry()   # vertices, faces, object_face_ranges, units
-      2. Build face_material_map              # object_id → face range → absorption coefficient
-      3. PyroomacousticsService.weld_mesh()   # deduplicate verts, drop degenerate/non-manifold faces
+      1. load_speckle_simulation_geometry()  # Speckle fetch + per-face material/scattering maps
+      2. SimulationMeshService.prepare()      # weld, air-side orientation, two-sided, merge (see below)
+      3. SimulationPreflightService.analyze() # same checks as the preflight → results "geometry_diagnostics"
       4. Group source-receiver pairs by source_id
       5. For each unique source:
-         PyroomacousticsService.create_room_from_mesh()  # build pra.Room from triangulated mesh
+         pyroomacoustics_room_builder.build_room()       # pra.Room from the prepared walls (recentred)
          PyroomacousticsService.add_receiver_to_room()   # add mono mic or FOA MicrophoneArray
          room.add_source(source_position)
          if ray_tracing: room.enable_ray_tracing(n_rays=n_rays)
@@ -57,37 +57,72 @@ POST /api/jobs/{job_id}/cancel   # kills the child process
 GET /api/pyroomacoustics/get-result-file/{simulation_id}/{file_type}  # download WAV / JSON
 ```
 
-### Room Creation — Mesh, Not ShoeBox
+### Room Creation — Prepared Mesh, Not ShoeBox
 
-The room is built face-by-face from the welded Speckle mesh using `pra.wall_factory()`:
+Rooms are built from the walls of a prepared `SimulationMesh`
+(`services/pyroomacoustics_room_builder.build_room`). There is one pra wall per merged coplanar
+polygon. If pra rejects the polygon as non-planar, the wall falls back to its triangles.
+Two-sided surfaces set `wall.two_sided = True`. Geometry and source/receiver positions are shifted
+by the model centre before building, because pra stores corners in float32. The ray-traced tail
+volume is overridden with the preparation's mean-free-path air volume.
 
-```python
-# PyroomacousticsService.create_room_from_mesh() — key loop
-for face_idx, face in enumerate(welded_faces):
-    mat_value = face_materials.get(face_idx, "rough_concrete")
-    # Custom materials (in PYROOMACOUSTICS_CUSTOM_MATERIALS) resolve to {coeffs, center_freqs}
-    material = pra.Material(energy_absorption=mat_value)
-
-    corners = vertices_np[face].T   # shape [3, n_corners] (float64)
-    wall = pra.wall_factory(corners, absorption_bands, scattering_bands, f"face_{face_idx}")
-    walls.append(wall)
-
-room = pra.Room(walls, fs=fs, max_order=max_order, ...)
-```
-
-**Never** use `pra.ShoeBox` — it only supports rectangular rooms. The real rooms are arbitrary
+**Never** use `pra.ShoeBox`. It only supports rectangular rooms, and the real rooms are arbitrary
 architectural meshes from Rhino/Revit via Speckle.
 
-### Mesh Weld
+### Simulation Mesh Preparation (replaces weld_mesh + fix_outward_winding)
 
-`PyroomacousticsService.weld_mesh()` is mandatory before room creation. It:
-1. Quantizes vertices to a tolerance grid → deduplicates shared boundary verts
-2. Drops degenerate faces (< 3 unique vertices after remapping)
-3. Drops duplicate faces (same vertex set in different order)
-4. Iteratively removes the worst non-manifold edges (edges shared by 3+ faces) until the mesh is
-   2-manifold (each edge shared by exactly 2 faces)
+`SimulationMeshService.prepare()` is the **only** way geometry reaches an engine. The
+pyroomacoustics worker (Speckle and Grasshopper), the Choras job and the geometry preflight all
+call it with identical inputs. **Invariant: what the preflight shows is what is simulated.** It is
+deterministic (`SIM_MESH_RAY_SEED`).
 
-Material and scattering dicts are re-indexed through each removal step to stay aligned.
+1. **Drop faces without a material**, in every pipeline. Do not default them to `rough_concrete`.
+2. **KD-tree weld** (`MeshPrepSettings.weld_tolerance_mm`), then drop degenerate and sliver faces
+   and dedupe faces with the same vertex set.
+   **Never prune non-manifold faces.** The old pruning deleted the shared wall of two adjoining
+   rooms and holed T-junctions. pra does not need a manifold mesh.
+3. **Orient from the air.** A diffuse random walk from every source/receiver records which SIDE of
+   each face sound reaches (`utils/air_visibility.py`). Seeds that are outside the model don't vote.
+   The orientation is decided hierarchically (`utils/mesh_orientation.py`):
+   - closed welded component: whole-component majority vote, one-sided;
+   - loose-face object that encloses a volume: parity test. A solid object gets normals pointing in;
+     a room shell made of loose panels gets normals pointing out. Never two-sided;
+   - open manifold component: vote; two-sided only if the air clearly reaches both sides;
+   - non-manifold leftovers: per-face vote. Two-sidedness is smoothed per object.
+
+   Never re-introduce a centroid-based winding fix. It flips re-entrant walls of L-shaped rooms and
+   the far faces of every column or piece of furniture.
+4. **Classify** each face as outer shell, inside the room, or skipped (never reached by sound).
+   Double-sidedness is a separate flag: a two-sided surface counts as shell when sound escapes
+   the model from one of its sides, otherwise as inside. Then compute the **air
+   volume** as mean free path × S / 4.
+5. **Merge coplanar triangles** into simple polygon walls (pyroomacoustics only). Never merge for
+   Choras: gmsh needs conforming triangle edges.
+
+### pyroomacoustics Fork Requirements (`../pyroomacoustics`)
+
+- `Wall.two_sided` (C++, including the copy constructor). The ISM accepts reflections from either
+  side and never reflects twice in a row across the same wall.
+- The RT scatter lobe is mirrored into the half-space the ray came from. Upstream negated it
+  unconditionally, which leaked energy through any wall hit from its normal side.
+- `find_non_convex_walls`: uses unit hull planes with a relative tolerance and includes wall 0.
+  Upstream used an absolute 1e-10 on float32 cross products, so most walls of any rotated room were
+  marked obstructing.
+- After editing the C++, rebuild with `python setup.py build_ext --inplace`. A running worker locks
+  `libroom*.pyd`; rename it aside first. If two-sided faces exist and pra lacks the flag,
+  `build_room` raises. There is no silent fallback.
+
+### Geometry Preflight (pre-simulation check)
+
+- `POST /api/simulation/preflight-speckle` (`engine` = `pyroomacoustics` | `choras`) is a CPU job
+  (variant `pyroomacoustics_preflight`). It writes `temp/simulations/preflight/<workspace>/preflight_<id>.json`,
+  served by `GET /api/simulation/preflight/{id}`.
+- Issues come from `SimulationPreflightService.analyze` with **per-engine severities**. For Choras,
+  holes, open edges, non-manifold edges and two-sided surfaces are errors.
+- The frontend builds the run request and the preflight request with the same helper
+  (`utils/simulationRequest.ts`). The signature it produces detects stale results.
+  `AcousticsSection.runSimulation` gates the run: errors ask "Run anyway"; warnings and failed checks
+  never block.
 
 ### Receiver Types
 
@@ -131,9 +166,10 @@ POST /api/choras/run-simulation-speckle
   Choras worker: python -m workers.worker_main --role choras  leases queue:choras
     └─ spawns a child process running services/choras_job.run_choras_job()
        (Speckle fetch + .geo write + solve moved out of the router) — hard-killable on cancel
-       1. SpeckleService.get_model_geometry()   # same as pyroomacoustics
+       1. load_speckle_simulation_geometry()    # same loader as pyroomacoustics / preflight
+          SimulationMeshService.prepare()       # weld, drop unassigned, orient; NO coplanar merge
        2. build_choras_temp_dir(simulation_id)  # temp/choras_sims/<simulation_id>/
-       3. write_geo_from_mesh(...)              # write shared room.geo
+       3. write_geo_from_mesh(...)              # prepared triangles regrouped per object → room.geo
        4. build_material_absorption_dict()      # object_id → per-frequency absorption coefficients
        5. DE method (per source-receiver pair) / DG method (per unique source) — see below
 

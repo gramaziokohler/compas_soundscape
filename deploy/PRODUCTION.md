@@ -44,6 +44,12 @@ Nothing is deployed by hand. Every `DeployPollSeconds`, the supervisor:
 - **Local editable builds:** `pyroomacoustics` is an editable install from
   `C:\Users\soundisblue\repos\pyroomacoustics`. It's listed in `PipExcludePackages`, so the
   `pyroomacoustics==0.9.0` pin never replaces it. Add any future local build there too.
+  The simulation needs the fork's C++ `Wall.two_sided` flag (two-sided thin surfaces). After
+  pulling fork changes, rebuild with `python setup.py build_ext --inplace` in the repo
+  (compas-soundscape env), then run `compas restart cpu`. A running CPU worker locks
+  `pyroomacoustics\libroom*.pyd`, which makes the build's final copy fail. Rename the locked file
+  aside first (Windows allows renaming a loaded DLL), then re-run the build. If the flag is
+  missing, simulations that need it stop with a "rebuild pyroomacoustics" error.
 - **Edits to `C:\compas\*.ps1` / `config.psd1`:** the supervisor reloads them on its next loop
   (it compares file timestamps). If in doubt, run `compas restart supervisor`. `compas restart all`
   restarts only the services, **not** the supervisor loop.

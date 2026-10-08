@@ -9,17 +9,19 @@ import { SoundGenerationSection } from '@/components/layout/sidebar/SoundGenerat
 import { buildSoundGenerationSectionProps } from '@/components/layout/sidebar/soundSectionProps';
 import { ScenePromptComposer } from './ScenePromptComposer';
 import { SceneSettingsSummary } from './SceneSettingsSummary';
-import { SceneWorkflowDetail } from './SceneWorkflowDetail';
+import { SceneWorkflowActions, SceneWorkflowDetail } from './SceneWorkflowDetail';
 import { NEW_SCENE_ADD_BUTTON_ID } from './HomeSceneComposer';
 import { useSoundScenes } from '@/hooks/useSoundScenes';
 import { useSceneProgress } from '@/hooks/useSceneProgress';
 import { useSceneWaveform } from '@/hooks/useSceneWaveform';
 import { useDismissOnSceneClick } from '@/hooks/useDismissOnSceneClick';
 import { useBubbleColumnSpace } from '@/hooks/useBubbleColumnSpace';
+import { useSimpleSceneHighlights } from '@/hooks/useSimpleSceneHighlights';
 import {
   useAnalysisStore,
   useAudioControlsStore,
   useCardFlowStore,
+  useSceneHighlightStore,
   useSceneWorkflowStore,
   useUIStore,
 } from '@/store';
@@ -118,14 +120,16 @@ function WorkflowPanel({ scene, powered, onTogglePower, onReduce, onShowSounds, 
       onTogglePower={isPlayable(scene) ? onTogglePower : undefined}
       powered={powered}
       powerTitle={powerTitle(powered)}
+      footerActions={
+        <SceneWorkflowActions
+          scene={scene}
+          progress={progress}
+          onOpenExpert={() => switchUIMode('expert', scene.usageIndex)}
+        />
+      }
       style={{ position: 'fixed', left: PANEL_LEFT, top: COLUMN_TOP }}
     >
-      <SceneWorkflowDetail
-        scene={scene}
-        progress={progress}
-        onOpenExpert={() => switchUIMode('expert', scene.usageIndex)}
-        onShowSounds={onShowSounds}
-      />
+      <SceneWorkflowDetail scene={scene} progress={progress} onShowSounds={onShowSounds} />
     </BubblePanel>
   );
 }
@@ -165,6 +169,7 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
   const startScene = useSceneWorkflowStore((s) => s.startScene);
 
   const columnSpace = useBubbleColumnSpace();
+  useSimpleSceneHighlights();
 
   const [panel, setPanel] = useState<LeftPanel>(null);
   // The composer stays mounted once opened so a stray click doesn't lose a draft.
@@ -285,6 +290,8 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
   const removeScene = useCallback((usageIndex: number) => {
     // Removal re-keys every usage-index link (scene runs, active sound parent) —
     // the removed scene's run and selection are dropped there, later ones shift.
+    // The highlight toggles hold raw card indices: drop them rather than remap.
+    useSceneHighlightStore.getState().reset();
     useAnalysisStore.getState().handleRemoveConfig(usageIndex);
     closePanel();
   }, [closePanel]);

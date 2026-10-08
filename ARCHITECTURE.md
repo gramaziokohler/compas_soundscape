@@ -26,6 +26,7 @@ compas_soundscape/
 │   │   ├── pyroomacoustics.py       # Pyroomacoustics acoustic simulation (ISM, RT60)
 │   │   ├── reprocess.py             # Audio reprocessing (denoising)
 │   │   ├── sed_analysis.py          # Sound Event Detection endpoints
+│   │   ├── simulation_preflight.py  # Pre-simulation geometry check (both engines)
 │   │   ├── sounds.py                # Audio generation endpoints
 │   │   └── upload.py                # File upload endpoints
 │   ├── services/
@@ -38,6 +39,11 @@ compas_soundscape/
 │   │   ├── llm_service.py           # Google Gemini LLM
 │   │   ├── modal_analysis_service.py    # Modal analysis & mode shape visualization
 │   │   ├── pyroomacoustics_service.py   # Pyroomacoustics simulation (ISM, RT60, EDT)
+│   │   ├── pyroomacoustics_room_builder.py  # pra.Room from a prepared SimulationMesh
+│   │   ├── simulation_geometry_loader.py    # Speckle fetch + per-face materials (all engines)
+│   │   ├── simulation_mesh_service.py   # Weld → air-side orientation → classify → merge
+│   │   ├── simulation_preflight_service.py  # Geometry issues (per-engine severities)
+│   │   ├── simulation_preflight_worker.py   # CPU-worker entry of the preflight job
 │   │   ├── sed_service.py           # Sound Event Detection
 │   │   ├── speckle_demo.py          # Speckle demo/testing
 │   │   └── speckle_service.py       # Speckle integration service
@@ -47,6 +53,12 @@ compas_soundscape/
 │   │   ├── audio_processing.py      # Audio manipulation utilities
 │   │   ├── file_operations.py       # File I/O and cleanup
 │   │   ├── helpers.py               # General helpers
+│   │   ├── mesh_topology.py         # KD-tree weld, dedupe, edges, components, loops
+│   │   ├── mesh_raycast.py          # numba ray/triangle queries
+│   │   ├── air_visibility.py        # Diffuse random walk from sources/receivers
+│   │   ├── mesh_orientation.py      # Hierarchical one-/two-sided orientation
+│   │   ├── mesh_coplanar.py         # Coplanar triangles → polygon walls, hull test
+│   │   ├── preflight_payload.py     # Preview payload for the frontend
 │   │   └── sed_processing.py        # SED processing utilities
 │   └── temp/                        # Parent temporary directory (all temp files)
 │       ├── static/                  # Static files served via /static/
@@ -420,7 +432,11 @@ page.tsx
   │              │     (chips: speech, people, duration — people/duration are
   │              │      components/ui/EditableCycleChip: click cycles, double-click exact value;
   │              │      0 people disables speech; diffusion steps always SIMPLE_MODE.DIFFUSION_STEPS)
-  │              ├── running bubble → SceneWorkflowDetail (live step detail, Stop/Resume,
+  │              ├── running bubble → SceneWorkflowDetail (live step detail,
+  │              │     footer SceneWorkflowActions: Stop/Resume + "Open in detailed mode",
+  │              │     right of the trash via BubblePanel.footerActions;
+  │              │     done Analyze / Scenario steps → SceneStepHighlights: "Show colors" /
+  │              │     "Show objects" toggles + expandable group / event lists,
   │              │     ThinkingDisclosure ← analysisStore.analysisThinking /
   │              │     soundscapeStore.orchestrateThinking + isOrchestrating ("Orchestrate agent"),
   │              │     "Scene settings" = getSceneSettingsRows + SettingsSummary tone="neutral")
@@ -473,6 +489,15 @@ sceneWorkflowStore (one run at a time, FIFO queue, keyed by scenario card index)
   Each step is idempotent (skipped when its result exists) → same runner powers Resume.
   Each step writes sidebarWizardStep / cardFlowStore + uiStore.sidebarNavCommand so a
   mounted expert Sidebar follows the pipeline live.
+
+Simple-mode 3D highlights (hooks/useSimpleSceneHighlights, mounted by SimpleSoundscapes)
+  analysis groups  → speckleStore.setAnalysisObjectGroups only while the Analyze step runs,
+                     or sceneHighlightStore.analysisContextIndex ("Show colors") / focusedGroup
+                     (hovered group alone); otherwise cleared (overrides handleAnalyzeModel's
+                     final colors).
+  scenario objects → scenarioPreviewStore.setPreview(utils/scenarioObjectRefs.buildScenarioPreview)
+                     only while the Scenario step streams, or sceneHighlightStore.scenarioUsageIndex.
+  Unmount (switch to Detailed) clears both; the expert card syncs take over.
 
 SpeckleScene
   └── SceneBottomBar (full width, both modes): home · undo/redo · save
@@ -697,3 +722,55 @@ When that client id is listed in `LOADTEST_SERVICE_TOKEN_IDS` (off by default),
 (user → default workspace → session), so each virtual user exercises the real identity path. The
 mapping requires a verified JWT from an allowlisted token, so it can't be used to forge an identity.
 Setup and usage: `scripts/loadtest/README.md`.
+
+### Simulation Mesh Preparation & Geometry Preflight
+
+pyroomacoustics and Choras never consume the raw Speckle mesh. Both go through
+`SimulationMeshService.prepare()`. The pre-simulation **geometry check** (preflight) calls the
+same function with the same inputs and shows its output, so **what the user inspects is exactly
+what gets simulated**. The preparation is deterministic, using a fixed RNG seed.
+
+```
+Speckle layer ──simulation_geometry_loader──▶ vertices, faces, object face ranges, face materials
+        │                                    (identical for the pyroom worker, the Choras job, the preflight)
+        ▼
+SimulationMeshService.prepare(seeds = sources + receivers, MeshPrepSettings)
+  1. drop faces without material (both engines, Speckle + Grasshopper)
+  2. KD-tree weld · drop degenerate/sliver · dedupe   (NO non-manifold pruning)
+  3. topology: components, closed/manifold, BFS winding, open-edge loops
+  4. air_visibility: diffuse random walk from each seed → hits per face SIDE,
+     seed inside/leaky/outside, leaks, reachable faces per seed, mean free path
+  5. mesh_orientation (hierarchical):
+       closed welded component  → whole-component vote, one-sided
+       loose-face closed object → parity test (solid: normals in; air shell: normals out)
+       open manifold component  → vote; two-sided if air clearly hits both sides
+       non-manifold leftovers   → per-face vote; two-sidedness smoothed per object
+  6. classes: outer shell / inside the room / skipped (probes; two-sided is a separate flag)
+  7. air volume = mean free path × S / 4 (RT tail density)
+  8. coplanar merge → simple polygon walls (pyroomacoustics only)
+        │
+        ├─ pyroomacoustics_worker → pyroomacoustics_room_builder.build_room (recentred, two_sided walls)
+        ├─ choras_job → write_geo_from_mesh (triangles regrouped per object, no merge)
+        └─ simulation_preflight_worker → SimulationPreflightService.analyze → preflight_<id>.json
+```
+
+- **Endpoints:**
+  - `POST /api/simulation/preflight-speckle` is a CPU job (variant `pyroomacoustics_preflight`).
+  - `GET /api/simulation/preflight/{id}` returns the payload, scoped to the workspace.
+  - The run endpoints of both engines accept the same `mesh_settings` JSON.
+- **Frontend:**
+  - `utils/simulationRequest.ts` builds the inputs for runs and the preflight, plus the staleness signature.
+  - `store/simulationPreflightStore.ts` holds per-card results and the preview options.
+  - `SimulationPreflightPanel` sits in the card setup.
+  - `lib/three/simulation-mesh-preview.ts` and `useSpeckleSimulationPreflight` handle the 3D preview.
+    While it is on, the Speckle model (`ContentGroup`) is hidden, so only the simulation mesh shows.
+    Legend rows double as visibility checkboxes (`PREVIEW_CATEGORIES` in `simulation-mesh-colors.ts`).
+  - Mesh settings live in `uiStore.simulationMeshSettings` (Advanced settings > Acoustics > Simulation geometry).
+- **Run gating:** `AcousticsSection.runSimulation` reuses a preflight computed for identical inputs, or runs one first.
+  - Errors stop the run and ask "Run anyway".
+  - Warnings, or a preflight that fails to run, never block.
+- **pyroomacoustics fork** (`../pyroomacoustics`, rebuild with `python setup.py build_ext --inplace`):
+  - `Wall.two_sided`: the ISM reflects from both sides and never reflects twice in a row on the same wall.
+  - The RT scatter lobe is mirrored into the side the ray arrived from.
+  - `find_non_convex_walls` uses scale-aware hull planes and includes wall 0.
+  - Two-sided surfaces fail loudly on a pra build without `two_sided`; there is no silent fallback.

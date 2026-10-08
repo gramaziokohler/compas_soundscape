@@ -41,9 +41,7 @@ for f in faces_before:
 print(f"\nReconstructed raw mesh: {len(all_verts)} verts, {len(all_faces)} faces")
 
 # Run the updated weld_mesh
-verts_after, faces_after, _, _ = PyroomacousticsService.weld_mesh(
-    all_verts, all_faces, None, None
-)
+verts_after, faces_after = PyroomacousticsService.weld_mesh(all_verts, all_faces)
 
 print(f"After weld_mesh: {len(verts_after)} verts, {len(faces_after)} faces")
 nm = edge_stats(faces_after, "After")

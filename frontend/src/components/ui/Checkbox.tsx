@@ -15,6 +15,9 @@ export interface CheckboxProps {
   title?: string;
   /** Box size in px. Defaults to 16. */
   size?: number;
+  /** CSS colour of the checked fill/border (e.g. `var(--color-warning)`) — lets the
+   *  box double as a legend swatch. Defaults to the primary token. */
+  accentColor?: string;
   className?: string;
 }
 
@@ -39,6 +42,7 @@ export function Checkbox({
   label,
   title,
   size = 16,
+  accentColor = "var(--color-primary)",
   className = "",
 }: CheckboxProps) {
   const active = checked || indeterminate;
@@ -61,8 +65,8 @@ export function Checkbox({
       style={{
         width: `${size}px`,
         height: `${size}px`,
-        backgroundColor: active ? "var(--color-primary)" : "transparent",
-        borderColor: active ? "var(--color-primary)" : "var(--color-border-strong)",
+        backgroundColor: active ? accentColor : "transparent",
+        borderColor: active ? accentColor : "var(--color-border-strong)",
         color: "var(--color-on-blue)",
         opacity: disabled ? 0.5 : 1,
         cursor: disabled ? "not-allowed" : "pointer",

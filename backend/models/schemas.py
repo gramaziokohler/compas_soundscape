@@ -17,6 +17,15 @@ from config.constants import PYROOMACOUSTICS_DEFAULT_RAY_TRACING
 from config.constants import PYROOMACOUSTICS_DEFAULT_RIR_DURATION
 from config.constants import PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE
 from config.constants import PYROOMACOUSTICS_RAY_TRACING_N_RAYS
+from config.constants import SIM_MESH_COPLANAR_ANGLE_DEG_DEFAULT
+from config.constants import SIM_MESH_COPLANAR_ANGLE_DEG_MAX
+from config.constants import SIM_MESH_COPLANAR_DISTANCE_MM_DEFAULT
+from config.constants import SIM_MESH_COPLANAR_DISTANCE_MM_MAX
+from config.constants import SIM_MESH_DETECT_TWO_SIDED_DEFAULT
+from config.constants import SIM_MESH_MERGE_COPLANAR_DEFAULT
+from config.constants import SIM_MESH_VISIBILITY_QUALITY_DEFAULT
+from config.constants import SIM_MESH_WELD_TOLERANCE_MM_DEFAULT
+from config.constants import SIM_MESH_WELD_TOLERANCE_MM_MAX
 from pydantic import BaseModel
 from pydantic import Field
 from pydantic import field_validator
@@ -599,6 +608,30 @@ class PyroomacousticsGeometryReceiver(BaseModel):
     position: list[float] = Field(min_length=3, max_length=3)
 
 
+class MeshPrepSettings(BaseModel):
+    """User-tunable simulation mesh preparation (Advanced settings > Acoustics)."""
+    weld_tolerance_mm: float = Field(
+        default=SIM_MESH_WELD_TOLERANCE_MM_DEFAULT, ge=0.0, le=SIM_MESH_WELD_TOLERANCE_MM_MAX
+    )
+    merge_coplanar: bool = SIM_MESH_MERGE_COPLANAR_DEFAULT
+    coplanar_angle_deg: float = Field(
+        default=SIM_MESH_COPLANAR_ANGLE_DEG_DEFAULT, gt=0.0, le=SIM_MESH_COPLANAR_ANGLE_DEG_MAX
+    )
+    coplanar_distance_mm: float = Field(
+        default=SIM_MESH_COPLANAR_DISTANCE_MM_DEFAULT, gt=0.0, le=SIM_MESH_COPLANAR_DISTANCE_MM_MAX
+    )
+    detect_two_sided: bool = SIM_MESH_DETECT_TWO_SIDED_DEFAULT
+    visibility_quality: Literal["fast", "standard", "thorough"] = SIM_MESH_VISIBILITY_QUALITY_DEFAULT
+
+    @classmethod
+    def from_form(cls, raw: Optional[str]) -> "MeshPrepSettings":
+        """Parse the ``mesh_settings`` JSON form field (missing/empty -> defaults)."""
+        import json
+        if not raw:
+            return cls()
+        return cls.model_validate(json.loads(raw))
+
+
 class PyroomacousticsGeometryRequest(BaseModel):
     """Direct-geometry simulation payload (no Speckle involved).
 
@@ -614,6 +647,7 @@ class PyroomacousticsGeometryRequest(BaseModel):
     face_groups: dict[str, list[int]] = Field(default_factory=dict)
     materials: dict[str, PyroomacousticsGeometryMaterial] = Field(default_factory=dict)
     units: Literal["m", "mm", "cm", "ft"] = "m"
+    mesh_settings: Optional[MeshPrepSettings] = None
     sources: list[PyroomacousticsGeometrySource] = Field(min_length=1)
     receivers: list[PyroomacousticsGeometryReceiver] = Field(min_length=1)
     settings: PyroomacousticsGeometrySettings = Field(default_factory=PyroomacousticsGeometrySettings)
@@ -929,3 +963,27 @@ class UserPreferences(BaseModel):
     enable_auto_save: Optional[bool] = None
     # One-time UI hints the user has already seen (e.g. "fps"), shown once per identity
     seen_hints: Optional[list[str]] = None
+
+
+# ─── Simulation mesh preparation + preflight ─────────────────────────────────
+
+class PreflightIssue(BaseModel):
+    id: str
+    severity: Literal["error", "warning", "info"]
+    code: str
+    title: str
+    detail: str
+    position: Optional[list[float]] = None
+    segment: Optional[list[list[float]]] = None
+    face_ids: list[int] = Field(default_factory=list)
+    object_ids: list[str] = Field(default_factory=list)
+    loop_ids: list[int] = Field(default_factory=list)
+
+
+class PreflightSummary(BaseModel):
+    preflight_id: str
+    engine: Literal["pyroomacoustics", "choras"]
+    n_errors: int
+    n_warnings: int
+    n_infos: int
+    payload_file: str

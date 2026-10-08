@@ -313,3 +313,25 @@ export interface LibrarySearchState {
   selectedSound: LibrarySearchResult | null;
   error: string | null;
 }
+
+// Simulation geometry preflight types
+export type {
+  SimulationEngine,
+  SimulationMeshSettings,
+  PreflightSeverity,
+  PreflightIssue,
+  PreflightFaceClass,
+  PreflightSeedStatus,
+  PreflightSeed,
+  PreflightLoop,
+  PreflightLeakRay,
+  PreflightBlockedPath,
+  PreflightStats,
+  PreflightPayload,
+  PreflightJobResult,
+  PreflightViewMode,
+  PreflightFilters,
+  PreflightRunStatus,
+  PreflightEntry,
+} from './simulationPreflight';
+export { PREFLIGHT_FACE_CLASS } from './simulationPreflight';

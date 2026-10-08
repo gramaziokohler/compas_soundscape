@@ -208,6 +208,12 @@ export type { ScenarioPreviewStoreState, ScenarioPreviewParcours, ScenarioPrevie
 export { useAnalysisPreviewStore } from './analysisPreviewStore';
 export type { AnalysisPreviewStoreState, AnalysisPreviewPoint } from './analysisPreviewStore';
 
+export { useSceneHighlightStore } from './sceneHighlightStore';
+export type { SceneHighlightStoreState } from './sceneHighlightStore';
+
+export { useSimulationPreflightStore } from './simulationPreflightStore';
+export type { SimulationPreflightStoreState, RunPreflightArgs } from './simulationPreflightStore';
+
 export { useModalImpactStore };
 export type { ModalImpactStoreState } from './modalImpactStore';
 
