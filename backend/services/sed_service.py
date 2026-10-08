@@ -5,6 +5,16 @@ Uses Google's YAMNet model to detect and classify sound events in audio files.
 Provides batch analysis with amplitude statistics and temporal information.
 """
 
+import os
+import re
+import shutil
+
+from config.constants import SED_MIN_CONFIDENCE, TFHUB_CACHE_DIR, YAMNET_MODEL_URL
+
+# Must be set before tensorflow_hub is imported, otherwise it caches to %TEMP%.
+os.environ["TFHUB_CACHE_DIR"] = TFHUB_CACHE_DIR
+os.makedirs(TFHUB_CACHE_DIR, exist_ok=True)
+
 import tensorflow as tf
 
 # tensorflow_hub triggers a spurious `tf.losses.sparse_softmax_cross_entropy`
@@ -24,7 +34,6 @@ from utils.sed_processing import (
     FRAME_WINDOW_SECONDS,
     TARGET_SAMPLE_RATE
 )
-from config.constants import SED_MIN_CONFIDENCE
 
 
 class SEDService:
@@ -48,7 +57,7 @@ class SEDService:
         try:
             # Load YAMNet model from TensorFlow Hub
             # hub.load() downloads and caches the model on first use
-            self.model = hub.load('https://www.kaggle.com/models/google/yamnet/TensorFlow2/yamnet/1')
+            self.model = self._load_hub_model(YAMNET_MODEL_URL)
 
             # Load class names from the model's included CSV file
             # class_map_path() returns the path to yamnet_class_map.csv
@@ -60,6 +69,29 @@ class SEDService:
         except Exception as e:
             print(f"Error loading YAMNet model: {e}")
             raise
+
+    @staticmethod
+    def _load_hub_model(url: str):
+        """
+        hub.load() with self-healing for a corrupt cache.
+
+        An interrupted download or a temp-folder cleanup can leave the cached
+        module directory without saved_model.pb; TF Hub then reuses the broken
+        folder forever. Wipe that entry and download once more.
+        """
+        try:
+            return hub.load(url)
+        except (ValueError, OSError) as e:
+            if "saved_model.pb" not in str(e):
+                raise
+            # The error message names the broken cache directory.
+            match = re.search(r"'([^']+)' contains neither", str(e))
+            if not match:
+                raise
+            module_dir = match.group(1)
+            print(f"YAMNet cache is corrupt, re-downloading: {module_dir}")
+            shutil.rmtree(module_dir, ignore_errors=True)
+            return hub.load(url)
 
     def _class_names_from_csv(self, class_map_csv_text: str) -> List[str]:
         """

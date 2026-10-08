@@ -16,7 +16,20 @@ ambisonic / binaural spatial audio rendering.
 | State    | Zustand v5 + zundo undo/redo        | —    |
 | Job store| Redis (job hashes + worker queues)  | 6379 |
 
-## Run Commands
+## Deployment Docs: which file to use
+
+| Talking about… | Use |
+| --- | --- |
+| Running the app locally, dev setup, a new dev machine | `deploy/README.md` |
+| The always-on server (soundisblue.com), Windows services, auto-deploy, the `compas` CLI, prod logs in `C:\compas\logs\` | `deploy/PRODUCTION.md` (CLI reference: `C:\compas\README.md`) |
+
+On the production host, never tell the user to run `uvicorn`/workers or `pip install -r` by hand.
+Use `compas restart <svc>` and `compas deps` instead, because `compas deps` honours
+`PipExcludePackages`. Local editable builds such as pyroomacoustics must not be overwritten.
+
+## Run Commands (local dev — see `deploy/README.md`)
+
+The backend env is `compas-toy` on dev machines and `compas-soundscape` on the production host.
 
 ```bash
 # Redis must be up first (Memurai or redis-windows) — see deploy/README.md

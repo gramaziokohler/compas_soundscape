@@ -508,6 +508,10 @@ FRAME_WINDOW_SECONDS = 0.96  # YAMNet analysis window duration
 DEFAULT_SED_NUM_SOUNDS = 10  # Default number of top sounds to return
 DEFAULT_SED_TOP_N_CLASSES = 100  # Default maximum classes to analyze
 SED_MIN_CONFIDENCE = 0.05  # Minimum confidence (mean_score) threshold for returning results
+YAMNET_MODEL_URL = "https://www.kaggle.com/models/google/yamnet/TensorFlow2/yamnet/1"
+# TF Hub defaults to %TEMP%\tfhub_modules, which Windows temp cleanup can gut
+# (leaving a folder without saved_model.pb). Keep the cache somewhere durable.
+TFHUB_CACHE_DIR = os.environ.get("TFHUB_CACHE_DIR") or str(BACKEND_DIR / "data" / "tfhub_modules")
 
 # Audio to dB Conversion
 AMPLITUDE_TO_DB_EPSILON = 1e-10  # Epsilon threshold for amplitude to dB conversion
