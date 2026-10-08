@@ -659,9 +659,9 @@ class SoundscapeExistsResponse(BaseModel):
 # ── LLM Analysis Output Schemas ───────────────────────────────────────────────
 
 class ModelObjectResultRaw(BaseModel):
-    """Raw LLM output for a single object group — object_ids are a flat list of hex strings.
-    Used only as the structured-output schema for _call_llm; post-processing converts
-    this to ModelObjectResult (with dict-format object_ids).
+    """Raw LLM output for a single object group — object_ids are the input group keys
+    (e.g. "G3"; legacy: hex Speckle IDs). Used only as the structured-output schema for
+    _call_llm; post-processing expands the keys to ModelObjectResult (dict-format object_ids).
     """
     name: str
     description: str

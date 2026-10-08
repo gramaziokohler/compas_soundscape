@@ -66,6 +66,14 @@ LLM_PROGRESS_THINKING_MAX = 40
 LLM_PROGRESS_WRITING_MIN = 40
 LLM_PROGRESS_WRITING_MAX = 90
 
+# 3D model analysis — entity grouping (utils/entity_grouping.py)
+# Identical entities are collapsed into groups (G1, G2, …) so the prompt and the
+# LLM's answer scale with the number of distinct object kinds, not entity count.
+MODEL_ANALYSIS_MAX_INPUT_TOKENS = 20_000  # Hard cap on the text prompt (estimated)
+MODEL_ANALYSIS_CHARS_PER_TOKEN = 4        # Cheap provider-agnostic token estimate
+MODEL_ANALYSIS_SIZE_ROUND_M = 0.05        # Bbox-size rounding for the group signature
+MODEL_ANALYSIS_PROMPT_SAMPLE_IDS = 5      # Speckle IDs kept per object in downstream agent prompts
+
 # Default Sound Parameters (consolidated from multiple sources)
 DEFAULT_DBFS = -18.0  # Default volume level in dBFS (decibels relative to full scale)
 DEFAULT_ENTITY_DBFS = -18.0  # Default volume for entity prompts

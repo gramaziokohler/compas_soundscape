@@ -46,6 +46,7 @@ import { startPolling, createPollRegistry } from '@/lib/poll-until-done';
 import { recordInflightJob, removeInflightJob } from '@/lib/job-tracker';
 import { generatePositionsInArea, generatePositionsInBounds } from '@/utils/positioning';
 import { getAnalysisGroupColor } from '@/utils/utils';
+import { entityIdCandidates, filterVisibleAnalysisEntities } from '@/utils/analysisEntities';
 import { notifySectionError } from './errorsStore';
 import { useAreaDrawingStore } from './areaDrawingStore';
 import { useSoundscapeStore } from './soundscapeStore';
@@ -1685,23 +1686,11 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             const isolatedSetForAnalysis = isolatedIdsForAnalysis
               ? new Set(isolatedIdsForAnalysis)
               : null;
-            // The viewer's filtering IDs and the extracted entity IDs don't always
-            // come from the same field (raw.id vs model.id vs applicationId), so
-            // match against every candidate ID an entity carries.
-            const entityIdCandidates = (e: any): string[] =>
-              [e?.id, e?.nodeId, e?.modelId, e?.applicationId, e?.raw?.id, e?.raw?.applicationId].filter(Boolean) as string[];
-            // Include the ancestor container/layer IDs so hiding/isolating a layer
-            // captures its whole subtree, even if the viewer's leaf-id enumeration
-            // is incomplete (the layer node itself is always in the set).
-            const entityMatchIds = (e: any): string[] =>
-              [...entityIdCandidates(e), ...((e?.ancestorIds ?? []) as string[])];
-            const isEntityHidden = (e: any) =>
-              entityMatchIds(e).some((id) => hiddenIdsForAnalysis.has(id));
-            const isEntityShownByIsolation = (e: any) =>
-              isolatedSetForAnalysis === null ||
-              entityMatchIds(e).some((id) => isolatedSetForAnalysis.has(id));
-            const visibleEntitiesForAnalysis = baseEntities.filter(
-              (e: any) => !isEntityHidden(e) && isEntityShownByIsolation(e),
+            // Shared with the Analyze card's entity-count warning (utils/analysisEntities).
+            const visibleEntitiesForAnalysis = filterVisibleAnalysisEntities(
+              baseEntities,
+              hiddenIdsForAnalysis,
+              isolatedIdsForAnalysis,
             );
 
             // ─── DIAGNOSTIC: trace "Backwall" layer + its children ───────────
@@ -1778,7 +1767,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                   candidateIds: cands,
                   inIsolated: cands.map((id) => isolatedSetForAnalysis?.has(id) ?? null),
                   inHidden: cands.map((id) => hiddenIdsForAnalysis.has(id)),
-                  shown: !isEntityHidden(e) && isEntityShownByIsolation(e),
+                  shown: visibleEntitiesForAnalysis.includes(e),
                 });
               }
               // Ancestor-match confirmation: entities included only because an

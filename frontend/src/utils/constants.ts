@@ -539,6 +539,10 @@ export const LLM_MODEL_ANTHROPIC = "anthropic";
 // Latest Flash model is the default.
 export const DEFAULT_LLM_MODEL = LLM_MODEL_GEMINI_FLASH;
 
+// 3D model analysis: above this many visible entities the Analyze card warns
+// that the LLM will be slow and suggests hiding layers.
+export const MODEL_ANALYSIS_ENTITY_WARNING = 1000;
+
 // Frontend-only service version strings (for Card version display)
 export const ELEVENLABS_SERVICE_VERSION = "@elevenlabs/elevenlabs-js 2.35.0";
 export const GOOGLE_SOUND_LIBRARY_SERVICE_VERSION = "Google Sound Library v1";

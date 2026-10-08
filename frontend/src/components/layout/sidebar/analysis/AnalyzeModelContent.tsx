@@ -7,6 +7,9 @@ import { useSpeckleStore, useAnalysisStore, useUIStore } from '@/store';
 import { getRootNodesForModel } from '@/hooks/useSpeckleTree';
 import { DashedAddButton } from '@/components/ui/DashedAddButton';
 import { ContextMenu } from '@/components/ui/ContextMenu';
+import { Notice } from '@/components/ui/Notice';
+import { MODEL_ANALYSIS_ENTITY_WARNING } from '@/utils/constants';
+import { filterVisibleAnalysisEntities, isAnalysisGeometry } from '@/utils/analysisEntities';
 
 /**
  * AnalyzeModelContent
@@ -121,6 +124,20 @@ export function AnalyzeModelContent({
 
   const hasModel = config.speckleData !== undefined || config.modelEntities.length > 0;
 
+  // Geometry entities the LLM will actually receive (hidden / non-isolated layers
+  // excluded). The applied* arrays are reactive mirrors of the viewer filtering
+  // state; the live getters are the same source analysisStore uses at run time.
+  const appliedHiddenIds = useSpeckleStore((s) => s.appliedHiddenIds);
+  const appliedIsolatedIds = useSpeckleStore((s) => s.appliedIsolatedIds);
+  const visibleEntityCount = useMemo(() => {
+    const { getExplorerHiddenIds, getExplorerIsolatedIds } = useSpeckleStore.getState();
+    return filterVisibleAnalysisEntities(
+      config.modelEntities.filter(isAnalysisGeometry),
+      getExplorerHiddenIds(),
+      getExplorerIsolatedIds(),
+    ).length;
+  }, [config.modelEntities, appliedHiddenIds, appliedIsolatedIds]);
+
   return (
     <div className="card-stack">
       {!hasModel && (
@@ -145,6 +162,13 @@ export function AnalyzeModelContent({
               ? `${entityCount} object${entityCount !== 1 ? 's' : ''} detected`
               : 'Loading model objects…'}
           </div>
+
+          {visibleEntityCount > MODEL_ANALYSIS_ENTITY_WARNING && (
+            <Notice
+              type="warning"
+              message={`Your model has ${visibleEntityCount.toLocaleString()} visible entities — the LLM may take minutes to process them. Hide layers in the Object Explorer (e.g. ceiling tiles, structure, repeated details) to speed up the analysis.`}
+            />
+          )}
 
 
           {/* Optional user context */}

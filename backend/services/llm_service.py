@@ -58,11 +58,28 @@ from config.constants import (
     LLM_PROVIDER_ANTHROPIC,
     TTS_CHARACTER_NAMES,
     TTS_INLINE_VOCAL_TAGS,
+    MODEL_ANALYSIS_MAX_INPUT_TOKENS,
+    MODEL_ANALYSIS_CHARS_PER_TOKEN,
+    MODEL_ANALYSIS_SIZE_ROUND_M,
+    MODEL_ANALYSIS_PROMPT_SAMPLE_IDS,
 )
+from utils.entity_grouping import EntityRecord, group_entities, compact_furniture_for_prompt
 
 
 class Error(Exception):
     pass
+
+
+def _furniture_prompt_json(furniture_list: dict | None) -> str:
+    """Serialize a 3D-analysis result for agent prompts with a few sample IDs per object.
+
+    The stored result keeps every Speckle ID (the viewer colours whole groups);
+    prompts only need representative IDs, plus id_count/extent for the group.
+    """
+    if not furniture_list:
+        return "{}"
+    compact = compact_furniture_for_prompt(furniture_list, MODEL_ANALYSIS_PROMPT_SAMPLE_IDS)
+    return json.dumps(compact, indent=2)
 
 
 class LLMCancelled(Exception):
@@ -1203,13 +1220,14 @@ For the duration estimation (in seconds with 0.1 precision):
             yield sound
 
     def _parse_architecture_object(self, text: str) -> dict | None:
-        """Parse a NAME:/DESCRIPTION:/MATERIAL:/QUANTITY:/IDS: block.
+        """Parse a NAME:/DESCRIPTION:/MATERIAL:/QUANTITY:/GROUPS: (or legacy IDS:) block.
 
         Returns:
             dict with keys name, description, material, quantity, object_ids
-            or None if NAME: is missing.
+            (raw tokens: group keys like 'G12', hex IDs or bracket indices)
+            or None if NAME: is missing or echoes the format template.
         """
-        _FIELD = r'(?:NAME|DESCRIPTION|MATERIAL|QUANTITY|IDS)'
+        _FIELD = r'(?:NAME|DESCRIPTION|MATERIAL|QUANTITY|GROUPS|IDS)'
         name_match = re.search(rf'NAME:\s*(.*?)(?=\s*{_FIELD}:|$)', text, re.DOTALL | re.IGNORECASE)
         if not name_match:
             return None
@@ -1217,9 +1235,11 @@ For the duration estimation (in seconds with 0.1 precision):
         desc_match = re.search(rf'DESCRIPTION:\s*(.*?)(?=\s*{_FIELD}:|$)', text, re.DOTALL | re.IGNORECASE)
         mat_match = re.search(rf'MATERIAL:\s*(.*?)(?=\s*{_FIELD}:|$)', text, re.DOTALL | re.IGNORECASE)
         qty_match = re.search(r'QUANTITY:\s*(\d+)', text, re.IGNORECASE)
-        ids_match = re.search(r'IDS:\s*(.+?)$', text, re.DOTALL | re.IGNORECASE)
+        ids_match = re.search(r'(?:GROUPS|IDS):\s*(.+?)$', text, re.DOTALL | re.IGNORECASE)
 
         name = name_match.group(1).strip()
+        if self._is_template_echo(name):
+            return None
         description = desc_match.group(1).strip() if desc_match else ''
         material = mat_match.group(1).strip() if mat_match else ''
         if re.search(rf'{_FIELD}:', material, re.IGNORECASE):
@@ -1238,16 +1258,18 @@ For the duration estimation (in seconds with 0.1 precision):
             # Strip outer backtick/bracket code-span wrapping from the whole value
             raw = re.sub(r'^[`\[]+|[`\]]+$', '', raw).strip()
             tokens: list[str] = []
-            for tok in re.split(r'[,\n]+', raw):
+            for tok in re.split(r'[,;\s]+', raw):
                 # Strip all formatting chars from each token boundary
                 tok = re.sub(r'^[`\'"*\[\]\s]+|[`\'"*\[\]\s]+$', '', tok)
                 if not tok:
                     continue
                 # Strip any id: / ids: prefix the LLM may have hallucinated
                 tok = re.sub(r'^(?:ids?:)?\s*(?:id:)?\s*', '', tok, count=1)
-                # Keep only tokens that look like a Speckle ID (hex ≥20 chars)
-                # or a plain/bracket integer (handled later by _resolve_object_ids)
-                if re.fullmatch(r'[0-9a-fA-F]{20,}', tok) or re.fullmatch(r'\d+', tok):
+                # Keep group keys (G12), Speckle IDs (hex ≥20 chars) or plain/bracket
+                # integers (all resolved later by _resolve_and_build_object_ids)
+                if re.fullmatch(r'[Gg]\d+', tok):
+                    tokens.append(tok.upper())
+                elif re.fullmatch(r'[0-9a-fA-F]{20,}', tok) or re.fullmatch(r'\d+', tok):
                     tokens.append(tok)
             object_ids = tokens
 
@@ -1313,21 +1335,43 @@ For the duration estimation (in seconds with 0.1 precision):
             }
         return result
 
+    @staticmethod
+    def _is_template_echo(name: str) -> bool:
+        """True when an analysis entry NAME is the prompt's placeholder, not a real object."""
+        stripped = name.strip().strip('*`"\'').strip()
+        if not stripped or stripped in ("...", "…"):
+            return True
+        if stripped.startswith("[") and stripped.endswith("]"):
+            return True
+        return "standardized object name" in stripped.lower()
+
     def _resolve_and_build_object_ids(
         self,
         raw_ids: list[str],
         entities: list[dict],
         bbox_map: dict[str, dict],
+        group_map: dict[str, list[str]] | None = None,
     ) -> dict[str, dict]:
-        """Resolve raw LLM IDs (possibly bracket indices) → dict with per-ID bounds.
+        """Resolve raw LLM tokens → dict with per-ID bounds.
+
+        Group keys ('G12') expand to every member Speckle ID via ``group_map``;
+        bracket indices and raw hex IDs are kept as legacy fallbacks.
 
         Returns:
             object_ids_dict = {hex_id: {"min_bounds": [x,y,z], "max_bounds": [x,y,z]}}
         """
-        resolved = self._resolve_object_ids(raw_ids, entities)
+        expanded: list[str] = []
+        legacy: list[str] = []
+        for tok in raw_ids:
+            members = (group_map or {}).get(tok.strip().upper())
+            if members is not None:
+                expanded.extend(members)
+            elif not re.fullmatch(r'[Gg]\d+', tok.strip()):
+                legacy.append(tok)
+        expanded.extend(self._resolve_object_ids(legacy, entities))
 
         object_ids_dict: dict[str, dict] = {}
-        for oid in resolved:
+        for oid in expanded:
             bounds = bbox_map.get(oid)
             object_ids_dict[oid] = bounds if bounds else {}
 
@@ -1382,14 +1426,19 @@ For the duration estimation (in seconds with 0.1 precision):
 
     # ── Private prompt/entity helpers (source of truth) ──────────────────────
 
-    def _prepare_entities(self, entities: list[dict]) -> tuple[list[dict], str]:
-        """Filter internal collections and build the entity metadata text block.
+    def _prepare_entities(
+        self, entities: list[dict], overhead_chars: int = 0
+    ) -> tuple[list[dict], str, dict[str, list[str]], dict]:
+        """Filter internal collections and build the grouped entity text block.
 
         This is the single source of truth for entity filtering and formatting.
-        Both analyze_3dmodel and stream_analyze_3dmodel delegate here.
+        Both analyze_3dmodel and stream_analyze_3dmodel delegate here. Identical
+        entities are collapsed into ``G<n>`` groups (utils/entity_grouping.py) so
+        the text fits MODEL_ANALYSIS_MAX_INPUT_TOKENS minus ``overhead_chars``
+        (the rest of the prompt).
 
         Returns:
-            (filtered_entities, entities_text)
+            (filtered_entities, groups_text, group_map, stats)
         """
         # Note: hidden layers are already filtered out client-side (the Object
         # Explorer's hidden IDs are removed before entities reach the backend),
@@ -1450,31 +1499,29 @@ For the duration estimation (in seconds with 0.1 precision):
 
         filtered = [e for e in entities if _is_geometry(e)]
 
-        def _fmt_pt(pt: dict) -> str:
-            x = round(float(pt.get("x") or pt.get("X") or 0), 2)
-            y = round(float(pt.get("y") or pt.get("Y") or 0), 2)
-            z = round(float(pt.get("z") or pt.get("Z") or 0), 2)
-            return f"[{x}, {y}, {z}]"
+        def _vec(pt: dict) -> tuple[float, float, float]:
+            return (
+                float(pt.get("x") or pt.get("X") or 0),
+                float(pt.get("y") or pt.get("Y") or 0),
+                float(pt.get("z") or pt.get("Z") or 0),
+            )
 
-        def _bbox_str(entity: dict) -> str:
+        def _bbox(entity: dict):
             # Prefer the entity-level bbox passed from the viewer's renderView.aabb
             # (raw.bbox is always null — Speckle stores it as an unresolved reference)
             bbox = entity.get("bbox") or {}
             if not isinstance(bbox, dict):
-                return ""
+                return None
             mn = bbox.get("min") or {}
             mx = bbox.get("max") or {}
             if not isinstance(mn, dict) or not isinstance(mx, dict) or not mn or not mx:
-                return ""
-            return f"{_fmt_pt(mn)} to {_fmt_pt(mx)}"
+                return None
+            return (_vec(mn), _vec(mx))
 
-        lines: list[str] = []
+        records: list[EntityRecord] = []
         for i, entity in enumerate(filtered):
-            entity_id = entity.get("id") or entity.get("nodeId") or f"obj-{i}"
-            name = entity.get("name", "")
             raw = entity.get("raw") or {}
             layer = entity.get("layer") or raw.get("layer") or ""
-
             # Material: try direct applicationId match first, then layer name
             app_id = str(raw.get("applicationId") or "")
             material = (
@@ -1483,21 +1530,21 @@ For the duration estimation (in seconds with 0.1 precision):
                 or entity.get("material")
                 or ""
             )
+            records.append(EntityRecord(
+                id=str(entity.get("id") or entity.get("nodeId") or f"obj-{i}"),
+                layer=layer,
+                name=entity.get("name", ""),
+                material=material,
+                bbox=_bbox(entity),
+            ))
 
-            position = _bbox_str(entity)
-
-            line = f"[{i + 1}] SPECKLE_ID={entity_id}"
-            if layer:
-                line += f" | Layer={layer}"
-            if name:
-                line += f" | Name={name}"
-            if material:
-                line += f" | Material={material}"
-            if position:
-                line += f" | Position={position}"
-
-            lines.append(line)
-        return filtered, "\n".join(lines)
+        budget_chars = (
+            MODEL_ANALYSIS_MAX_INPUT_TOKENS * MODEL_ANALYSIS_CHARS_PER_TOKEN - overhead_chars
+        )
+        groups_text, group_map, stats = group_entities(
+            records, max(budget_chars, 0), MODEL_ANALYSIS_SIZE_ROUND_M
+        )
+        return filtered, groups_text, group_map, stats
 
     def _build_analyze_3dmodel_prompts(
         self,
@@ -1528,9 +1575,13 @@ For the duration estimation (in seconds with 0.1 precision):
         user_prompt = (
             f"Analyze this 3D architectural model and group objects by type/function.\n"
             f"{screenshot_note}{context_note}\n"
-            f"Each input entity line includes 'Position=[min] to [max]' — the 3D bounding box in metres. "
-            f"Use this to understand the spatial layout of the room (which objects are near each other, "
-            f"their height, footprint, etc.).\n\n"
+            f"The input is pre-grouped. Each line starts with a group key [G<n>]:\n"
+            f"- A single object line gives its SPECKLE_ID and 'Position=[min] to [max]' (bounding box in metres).\n"
+            f"- A multi-object line gives Count (number of near-identical objects), Size (typical w x d x h of one "
+            f"object in metres) and Extent (bounding box enclosing all of them), optionally followed by one "
+            f"'Example:' member.\n"
+            f"Use positions, sizes and extents to understand the spatial layout of the room (which objects are "
+            f"near each other, their height, footprint, etc.).\n\n"
             f"First, output at the beginning of the response:\n"
             f"TITLE: [short 1 to 3 word title for the analyzed space, e.g. Open Plan Lounge]\n"
             f"SPACE: [description of the architectural typology and general layout of the space "
@@ -1540,15 +1591,57 @@ For the duration estimation (in seconds with 0.1 precision):
             f"DESCRIPTION: [brief functional description]\n"
             f"MATERIAL: [finishing material, e.g. polished wood, plaster, rough concrete — focus on material, not color]\n"
             f"QUANTITY: [integer count]\n"
-            f"IDS: [raw hex IDs only, comma-separated — e.g. b30f783e4ae80e8331c0c5377c2a9dab, 9f1c2e…]\n\n"
+            f"GROUPS: [group keys only, comma-separated — e.g. G3, G7, G12]\n\n"
             f"Rules:\n"
-            f"- Group similar objects together depending on their function (e.g. desk chair and conference chair → Chairs).\n"
-            f"- IDS must contain ONLY the raw hex SPECKLE_ID strings — no backticks, no code formatting, no quotes, no brackets, no extra text.\n"
-            f"- Do NOT put any section headers, labels, or comments inside an IDS field.\n"
+            f"- Group similar objects together depending on their function (e.g. desk chair and conference chair → Chairs). "
+            f"One entry may combine several input groups.\n"
+            f"- GROUPS must contain ONLY input group keys (G<n>) — never hex IDs, no backticks, quotes, brackets or extra text. "
+            f"Use each group key in at most one entry.\n"
+            f"- QUANTITY should reflect the summed Count of the listed groups (count a single-object line as 1).\n"
+            f"- Never copy the placeholder text of the format above (e.g. '[standardized object name]') — every entry must "
+            f"describe a real object from the input.\n"
+            f"- Do NOT put any section headers, labels, or comments inside a GROUPS field.\n"
             f"- Output ONLY the TITLE: line, the SPACE: line, followed by the numbered list.\n\n"
-            f"Model contains {len(entities)} objects:\n{entities_text}"
+            f"Model contains {len(entities)} objects in these groups:\n{entities_text}"
         )
         return system_prompt, user_prompt
+
+    def _prepare_analysis_prompts(
+        self,
+        entities: list[dict],
+        screenshots: list[str] | None,
+        user_context: str | None,
+        tag: str,
+    ) -> tuple[list[dict], str, str, dict[str, list[str]]]:
+        """Filter + group entities and build the analysis prompts within the token cap.
+
+        Returns:
+            (filtered_entities, system_prompt, user_prompt, group_map)
+        """
+        # Size the prompt scaffolding first so the group text gets the remaining budget.
+        base_sys, base_user = self._build_analyze_3dmodel_prompts(
+            entities, "", screenshots, user_context
+        )
+        overhead = len(base_sys) + len(base_user)
+        filtered, groups_text, group_map, stats = self._prepare_entities(entities, overhead)
+        system_prompt, user_prompt = self._build_analyze_3dmodel_prompts(
+            filtered, groups_text, screenshots, user_context
+        )
+        est_tokens = (len(system_prompt) + len(user_prompt)) // MODEL_ANALYSIS_CHARS_PER_TOKEN
+        biggest = sorted(group_map.items(), key=lambda kv: -len(kv[1]))[:10]
+        print(
+            f"[{tag}] entities={stats['entities']} groups={stats['groups']} "
+            f"est_tokens={est_tokens} coarsen_level={stats['level']} "
+            f"truncated={stats['truncated']} | largest: "
+            + ", ".join(f"{k}={len(v)}" for k, v in biggest),
+            flush=True,
+        )
+        if stats["truncated"]:
+            logger.warning(
+                "[%s] group text exceeded %d-token budget even at the coarsest level; "
+                "remaining groups merged into one", tag, MODEL_ANALYSIS_MAX_INPUT_TOKENS,
+            )
+        return filtered, system_prompt, user_prompt, group_map
 
     def _build_scenarist_prompts(
         self,
@@ -1700,13 +1793,14 @@ For the duration estimation (in seconds with 0.1 precision):
 
         Returns:
             (furniture_context, has_furniture, room_bounds)
-            - furniture_context: JSON string of the full furniture_list (or "{}").
+            - furniture_context: JSON string of the furniture_list with sampled
+                                object IDs per group (or "{}").
             - has_furniture:    True when architectural objects are present.
             - room_bounds:      Human-readable "[min] to [max] (w x d x h)" of the
                                 full 3D model bounding box (available even with no
                                 furniture), or None.
         """
-        furniture_context = json.dumps(furniture_list, indent=2) if furniture_list else "{}"
+        furniture_context = _furniture_prompt_json(furniture_list)
         meta = (furniture_list or {}).get("meta") or {}
         bounds = meta.get("total_bounds") or {}
 
@@ -1841,16 +1935,26 @@ For the duration estimation (in seconds with 0.1 precision):
         Each object dict matches ArchitecturalObject shape:
             name, description, material, confidence, quantity, object_ids
         """
-        entities, entities_text = self._prepare_entities(entities)
-        print(f"[stream_analyze_3dmodel] {len(entities)} entities after filtering:\n{entities_text}", flush=True)
-
+        entities, system_prompt, user_prompt, group_map = self._prepare_analysis_prompts(
+            entities, screenshots, user_context, tag="stream_analyze_3dmodel"
+        )
         if not entities:
             return
 
         bbox_map = self._build_entity_bbox_map(entities)
-        system_prompt, user_prompt = self._build_analyze_3dmodel_prompts(
-            entities, entities_text, screenshots, user_context
-        )
+
+        def _finish(entry_clean: str) -> dict | None:
+            parsed = self._parse_architecture_object(entry_clean)
+            if not parsed:
+                return None
+            parsed['object_ids'] = self._resolve_and_build_object_ids(
+                parsed['object_ids'], entities, bbox_map, group_map
+            )
+            return parsed if parsed['object_ids'] else None
+
+        t_start = time.monotonic()
+        t_first: float | None = None
+        n_objects = 0
 
         _ENTRY_START = re.compile(r'\n\s*\d+[\.\)]\s+')
         _TITLE_LINE = re.compile(r'\bTITLE\s*:\s*(.+?)(?:\n|$)', re.IGNORECASE)
@@ -1865,6 +1969,8 @@ For the duration estimation (in seconds with 0.1 precision):
             llm_model=llm_model,
             on_progress=on_progress,
         ):
+            if t_first is None:
+                t_first = time.monotonic() - t_start
             buffer += chunk
             if not title_yielded:
                 title_match = _TITLE_LINE.search(buffer)
@@ -1888,22 +1994,24 @@ For the duration estimation (in seconds with 0.1 precision):
                 buffer = buffer[match.start():]
                 entry_clean = re.sub(r'^\s*\d+[\.\)]\s*', '', completed.strip())
                 if entry_clean:
-                    parsed = self._parse_architecture_object(entry_clean)
+                    parsed = _finish(entry_clean)
                     if parsed:
-                        parsed['object_ids'] = self._resolve_and_build_object_ids(
-                            parsed['object_ids'], entities, bbox_map
-                        )
+                        n_objects += 1
                         yield {"type": "object", **parsed}
         # Yield trailing entry
         if buffer.strip():
             entry_clean = re.sub(r'^\s*\d+[\.\)]\s*', '', buffer.strip())
             if entry_clean:
-                parsed = self._parse_architecture_object(entry_clean)
+                parsed = _finish(entry_clean)
                 if parsed:
-                    parsed['object_ids'] = self._resolve_and_build_object_ids(
-                        parsed['object_ids'], entities, bbox_map
-                    )
+                    n_objects += 1
                     yield {"type": "object", **parsed}
+        print(
+            f"[stream_analyze_3dmodel] done: objects={n_objects} "
+            f"first_chunk={t_first if t_first is None else round(t_first, 1)}s "
+            f"total={time.monotonic() - t_start:.1f}s",
+            flush=True,
+        )
 
     # ── 3D Model Analysis ─────────────────────────────────────────────────────
 
@@ -1929,15 +2037,11 @@ For the duration estimation (in seconds with 0.1 precision):
         Returns:
             dict with an "objects" key — list of raw dicts matching ModelObjectResult fields.
         """
-        entities, entities_text = self._prepare_entities(entities)
-        print(f"[analyze_3dmodel] {len(entities)} entities after filtering:\n{entities_text}", flush=True)
-
+        entities, system_prompt, user_prompt, group_map = self._prepare_analysis_prompts(
+            entities, screenshots, user_context, tag="analyze_3dmodel"
+        )
         if not entities:
             return {"objects": []}
-
-        system_prompt, user_prompt = self._build_analyze_3dmodel_prompts(
-            entities, entities_text, screenshots, user_context
-        )
 
         # ── Retry with exponential back-off ───────────────────────────────────
         from models.schemas import ModelAnalysisOutput
@@ -1949,15 +2053,24 @@ For the duration estimation (in seconds with 0.1 precision):
             operation_name="Model analysis",
             llm_model=llm_model,
         ))
-        # Resolve any numeric bracket indices the LLM may have used instead of Speckle IDs
-        # and build per-entity bounds dict.
+        # Expand group keys (G12) back to every member Speckle ID, build per-entity
+        # bounds, and drop template echoes / entries that resolve to nothing.
         if isinstance(result, dict):
             bbox_map = self._build_entity_bbox_map(entities)
-            for obj in [o for o in (result.get("objects") or []) if isinstance(o, dict)]:
-                if "object_ids" in obj and isinstance(obj["object_ids"], list):
+            kept: list = []
+            for obj in result.get("objects") or []:
+                if not isinstance(obj, dict):
+                    continue
+                if self._is_template_echo(str(obj.get("name", ""))):
+                    continue
+                if isinstance(obj.get("object_ids"), list):
                     obj["object_ids"] = self._resolve_and_build_object_ids(
-                        obj["object_ids"], entities, bbox_map
+                        obj["object_ids"], entities, bbox_map, group_map
                     )
+                if not obj.get("object_ids"):
+                    continue
+                kept.append(obj)
+            result["objects"] = kept
         return result  # type: ignore[return-value]
 
     # ── Scenario Generation ───────────────────────────────────────────────────
@@ -2149,7 +2262,7 @@ For the duration estimation (in seconds with 0.1 precision):
 
         # ── Serialize inputs ──────────────────────────────────────────────────
         scenarios_json = json.dumps({"scenarios": selected_scenarios}, indent=2)
-        furniture_json = json.dumps(furniture_list, indent=2) if furniture_list else "{}"
+        furniture_json = _furniture_prompt_json(furniture_list)
         system_prompt, user_prompt = self._build_foley_prompts(
             scenarios_json, furniture_json
         )
@@ -2184,7 +2297,7 @@ For the duration estimation (in seconds with 0.1 precision):
             return _FoleyOutput(sounds=[]).model_dump()
 
         scenarios_json = json.dumps({"scenarios": all_scenarios}, indent=2)
-        furniture_json = json.dumps(furniture_list, indent=2) if furniture_list else "{}"
+        furniture_json = _furniture_prompt_json(furniture_list)
         system_prompt, user_prompt = self._build_foley_prompts(
             scenarios_json, furniture_json
         )
@@ -2372,7 +2485,7 @@ For the duration estimation (in seconds with 0.1 precision):
             return _SpeechOutput(speeches=[]).model_dump()
 
         scenarios_json = json.dumps({"scenarios": all_scenarios}, indent=2)
-        furniture_json = json.dumps(furniture_list, indent=2) if furniture_list else "{}"
+        furniture_json = _furniture_prompt_json(furniture_list)
         system_prompt, user_prompt = self._build_speech_prompts(
             scenarios_json, furniture_json, language=language
         )
