@@ -1,4 +1,8 @@
-# Run the COMPAS Soundscape app locally (Windows)
+# Local development: run the app in manual terminals (Windows)
+
+> **Running the always-on server (soundisblue.com)? Use [`PRODUCTION.md`](PRODUCTION.md), not
+> this file.** That host runs everything as Windows services with auto-deploy. Following the steps
+> below there (manual `uvicorn`, manual `pip install`) conflicts with the services.
 
 This is the complete local-dev setup for the **distributed backend** (FastAPI +
 Redis job store + resident worker processes + Next.js frontend). Production
@@ -15,7 +19,7 @@ everything in plain terminals on one machine.
 
 | Tool | Notes |
 | ---- | ----- |
-| Conda / Mamba env **`compas-toy`** | `mamba activate compas-toy` — used for backend + gpu/cpu/choras workers |
+| Conda / Mamba env **`compas-toy`** | `mamba activate compas-toy` — used for backend + gpu/cpu/choras workers (dev-machine name; the production host uses `compas-soundscape`) |
 | Conda / Mamba env **`compas-sa3`** | Isolated Python 3.10 / torch 2.7.1 env for **Stable Audio 3** (the default text-to-audio model) — see §0.1 |
 | **Redis** (Memurai or redis-windows) | See §2. Nothing runs jobs without it |
 | **Node / pnpm** | Frontend; `pnpm --version` |
