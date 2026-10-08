@@ -12,6 +12,7 @@ local development without Cloudflare keeps working.
 """
 
 import logging
+import re
 import threading
 from typing import Optional
 
@@ -22,6 +23,10 @@ from config.constants import (
     CF_ACCESS_JWT_LEEWAY_S,
     CF_ACCESS_JWKS_CACHE_TTL_S,
     CF_ACCESS_TEAM_DOMAIN,
+    LOADTEST_EMAIL_DOMAIN,
+    LOADTEST_SERVICE_TOKEN_IDS,
+    LOADTEST_USER_HEADER,
+    LOADTEST_USER_ID_PATTERN,
 )
 
 try:  # PyJWT is optional at import time so the app still boots without it.
@@ -64,8 +69,8 @@ def _get_jwks_client():
     return _jwks_client
 
 
-def verify_cf_jwt(token: str) -> Optional[str]:
-    """Verify a Cloudflare Access JWT and return the lower-cased email.
+def _verify_cf_claims(token: str) -> Optional[dict]:
+    """Verify a Cloudflare Access JWT and return its claims.
 
     Checks the signature (RS256 via the team JWKS), issuer, audience, and
     expiry. Returns ``None`` on any failure.
@@ -78,7 +83,7 @@ def verify_cf_jwt(token: str) -> Optional[str]:
 
     try:
         signing_key = _get_jwks_client().get_signing_key_from_jwt(token)
-        claims = jwt.decode(
+        return jwt.decode(
             token,
             signing_key.key,
             algorithms=["RS256"],
@@ -93,6 +98,13 @@ def verify_cf_jwt(token: str) -> Optional[str]:
         )
     except Exception as exc:  # noqa: BLE001 - any verification failure is a reject
         logger.warning("Cloudflare Access JWT rejected: %s", exc)
+        return None
+
+
+def verify_cf_jwt(token: str) -> Optional[str]:
+    """Verify a Cloudflare Access JWT and return the lower-cased email."""
+    claims = _verify_cf_claims(token)
+    if claims is None:
         return None
 
     email = str(claims.get("email") or "").strip().lower()
@@ -128,4 +140,32 @@ def extract_email(request) -> Optional[str]:
         if email:
             return email
         logger.info("Cloudflare Access %s token present but not verifiable", source)
+    return None
+
+
+def extract_loadtest_email(request) -> Optional[str]:
+    """Map an allowlisted Access *service token* to a synthetic load-test user.
+
+    Only active when ``LOADTEST_SERVICE_TOKEN_IDS`` is set. The JWT must verify,
+    carry no ``email`` (i.e. be a service token), have its ``common_name`` in the
+    allowlist, and the request must name a valid user id in
+    ``X-Loadtest-User``. Returns ``loadtest-<id>@loadtest.local`` or ``None``.
+    """
+    if not LOADTEST_SERVICE_TOKEN_IDS:
+        return None
+    user_id = request.headers.get(LOADTEST_USER_HEADER) or ""
+    if not re.match(LOADTEST_USER_ID_PATTERN, user_id):
+        return None
+
+    for token in (
+        request.headers.get(CF_ACCESS_JWT_HEADER),
+        request.cookies.get(CF_ACCESS_COOKIE),
+    ):
+        if not token:
+            continue
+        claims = _verify_cf_claims(token)
+        if not claims or claims.get("email"):
+            continue
+        if str(claims.get("common_name") or "") in LOADTEST_SERVICE_TOKEN_IDS:
+            return f"loadtest-{user_id.lower()}@{LOADTEST_EMAIL_DOMAIN}"
     return None

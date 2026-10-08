@@ -686,3 +686,14 @@ Criterion: Vorländer's receiver-sphere bound `N ≥ (4.34/ΔL)² · V / (π r²
 r = 0.5 m, Δt = 4 ms (pyroomacoustics defaults); independent of the Image-Source order. Full
 derivation, pyroomacoustics specifics and references are in the header comment of
 `ray-count-estimate.ts`. Marker ticks are inset by `--slider-thumb-size` to align with the thumb.
+
+### Load-Test Identity (Cloudflare service token)
+
+`scripts/loadtest/` simulates N concurrent users against a deployment behind Cloudflare Access.
+A Cloudflare **service token** gets past the edge, but its JWT has `common_name` and no `email`.
+When that client id is listed in `LOADTEST_SERVICE_TOKEN_IDS` (off by default),
+`access_service.extract_loadtest_email()` maps the `X-Loadtest-User: vu-NN` header to
+`loadtest-vu-nn@loadtest.local`. `middleware/session.py` then resolves it like any real email
+(user → default workspace → session), so each virtual user exercises the real identity path. The
+mapping requires a verified JWT from an allowlisted token, so it can't be used to forge an identity.
+Setup and usage: `scripts/loadtest/README.md`.

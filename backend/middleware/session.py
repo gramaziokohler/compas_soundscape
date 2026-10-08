@@ -3,7 +3,9 @@
 Resolves a durable identity for every request and binds it to a **workspace**:
 
   1. If Cloudflare Access is configured, verify the Access JWT and use its
-     verified ``email`` as the identity (no custom login).
+     verified ``email`` as the identity (no custom login). An allowlisted
+     service token + ``X-Loadtest-User`` header maps to a synthetic load-test
+     user instead (see ``LOADTEST_SERVICE_TOKEN_IDS``).
   2. Else if ``AUTH_DEV_BYPASS`` is set, use ``DEV_USER_EMAIL`` (local dev).
   3. Else fall back to the legacy anonymous ``compas_session`` cookie: the
      cookie value doubles as the workspace id, so existing
@@ -34,7 +36,7 @@ from config.constants import (
     SESSION_COOKIE_MAX_AGE,
     SESSION_TOKEN_BYTES,
 )
-from services.access_service import cf_configured, extract_email
+from services.access_service import cf_configured, extract_email, extract_loadtest_email
 from services.metadata_store import metadata_store
 
 logger = logging.getLogger(__name__)
@@ -86,7 +88,7 @@ class SessionMiddleware(BaseHTTPMiddleware):
         # ── Identity ─────────────────────────────────────────────────────
         email = None
         if cf_configured():
-            email = extract_email(request)
+            email = extract_email(request) or extract_loadtest_email(request)
             if not email:
                 # Diagnostic: Cloudflare is configured but this request carried
                 # no verifiable Access token (missing/expired/rotated/clock-skew

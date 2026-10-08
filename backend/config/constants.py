@@ -899,6 +899,18 @@ CF_ACCESS_JWKS_CACHE_TTL_S = int(os.environ.get("CF_ACCESS_JWKS_CACHE_TTL_S", "3
 # silently fall back to anonymous. Default 60 s.
 CF_ACCESS_JWT_LEEWAY_S = int(os.environ.get("CF_ACCESS_JWT_LEEWAY_S", "60"))
 
+# Load testing through Cloudflare Access (scripts/loadtest/). A service-token JWT
+# carries `common_name` (the token's client id) but no `email`. When that client
+# id is allowlisted here, the `X-Loadtest-User` header selects one of many
+# synthetic identities (`loadtest-<id>@loadtest.local`), so a single token can
+# simulate N distinct users. Empty (the default) disables the feature entirely.
+LOADTEST_SERVICE_TOKEN_IDS = frozenset(
+    cid.strip() for cid in os.environ.get("LOADTEST_SERVICE_TOKEN_IDS", "").split(",") if cid.strip()
+)
+LOADTEST_USER_HEADER = "X-Loadtest-User"
+LOADTEST_EMAIL_DOMAIN = "loadtest.local"
+LOADTEST_USER_ID_PATTERN = r"^[A-Za-z0-9_-]{1,32}$"
+
 # Opaque session cookie. Sessions are non-expiring (sliding): the cookie is
 # re-issued on every visit and the server-side row never expires.
 SESSION_COOKIE = "compas_session"

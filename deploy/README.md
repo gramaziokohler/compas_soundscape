@@ -118,6 +118,7 @@ repo root. Create/keep them there. Recognized keys (values never printed here):
 | `GPU_WORKER_SLOTS`, `CPU_WORKER_SLOTS`, `CHORAS_WORKER_SLOTS`, `SA3_WORKER_SLOTS` | Slot counts read by `--slots` defaults / docs | optional |
 | `LLM_MAX_CONCURRENT` (8), `TTS_MAX_CONCURRENT` (2), `GPU_QUEUE_PER_SESSION_MAX` (3) | Concurrency tuning | optional |
 | `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD` | Cloudflare Access team domain + app Audience tag. When set, the verified Access email is the user identity (multi-user mode). | for multi-user behind Cloudflare |
+| `LOADTEST_SERVICE_TOKEN_IDS` | Comma-separated Cloudflare service-token client ids allowed to act as synthetic load-test users (`X-Loadtest-User` header). Unset = disabled. See `scripts/loadtest/README.md`. | only while load testing |
 | `AUTH_DEV_BYPASS`, `DEV_USER_EMAIL` | Local dev identity without Cloudflare | optional |
 | `COOKIE_SECURE` (default `true`) | Secure session cookie; set `false` only for plain-HTTP LAN tests | optional |
 | `FRONTEND_ORIGIN` | CORS origin (default `http://localhost:3000`) | only when changed |
@@ -269,13 +270,15 @@ Local networking note: on `localhost` the frontend calls the API at
 
 ### Load test (optional)
 
-`scripts/load_test.py` fires N LLM + N pyroomacoustics (a box room) + N TangoFlux
-jobs from separate sessions and reports first-clip / completion times and queue
-depths. Needs Redis + the workers running:
+`scripts/loadtest/run.py` simulates N concurrent users. Each one has its own identity and
+workspace, and loads the page, sends presence heartbeats, browses, saves/loads a soundscape, and
+runs pyroomacoustics, text-to-audio and LLM jobs. It reports latency per endpoint, job times, queue
+depths, and session-isolation checks. It works against localhost or the public deployment through
+Cloudflare Access; setup is in `scripts/loadtest/README.md`.
 
 ```powershell
 mamba activate compas-toy
-python scripts/load_test.py --llm 2 --pyroom 1 --sounds 1
+python scripts/loadtest/run.py --base-url http://localhost:8000 --users 3 --duration 60
 ```
 
 ---

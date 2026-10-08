@@ -8,6 +8,7 @@ import { useSceneWorkflowStore, useUIStore } from '@/store';
 import { useHomeComposerStore } from '@/store/homeComposerStore';
 import type { SceneWorkflowOptions } from '@/types/sceneWorkflow';
 import { HOME_STAGE, SCENE_BOTTOM_BAR, SIMPLE_MODE } from '@/utils/constants';
+import { isFreshHomeUrl } from '@/utils/homeStage';
 
 /** DOM id of the Simple-mode "+" button the panel shrinks into when reduced. */
 export const NEW_SCENE_ADD_BUTTON_ID = 'new-scene-add-button';
@@ -18,12 +19,6 @@ export const NEW_SCENE_ADD_BUTTON_ID = 'new-scene-add-button';
  * Expert round trip doesn't re-open it.
  */
 let homeComposerOffered = false;
-
-function isFreshHomeUrl(): boolean {
-  if (typeof window === 'undefined') return false;
-  const params = new URLSearchParams(window.location.search);
-  return !params.get('model_id') && !params.get('home');
-}
 
 /**
  * HomeSceneComposer Component

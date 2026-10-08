@@ -152,7 +152,9 @@ vs/
 
 docs/api/generated/
 
-scripts/
+scripts/*
+!scripts/loadtest/
+scripts/loadtest/results/
 
 .ruff_cache
 

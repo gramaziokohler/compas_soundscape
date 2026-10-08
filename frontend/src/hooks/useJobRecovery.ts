@@ -17,6 +17,7 @@ import { useReceiversStore } from '@/store/receiversStore';
 import { useGridListenersStore } from '@/store/gridListenersStore';
 import { useAudioControlsStore } from '@/store/audioControlsStore';
 import { collapseVariantsToOne, groupSoundsByPosition } from '@/utils/positionKey';
+import { isFreshHomeUrl } from '@/utils/homeStage';
 import {
   importPyroomIRFiles,
   importChorasIRFiles,
@@ -140,6 +141,15 @@ export function useJobRecovery(): { hasInflightJobs: boolean; recoveryResolved: 
   useEffect(() => {
     if (recoveredRef.current) return;
     recoveredRef.current = true;
+
+    // The fresh Home stage starts empty by design and has no save target, so a
+    // recovered result (the backend lists finished jobs too, for an hour) would
+    // land there as unsaved work. Leave the local records untouched — the jobs
+    // reattach when their model/project is reopened.
+    if (isFreshHomeUrl()) {
+      setRecoveryResolved(true);
+      return;
+    }
 
     void (async () => {
       try {
