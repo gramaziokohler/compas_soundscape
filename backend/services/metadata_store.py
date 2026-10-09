@@ -166,7 +166,27 @@ CREATE TABLE IF NOT EXISTS custom_voices (
     created_at      TEXT NOT NULL
 );
 
+-- In-app bug reports (routers/bug_reports.py). Screenshot media lives on disk
+-- under data/bug_reports/<id>/; `context` is the client diagnostics JSON.
+CREATE TABLE IF NOT EXISTS bug_reports (
+    id              TEXT PRIMARY KEY,
+    created_at      TEXT NOT NULL,
+    user_hash       TEXT,
+    user_email      TEXT,
+    workspace_id    TEXT,
+    category        TEXT NOT NULL,
+    description     TEXT NOT NULL,
+    page_url        TEXT,
+    model_id        TEXT,
+    user_agent      TEXT,
+    app_version     TEXT,
+    context         TEXT NOT NULL,
+    screenshot_path TEXT,
+    status          TEXT NOT NULL DEFAULT 'open'
+);
+
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_hash);
+CREATE INDEX IF NOT EXISTS idx_bug_reports_created ON bug_reports(created_at);
 CREATE INDEX IF NOT EXISTS idx_custom_voices_user ON custom_voices(user_hash);
 CREATE INDEX IF NOT EXISTS idx_members_user ON workspace_members(user_hash);
 CREATE INDEX IF NOT EXISTS idx_model_workspace ON model_workspace(workspace_id);
@@ -271,6 +291,46 @@ class MetadataStore:
             (user_hash, payload, _now()),
         )
         return data
+
+    # ── bug reports ──────────────────────────────────────────────────────
+    def add_bug_report(
+        self,
+        report_id: str,
+        category: str,
+        description: str,
+        context: dict,
+        *,
+        user_hash: Optional[str] = None,
+        user_email: Optional[str] = None,
+        workspace_id: Optional[str] = None,
+        page_url: Optional[str] = None,
+        model_id: Optional[str] = None,
+        user_agent: Optional[str] = None,
+        app_version: Optional[str] = None,
+        screenshot_path: Optional[str] = None,
+    ) -> dict:
+        """Insert a bug report row and return it (``context`` stored as JSON)."""
+        import json
+
+        self._execute(
+            "INSERT INTO bug_reports (id, created_at, user_hash, user_email, workspace_id, category, "
+            "description, page_url, model_id, user_agent, app_version, context, screenshot_path) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (report_id, _now(), user_hash, user_email, workspace_id, category, description,
+             page_url, model_id, user_agent, app_version, json.dumps(context), screenshot_path),
+        )
+        return dict(self._query("SELECT * FROM bug_reports WHERE id = ?", (report_id,))[0])
+
+    def list_bug_reports(self, limit: int = 50, status: Optional[str] = None) -> list[dict]:
+        """Most recent bug reports first, optionally filtered by status."""
+        if status:
+            rows = self._query(
+                "SELECT * FROM bug_reports WHERE status = ? ORDER BY created_at DESC LIMIT ?",
+                (status, limit),
+            )
+        else:
+            rows = self._query("SELECT * FROM bug_reports ORDER BY created_at DESC LIMIT ?", (limit,))
+        return [dict(r) for r in rows]
 
     # ── custom TTS voices ────────────────────────────────────────────────
     def list_custom_voices(self, user_hash: str) -> list[dict]:

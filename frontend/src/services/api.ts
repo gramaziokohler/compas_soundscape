@@ -1,5 +1,6 @@
 import { API_BASE_URL, SPECKLE_INGESTION } from '@/utils/constants';
-import type { CompasGeometry, SoundEvent, SoundGenerationConfig, FileUploadResponse, JobType, UserPreferences } from '@/types';
+import type { CompasGeometry, SoundEvent, SoundGenerationConfig, FileUploadResponse, JobType, UserPreferences, BugReportPayload, BugReportCreated } from '@/types';
+import { recordFailedRequest } from '@/lib/diagnostics/diagnosticsBuffer';
 import type { TtsCustomVoice, TtsCustomVoiceCreateRequest, TtsDialectsResponse, TtsLanguageMatch } from '@/types/ttsLanguage';
 import type { ImpulseResponseMetadata } from '@/types/audio';
 import type { ModalAnalysisRequest, ModalAnalysisResult } from '@/types/modal';
@@ -49,6 +50,7 @@ async function fetchWithErrorHandling(
       ...options,
       credentials: 'include',
     });
+    if (!response.ok) recordFailedRequest(options?.method ?? 'GET', url, response.status);
     return response;
   } catch (error) {
     handleApiError(error, context);
@@ -419,6 +421,26 @@ export const apiService = {
     if (!response.ok) throw new Error('Failed to save preferences');
     const data = await response.json().catch(() => ({}));
     return prefsFromWire(data ?? {});
+  },
+
+  // ─── Bug reports ────────────────────────────────────────────────────────
+  /** Submit an in-app bug report; returns its reference id. */
+  async submitBugReport(payload: BugReportPayload): Promise<BugReportCreated> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/bug-reports`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      },
+      'Send bug report'
+    );
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      const detail = typeof data?.detail === 'string' ? data.detail : `Server error ${response.status}`;
+      throw new Error(`Could not send the report: ${detail}`);
+    }
+    return response.json();
   },
 
   // ─── Workspaces / collaboration ─────────────────────────────────────────

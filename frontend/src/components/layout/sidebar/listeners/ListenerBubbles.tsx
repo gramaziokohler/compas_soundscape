@@ -12,6 +12,7 @@ import { BubbleScrollColumn } from '@/components/ui/BubbleScrollColumn';
 import { FpsHelpPopup } from '@/components/scene/FpsHelpPopup';
 import { useDismissOnSceneClick } from '@/hooks/useDismissOnSceneClick';
 import { useBubbleColumnSpace } from '@/hooks/useBubbleColumnSpace';
+import { useBubbleFrontLayer } from '@/hooks/useBubbleFrontLayer';
 import { columnHeight, windowLayout } from '@/utils/bubbleOverflow';
 import { SIMPLE_MODE } from '@/utils/constants';
 
@@ -91,6 +92,8 @@ export function ListenerBubbles({
   const layout = windowLayout(itemCount, columnSpace.listeners);
   const headingBottom = bottom + columnHeight(layout.visibleSlots, layout.overflow) + SIMPLE_MODE.BUBBLE_GAP;
   const openItem = openIndex !== null ? items[openIndex] : undefined;
+  // The open card and the docked DAW overlap: whichever was clicked last is on top.
+  const frontLayer = useBubbleFrontLayer(openIndex);
   const activeItem = activeIndex !== null ? items[activeIndex] : undefined;
   // Exit button + help popup beside the powered bubble while its card is closed
   // (the open card shows the FPS notice itself).
@@ -175,12 +178,13 @@ export function ListenerBubbles({
       {openItem && openIndex !== null && (
         <div
           className="bubble-card-host"
+          onPointerDownCapture={frontLayer.onPointerDownCapture}
           style={{
             right: SIMPLE_MODE.EDGE_MARGIN + size + SIMPLE_MODE.PANEL_GAP,
             bottom,
             width: SIMPLE_MODE.PANEL_WIDTH,
             maxHeight: SIMPLE_MODE.PANEL_MAX_HEIGHT,
-            zIndex: SIMPLE_MODE.Z_INDEX,
+            zIndex: frontLayer.zIndex,
           }}
         >
           {renderCard(openItem, openIndex, true, () => onOpenChange(null), {

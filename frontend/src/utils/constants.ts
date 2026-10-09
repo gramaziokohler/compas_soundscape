@@ -2167,12 +2167,27 @@ export const AREA_DRAWING = {
 // Sound Categories (foley analysis)
 // ============================================================================
 
-/** Canonical sound-category labels + Badge variants. */
+/** Canonical sound-category labels, Badge variants, matching colours (DAW track dots) and hover text. */
 export const SOUND_CATEGORIES = {
-  background: { label: 'Background', variant: 'info' },
-  sound_event: { label: 'Sound Event', variant: 'success' },
-  speech: { label: 'Speech', variant: 'warning' },
+  background: {
+    label: 'Background', variant: 'info', color: 'var(--color-info)',
+    description: 'Continuous ambience that plays for the whole scene',
+  },
+  sound_event: {
+    label: 'Sound Event', variant: 'success', color: 'var(--color-success)',
+    description: 'Discrete sound placed at points in time',
+  },
+  speech: {
+    label: 'Speech', variant: 'warning', color: 'var(--color-warning)',
+    description: 'Spoken dialogue lines',
+  },
 } as const;
+
+/** Hover text for a sound-category badge / DAW track dot. */
+export function soundCategoryTooltip(key: SoundCategoryKey | undefined): string {
+  if (!key) return 'Uncategorized sound';
+  return `${SOUND_CATEGORIES[key].label} — ${SOUND_CATEGORIES[key].description}`;
+}
 
 export type SoundCategoryKey = keyof typeof SOUND_CATEGORIES;
 
@@ -2209,7 +2224,7 @@ export const SIMPLE_MODE = {
   DELETE_CONFIRM_WIDTH: 168,    // px â€” remove confirmation popover above a card's trash button
   DELETE_CONFIRM_GAP: 6,        // px â€” between the trash button and its confirmation
   DELETE_CONFIRM_MARGIN: 8,     // px â€” minimum distance from the viewport edges
-  DELETE_CONFIRM_Z_INDEX: 60,   // above floating cards / panels (Z_INDEX), below modals
+  DELETE_CONFIRM_Z_INDEX: 220,  // above floating cards / panels (incl. PANEL_RAISED_Z_INDEX), below modals
   BUBBLE_GAP: 10,               // px â€” vertical gap between bubbles
   RING_STROKE: 2,               // px â€” progress ring stroke width
   EDGE_MARGIN: 16,              // px â€” column distance from the screen edge
@@ -2227,6 +2242,7 @@ export const SIMPLE_MODE = {
   COMPOSER_WIDTH: 360,          // px â€” prompt composer panel width
   COMPOSER_MAX_PROMPT: 600,     // chars
   Z_INDEX: 25,                  // above scene overlays, below modals/toasts
+  PANEL_RAISED_Z_INDEX: 205,    // scene panel brought in front of the docked DAW (200), below the bottom bar (210)
   /** Relative weight of each pipeline step in the global progress ring. */
   STEP_WEIGHTS: { analyze: 0.2, scenario: 0.2, foley: 0.2, generate: 0.4 },
   STEP_LABELS: {
@@ -2286,6 +2302,32 @@ export const SCENE_BOTTOM_BAR = {
   DAW_CONTROLS_SLOT_ID: 'scene-bottom-bar-daw-controls',
   /** Object Explorer toggle â€” Simple-mode SectionHighlight target for materials. */
   OBJECT_EXPLORER_BUTTON_ID: 'scene-bottom-bar-object-explorer',
+} as const;
+
+// In-app bug reports (components/scene/BugReportButton.tsx → POST /api/bug-reports).
+// Category ids / size caps mirror BUG_REPORT_* in backend/config/constants.py.
+export const BUG_REPORT = {
+  CATEGORIES: [
+    { id: 'bug', label: 'Bug' },
+    { id: 'visual', label: 'Display' },
+    { id: 'performance', label: 'Slow' },
+    { id: 'idea', label: 'Idea' },
+  ],
+  MAX_DESCRIPTION_CHARS: 5000,
+  LOG_BUFFER_SIZE: 50,              // recent console errors / warnings kept for the report
+  LOG_MESSAGE_MAX_CHARS: 500,       // per captured log message
+  FAILED_REQUEST_BUFFER_SIZE: 20,   // recent non-OK API responses kept for the report
+  NOTIFICATIONS_MAX: 20,            // most recent notifications attached
+  POPOVER_WIDTH: 320,               // px
+  TEXTAREA_ROWS: 5,
+  FLOATING_SIZE: 32,                // px — Simple-mode floating button diameter
+  SCREENSHOT_PIXEL_RATIO: 1,
+  SCREENSHOT_JPEG_QUALITY: 0.8,
+  SUCCESS_AUTOCLOSE_MS: 2500,       // popover closes this long after a successful send
+  DRAFT_STORAGE_KEY: 'compas-bug-report-draft',
+  /** Elements carrying this attribute are left out of the screenshot. */
+  IGNORE_ATTR: 'data-bug-report-ignore',
+  Z_INDEX: 215,                     // above the bottom bar (210) and raised panels, below modals
 } as const;
 
 // Outline drawn around each sound sphere / listener in a multi-selection

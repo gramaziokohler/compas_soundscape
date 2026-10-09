@@ -5,6 +5,7 @@ from enum import Enum
 from typing import Any, Literal
 from typing import Optional
 
+from config.constants import BUG_REPORT_MAX_DESCRIPTION_CHARS
 from config.constants import DEFAULT_AUDIO_MODEL
 from config.constants import DEFAULT_DBFS
 from config.constants import DEFAULT_LLM_MODEL
@@ -963,6 +964,25 @@ class UserPreferences(BaseModel):
     enable_auto_save: Optional[bool] = None
     # One-time UI hints the user has already seen (e.g. "fps"), shown once per identity
     seen_hints: Optional[list[str]] = None
+
+
+# ─── Bug reports ─────────────────────────────────────────────────────────────
+
+class BugReportCreate(BaseModel):
+    """In-app bug report (components/scene/BugReportButton.tsx).
+
+    ``context`` is the client diagnostics snapshot (URL, UI mode, recent console
+    errors, failed requests…); ``screenshot`` is an optional PNG/JPEG data URL.
+    """
+    description: str = Field(..., min_length=1, max_length=BUG_REPORT_MAX_DESCRIPTION_CHARS)
+    category: Literal["bug", "visual", "performance", "idea"] = "bug"
+    context: dict[str, Any] = Field(default_factory=dict)
+    screenshot: Optional[str] = None
+
+
+class BugReportCreated(BaseModel):
+    id: str
+    created_at: str
 
 
 # ─── Simulation mesh preparation + preflight ─────────────────────────────────

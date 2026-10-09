@@ -18,6 +18,7 @@ import { useAudioControlsStore } from '@/store/audioControlsStore';
 import { useSoundscapeStore } from '@/store/soundscapeStore';
 import { useSpeckleStore } from '@/store/speckleStore';
 import { useUIStore } from '@/store/uiStore';
+import { useSceneWorkflowStore } from '@/store/sceneWorkflowStore';
 import { DAW, DEFAULT_DBFS, SCENE_BOTTOM_BAR, UI_SIDEBAR_RESIZE, UI_SIDEBAR_TOGGLE } from '@/utils/constants';
 import type { TimelineSound, IterationLink } from '@/types/audio';
 import type { PlaybackSchedulerService } from '@/lib/audio/playback-scheduler-service';
@@ -727,6 +728,9 @@ export function DAWDock({
       ref={dockRef}
       tabIndex={0}
       onPointerDown={(e) => { if (dockRef.current) dockRef.current.focus(); void e; }}
+      // Capture: track heads stop pointerdown propagation. Brings the DAW back
+      // in front of an overlapping Simple-mode scene panel.
+      onPointerDownCapture={() => useSceneWorkflowStore.getState().setSimpleFrontLayer('daw')}
       onKeyDown={handleKeyDown}
       className="transition-all duration-300 ease-in-out"
       style={{

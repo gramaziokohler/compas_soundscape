@@ -8,6 +8,7 @@ import { UndoRedoToolbar } from '@/components/ui/UndoRedoToolbar';
 import { SceneShortcutsButton } from '@/components/scene/SceneShortcutsButton';
 import { LowOutputHintPopover } from '@/components/scene/LowOutputHintPopover';
 import { SceneVolumeButton } from '@/components/scene/SceneVolumeButton';
+import { BugReportButton } from '@/components/scene/BugReportButton';
 import { useSceneWorkflowStore, useUIStore, selectHasSaveTarget } from '@/store';
 import { useHomeStageHasWork } from '@/hooks/useHomeStageHasWork';
 import { SCENE_BOTTOM_BAR } from '@/utils/constants';
@@ -63,14 +64,15 @@ export interface SceneBottomBarProps {
  *
  * Full-width frosted control strip docked to the bottom edge. Groups every
  * scene-level control by intent:
- *   left   — app: home, undo/redo, save
+ *   left   — app: report a bug (Detailed mode), home, undo/redo, save
  *   center — playback of the selected scene: play/pause, stop, time, timeline,
  *            plus snap / zoom / export while the DAW is expanded (portaled by DAWDock);
  *            a low-output hint pops above it when playback is too quiet
  *   right  — view: Simple / Detailed interface toggle, volume, show/hide sounds & listeners,
  *            reset view, refresh, Object Explorer / load model;
  *            then help & system: shortcuts, notifications, settings
- * The docked DAW opens above it; sidebars stop at its top edge.
+ * The docked DAW opens above it; sidebars stop at its top edge. In Simple mode
+ * the bug report button floats above the bar's left end instead.
  *
  * Usage:
  * ```tsx
@@ -105,6 +107,14 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
     >
       {/* ── Left: app, mode, history ── */}
       <div className="scene-bottom-bar__group" style={{ justifySelf: 'start' }}>
+        {isExpert ? (
+          <>
+            <BugReportButton variant="bar" />
+            <div className="scene-bottom-bar__sep" />
+          </>
+        ) : (
+          <BugReportButton variant="floating" />
+        )}
         <button
           type="button"
           className="scene-bottom-bar__brand"

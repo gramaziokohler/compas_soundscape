@@ -1419,6 +1419,126 @@ canvas {
   color: var(--color-primary);
   margin: 6px 0 2px;
 }
+/* Bug report popover (components/ui/BugReportPanel.tsx) and the Simple-mode
+   floating trigger (components/scene/BugReportButton.tsx). */
+.bug-report {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 12px 12px;
+  font-size: 11px;
+}
+.bug-report__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.bug-report__title {
+  font-size: 12px;
+  font-weight: 600;
+}
+.bug-report__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.bug-report__chip {
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-secondary-lighter);
+  color: var(--color-secondary-hover);
+  transition: background-color 0.15s, color 0.15s, border-color 0.15s;
+}
+.bug-report__chip:hover {
+  color: var(--foreground);
+}
+.bug-report__chip[data-active='true'] {
+  border-color: var(--color-primary);
+  background: var(--color-blue-tint);
+  color: var(--color-blue-text);
+}
+.bug-report__textarea {
+  width: 100%;
+  resize: vertical;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border-strong);
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.bug-report__textarea:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+.bug-report__meta {
+  display: flex;
+  justify-content: space-between;
+  margin-top: -4px;
+  font-size: 10px;
+  color: var(--color-secondary-hover);
+}
+.bug-report__option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.bug-report__option-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+  line-height: 1.3;
+  margin-top: -1px;
+}
+.bug-report__hint {
+  font-size: 10px;
+  color: var(--color-secondary-hover);
+}
+.bug-report__note {
+  margin: 0;
+}
+.bug-report__error {
+  margin: 0;
+  color: var(--color-error);
+}
+.bug-report__footer {
+  display: flex;
+  justify-content: flex-end;
+}
+.bug-report__send {
+  padding: 0 14px;
+}
+.bug-report__sent {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 16px 0 8px;
+  color: var(--color-success);
+  font-size: 12px;
+}
+.bug-report__sent span:not(.bug-report__hint) {
+  color: var(--foreground);
+}
+.bug-report-fab {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--sidebar-bg);
+  border: 1px solid var(--color-overlay-border);
+  box-shadow: var(--shadow-md);
+  color: var(--color-secondary-hover);
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+.bug-report-fab:hover,
+.bug-report-fab[data-active='true'] {
+  color: var(--color-blue-text);
+  background: var(--color-blue-tint);
+}
 /* Low-output helper hint (components/scene/LowOutputHintPopover.tsx) — rises
    above the play button inside the bar's playback group. */
 .bar-hint {

@@ -50,7 +50,7 @@ from services.metadata_store import metadata_store
 # from services.modal_analysis_service import ModalAnalysisService
 
 # Import routers
-from routers import upload, generation, sounds, stable_audio, sed_analysis, sed_extract, library_search, reprocess, impulse_responses, modal_analysis, choras, pyroomacoustics, simulation_preflight, speckle, soundscape, tokens, tts, tts_voices, loop_analysis, jobs, auth, workspaces, preferences
+from routers import upload, generation, sounds, stable_audio, sed_analysis, sed_extract, library_search, reprocess, impulse_responses, modal_analysis, choras, pyroomacoustics, simulation_preflight, speckle, soundscape, tokens, tts, tts_voices, loop_analysis, jobs, auth, workspaces, preferences, bug_reports
 
 # Import constants
 from config.constants import (
@@ -301,6 +301,7 @@ app.add_middleware(
 # --- Include Routers ---
 app.include_router(auth.router)
 app.include_router(preferences.router)
+app.include_router(bug_reports.router)
 app.include_router(workspaces.router)
 app.include_router(upload.router)
 # app.include_router(analysis.router)

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useUIStore } from '@/store';
-import { SCENE_BOTTOM_BAR, SIMPLE_MODE } from '@/utils/constants';
+import { BUG_REPORT, SCENE_BOTTOM_BAR, SIMPLE_MODE } from '@/utils/constants';
 import { splitRightBudget } from '@/utils/bubbleOverflow';
 
 export interface BubbleColumnSpace {
@@ -47,7 +47,9 @@ export function useBubbleColumnSpace(): BubbleColumnSpace {
 
   const top = SIMPLE_MODE.TOP_OFFSET + SIMPLE_MODE.HEADING_HEIGHT;
   const listenersBottom = SCENE_BOTTOM_BAR.HEIGHT + SIMPLE_MODE.LISTENERS_BOTTOM_GAP + dockLift;
-  const soundscapes = Math.max(0, viewport - top - listenersBottom);
+  // The left column also stops above the floating bug report button (BugReportButton).
+  const bugButtonSpace = BUG_REPORT.FLOATING_SIZE + SIMPLE_MODE.LISTENERS_BOTTOM_GAP;
+  const soundscapes = Math.max(0, viewport - top - listenersBottom - bugButtonSpace);
 
   const rightTop = SIMPLE_MODE.RIGHT_TOP_OFFSET + SIMPLE_MODE.HEADING_HEIGHT;
   const rightAvailable = Math.max(

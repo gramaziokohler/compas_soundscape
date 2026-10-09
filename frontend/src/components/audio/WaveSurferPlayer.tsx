@@ -194,6 +194,9 @@ export function WaveSurferPlayer({
 
   const displayHeight = pendingHeight ?? waveformHeight;
   const isSpectrogramMode = showSpectrograms;
+  // Callers may mount with an empty URL and fill it in from an effect (e.g. a
+  // blob URL created post-mount) — the instance must be created once it arrives.
+  const hasAudioUrl = audioUrl !== '';
 
   const resolveAudioUrl = (url: string): string => {
     if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('blob:')) {
@@ -311,8 +314,10 @@ export function WaveSurferPlayer({
     // whole instance for a resize-handle drag or a mute-color change was the
     // cause of the spinner flash on every such interaction. Only the spectrogram
     // plugin wiring needs a real recreate; the audio source loads separately.
+    // hasAudioUrl (not audioUrl) so a URL swap reuses the instance, but a first
+    // URL arriving after mount still creates it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSpectrogramMode]);
+  }, [isSpectrogramMode, hasAudioUrl]);
 
   // Load — or seamlessly swap — the audio source.
   //   * first load / after a recreate: load from the start.

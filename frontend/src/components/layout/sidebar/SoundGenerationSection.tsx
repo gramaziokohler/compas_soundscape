@@ -31,6 +31,7 @@ import {
   GOOGLE_SOUND_LIBRARY_SERVICE_VERSION,
   SOUND_CATEGORIES,
   normalizeSoundCategory,
+  soundCategoryTooltip,
 } from "@/utils/constants";
 import { getGenerationSignature, getModifiedGenerationFields, isGenerationDirty } from '@/utils/generationSignature';
 
@@ -989,7 +990,11 @@ export function SoundGenerationSection({
     // Category badge (if available from foley analysis)
     const categoryKey = normalizeSoundCategory(config.category);
     const categoryBadge = config.category ? (
-      <Badge variant={categoryKey ? SOUND_CATEGORIES[categoryKey].variant : 'neutral'} onBlueBackground={isGenerated}>
+      <Badge
+        variant={categoryKey ? SOUND_CATEGORIES[categoryKey].variant : 'neutral'}
+        onBlueBackground={isGenerated}
+        title={soundCategoryTooltip(categoryKey)}
+      >
         {categoryKey ? SOUND_CATEGORIES[categoryKey].label : config.category.replace(/_/g, ' ')}
       </Badge>
     ) : null;

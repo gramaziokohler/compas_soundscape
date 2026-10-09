@@ -34,6 +34,7 @@ import { SimulationTypeIcon } from '@/components/ui/BubbleIcons';
 import { ContextMenu } from '@/components/ui/ContextMenu';
 import { useDismissOnSceneClick } from '@/hooks/useDismissOnSceneClick';
 import { useBubbleColumnSpace } from '@/hooks/useBubbleColumnSpace';
+import { useBubbleFrontLayer } from '@/hooks/useBubbleFrontLayer';
 import { BubbleScrollColumn } from '@/components/ui/BubbleScrollColumn';
 import { RangeSlider } from '@/components/ui/RangeSlider';
 import { ToggleField } from '@/components/ui/ToggleField';
@@ -2306,6 +2307,8 @@ function AcousticsBubbles({
   };
 
   const openConfig = openIndex !== null ? simulationConfigs[openIndex] : undefined;
+  // The open card and the docked DAW overlap: whichever was clicked last is on top.
+  const frontLayer = useBubbleFrontLayer(openIndex);
   const columnTop = SIMPLE_MODE.RIGHT_TOP_OFFSET + BUBBLE_LABEL_HEIGHT;
   const runningIndex = simulationConfigs.findIndex((c) => simRuntime(c).isRunning);
   const focusIndex = openIndex ?? activeSimulationIndex ?? (runningIndex >= 0 ? runningIndex : null);
@@ -2378,12 +2381,13 @@ function AcousticsBubbles({
       {openConfig && openIndex !== null && (
         <div
           className="bubble-card-host"
+          onPointerDownCapture={frontLayer.onPointerDownCapture}
           style={{
             right: SIMPLE_MODE.EDGE_MARGIN + SIMPLE_MODE.BUBBLE_SIZE + SIMPLE_MODE.PANEL_GAP,
             top: columnTop,
             width: SIMPLE_MODE.PANEL_WIDTH,
             maxHeight: SIMPLE_MODE.PANEL_MAX_HEIGHT,
-            zIndex: SIMPLE_MODE.Z_INDEX,
+            zIndex: frontLayer.zIndex,
           }}
         >
           {renderCard(openConfig, openIndex, true, onReduce, { onReduce })}

@@ -478,6 +478,12 @@ Bubble columns overflow (all three columns):
       BubbleScrollButton pills ("N more"); wheel / drag / arrows scroll, focusIndex kept in view,
       "+" always visible
 
+Bubble cards vs docked DAW (stacking):
+  hooks/useBubbleFrontLayer(openKey) — scene panel (SimpleSoundscapes), acoustics card,
+    listener card: pointerdown (capture) or opening a card → sceneWorkflowStore.simpleFrontLayer
+    = 'panel' → z SIMPLE_MODE.PANEL_RAISED_Z_INDEX (205, above DAW 200, below bottom bar 210);
+    DAWDock pointerdown (capture) → 'daw' → cards drop back to SIMPLE_MODE.Z_INDEX.
+
 sceneWorkflowStore (one run at a time, FIFO queue, keyed by scenario card index)
   analyze   → analysisStore.handleAnalyze(context)        (skipped/reused if analyzed)
   scenario  → analysisStore.handleScenarioAnalyze(usage)
@@ -646,6 +652,38 @@ Files: `lib/audio/utils/output-level-meter.ts`, `lib/audio/utils/low-output-diag
 `utils/constants.ts` → `LOW_OUTPUT_HINT`. Master volume lives in
 `audioControlsStore.masterVolume` (session-only) so hints can raise it; `SceneVolumeButton`
 mirrors it onto the orchestrator.
+
+### In-App Bug Reports
+
+A bug icon opens a "Report a problem" popover with a category, a description, an optional
+screenshot, and an optional diagnostics snapshot. In Detailed mode the icon sits at the far left
+of the bottom bar. In Simple mode it floats above the bar's left end and rises with the docked
+DAW. `useBubbleColumnSpace` shortens the Soundscapes column so the two never overlap.
+
+```
+diagnosticsBuffer (installed on mount)  ← console.error/warn, window error/unhandledrejection,
+            │                              non-OK responses from fetchWithErrorHandling
+            ▼
+useBugReport.submit()
+  ├─ collectBugReportContext()  URL, model_id, UI mode, browser, viewport, app version
+  │                             + notifications, in-flight jobs, logs, failed requests
+  ├─ html-to-image toJpeg(body)  (popover excluded via data-bug-report-ignore)
+  ▼
+apiService.submitBugReport → POST /api/bug-reports (routers/bug_reports.py)
+            ▼
+BugReportService.save (asyncio.to_thread): validate, decode screenshot,
+  data/bug_reports/<id>/screenshot.{png,jpg} + app.db `bug_reports` row
+  (identity from request.state, backend git commit added to the context)
+```
+
+There is deliberately no listing endpoint. To read reports on the server, run
+`python scripts/list_bug_reports.py [-n N] [--status open] [--full]` from `backend/`.
+
+Files:
+- Frontend: `components/scene/BugReportButton.tsx`, `components/ui/BugReportPanel.tsx`,
+  `hooks/useBugReport.ts`, `lib/diagnostics/*`, `types/bugReport.ts`.
+- Backend: `routers/bug_reports.py`, `services/bug_report_service.py`.
+- Constants: `BUG_REPORT` (frontend) and `BUG_REPORT_*` (backend).
 
 ### Viewer Right-Click Menu
 

@@ -335,3 +335,14 @@ export type {
   PreflightEntry,
 } from './simulationPreflight';
 export { PREFLIGHT_FACE_CLASS } from './simulationPreflight';
+
+// In-app bug reports
+export type {
+  BugReportCategory,
+  BugReportLogLevel,
+  BugReportLogEntry,
+  BugReportFailedRequest,
+  BugReportContext,
+  BugReportPayload,
+  BugReportCreated,
+} from './bugReport';

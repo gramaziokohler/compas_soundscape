@@ -17,6 +17,7 @@ import { useSceneWaveform } from '@/hooks/useSceneWaveform';
 import { useDismissOnSceneClick } from '@/hooks/useDismissOnSceneClick';
 import { useBubbleColumnSpace } from '@/hooks/useBubbleColumnSpace';
 import { useSimpleSceneHighlights } from '@/hooks/useSimpleSceneHighlights';
+import { useBubbleFrontLayer } from '@/hooks/useBubbleFrontLayer';
 import {
   useAnalysisStore,
   useAudioControlsStore,
@@ -189,6 +190,11 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
     );
   }, [panel]);
 
+  // The panel and the docked DAW overlap: whichever was clicked last is on top.
+  const frontLayer = useBubbleFrontLayer(
+    panel ? (panel.kind === 'composer' ? 'composer' : `${panel.kind}:${panel.usageIndex}`) : null,
+  );
+
   const busy = activeUsageIndex !== null || queueLength > 0;
   const removeDisabledReason = busy ? 'Wait until the running scene finishes' : undefined;
 
@@ -339,6 +345,13 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
         }
       />
 
+      {/* Zero-size stacking context for the panels (fixed children keep their
+          viewport coordinates). The capture handler also sees clicks from the
+          panels' portaled popups, which bubble through the React tree. */}
+      <div
+        onPointerDownCapture={frontLayer.onPointerDownCapture}
+        style={{ position: 'relative', zIndex: frontLayer.zIndex }}
+      >
       {composerMounted && (
         <div style={{ display: panel?.kind === 'composer' ? undefined : 'none' }}>
           <BubblePanel
@@ -386,6 +399,7 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
           <SoundGenerationSection {...buildSoundGenerationSectionProps(sidebarProps, panelScene.usageIndex)} />
         </BubblePanel>
       )}
+      </div>
     </>
   );
 }

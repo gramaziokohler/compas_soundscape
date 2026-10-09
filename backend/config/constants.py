@@ -993,3 +993,15 @@ INVITE_MAX_USES_HARD_CAP = 100
 # Metadata only — audio/media stays on the filesystem. Note this amends the
 # former "no database" rule; durable workspace data still lives under data/.
 APP_DB_PATH = str(BACKEND_DIR / "data" / "app.db")
+
+# ============================================================================
+# Bug reports (routers/bug_reports.py, services/bug_report_service.py)
+# ============================================================================
+# Durable: rows in app.db (`bug_reports`), screenshots under data/ — never temp/.
+BUG_REPORTS_DIR = BACKEND_DIR / "data" / "bug_reports"
+BUG_REPORT_CATEGORIES = ("bug", "visual", "performance", "idea")
+BUG_REPORT_STATUS_OPEN = "open"
+BUG_REPORT_MAX_DESCRIPTION_CHARS = 5000
+BUG_REPORT_MAX_SCREENSHOT_BYTES = 8 * 1024 * 1024
+BUG_REPORT_MAX_CONTEXT_BYTES = 256 * 1024
+BUG_REPORT_SCREENSHOT_BASENAME = "screenshot"

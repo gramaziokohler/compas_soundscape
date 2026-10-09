@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef, memo } from 'react';
 import { RangeSlider } from '@/components/ui/RangeSlider';
-import { DAW, DEFAULT_DBFS } from '@/utils/constants';
+import { DAW, DEFAULT_DBFS, SOUND_CATEGORIES, soundCategoryTooltip } from '@/utils/constants';
 import type { TimelineSound } from '@/types/audio';
 
 interface DAWTrackHeadProps {
@@ -90,6 +90,8 @@ function DAWTrackHeadImpl({
   ];
 
   const showSubLabel = trackHeight >= DAW.TRACK_HEIGHT_SUBLABEL_MIN;
+  // Same colour as the sound card's category badge; neutral when uncategorized.
+  const categoryColor = sound.soundGroup ? SOUND_CATEGORIES[sound.soundGroup].color : 'var(--color-secondary-hover)';
 
   return (
     <div
@@ -125,9 +127,10 @@ function DAWTrackHeadImpl({
       {/* Row 1: badge, name, kebab */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--card-space-xs)' }}>
         <span
+          title={soundCategoryTooltip(sound.soundGroup)}
           style={{
             display: 'inline-block', width: '7px', height: '7px', borderRadius: '50%',
-            backgroundColor: sound.color, flexShrink: 0,
+            backgroundColor: categoryColor, flexShrink: 0, cursor: 'help',
           }}
         />
         <span

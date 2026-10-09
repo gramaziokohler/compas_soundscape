@@ -166,6 +166,9 @@ export interface SceneWorkflowStoreState {
   /** The scene panel Simple mode currently has open (null = none); Detailed mode opens the same scene. */
   openSimplePanel: { kind: 'scene' | 'workflow'; usageIndex: number } | null;
   setOpenSimplePanel: (panel: { kind: 'scene' | 'workflow'; usageIndex: number } | null) => void;
+  /** Simple mode: which overlapping window was clicked last and is drawn in front (scene panel or docked DAW). */
+  simpleFrontLayer: 'panel' | 'daw';
+  setSimpleFrontLayer: (layer: 'panel' | 'daw') => void;
   pendingSimpleFocus: number | null;
   consumeSimpleFocus: () => number | null;
   /**
@@ -485,6 +488,12 @@ export const useSceneWorkflowStore = create<SceneWorkflowStoreState>()(
 
         openSimplePanel: null,
         setOpenSimplePanel: (panel) => set({ openSimplePanel: panel }, false, 'sceneWorkflow/setOpenSimplePanel'),
+
+        simpleFrontLayer: 'daw',
+        // Called on every DAW pointerdown — skip the no-op commits.
+        setSimpleFrontLayer: (layer) => {
+          if (get().simpleFrontLayer !== layer) set({ simpleFrontLayer: layer }, false, 'sceneWorkflow/setSimpleFrontLayer');
+        },
 
         pendingSimpleFocus: null,
         consumeSimpleFocus: () => {
