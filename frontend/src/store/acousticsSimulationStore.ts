@@ -8,8 +8,8 @@
  * Previously used a module-level singleton to survive tab switches — this
  * Zustand store accomplishes the same without module-level hacks.
  *
- * zundo partializes on simulationConfigs + activeSimulationIndex so that
- * adding/removing/updating configs is undoable.
+ * Undo covers adding / removing / reordering / editing configs (see the Undo
+ * section below); simulation runs and their results are never undone.
  */
 
 import { create } from 'zustand';
@@ -41,21 +41,94 @@ import {
   CHORAS_DG_DEFAULT_PPW,
   CHORAS_DG_DEFAULT_CFL,
 } from '@/utils/constants';
+import { UNDO_HISTORY_LIMIT, undoEquality, type RegisterTemporalStoreOptions } from './undoRedoRegistry';
 
-// ─── Partialize ───────────────────────────────────────────────────────────────
+// ─── Undo ─────────────────────────────────────────────────────────────────────
+//
+// Simulation runs are NOT undo steps: their run state and results (written by
+// the polling jobs) are excluded from step detection and always kept live when
+// a snapshot is applied, so Ctrl+Z can never discard a finished simulation.
+// View-only card fields (expanded panels, chosen heatmap metric, isolation) are
+// excluded the same way. Card activation / expansion are navigation state —
+// they follow their card by id across undo instead of being restored.
+
+/** Fields written by a simulation run (Choras / Pyroomacoustics cards). */
+const SIM_RUN_KEYS = [
+  'state', 'completedAt', 'isRunning', 'progress', 'status', 'error',
+  'simulationResults', 'currentSimulationId', 'currentSimulationRunId',
+  'importedIRIds', 'importedIRMetadata', 'sourceReceiverIRMapping',
+  'simulationPositions', 'savedSettings', 'generatedSignature',
+  'queuePosition', 'queueTotal',
+] as const;
+/** Transient execution fields of cards without a backend run (import-irs). */
+const EXECUTION_KEYS = ['isRunning', 'progress', 'status', 'error', 'currentSimulationRunId'] as const;
+/** View-only card fields. */
+const SIM_VIEW_KEYS = [
+  'advancedSettingsExpanded', 'selectedGradientMetric', 'speckleIsolatedObjectIds', 'expandedMaterialItems',
+] as const;
+
+function liveOnlyKeys(config: SimulationConfig): readonly string[] {
+  const runKeys = config.type === 'choras' || config.type === 'pyroomacoustics' ? SIM_RUN_KEYS : EXECUTION_KEYS;
+  return [...runKeys, ...SIM_VIEW_KEYS];
+}
+
+/** The user-editable part of a config (what an undo step is made of). */
+function editableProjection(config: SimulationConfig): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...config };
+  for (const key of liveOnlyKeys(config)) delete out[key];
+  return out;
+}
 
 export const acousticsSimulationPartialize = (state: AcousticsSimulationStoreState) => ({
-  simulationConfigs: state.simulationConfigs.map((c) => ({
-    ...c,
-    // Never restore a "running" state or in-flight simulation ID after undo
-    isRunning: false,
-    progress: 0,
-    currentSimulationRunId: null,
-  })),
-  activeSimulationIndex: state.activeSimulationIndex,
-  expandedTabIndex: state.expandedTabIndex,
+  simulationConfigs: state.simulationConfigs,
   roomScale: state.roomScale,
 });
+
+type AcousticsSimulationSnapshot = ReturnType<typeof acousticsSimulationPartialize>;
+
+const acousticsSimulationEquality = (a: AcousticsSimulationSnapshot, b: AcousticsSimulationSnapshot) =>
+  undoEquality(a.roomScale, b.roomScale) &&
+  a.simulationConfigs.length === b.simulationConfigs.length &&
+  a.simulationConfigs.every((c, i) => undoEquality(editableProjection(c), editableProjection(b.simulationConfigs[i])));
+
+export const acousticsSimulationUndo: RegisterTemporalStoreOptions<
+  AcousticsSimulationStoreState,
+  AcousticsSimulationSnapshot
+> = {
+  partialize: acousticsSimulationPartialize,
+  equality: acousticsSimulationEquality,
+  apply: (snapshot) => {
+    const live = useAcousticsSimulationStore.getState();
+    const liveById = new Map(live.simulationConfigs.map((c) => [c.id, c]));
+    const configs = snapshot.simulationConfigs.map((config) => {
+      const liveConfig = liveById.get(config.id);
+      const merged: Record<string, unknown> = { ...config };
+      if (liveConfig) {
+        // Keep the live run state / results / view fields of a card that still exists.
+        for (const key of liveOnlyKeys(config)) merged[key] = (liveConfig as unknown as Record<string, unknown>)[key];
+      } else if (merged.isRunning) {
+        // Restored card (undo of a delete) — its old run is no longer tracked.
+        merged.isRunning = false;
+        merged.progress = 0;
+        merged.status = '';
+        merged.currentSimulationRunId = null;
+      }
+      return merged as unknown as SimulationConfig;
+    });
+    const idAt = (index: number | null) => (index === null ? null : live.simulationConfigs[index]?.id ?? null);
+    const indexOf = (id: string | null) => {
+      if (id === null) return null;
+      const idx = configs.findIndex((c) => c.id === id);
+      return idx >= 0 ? idx : null;
+    };
+    useAcousticsSimulationStore.setState({
+      simulationConfigs: configs,
+      roomScale: snapshot.roomScale,
+      activeSimulationIndex: indexOf(idAt(live.activeSimulationIndex)),
+      expandedTabIndex: indexOf(idAt(live.expandedTabIndex)),
+    });
+  },
+};
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -383,6 +456,6 @@ export const useAcousticsSimulationStore = create<AcousticsSimulationStoreState>
       }),
       { name: 'acousticsSimulationStore' },
     ),
-    { partialize: acousticsSimulationPartialize },
+    { partialize: acousticsSimulationPartialize, equality: acousticsSimulationEquality, limit: UNDO_HISTORY_LIMIT },
   ),
 );

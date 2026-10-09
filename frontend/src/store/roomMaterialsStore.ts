@@ -14,13 +14,19 @@ import { temporal } from 'zundo';
 import { devtools } from 'zustand/middleware';
 import { RESONANCE_AUDIO } from '@/utils/constants';
 import type { ResonanceRoomMaterial, ResonanceRoomDimensions } from '@/types/audio';
+import { UNDO_HISTORY_LIMIT, undoEquality, type RegisterTemporalStoreOptions } from './undoRedoRegistry';
 
 // ─── Partialize ───────────────────────────────────────────────────────────────
 
 export const roomMaterialsPartialize = (state: RoomMaterialsStoreState) => ({
-  roomMaterials: { ...state.roomMaterials },
-  roomDimensions: { ...state.roomDimensions },
+  roomMaterials: state.roomMaterials,
+  roomDimensions: state.roomDimensions,
 });
+
+export const roomMaterialsUndo: RegisterTemporalStoreOptions<
+  RoomMaterialsStoreState,
+  ReturnType<typeof roomMaterialsPartialize>
+> = { partialize: roomMaterialsPartialize };
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -60,6 +66,6 @@ export const useRoomMaterialsStore = create<RoomMaterialsStoreState>()(
       }),
       { name: 'roomMaterialsStore' },
     ),
-    { partialize: roomMaterialsPartialize },
+    { partialize: roomMaterialsPartialize, equality: undoEquality, limit: UNDO_HISTORY_LIMIT },
   ),
 );

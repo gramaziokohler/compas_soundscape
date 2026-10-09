@@ -18,7 +18,7 @@
 import type { UserPreferences } from '@/types';
 import type { ColorThemePreference } from '@/utils/color-theme';
 import { apiService } from '@/services/api';
-import { useUIStore, useAudioControlsStore, useSoundscapeStore } from '@/store';
+import { useUIStore, useAudioControlsStore, useSoundscapeStore, runAsLoad } from '@/store';
 import { USER_PREFERENCES_SAVE_DEBOUNCE_MS } from '@/utils/constants';
 
 let _saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -122,7 +122,9 @@ export function applyPreferences(prefs: UserPreferences): void {
 function applyWithoutSaving(prefs: UserPreferences): void {
   _applying = true;
   try {
-    applyPreferences(prefs);
+    // Loading preferences is not an edit: no undo step, and history is
+    // re-based so undo never reverts the user's loaded settings.
+    runAsLoad(() => applyPreferences(prefs));
   } finally {
     _applying = false;
     _lastSignature = JSON.stringify(collectPreferences());

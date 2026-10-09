@@ -5,12 +5,11 @@
  * keyed by simulationInstanceId, plus a shared materials cache.
  *
  * The previous hook used module-level Maps for persistence across tab changes.
- * This Zustand store provides the same without module-level hacks and adds
- * undo/redo on faceMaterialAssignments + simulationSettings per instance.
+ * This Zustand store provides the same without module-level hacks. It holds
+ * runtime job state only, so it is not part of undo/redo.
  */
 
 import { create } from 'zustand';
-import { temporal } from 'zundo';
 import { devtools } from 'zustand/middleware';
 import { apiService } from '@/services/api';
 import {
@@ -78,12 +77,6 @@ export interface SpeckleData {
   url: string;
   auth_token?: string;
 }
-
-// ─── Partialize ───────────────────────────────────────────────────────────────
-
-export const pyroomAcousticsPartialize = (state: PyroomAcousticsStoreState) => ({
-  instances: { ...state.instances },
-});
 
 // ─── Default state factory ────────────────────────────────────────────────────
 
@@ -174,7 +167,6 @@ function patchInstance(
 }
 
 export const usePyroomAcousticsStore = create<PyroomAcousticsStoreState>()(
-  temporal(
     devtools(
       (set, get) => ({
         instances: {},
@@ -567,6 +559,4 @@ export const usePyroomAcousticsStore = create<PyroomAcousticsStoreState>()(
       }),
       { name: 'pyroomAcousticsStore' },
     ),
-    { partialize: pyroomAcousticsPartialize },
-  ),
 );

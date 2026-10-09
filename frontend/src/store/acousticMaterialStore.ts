@@ -18,6 +18,7 @@ import type { AcousticMaterial } from '@/types/materials';
 import type { HierarchicalMeshObject } from '@/hooks/useSpeckleSurfaceMaterials';
 import type { SpeckleLayerInfo } from '@/types/speckle-materials';
 import { getMaterialColorByAbsorption } from '@/utils/utils';
+import { UNDO_HISTORY_LIMIT, undoEquality, type RegisterTemporalStoreOptions } from './undoRedoRegistry';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -96,9 +97,15 @@ export interface AcousticMaterialStoreState {
 // ─── Partialize (exported for snapshot registry) ────────────────────────────
 
 export const acousticMaterialPartialize = (state: AcousticMaterialStoreState) => ({
-  materialAssignments: new Map(state.materialAssignments),
-  scatteringAssignments: new Map(state.scatteringAssignments),
+  materialAssignments: state.materialAssignments,
+  scatteringAssignments: state.scatteringAssignments,
 });
+
+type AcousticMaterialSnapshot = ReturnType<typeof acousticMaterialPartialize>;
+
+export const acousticMaterialUndo: RegisterTemporalStoreOptions<AcousticMaterialStoreState, AcousticMaterialSnapshot> = {
+  partialize: acousticMaterialPartialize,
+};
 
 // ─── Store ───────────────────────────────────────────────────────────────────
 
@@ -277,20 +284,11 @@ export const useAcousticMaterialStore = create<AcousticMaterialStoreState>()(
       { name: 'AcousticMaterialStore' },
     ),
     {
-      // Snapshot only assignment Maps — exclude structural/layer data from history
+      // Snapshot only assignment Maps — exclude structural/layer data from history.
+      // Every action replaces the Maps (never mutates), so references are safe.
       partialize: acousticMaterialPartialize,
-      // Skip recording a history entry when Maps haven't changed
-      equality: (past, current) => {
-        if (past.materialAssignments.size !== current.materialAssignments.size) return false;
-        for (const [k, v] of past.materialAssignments) {
-          if (current.materialAssignments.get(k) !== v) return false;
-        }
-        if (past.scatteringAssignments.size !== current.scatteringAssignments.size) return false;
-        for (const [k, v] of past.scatteringAssignments) {
-          if (current.scatteringAssignments.get(k) !== v) return false;
-        }
-        return true;
-      },
+      equality: undoEquality,
+      limit: UNDO_HISTORY_LIMIT,
     },
   ),
 );

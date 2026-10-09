@@ -6,7 +6,8 @@
  * audio rendering mode, Speckle viewer flags, global model identity, and
  * sidebar expand states.
  *
- * No undo/redo needed — these are transient navigation/display choices.
+ * Navigation / display choices are not undoable — only the global simulation
+ * parameters are (see uiPartialize).
  *
  * Added persist middleware (localStorage) so panel tabs, view toggles,
  * and display preferences survive a page refresh. skipHydration + manual
@@ -15,6 +16,8 @@
 
 import { create } from 'zustand';
 import { devtools, persist, createJSONStorage } from 'zustand/middleware';
+import { temporal } from 'zundo';
+import { UNDO_HISTORY_LIMIT, undoEquality, type RegisterTemporalStoreOptions } from './undoRedoRegistry';
 import type { LoadTab } from '@/types';
 import type { AudioRenderingMode } from '@/components/audio/AudioRenderingModeSelector';
 import {
@@ -289,8 +292,23 @@ export interface GradientMapState {
   range?: { min: number; max: number };
 }
 
+// ─── Undo ─────────────────────────────────────────────────────────────────────
+// Almost everything here is navigation / display state and is NOT undoable.
+// The exceptions are the global acoustic-simulation parameters, which change
+// simulation output exactly like a card setting does.
+export const uiPartialize = (state: UIStoreState) => ({
+  globalSoundSpeed: state.globalSoundSpeed,
+  globalMeshLc: state.globalMeshLc,
+  simulationMeshSettings: state.simulationMeshSettings,
+});
+
+export const uiUndo: RegisterTemporalStoreOptions<UIStoreState, ReturnType<typeof uiPartialize>> = {
+  partialize: uiPartialize,
+};
+
 export const useUIStore = create<UIStoreState>()(
   persist(
+    temporal(
     devtools(
       (set) => ({
       // ── Load tab ────────────────────────────────────────────────────────
@@ -582,6 +600,8 @@ export const useUIStore = create<UIStoreState>()(
     }),
     { name: 'uiStore' },
   ),
+    { partialize: uiPartialize, equality: undoEquality, limit: UNDO_HISTORY_LIMIT },
+    ),
   {
     name: 'compas-ui-state',
     storage: createJSONStorage(() => localStorage),

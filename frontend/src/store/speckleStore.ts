@@ -14,6 +14,8 @@
 
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
+import { temporal } from 'zundo';
+import { UNDO_HISTORY_LIMIT, undoEquality, type RegisterTemporalStoreOptions } from './undoRedoRegistry';
 import { FilteringExtension, CameraController, SelectionExtension, type Viewer } from '@speckle/viewer';
 import type React from 'react';
 import type { ArchitecturalObject } from '@/types/analysis';
@@ -302,9 +304,34 @@ function scheduleApplyColors(applyFn: () => void) {
   _applyColorsTimer = setTimeout(applyFn, 50);
 }
 
+// ─── Undo ─────────────────────────────────────────────────────────────────────
+// Only the user's visibility intent is undoable (Hide / Isolate / Exclude from
+// acoustic layer). Selection, hover, colors and view mode are not.
+
+export const speckleVisibilityPartialize = (state: SpeckleStoreState) => ({
+  userHiddenIds: state.userHiddenIds,
+  userIsolatedIds: state.userIsolatedIds,
+  acousticExplorerHiddenIds: state.acousticExplorerHiddenIds,
+});
+
+type SpeckleVisibilitySnapshot = ReturnType<typeof speckleVisibilityPartialize>;
+
+export const speckleUndo: RegisterTemporalStoreOptions<SpeckleStoreState, SpeckleVisibilitySnapshot> = {
+  partialize: speckleVisibilityPartialize,
+  apply: (snapshot) => {
+    // The module-level sets are the source applyVisibility() reads.
+    _userHiddenIds = new Set(snapshot.userHiddenIds);
+    _userIsolatedIds = new Set(snapshot.userIsolatedIds);
+    _acousticExplorerHiddenIds = new Set(snapshot.acousticExplorerHiddenIds);
+    useSpeckleStore.setState(snapshot);
+    useSpeckleStore.getState().applyVisibility();
+  },
+};
+
 // ─── Store ────────────────────────────────────────────────────────────────────
 
 export const useSpeckleStore = create<SpeckleStoreState>()(
+  temporal(
   devtools(
     (set, get) => ({
       // ── SpeckleViewerContext state ─────────────────────────────────────────
@@ -339,6 +366,8 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
             false,
             'speckle/setViewerReset',
           );
+          // Visibility history refers to the previous model's ids.
+          useSpeckleStore.temporal.getState().clear();
         }
         // Re-apply any pending colors (material colors OR entity-sound links)
         // that were registered before the viewer was ready. Retry at increasing
@@ -949,5 +978,7 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
       },
     }),
     { name: 'speckleStore' },
+  ),
+    { partialize: speckleVisibilityPartialize, equality: undoEquality, limit: UNDO_HISTORY_LIMIT },
   ),
 );

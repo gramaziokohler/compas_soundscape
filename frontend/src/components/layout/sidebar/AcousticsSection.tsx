@@ -40,7 +40,7 @@ import { RangeSlider } from '@/components/ui/RangeSlider';
 import { ToggleField } from '@/components/ui/ToggleField';
 import { apiService } from '@/services/api';
 import { CARD_TYPE_LABELS } from '@/types/card';
-import { useSpeckleStore, useAcousticsSimulationStore, useReceiversStore, useGridListenersStore, useAudioControlsStore, useSoundscapeStore, useAcousticLayerStore, useRightSidebarStore, notifyError } from '@/store';
+import { useSpeckleStore, useAcousticsSimulationStore, useReceiversStore, useGridListenersStore, useAudioControlsStore, useSoundscapeStore, useAcousticLayerStore, useRightSidebarStore, notifyError, runWithoutUndo } from '@/store';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { useUIStore } from '@/store/uiStore';
 import { useSimulationPreflightStore, type RunPreflightArgs } from '@/store';
@@ -516,7 +516,8 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       );
       const gain = (cfg as any).irGain ?? IMPULSE_RESPONSE.GAIN_OFFSET_DEFAULT;
       const clamped = Math.min(hi, Math.max(lo, gain));
-      if (clamped !== gain) handleUpdateConfig(idx, { irGain: clamped } as any);
+      // Derived correction — inside an interaction it joins that step, otherwise untracked.
+      if (clamped !== gain) runWithoutUndo(() => handleUpdateConfig(idx, { irGain: clamped } as any));
     });
   }, [simulationConfigs, irPeaksByCard, handleUpdateConfig]);
 
@@ -1121,10 +1122,10 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   // A completed card keeps its results when materials change: the new assignments
   // are part of its generation signature, so the edit surfaces "Regenerate".
   const handleSpeckleMaterialAssignments = useCallback((index: number, assignments: Record<string, string>, layerName: string | null, geometryObjectIds: string[], scatteringAssignments: Record<string, number>) => {
-    // Pause acousticsSimulation temporal so this config-sync never becomes its own undo step.
-    // Material assignment undo is owned entirely by acousticMaterial store.
-    const acousticsTemporalPause = () => useAcousticsSimulationStore.temporal.getState().pause();
-    const acousticsTemporalResume = () => useAcousticsSimulationStore.temporal.getState().resume();
+    // This mirrors the acousticMaterial store into the card config. Inside the
+    // user's interaction it joins that interaction's undo step (so the material
+    // edit and its config copy undo together); outside one (re-sync after an
+    // undo / load) it records nothing.
 
     // Snapshot the live acoustic region together with the material assignments.
     // This is the region the card is generated with, and what the Object Explorer
@@ -1138,15 +1139,13 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       autoDetected: acousticSel.autoDetected,
     };
 
-    acousticsTemporalPause();
-    handleUpdateConfig(index, {
+    runWithoutUndo(() => handleUpdateConfig(index, {
       speckleMaterialAssignments: assignments,
       speckleLayerName: layerName,
       speckleGeometryObjectIds: geometryObjectIds,
       speckleScatteringAssignments: scatteringAssignments,
       speckleAcousticSelection: acousticSelectionSnapshot,
-    } as any);
-    acousticsTemporalResume();
+    } as any));
   }, [handleUpdateConfig]);
 
   // Auto-Select IR logic - use refs to avoid infinite loops

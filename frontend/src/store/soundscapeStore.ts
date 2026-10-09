@@ -8,7 +8,7 @@
  * geometryBounds is now read from useFileUploadStore instead of being a prop.
  * AbortController is kept as a module-level ref (non-serializable).
  *
- * zundo partializes on soundConfigs (excluding blob URLs/buffers) + global settings.
+ * Undo covers cards, generated events and global settings (see the Undo section).
  */
 
 import { create } from 'zustand';
@@ -54,6 +54,14 @@ import { useAudioControlsStore } from './audioControlsStore';
 import { useCardFlowStore } from './cardFlowStore';
 import { recordInflightJob, removeInflightJob } from '@/lib/job-tracker';
 import { startPolling, createPollRegistry } from '@/lib/poll-until-done';
+import {
+  UNDO_HISTORY_LIMIT,
+  undoEquality,
+  runWithoutUndo,
+  rebaseUndoHistory,
+  type RegisterTemporalStoreOptions,
+} from './undoRedoRegistry';
+import { scheduleUndoSafeDeletion } from '@/lib/undo-safe-deletion';
 
 // ─── Module-level concurrency state ──────────────────────────────────────────
 // Multiple generations may run at once (e.g. TTA on the GPU pool while a
@@ -594,19 +602,26 @@ function applyOrchestrateDynamics(
   });
 }
 
-// ─── Partialize ───────────────────────────────────────────────────────────────
+// ─── Undo ─────────────────────────────────────────────────────────────────────
+//
+// History holds the cards, the generated events and the global generation
+// settings. Snapshots keep REFERENCES to everything (uploaded AudioBuffers /
+// blob URLs included) so an undo never strips a card's audio. A card's library
+// search results and its error message are runtime: they never create a step
+// and stay live across undo. Generation results are steps (a finished
+// generation can be undone / redone); streamed results collapse into one step.
+
+/** Per-card fields that are runtime, not edits. */
+const SOUND_CONFIG_RUNTIME_KEYS = ['librarySearchState', 'error'] as const;
+
+function soundConfigProjection(config: SoundGenerationConfig): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...config };
+  for (const key of SOUND_CONFIG_RUNTIME_KEYS) delete out[key];
+  return out;
+}
 
 export const soundscapePartialize = (state: SoundscapeStoreState) => ({
-  soundConfigs: state.soundConfigs.map((c) => ({
-    ...c,
-    // Omit non-serializable blob data from undo history
-    uploadedAudioBuffer: undefined,
-    uploadedAudioUrl: undefined,
-    // Never restore a "searching in progress" state after undo
-    librarySearchState: c.librarySearchState
-      ? { ...c.librarySearchState, isSearching: false }
-      : undefined,
-  })),
+  soundConfigs: state.soundConfigs,
   generatedSounds: state.generatedSounds,
   soundscapeData: state.soundscapeData,
   globalDuration: state.globalDuration,
@@ -620,6 +635,40 @@ export const soundscapePartialize = (state: SoundscapeStoreState) => ({
   ttsModel: state.ttsModel,
   orchestrateSoundsEnabled: state.orchestrateSoundsEnabled,
 });
+
+type SoundscapeSnapshot = ReturnType<typeof soundscapePartialize>;
+
+const soundscapeEquality = (a: SoundscapeSnapshot, b: SoundscapeSnapshot): boolean => {
+  const { soundConfigs: ca, ...restA } = a;
+  const { soundConfigs: cb, ...restB } = b;
+  if (!undoEquality(restA, restB)) return false;
+  if (ca === cb) return true;
+  return ca.length === cb.length && ca.every((c, i) => undoEquality(soundConfigProjection(c), soundConfigProjection(cb[i])));
+};
+
+export const soundscapeUndo: RegisterTemporalStoreOptions<SoundscapeStoreState, SoundscapeSnapshot> = {
+  partialize: soundscapePartialize,
+  equality: soundscapeEquality,
+  apply: (snapshot) => {
+    const live = useSoundscapeStore.getState();
+    const liveById = new Map<string, SoundGenerationConfig>();
+    for (const c of live.soundConfigs) if (c.config_id) liveById.set(c.config_id, c);
+    const soundConfigs = snapshot.soundConfigs.map((config) => {
+      const liveConfig = config.config_id ? liveById.get(config.config_id) : undefined;
+      if (liveConfig) {
+        return { ...config, librarySearchState: liveConfig.librarySearchState, error: liveConfig.error };
+      }
+      return config.librarySearchState?.isSearching
+        ? { ...config, librarySearchState: { ...config.librarySearchState, isSearching: false } }
+        : config;
+    });
+    useSoundscapeStore.setState({
+      ...snapshot,
+      soundConfigs,
+      activeSoundConfigTab: Math.min(live.activeSoundConfigTab, Math.max(0, soundConfigs.length - 1)),
+    });
+  },
+};
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -2989,22 +3038,29 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             try {
               const sampleFile = await apiService.loadSampleAudio();
               const result = await loadAudioFile(sampleFile);
-              set(
-                (s) => ({
-                  soundConfigs: s.soundConfigs.map((c, i) =>
-                    i === idx && c.type === 'sample-audio' && !c.uploadedAudioUrl
-                      ? {
-                          ...c,
-                          uploadedAudioBuffer: result.audioBuffer,
-                          uploadedAudioInfo: result.audioInfo,
-                          uploadedAudioUrl: result.audioUrl,
-                        }
-                      : c,
-                  ),
-                }),
-                false,
-                'soundscape/sampleRehydrate',
+              const configId = get().soundConfigs[idx]?.config_id;
+              const withSample = (configs: SoundGenerationConfig[], matchIndex: number | null) =>
+                configs.map((c, i) =>
+                  (configId ? c.config_id === configId : i === matchIndex) &&
+                  c.type === 'sample-audio' &&
+                  !c.uploadedAudioUrl
+                    ? {
+                        ...c,
+                        uploadedAudioBuffer: result.audioBuffer,
+                        uploadedAudioInfo: result.audioInfo,
+                        uploadedAudioUrl: result.audioUrl,
+                      }
+                    : c,
+                );
+              // Reloading the bundled clip is a load, not an edit: no undo step,
+              // and every history snapshot of this card gets the clip too.
+              runWithoutUndo(() =>
+                set((s) => ({ soundConfigs: withSample(s.soundConfigs, idx) }), false, 'soundscape/sampleRehydrate'),
               );
+              rebaseUndoHistory<SoundscapeSnapshot>('soundscape', (snap) => ({
+                ...snap,
+                soundConfigs: withSample(snap.soundConfigs, configId ? null : idx),
+              }));
             } catch (error) {
               console.warn(
                 '[soundscapeStore] Failed to reload bundled sample for config',
@@ -3329,17 +3385,21 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           // SED-extracted segment variants reference a real WAV on the backend
           // (unlike ML/TTS variants, whose files are intentionally kept on disk
           // for dedup/regeneration). Remove the file too so a deleted segment
-          // does not linger and reappear after a refresh.
+          // does not linger and reappear after a refresh — but only once the
+          // deletion can no longer be undone (an undo must get its audio back).
           if (
             String(target.id ?? '').startsWith('sed-') &&
             target.url &&
             !target.url.startsWith('blob:')
           ) {
-            try {
-              await apiService.deleteSedSegmentAudio(target.url);
-            } catch (err) {
-              console.warn('[soundscapeStore] Failed to delete SED segment file:', err);
-            }
+            const url: string = target.url;
+            scheduleUndoSafeDeletion(`sed:${url}`, {
+              isReferenced: () => {
+                const s = get();
+                return [...(s.soundscapeData ?? []), ...s.generatedSounds].some((e: any) => e?.url === url);
+              },
+              run: () => apiService.deleteSedSegmentAudio(url),
+            });
           }
         },
 
@@ -3684,6 +3744,6 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
       }),
       { name: 'soundscapeStore' },
     ),
-    { partialize: soundscapePartialize },
+    { partialize: soundscapePartialize, equality: soundscapeEquality, limit: UNDO_HISTORY_LIMIT },
   ),
 );

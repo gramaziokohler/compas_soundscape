@@ -2,8 +2,8 @@
 
 import { useState, useRef, useEffect, useMemo, useCallback, type ChangeEvent } from 'react';
 import { toPng } from 'html-to-image';
-import type { AnalyzeModelConfig } from '@/types/analysis';
-import { useSpeckleStore, useAnalysisStore, useUIStore } from '@/store';
+import type { AnalyzeModelConfig, AnalysisConfig } from '@/types/analysis';
+import { useSpeckleStore, useAnalysisStore, useUIStore, runWithoutUndo, rebaseUndoHistory } from '@/store';
 import { getRootNodesForModel } from '@/hooks/useSpeckleTree';
 import { DashedAddButton } from '@/components/ui/DashedAddButton';
 import { ContextMenu } from '@/components/ui/ContextMenu';
@@ -97,9 +97,16 @@ export function AnalyzeModelContent({
       rootNodes.forEach((node: any) => processNode(node));
 
       if (entities.length > 0 && entities.length !== config.modelEntities.length) {
-        useAnalysisStore.temporal.getState().pause();
-        onUpdateConfig(index, { modelEntities: entities });
-        useAnalysisStore.temporal.getState().resume();
+        // Refreshing the extracted entities is a load, not an edit: no undo
+        // step, and history snapshots of this card get the same entities.
+        runWithoutUndo(() => onUpdateConfig(index, { modelEntities: entities }));
+        rebaseUndoHistory<{ analysisConfigs: AnalysisConfig[] }>('analysis', (snap) => {
+          const card = snap.analysisConfigs[index];
+          if (card?.type !== 'model-analysis') return snap;
+          const analysisConfigs = [...snap.analysisConfigs];
+          analysisConfigs[index] = { ...card, modelEntities: entities };
+          return { ...snap, analysisConfigs };
+        });
         setEntityCount(entities.length);
       } else if (config.modelEntities.length > 0) {
         setEntityCount(config.modelEntities.length);

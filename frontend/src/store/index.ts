@@ -3,109 +3,55 @@
  * Import from '@/store' throughout the app.
  *
  * To add a new temporal store to global undo/redo:
- *   1. Create the store with the `temporal` middleware.
- *   2. Export `myStorePartialize` from the store file.
- *   3. Add one line here: registerTemporalStore('myStore', useMyStore.temporal,
- *        () => myStorePartialize(useMyStore.getState()))
+ *   1. Create the store with the `temporal` middleware, passing
+ *      `{ partialize: myStoreUndo.partialize, equality: myStoreUndo.equality, limit: UNDO_HISTORY_LIMIT }`.
+ *   2. Export the undo spec (partialize + optional equality / apply) from the store file.
+ *   3. Add one line here: registerTemporalStore('myStore', useMyStore, myStoreUndo)
+ *
+ * See undoRedoRegistry.ts for the undo model and .cursor/rules/zustand-stores.mdc
+ * for what is (and is not) undoable.
  */
 
-import { useAcousticMaterialStore, acousticMaterialPartialize } from './acousticMaterialStore';
-import { useGridListenersStore, gridListenersPartialize } from './gridListenersStore';
-import { useAudioControlsStore, audioControlsPartialize } from './audioControlsStore';
-import { useObjectExplorerStore, objectExplorerPartialize } from './objectExplorerStore';
-import { useReceiversStore, receiversPartialize } from './receiversStore';
-import { useRoomMaterialsStore, roomMaterialsPartialize } from './roomMaterialsStore';
+import { useAcousticMaterialStore, acousticMaterialUndo } from './acousticMaterialStore';
+import { useGridListenersStore, gridListenersUndo } from './gridListenersStore';
+import { useAudioControlsStore, audioControlsUndo } from './audioControlsStore';
+import { useReceiversStore, receiversUndo } from './receiversStore';
+import { useRoomMaterialsStore, roomMaterialsUndo } from './roomMaterialsStore';
 import {
   useAcousticsSimulationStore,
-  acousticsSimulationPartialize,
+  acousticsSimulationUndo,
 } from './acousticsSimulationStore';
-import { usePyroomAcousticsStore, pyroomAcousticsPartialize } from './pyroomAcousticsStore';
-import { useChorasStore, chorasPartialize } from './chorasStore';
-import { useSoundscapeStore, soundscapePartialize, configValidationError, orchestrateInputsSignature, applyRecoveredOrchestrateResult, resumeOrchestrateJob } from './soundscapeStore';
+import { usePyroomAcousticsStore } from './pyroomAcousticsStore';
+import { useChorasStore } from './chorasStore';
+import { useSoundscapeStore, soundscapeUndo, configValidationError, orchestrateInputsSignature, applyRecoveredOrchestrateResult, resumeOrchestrateJob } from './soundscapeStore';
 import { useTextGenerationStore } from './textGenerationStore';
-import { useAnalysisStore, analysisPartialize, applyRecoveredLlmResult, resumeLlmJob } from './analysisStore';
-import { useSEDStore, sedPartialize } from './sedStore';
-import { useModalImpactStore, modalImpactPartialize } from './modalImpactStore';
-import { useAreaDrawingStore, areaDrawingPartialize } from './areaDrawingStore';
-import { useSoundFxStore, soundFxPartialize } from './soundFxStore';
+import { useAnalysisStore, analysisUndo, applyRecoveredLlmResult, resumeLlmJob } from './analysisStore';
+import { useSEDStore, sedUndo } from './sedStore';
+import { useModalImpactStore } from './modalImpactStore';
+import { useAreaDrawingStore, areaDrawingUndo } from './areaDrawingStore';
+import { useSoundFxStore, soundFxUndo } from './soundFxStore';
+import { useUIStore, uiUndo } from './uiStore';
+import { useAcousticLayerStore, acousticLayerUndo } from './acousticLayerStore';
+import { useCardFlowStore, cardFlowUndo } from './cardFlowStore';
+import { useSpeckleStore, speckleUndo } from './speckleStore';
 import { registerTemporalStore } from './undoRedoRegistry';
 
 // ── Register all temporal stores ─────────────────────────────────────────────
-registerTemporalStore(
-  'acousticMaterial',
-  useAcousticMaterialStore.temporal,
-  () => acousticMaterialPartialize(useAcousticMaterialStore.getState()),
-);
-registerTemporalStore(
-  'audioControls',
-  useAudioControlsStore.temporal,
-  () => audioControlsPartialize(useAudioControlsStore.getState()),
-);
-registerTemporalStore(
-  'objectExplorer',
-  useObjectExplorerStore.temporal,
-  () => objectExplorerPartialize(useObjectExplorerStore.getState()),
-);
-registerTemporalStore(
-  'receivers',
-  useReceiversStore.temporal,
-  () => receiversPartialize(useReceiversStore.getState()),
-);
-registerTemporalStore(
-  'roomMaterials',
-  useRoomMaterialsStore.temporal,
-  () => roomMaterialsPartialize(useRoomMaterialsStore.getState()),
-);
-registerTemporalStore(
-  'acousticsSimulation',
-  useAcousticsSimulationStore.temporal,
-  () => acousticsSimulationPartialize(useAcousticsSimulationStore.getState()),
-);
-registerTemporalStore(
-  'pyroomAcoustics',
-  usePyroomAcousticsStore.temporal,
-  () => pyroomAcousticsPartialize(usePyroomAcousticsStore.getState()),
-);
-registerTemporalStore(
-  'choras',
-  useChorasStore.temporal,
-  () => chorasPartialize(useChorasStore.getState()),
-);
-registerTemporalStore(
-  'soundscape',
-  useSoundscapeStore.temporal,
-  () => soundscapePartialize(useSoundscapeStore.getState()),
-);
-registerTemporalStore(
-  'analysis',
-  useAnalysisStore.temporal,
-  () => analysisPartialize(useAnalysisStore.getState()),
-);
-registerTemporalStore(
-  'sed',
-  useSEDStore.temporal,
-  () => sedPartialize(useSEDStore.getState()),
-);
-registerTemporalStore(
-  'modalImpact',
-  useModalImpactStore.temporal,
-  () => modalImpactPartialize(useModalImpactStore.getState()),
-);
-registerTemporalStore(
-  'areaDrawing',
-  useAreaDrawingStore.temporal,
-  () => areaDrawingPartialize(useAreaDrawingStore.getState()),
-);
-registerTemporalStore(
-  'gridListeners',
-  useGridListenersStore.temporal,
-  () => gridListenersPartialize(useGridListenersStore.getState()),
-);
-registerTemporalStore(
-  'soundFx',
-  useSoundFxStore.temporal,
-  () => soundFxPartialize(useSoundFxStore.getState()),
-);
+registerTemporalStore('acousticMaterial', useAcousticMaterialStore, acousticMaterialUndo);
+registerTemporalStore('audioControls', useAudioControlsStore, audioControlsUndo);
+registerTemporalStore('receivers', useReceiversStore, receiversUndo);
+registerTemporalStore('roomMaterials', useRoomMaterialsStore, roomMaterialsUndo);
+registerTemporalStore('acousticsSimulation', useAcousticsSimulationStore, acousticsSimulationUndo);
+registerTemporalStore('soundscape', useSoundscapeStore, soundscapeUndo);
+registerTemporalStore('analysis', useAnalysisStore, analysisUndo);
+registerTemporalStore('sed', useSEDStore, sedUndo);
+registerTemporalStore('areaDrawing', useAreaDrawingStore, areaDrawingUndo);
+registerTemporalStore('gridListeners', useGridListenersStore, gridListenersUndo);
+registerTemporalStore('soundFx', useSoundFxStore, soundFxUndo);
+registerTemporalStore('ui', useUIStore, uiUndo);
+registerTemporalStore('acousticLayer', useAcousticLayerStore, acousticLayerUndo);
+registerTemporalStore('cardFlow', useCardFlowStore, cardFlowUndo);
+registerTemporalStore('speckle', useSpeckleStore, speckleUndo);
 
 // ── Re-exports ────────────────────────────────────────────────────────────────
 export { useAcousticMaterialStore };
@@ -124,7 +70,7 @@ export type { ErrorsStoreState, ErrorNotification, ErrorNotificationAction } fro
 export { useRightSidebarStore } from './rightSidebarStore';
 export type { RightSidebarStoreState } from './rightSidebarStore';
 
-export { useAcousticLayerStore } from './acousticLayerStore';
+export { useAcousticLayerStore };
 export type { AcousticLayerState } from './acousticLayerStore';
 export { resolveSimulationLayerName, resolveSimulationGeometryObjectIds, toBackendGeometryIds } from './acousticLayerStore';
 export {
@@ -133,7 +79,8 @@ export {
   discardAcousticSelectionSnapshot,
 } from './acousticLayerStore';
 
-export { useUIStore, selectHasSaveTarget } from './uiStore';
+export { useUIStore };
+export { selectHasSaveTarget } from './uiStore';
 export type { UIStoreState, SidebarNavCommand } from './uiStore';
 
 export { useSceneWorkflowStore, registerSendToSoundGeneration, defaultSceneOptions } from './sceneWorkflowStore';
@@ -142,23 +89,21 @@ export type { SceneWorkflowStoreState } from './sceneWorkflowStore';
 export { useFileUploadStore } from './fileUploadStore';
 export type { FileUploadStoreState } from './fileUploadStore';
 
-export { useSpeckleStore, getAnalysisResultGroups } from './speckleStore';
+export { useSpeckleStore };
+export { getAnalysisResultGroups } from './speckleStore';
 export type { SpeckleStoreState } from './speckleStore';
 
-export { useCardFlowStore } from './cardFlowStore';
+export { useCardFlowStore };
 export type { CardFlowState } from './cardFlowStore';
 
-export { useAreaDrawingStore } from './areaDrawingStore';
+export { useAreaDrawingStore };
 export type { AreaDrawingStoreState } from './areaDrawingStore';
 
-export { useGridListenersStore } from './gridListenersStore';
+export { useGridListenersStore };
 export type { GridListenersStoreState } from './gridListenersStore';
 export { computeGridPoints } from './gridListenersStore';
 
 // Temporal stores
-export { useObjectExplorerStore };
-export type { ObjectExplorerStoreState } from './objectExplorerStore';
-
 export { useReceiversStore };
 export type { ReceiversStoreState } from './receiversStore';
 
@@ -224,6 +169,16 @@ export { useWorkspaceStore } from './workspaceStore';
 
 export {
   registerTemporalStore,
+  UNDO_HISTORY_LIMIT,
+  undoEquality,
+  clearUndoHistory,
+  onUndoHistoryCleared,
+  runWithoutUndo,
+  rebaseUndoHistory,
+  runAsLoad,
+  beginUndoInteraction,
+  endUndoInteraction,
+  installUndoInteractionTracking,
   globalUndo,
   globalRedo,
   canUndo,
@@ -235,4 +190,4 @@ export {
   setUndoRedoOverride,
   notifyUndoRedoChanged,
 } from './undoRedoRegistry';
-export type { UndoRedoOverride } from './undoRedoRegistry';
+export type { UndoRedoOverride, RegisterTemporalStoreOptions } from './undoRedoRegistry';

@@ -4,7 +4,7 @@
  * Replaces useAnalysis. Manages analysis configurations and results for the
  * Analysis section (3D Model, Audio, Text context cards).
  *
- * zundo partializes on analysisConfigs and activeAnalysisTab.
+ * Undo covers analysis cards and their results (see the Undo section).
  */
 
 import { create } from 'zustand';
@@ -56,6 +56,13 @@ import { useUIStore } from './uiStore';
 import { useFileUploadStore } from './fileUploadStore';
 import { remapLinkedCardIndices } from './cardIndexLinks';
 import { captureGenerationSignature } from '@/utils/generationSignature';
+import {
+  UNDO_HISTORY_LIMIT,
+  undoEquality,
+  runWithoutUndo,
+  rebaseUndoHistory,
+  type RegisterTemporalStoreOptions,
+} from './undoRedoRegistry';
 import type { IndexMapper } from '@/utils/cardIndexRemap';
 import {
   createInsertionIndexMapper,
@@ -195,28 +202,49 @@ async function pollLlmJob(
   }
 }
 
-// ─── Partialize ───────────────────────────────────────────────────────────────
+// ─── Undo ─────────────────────────────────────────────────────────────────────
+//
+// History holds the analysis cards and their results (prompt selections are
+// edits too). Snapshots keep references to everything (uploaded audio File /
+// AudioBuffer, scenario results) so undo never strips a card. Fields that only
+// stream in while a job runs (raw LLM text, live screenshots) or report errors
+// never create a step; the finished result does (as one step — consecutive
+// streamed writes collapse). The active tab is navigation, not history.
+
+const ANALYSIS_RUNTIME_KEYS = ['error', 'liveScreenshots', 'liveScreenshotFilenames', 'scenarioRawText'] as const;
+
+function analysisConfigProjection(config: AnalysisConfig): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...config };
+  for (const key of ANALYSIS_RUNTIME_KEYS) delete out[key];
+  return out;
+}
 
 export const analysisPartialize = (state: AnalysisStoreState) => ({
-  analysisConfigs: state.analysisConfigs.map((config) => {
-    // Omit non-serializable objects (File, ArrayBuffer) from undo history
-    if (config.type === 'audio') {
-      // Store audioFile as null so code never tries to use it as a Blob after undo
-      return { ...config, audioFile: null, audioBuffer: null };
-    }
-    if (config.type === 'model-analysis') {
-      return { ...config, liveScreenshots: [], liveScreenshotFilenames: [] };
-    }
-    if (config.type === 'scenario') {
-      // Don't persist streaming state in undo history
-      return { ...config, scenarioRawText: '', speechResult: null, speechId: null, orchestrateResult: null, orchestrateId: null, referenceImages: undefined };
-    }
-    return config;
-  }),
-  activeAnalysisTab: state.activeAnalysisTab,
-  // Include analysisResults so prompt checkbox selections are tracked in undo history
+  analysisConfigs: state.analysisConfigs,
   analysisResults: state.analysisResults,
 });
+
+type AnalysisSnapshot = ReturnType<typeof analysisPartialize>;
+
+const analysisEquality = (a: AnalysisSnapshot, b: AnalysisSnapshot): boolean =>
+  undoEquality(a.analysisResults, b.analysisResults) &&
+  (a.analysisConfigs === b.analysisConfigs ||
+    (a.analysisConfigs.length === b.analysisConfigs.length &&
+      a.analysisConfigs.every((c, i) =>
+        undoEquality(analysisConfigProjection(c), analysisConfigProjection(b.analysisConfigs[i])),
+      )));
+
+export const analysisUndo: RegisterTemporalStoreOptions<AnalysisStoreState, AnalysisSnapshot> = {
+  partialize: analysisPartialize,
+  equality: analysisEquality,
+  apply: (snapshot) => {
+    const { activeAnalysisTab } = useAnalysisStore.getState();
+    useAnalysisStore.setState({
+      ...snapshot,
+      activeAnalysisTab: Math.min(activeAnalysisTab, Math.max(0, snapshot.analysisConfigs.length - 1)),
+    });
+  },
+};
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -955,11 +983,21 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
               const { handleUpdateConfig } = get();
               const current = get().analysisConfigs[idx] as AudioAnalysisConfig;
               if (current?.type === 'audio' && !current.audioFile) {
-                handleUpdateConfig(idx, {
+                const patch = {
                   audioFile: file,
                   audioInfo: loaded.audioInfo,
                   audioBuffer: loaded.audioBuffer,
-                } as Partial<AudioAnalysisConfig>);
+                } as Partial<AudioAnalysisConfig>;
+                // Restoring the saved audio is a load, not an edit: no undo step,
+                // and every history snapshot of this card gets the audio too.
+                runWithoutUndo(() => handleUpdateConfig(idx, patch));
+                rebaseUndoHistory<AnalysisSnapshot>('analysis', (snap) => {
+                  const card = snap.analysisConfigs[idx];
+                  if (card?.type !== 'audio' || card.audioFile || card.persistedAudioFilename !== filename) return snap;
+                  const analysisConfigs = [...snap.analysisConfigs];
+                  analysisConfigs[idx] = { ...card, ...patch } as AnalysisConfig;
+                  return { ...snap, analysisConfigs };
+                });
               }
               markDone(idx, true);
             } catch (err) {
@@ -2331,7 +2369,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
       }),
       { name: 'analysisStore' },
     ),
-    { partialize: analysisPartialize },
+    { partialize: analysisPartialize, equality: analysisEquality, limit: UNDO_HISTORY_LIMIT },
   ),
 );
 

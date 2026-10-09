@@ -11,23 +11,29 @@ import { temporal } from 'zundo';
 import { devtools } from 'zustand/middleware';
 import { RECEIVER } from '@/utils/constants';
 import type { ReceiverData } from '@/types';
+import { UNDO_HISTORY_LIMIT, undoEquality, type RegisterTemporalStoreOptions } from './undoRedoRegistry';
 
 // ─── Partialize ───────────────────────────────────────────────────────────────
 
+// Selection is NOT undoable (it is navigation, not an edit) — only the receivers.
 export const receiversPartialize = (state: ReceiversStoreState) => ({
-  receivers: state.receivers.map((r) => ({
-    id: r.id,
-    name: r.name,
-    position: r.position,
-    hiddenForSimulation: r.hiddenForSimulation,
-    yaw: r.yaw,
-    pitch: r.pitch,
-    roll: r.roll,
-    orientationSaved: r.orientationSaved,
-    // mesh is not serializable → omit from history
-  })),
-  selectedReceiverId: state.selectedReceiverId,
+  receivers: state.receivers,
 });
+
+export const receiversUndo: RegisterTemporalStoreOptions<
+  ReceiversStoreState,
+  ReturnType<typeof receiversPartialize>
+> = {
+  partialize: receiversPartialize,
+  apply: (snapshot) => {
+    const { selectedReceiverId } = useReceiversStore.getState();
+    const stillExists = selectedReceiverId !== null && snapshot.receivers.some((r) => r.id === selectedReceiverId);
+    useReceiversStore.setState({
+      receivers: snapshot.receivers,
+      ...(stillExists ? {} : { selectedReceiverId: null }),
+    });
+  },
+};
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -184,6 +190,6 @@ export const useReceiversStore = create<ReceiversStoreState>()(
       }),
       { name: 'receiversStore' },
     ),
-    { partialize: receiversPartialize },
+    { partialize: receiversPartialize, equality: undoEquality, limit: UNDO_HISTORY_LIMIT },
   ),
 );

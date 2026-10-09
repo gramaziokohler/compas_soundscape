@@ -15,6 +15,7 @@ import { API_BASE_URL, DEFAULT_DBFS, LLM_SUGGESTED_INTERVAL_SECONDS, DEFAULT_DUR
 import { apiService } from '@/services/api';
 import { startPolling, createPollRegistry } from '@/lib/poll-until-done';
 import { recordInflightJob, removeInflightJob } from '@/lib/job-tracker';
+import { UNDO_HISTORY_LIMIT, undoEquality, type RegisterTemporalStoreOptions } from './undoRedoRegistry';
 
 // ─── Module-level polling registry ────────────────────────────────────────────
 // The poll handle is scoped per invocation so a second analysis can never
@@ -25,10 +26,18 @@ const _activeSedTaskIds = new Set<string>();
 
 // ─── Partialize ───────────────────────────────────────────────────────────────
 
+// The loaded file info travels with the detection results so undoing a
+// "clear" / new file restores a coherent pair. Progress / error are runtime.
 export const sedPartialize = (state: SEDStoreState) => ({
   sedDetectedSounds: state.sedDetectedSounds,
-  sedAnalysisOptions: { ...state.sedAnalysisOptions },
+  sedAnalysisOptions: state.sedAnalysisOptions,
+  sedAudioInfo: state.sedAudioInfo,
+  sedAudioBuffer: state.sedAudioBuffer,
 });
+
+export const sedUndo: RegisterTemporalStoreOptions<SEDStoreState, ReturnType<typeof sedPartialize>> = {
+  partialize: sedPartialize,
+};
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -211,6 +220,6 @@ export const useSEDStore = create<SEDStoreState>()(
       }),
       { name: 'sedStore' },
     ),
-    { partialize: sedPartialize },
+    { partialize: sedPartialize, equality: undoEquality, limit: UNDO_HISTORY_LIMIT },
   ),
 );

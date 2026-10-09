@@ -20,7 +20,7 @@
 
 import { useEffect, useRef } from 'react';
 import type React from 'react';
-import { useSpeckleStore, useAcousticLayerStore, useUIStore, discardAcousticSelectionSnapshot } from '@/store';
+import { useSpeckleStore, useAcousticLayerStore, useUIStore, discardAcousticSelectionSnapshot, runAsLoad } from '@/store';
 import { getRootNodesForModel, getGeometryLeafIdsFromNode, getExplorerNodeId, countTopLevelLayers, findSingleTopLevelLayer } from '@/hooks/useSpeckleTree';
 import { setAcousticLayerAllIds, setAllModelGeometryIds } from '@/store/speckleStore';
 import { computeGeometryFaceCounts } from '@/utils/face-count';
@@ -202,10 +202,10 @@ export function useAcousticLayerIsolation(
           .selectedAcousticGeometryIds.some((id) => modelIds.has(id));
         if (!stillValid) {
           console.log('[useAcousticLayerIsolation] Persisted selection no longer exists, clearing');
-          useAcousticLayerStore.getState().clearAcousticLayer();
+          runAsLoad(() => useAcousticLayerStore.getState().clearAcousticLayer());
         }
       } else if (validIds.length !== acousticLayerIds.length) {
-        useAcousticLayerStore.getState().setAcousticLayers(validIds, validNames, isWholeModel);
+        runAsLoad(() => useAcousticLayerStore.getState().setAcousticLayers(validIds, validNames, isWholeModel));
       }
       hasDetectedRef.current = true;
       return;
@@ -226,13 +226,13 @@ export function useAcousticLayerIsolation(
           name,
           onlyLayer ? '(only layer — whole model)' : '',
         );
-        useAcousticLayerStore.getState().setAcousticSelection({
+        runAsLoad(() => useAcousticLayerStore.getState().setAcousticSelection({
           nodeIds: [layerId],
           nodeNames: [name],
           geometryIds,
           isWholeModel: onlyLayer,
           autoDetected: true,
-        });
+        }));
       }
     } else {
       // No layer named "Acoustics" — if the model has exactly one top-level layer
@@ -245,13 +245,13 @@ export function useAcousticLayerIsolation(
         const geometryIds = getGeometryLeafIdsFromNode(singleLayer);
         if (name && layerId && geometryIds.length > 0) {
           console.log('[useAcousticLayerIsolation] Single-layer model — auto-defined acoustic region as whole model:', name);
-          useAcousticLayerStore.getState().setAcousticSelection({
+          runAsLoad(() => useAcousticLayerStore.getState().setAcousticSelection({
             nodeIds: [layerId],
             nodeNames: [name],
             geometryIds,
             isWholeModel: true,
             autoDetected: true,
-          });
+          }));
         }
       }
     }
@@ -300,13 +300,13 @@ export function useAcousticLayerIsolation(
         const geometryIds = getGeometryLeafIdsFromNode(singleLayer);
         if (name && layerId && geometryIds.length > 0) {
           console.log('[useAcousticLayerIsolation] Acoustic mode + single-layer model — auto-defined whole model:', name);
-          useAcousticLayerStore.getState().setAcousticSelection({
+          runAsLoad(() => useAcousticLayerStore.getState().setAcousticSelection({
             nodeIds: [layerId],
             nodeNames: [name],
             geometryIds,
             isWholeModel: true,
             autoDetected: true,
-          });
+          }));
           return true;
         }
       }

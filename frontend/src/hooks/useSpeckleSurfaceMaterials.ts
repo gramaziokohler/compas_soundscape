@@ -10,6 +10,7 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { Viewer } from '@speckle/viewer';
 import { useAcousticLayerStore } from '@/store/acousticLayerStore';
+import { runAsLoad } from '@/store/undoRedoRegistry';
 import type {
   SpeckleMeshObject,
   SpeckleLayerInfo,
@@ -446,7 +447,7 @@ export function useSpeckleSurfaceMaterials(
       // A single-layer model is the whole model — no layer filtering anywhere.
       const wholeModel = layerOptions.length === 1;
       if (!hasExistingAcousticSelection) {
-        useAcousticLayerStore.getState().setAcousticLayer(acousticsLayer.id, acousticsLayer.name, wholeModel);
+        runAsLoad(() => useAcousticLayerStore.getState().setAcousticLayer(acousticsLayer.id, acousticsLayer.name, wholeModel));
       }
     } else {
       console.log('[useSpeckleSurfaceMaterials] No "Acoustics" layer found, using first layer:', layerOptions[0]);
@@ -454,7 +455,7 @@ export function useSpeckleSurfaceMaterials(
       // Single-layer model: mark it as whole-model so ObjectExplorer / backend
       // don't filter by layer name.
       if (layerOptions.length === 1 && !hasExistingAcousticSelection) {
-        useAcousticLayerStore.getState().setAcousticLayer(layerOptions[0].id, layerOptions[0].name, true);
+        runAsLoad(() => useAcousticLayerStore.getState().setAcousticLayer(layerOptions[0].id, layerOptions[0].name, true));
       }
     }
 

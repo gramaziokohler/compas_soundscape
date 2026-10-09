@@ -11,14 +11,33 @@ import { create } from 'zustand';
 import { temporal } from 'zundo';
 import { devtools } from 'zustand/middleware';
 import type { DrawnArea, AreaVisualState } from '@/types/area-drawing';
+import { UNDO_HISTORY_LIMIT, undoEquality, type RegisterTemporalStoreOptions } from './undoRedoRegistry';
 
 // ─── Partialize ───────────────────────────────────────────────────────────────
 
+// Only the drawn polygons are undoable. Visual states ('generated' highlight)
+// and drawing-mode flags are runtime. Actions always replace the Map, so
+// keeping references in history is safe.
 export const areaDrawingPartialize = (state: AreaDrawingStoreState) => ({
-  // Store Maps directly — zundo uses structuredClone which preserves Map objects
   drawnAreas: state.drawnAreas,
-  areaVisualStates: state.areaVisualStates,
 });
+
+export const areaDrawingUndo: RegisterTemporalStoreOptions<
+  AreaDrawingStoreState,
+  ReturnType<typeof areaDrawingPartialize>
+> = {
+  partialize: areaDrawingPartialize,
+  apply: (snapshot) => {
+    useAreaDrawingStore.setState((s) => {
+      const areaVisualStates = new Map<number, AreaVisualState>();
+      for (const key of snapshot.drawnAreas.keys()) {
+        areaVisualStates.set(key, s.areaVisualStates.get(key) ?? 'default');
+      }
+      // Bump version so the scene re-syncs its polygon visuals.
+      return { drawnAreas: snapshot.drawnAreas, areaVisualStates, version: s.version + 1 };
+    });
+  },
+};
 
 export interface AreaDrawingStoreState {
   drawnAreas: Map<number, DrawnArea>;
@@ -185,6 +204,6 @@ export const useAreaDrawingStore = create<AreaDrawingStoreState>()(
       }),
       { name: 'areaDrawingStore' },
     ),
-    { partialize: areaDrawingPartialize },
+    { partialize: areaDrawingPartialize, equality: undoEquality, limit: UNDO_HISTORY_LIMIT },
   ),
 );

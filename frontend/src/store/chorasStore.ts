@@ -9,7 +9,6 @@
  */
 
 import { create } from 'zustand';
-import { temporal } from 'zundo';
 import { devtools } from 'zustand/middleware';
 import { apiService } from '@/services/api';
 import {
@@ -85,24 +84,6 @@ export interface SpeckleData {
   url: string;
   auth_token?: string;
 }
-
-// ─── Partialize ───────────────────────────────────────────────────────────────
-
-export const chorasPartialize = (state: ChorasStoreState) => ({
-  instances: Object.fromEntries(
-    Object.entries(state.instances).map(([id, inst]) => [
-      id,
-      {
-        ...inst,
-        // Exclude transient execution state from undo/redo history
-        isRunning: false,
-        progress: 0,
-        status: inst.status === 'Running simulation...' ? 'Idle' : inst.status,
-        error: null,
-      },
-    ])
-  ),
-});
 
 // ─── Default state factory ────────────────────────────────────────────────────
 
@@ -188,7 +169,6 @@ function _patch(
 // ─── Store ────────────────────────────────────────────────────────────────────
 
 export const useChorasStore = create<ChorasStoreState>()(
-  temporal(
     devtools(
       (set, get) => ({
         instances: {},
@@ -546,6 +526,4 @@ export const useChorasStore = create<ChorasStoreState>()(
       }),
       { name: 'chorasStore' },
     ),
-    { partialize: chorasPartialize },
-  ),
 );

@@ -16,10 +16,17 @@ import {
   sanitizeFxChain,
 } from '@/lib/audio/fx/fx-defaults';
 import type { FxChain, FxInstance, FxParams, FxRegion, FxType } from '@/lib/audio/fx/fx-types';
+import {
+  UNDO_HISTORY_LIMIT,
+  undoEquality,
+  rebaseUndoHistory,
+  runWithoutUndo,
+  type RegisterTemporalStoreOptions,
+} from './undoRedoRegistry';
 
+// Only the FX chains are undoable — which editor panel is expanded is view state.
 export const soundFxPartialize = (state: SoundFxStoreState) => ({
   chains: state.chains,
-  expandedId: state.expandedId,
 });
 
 interface SoundFxState {
@@ -44,6 +51,10 @@ interface SoundFxActions {
 
 export type SoundFxStoreState = SoundFxState & SoundFxActions;
 
+export const soundFxUndo: RegisterTemporalStoreOptions<SoundFxStoreState, ReturnType<typeof soundFxPartialize>> = {
+  partialize: soundFxPartialize,
+};
+
 function getOrEmpty(chains: Record<string, FxChain>, soundId: string): FxChain {
   return chains[soundId] ?? emptyFxChain();
 }
@@ -57,10 +68,12 @@ export const useSoundFxStore = create<SoundFxStoreState>()(
 
         ensureChain: (soundId, from) => {
           if (get().chains[soundId]) return;
-          set(
-            { chains: { ...get().chains, [soundId]: from ? sanitizeFxChain(from) : emptyFxChain() } },
-            false,
-            'fx/ensureChain',
+          const chain = from ? sanitizeFxChain(from) : emptyFxChain();
+          // Hydrating the editor from the saved SoundEvent is a load, not an
+          // edit: keep it out of history and add it to every snapshot.
+          runWithoutUndo(() => set({ chains: { ...get().chains, [soundId]: chain } }, false, 'fx/ensureChain'));
+          rebaseUndoHistory<ReturnType<typeof soundFxPartialize>>('soundFx', (snap) =>
+            snap.chains[soundId] ? snap : { ...snap, chains: { ...snap.chains, [soundId]: chain } },
           );
         },
 
@@ -199,6 +212,6 @@ export const useSoundFxStore = create<SoundFxStoreState>()(
       }),
       { name: 'soundFxStore' },
     ),
-    { limit: 100 },
+    { partialize: soundFxPartialize, equality: undoEquality, limit: UNDO_HISTORY_LIMIT },
   ),
 );

@@ -9,8 +9,8 @@
  *        changes so that playAll / stopAll / handleVariantChange / handleVolumeChange
  *        have the correct sound list available.
  *
- * zundo partializes on: soundVolumes, soundTrims, iterationTrims, soundTimestamps, selectedVariants,
- *                       mutedSounds, soloedSounds  (the "user-facing" config — excludes play state).
+ * Undo covers the user-facing mix + timeline (see audioControlsPartialize) —
+ * never play state, buffer metadata or the output device.
  *
  * Scheduling is purely timestamp-driven: `soundTimestamps[soundId]` is the only stored
  * schedule. A track with NO entry is an "auto" track — the timeline derives a default
@@ -21,6 +21,7 @@
 import { create } from 'zustand';
 import { temporal } from 'zundo';
 import { devtools, persist, createJSONStorage } from 'zustand/middleware';
+import { UNDO_HISTORY_LIMIT, undoEquality, runWithoutUndo, type RegisterTemporalStoreOptions } from './undoRedoRegistry';
 import type { SoundState, SoundGenerationConfig } from '@/types';
 import type { IterationLink, TrimRange } from '@/types/audio';
 import { iterationKey, remapIterationKeys, clearIterationKeysForSound } from '@/lib/audio/utils/iteration-keys';
@@ -341,24 +342,33 @@ export interface AudioControlsStoreState {
 
 // ─── Partialize (exported for snapshot registry) ───────────────────────────
 
+// The user-facing mix + timeline. Play state, buffer metadata and the output
+// device (hardware routing, not project content) are not history. Every action
+// replaces these objects (never mutates), so references are safe in history.
+// The orchestrate bake is a derived recomputation and runs untracked.
 export const audioControlsPartialize = (state: AudioControlsStoreState) => ({
-  soundVolumes: { ...state.soundVolumes },
-  soundTrims: { ...state.soundTrims },
-  iterationTrims: { ...state.iterationTrims },
-  selectedVariants: { ...state.selectedVariants },
-  mutedSounds: new Set(state.mutedSounds),
-  soloedSounds: new Set(state.soloedSounds),
+  soundVolumes: state.soundVolumes,
+  soundTrims: state.soundTrims,
+  iterationTrims: state.iterationTrims,
+  iterationLinks: state.iterationLinks,
+  selectedVariants: state.selectedVariants,
+  mutedSounds: state.mutedSounds,
+  soloedSounds: state.soloedSounds,
   timelineDurationMs: state.timelineDurationMs,
   globalBaseDbfs: state.globalBaseDbfs,
   maximumFoleySounds: state.maximumFoleySounds,
   ttsLanguage: state.ttsLanguage,
-  outputDeviceId: state.outputDeviceId,
   normalizeImpulseResponses: state.normalizeImpulseResponses,
-  soundTimestamps: { ...state.soundTimestamps },
-  soundLoopable: { ...state.soundLoopable },
-  excludedIterations: { ...state.excludedIterations },
-  exclusionReasons: { ...state.exclusionReasons },
+  soundTimestamps: state.soundTimestamps,
+  soundLoopable: state.soundLoopable,
+  excludedIterations: state.excludedIterations,
+  exclusionReasons: state.exclusionReasons,
 });
+
+export const audioControlsUndo: RegisterTemporalStoreOptions<
+  AudioControlsStoreState,
+  ReturnType<typeof audioControlsPartialize>
+> = { partialize: audioControlsPartialize };
 
 // Module-level counter used to cancel superseded bake calls (set inside setTimeout).
 let _pendingBakeId = 0;
@@ -1016,7 +1026,9 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
           const bakeId = ++_pendingBakeId;
           set({ isBakingSchedule: true }, false, 'audio/bakeOrchestrateSchedule/start');
 
-          setTimeout(() => {
+          // The bake re-derives the schedule from the inputs — never an undo step
+          // of its own (inside a user interaction it is part of that step).
+          setTimeout(() => runWithoutUndo(() => {
           if (bakeId !== _pendingBakeId) return; // superseded — the newer bake will run the pending callback
 
           const { _soundConfigs, _generatedSounds, soundTrims, iterationTrims, soundTimestamps, soundBufferDurations, soundIterationDurations } = get();
@@ -1471,7 +1483,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             }, false, 'audio/bakeOrchestrateSchedule/done');
           }
           const cb = _pendingBakeOnDone; _pendingBakeOnDone = null; cb?.();
-          }, 0); // end of setTimeout
+          }), 0); // end of setTimeout
         },
 
         handlePreviewPlayPause: (soundId) => {
@@ -1814,19 +1826,8 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
     {
       // Only record history for user-facing config (not play state / internal)
       partialize: audioControlsPartialize,
-      equality: (past, current) =>
-        JSON.stringify(past.soundVolumes) === JSON.stringify(current.soundVolumes) &&
-        JSON.stringify(past.soundTrims) === JSON.stringify(current.soundTrims) &&
-        JSON.stringify(past.iterationTrims) === JSON.stringify(current.iterationTrims) &&
-        JSON.stringify(past.selectedVariants) === JSON.stringify(current.selectedVariants) &&
-        past.mutedSounds.size === current.mutedSounds.size &&
-        [...past.mutedSounds].every((id) => current.mutedSounds.has(id)) &&
-        past.soloedSounds.size === current.soloedSounds.size &&
-        [...past.soloedSounds].every((id) => current.soloedSounds.has(id)) &&
-        past.timelineDurationMs === current.timelineDurationMs &&
-        past.globalBaseDbfs === current.globalBaseDbfs &&
-        JSON.stringify(past.soundTimestamps) === JSON.stringify(current.soundTimestamps) &&
-        JSON.stringify(past.soundLoopable) === JSON.stringify(current.soundLoopable),
+      equality: undoEquality,
+      limit: UNDO_HISTORY_LIMIT,
     },
   ),
   {

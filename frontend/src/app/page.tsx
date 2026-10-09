@@ -38,6 +38,8 @@ import {
   useWorkspaceStore,
   useAreaDrawingStore,
   notifyError,
+  runWithoutUndo,
+  clearUndoHistory,
 } from "@/store";
 import { useSpeckleEngineStore } from "@/store/speckleEngineStore";
 import * as THREE from "three";
@@ -49,6 +51,7 @@ import { useAudioOutputDeviceSync } from "@/hooks/useAudioOutputDeviceSync";
 import { applyOutputDevice } from "@/lib/audio/output-device";
 import { useViewportScale } from "@/hooks/useViewportScale";
 import { useUndoRedo } from "@/hooks/useUndoRedo";
+import { scheduleUndoSafeDeletion } from "@/lib/undo-safe-deletion";
 import { useGlobalShortcuts } from "@/hooks/useGlobalShortcuts";
 import { useJobRecovery } from "@/hooks/useJobRecovery";
 import { useModelVersionWatcher } from "@/hooks/useModelVersionWatcher";
@@ -142,6 +145,16 @@ function stableStringify(value: unknown): string {
     }
     return val;
   });
+}
+
+/**
+ * A project / model was (re)loaded or reset: nothing before this point may be
+ * undone (Ctrl+Z must never "undo the load"). Cleared again one macrotask later
+ * so the load's follow-up effects (material / entity syncs) don't become steps.
+ */
+function resetUndoAfterLoad() {
+  clearUndoHistory();
+  setTimeout(clearUndoHistory, 0);
 }
 
 function applyRestoredSoundscapePayload(
@@ -244,6 +257,7 @@ function applyRestoredSoundscapePayload(
   // User preferences win over the project's saved generation settings so the
   // person's Advanced Settings follow them across models/workspaces.
   reapplyUserPreferences();
+  resetUndoAfterLoad();
 }
 
 /**
@@ -633,7 +647,8 @@ function HomeContent() {
       if (audioStore.soundTimestamps[sound.id] !== undefined) return;
       const timestampsSec = (sound.timestamps as unknown[]).map(parseAuthoredSeconds);
       console.log('[page:autoInit] materializing authored ts for', sound.id, ':', timestampsSec);
-      audioStore.handleTimestampsChange(sound.id, timestampsSec);
+      // Derived from the generated sound — part of the generation, not its own step.
+      runWithoutUndo(() => audioStore.handleTimestampsChange(sound.id, timestampsSec));
     });
   }, [soundGen.generatedSounds]);
 
@@ -661,7 +676,8 @@ function HomeContent() {
       if (!audioStore._generationInProgress) {
         audioStore.bakeOrchestrateSchedule();
       }
-      audioStore.setOrchestrateIterationLinks(soundGen.soundConfigs);
+      // Re-derived from the generated configs — never its own undo step.
+      runWithoutUndo(() => audioStore.setOrchestrateIterationLinks(soundGen.soundConfigs));
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [soundGen.generatedSounds]);
@@ -873,7 +889,8 @@ function HomeContent() {
 
   useEffect(() => {
     if (!worldTreeReady) return;
-    refreshEntityLinksAndPositions();
+    // Reconciling links with the (re)loaded geometry is not a user edit.
+    runWithoutUndo(refreshEntityLinksAndPositions);
   }, [worldTreeReady, worldTreeVersion, refreshEntityLinksAndPositions]);
 
   const sed = useSEDStore();
@@ -2084,6 +2101,7 @@ function HomeContent() {
     audio.restoreExclusions({}, {});
     audio.restoreMuteSolo([], []);
     useAcousticLayerStore.getState().clearAcousticLayer();
+    resetUndoAfterLoad();
   };
 
   /**
@@ -2431,6 +2449,7 @@ function HomeContent() {
           }
           console.log(`[page.tsx] Restored analysis state: ${analysisRestored.analysisConfigs.length} cards, active tab ${analysisRestored.activeTab}`);
         }
+        resetUndoAfterLoad();
       }
     } catch (err) {
       console.warn('[page.tsx] Failed to auto-load soundscape:', err);
@@ -2467,6 +2486,8 @@ function HomeContent() {
         resetDomainForFreshModel();
         await handleSpeckleModelSelect(pending.speckleData, pending.isUpload);
         mergeHomeElements(home);
+        // The imported Home elements are part of opening the model.
+        resetUndoAfterLoad();
         lastSaveSourceRef.current = 'autosave';
         saveSoundscapeRef.current?.();
       } else if (choice === 'save') {
@@ -3161,8 +3182,10 @@ function HomeContent() {
   /**
    * Remove a simulation card, then delete the IRs it exclusively owned from the
    * backend library. Scoped to 'import-irs' cards and reference-counted against
-   * the remaining configs so IRs still used elsewhere are never removed.
-   * (Kept out of the store action, which is temporal/undoable.)
+   * the configs alive at deletion time so IRs still used elsewhere are never
+   * removed. The removal is undoable, so the backend deletion is deferred until
+   * it can no longer be undone (undo-safe-deletion) — an undone removal keeps
+   * its IRs.
    */
   const handleRemoveSimulationConfig = useCallback((index: number) => {
     const store = useAcousticsSimulationStore.getState();
@@ -3171,18 +3194,15 @@ function HomeContent() {
 
     store.handleRemoveConfig(index);
 
-    if (ids.size === 0) return;
-
-    const stillReferenced = new Set<string>();
-    for (const cfg of useAcousticsSimulationStore.getState().simulationConfigs) {
-      for (const id of collectSimulationIRIds(cfg)) stillReferenced.add(id);
+    const isReferenced = (irId: string) =>
+      useAcousticsSimulationStore.getState().simulationConfigs.some((cfg) => collectSimulationIRIds(cfg).has(irId));
+    for (const id of ids) {
+      scheduleUndoSafeDeletion(`ir:${id}`, {
+        isReferenced: () => isReferenced(id),
+        run: () => apiService.deleteImpulseResponse(id).then(() => useUIStore.getState().triggerIRRefresh()),
+      });
     }
-    const toDelete = Array.from(ids).filter((id) => !stillReferenced.has(id));
-    if (toDelete.length === 0) return;
-
-    void Promise.allSettled(toDelete.map((id) => apiService.deleteImpulseResponse(id)))
-      .then(() => triggerIRRefresh());
-  }, [triggerIRRefresh]);
+  }, []);
 
   // Handler: Material assignment selection (NEW)
   const handleSelectGeometry = useCallback((selection: SelectedGeometry | null) => {
@@ -4137,6 +4157,8 @@ export default function Home() {
     (useAudioControlsStore as any).persist?.rehydrate?.();
     (useRightSidebarStore as any).persist?.rehydrate?.();
     (useAcousticLayerStore as any).persist?.rehydrate?.();
+    // Rehydrating persisted state is not an edit.
+    clearUndoHistory();
     // Rehydration restores the persisted open/closed state of the floating
     // panels. Collapse them again AFTER rehydrate so a page load or refresh
     // always starts with Settings, Object Explorer, and the DAW timeline

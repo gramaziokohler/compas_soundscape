@@ -12,45 +12,80 @@ globs: frontend/src/store/**
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
 import { temporal } from 'zundo'
+import { UNDO_HISTORY_LIMIT, undoEquality, type RegisterTemporalStoreOptions } from './undoRedoRegistry'
 
-interface MyDomainState {
-  // state fields
-}
-interface MyDomainActions {
-  setFoo: (val: string) => void
-  reset: () => void
-}
+// ... state / actions / initialState ...
 
-const initialState: MyDomainState = { /* ... */ }
+// The undoable part of the state. Actions must REPLACE objects (never mutate),
+// so history can keep references.
+export const myDomainPartialize = (s: MyDomainState) => ({ foo: s.foo })
+
+export const myDomainUndo: RegisterTemporalStoreOptions<MyDomainState, ReturnType<typeof myDomainPartialize>> = {
+  partialize: myDomainPartialize,
+  // optional: equality (ignore runtime fields) and apply (keep runtime fields live)
+}
 
 export const useMyDomainStore = create<MyDomainState & MyDomainActions>()(
-  devtools(
-    temporal(
-      (set) => ({
-        ...initialState,
-        setFoo: (val) => set({ foo: val }),
-        reset: () => set(initialState),
-      }),
-      { limit: 100 }            // max undo history depth
-    ),
-    { name: 'myDomainStore' }   // Redux DevTools label — must be unique
-  )
+  temporal(
+    devtools((set) => ({ /* ... */ }), { name: 'myDomainStore' }),
+    { partialize: myDomainPartialize, equality: undoEquality, limit: UNDO_HISTORY_LIMIT },
+  ),
 )
 ```
 
-**Only add `temporal` if the state is user-facing and undo-able** (e.g. sound configs, material
-assignments, receiver positions). Background/async state (loading flags, job IDs, progress) should
-use plain `create()` without `temporal`.
+**Always pass `equality`** (the same one as in the undo spec). Without it zundo
+records an entry on EVERY `set` — progress polls, flags, play state — and Ctrl+Z
+then "does nothing" for each of them.
+
+## What Is Undoable (the rule)
+
+Undoable = everything that changes the project content (what is saved in
+`soundscape.json` or changes generation / simulation output): cards and their
+settings, generated sounds, positions, receivers / grids, materials, the acoustic
+region, DAW timeline + mix, FX chains, global generation & simulation settings,
+Object Explorer hide / isolate / exclude.
+
+NOT undoable: navigation and display (selection, expanded / active card, wizard
+step, panels, camera, view mode, display toggles, theme, zoom), hardware (output
+device), job runtime state (progress, status, errors, streaming text) and
+**simulation runs / results** (undo never discards a finished simulation).
+Generated content (sounds, LLM cards) IS a step; streamed results collapse into
+one step.
+
+Runtime fields that live inside undoable objects (e.g. `isRunning` on a
+simulation card) must be excluded by the store's `equality` and kept live by its
+`apply` — see `acousticsSimulationStore.ts`, `soundscapeStore.ts`.
 
 ## Registering for Global Undo/Redo
 
-If the store uses `temporal`, register it in `frontend/src/store/undoRedoRegistry.ts` so
-Ctrl+Z / Ctrl+Y works across all stores in order:
+Register the store in `frontend/src/store/index.ts`:
 
 ```typescript
-// In undoRedoRegistry.ts — add one line
-registerTemporalStore('myDomain', useMyDomainStore)
+registerTemporalStore('myDomain', useMyDomainStore, myDomainUndo)
 ```
+
+## How Steps Are Formed (`undoRedoRegistry.ts`)
+
+- **Every user input is ONE step**, automatically: a pointer press (through its
+  click), a key press, a text-field edit (focus → blur), a drop, a file pick.
+  `installUndoInteractionTracking` (mounted by `useUndoRedo`) pauses every store
+  for the interaction and commits whatever changed. Sliders, drags and typing need
+  no wiring.
+- Writes outside any interaction are **background** writes (job results); they
+  are steps too, and consecutive ones on a store collapse into one step.
+- **Derived recomputations / syncs** (bakes, effects mirroring one store into
+  another) → wrap in `runWithoutUndo(fn)`. Inside an interaction they still join
+  its step; outside one they record nothing.
+- **Loads** (preferences, restoring saved data, hydrating an editor) →
+  `runAsLoad(fn)` (whole top-level fields) or `runWithoutUndo` + a precise
+  `rebaseUndoHistory(id, patch)`, so undo never reverts what was loaded.
+- **Opening / resetting a project or model** → `clearUndoHistory()` (page.tsx
+  `resetUndoAfterLoad`). Ctrl+Z must never "undo the load".
+- **Never call `store.temporal.getState().pause()/resume()` directly** — it breaks
+  interaction sessions. Use the helpers above.
+- **Backend deletions tied to an undoable removal** (IR files, SED segment WAVs)
+  → `scheduleUndoSafeDeletion` (`lib/undo-safe-deletion.ts`), never delete
+  immediately: an undo would restore an item whose file is gone.
 
 ## Barrel Export — Required
 
@@ -92,42 +127,39 @@ export const useAudioStore = create<...>()((set) => ({
 }))
 ```
 
-## Pause / Commit Pattern (Continuous Gestures)
+## Pause / Commit Pattern (explicit gestures)
 
-Sliders, Three.js drag handles, and any input that fires many times per second must use the
-pause/commit pattern to prevent flooding undo history:
+Interactions already batch, so explicit gestures are only needed for flows that
+span several interactions (e.g. Re-assign acoustic region: clear → pick →
+confirm / cancel) or for code that must commit early:
 
 ```typescript
-import { pauseStore, commitStore } from '@/store/undoRedoRegistry'
+import { pauseStore, commitStore } from '@/store'
 
-// On drag start (onPointerDown / onMouseDown)
-pauseStore('myDomain')
-
-// Update state freely during drag — these are NOT recorded individually
-store.setFoo(newValue)
-
-// On drag end (onPointerUp / onMouseUp)
-commitStore('myDomain')   // records a single undo step
+pauseStore('myDomain', { spanInteractions: true }) // flow start
+// ... any number of clicks / edits ...
+commitStore('myDomain') // one step — nothing if the state ended unchanged
 ```
 
-**Always pair `pauseStore` with `commitStore`.** A missing `commitStore` will freeze the undo
-history for that store for the rest of the session.
+`commitStore` without `pauseStore` is a no-op; undo / redo commit open gestures.
 
 ## Current Stores Overview
 
-| Store | Domain | Temporal? |
-| ----- | ------ | --------- |
-| `speckleStore` | 3D scene, Speckle viewer, object selection | ✓ |
-| `soundscapeStore` | Sound configs, generation status, blob URLs | ✓ |
-| `audioControlsStore` | Playback: volumes, variants, intervals, mute/solo | ✓ |
-| `cardFlowStore` | Sidebar card wizard state | ✓ |
-| `uiStore` | UI state: active step, modal visibility | ✓ |
-| `acousticsSimulationStore` | Pyroomacoustics & Choras simulation state | ✓ |
-| `receiversStore` | Receiver positions in 3D scene | ✓ |
-| `roomMaterialsStore` | Material absorption assignments | ✓ |
-| `pyroomAcousticsStore` | PyRoom config: room geometry, method | ✓ |
-| `chorasStore` | Choras solver config | ✓ |
-| `sedStore` | SED detection regions | ✓ |
-| `analysisStore` | Analysis config (SED, modal) | ✓ |
-| `modalImpactStore` | Modal synthesis config | ✓ |
-| `acousticMaterialStore` | Material library selections | ✓ |
+| Store | Undoable part (`id`) | Not undoable |
+| ----- | -------------------- | ------------ |
+| `soundscapeStore` | cards, generated events, global generation settings (`soundscape`) | generation progress, card library-search results, card errors |
+| `analysisStore` | analysis cards + results / prompt selection (`analysis`) | active tab, streaming text, live screenshots, errors |
+| `audioControlsStore` | volumes, trims, timestamps, iteration links / trims, variants, mute / solo, timeline length, base dBFS, TTS language, foley max, IR normalize (`audioControls`) | play state, buffers, output device; the bake runs untracked |
+| `acousticsSimulationStore` | simulation cards + settings, room scale (`acousticsSimulation`) | runs / results, active & expanded card, view fields |
+| `acousticMaterialStore` | material + scattering assignments of the active card (`acousticMaterial`; history reset on card switch) | layer data |
+| `acousticLayerStore` | acoustic region selection (`acousticLayer`) | resolved geometry ids, face counts; auto-detect is a load |
+| `receiversStore` | receivers (`receivers`) | selection |
+| `gridListenersStore` | grid listeners (`gridListeners`) | — |
+| `areaDrawingStore` | drawn polygons (`areaDrawing`) | drawing mode, visual states |
+| `soundFxStore` | FX chains (`soundFx`) | expanded editor; editor hydration is a load |
+| `cardFlowStore` | card lineage maps (`cardFlow`) | active context / usage card |
+| `roomMaterialsStore` | ShoeBox materials + dimensions (`roomMaterials`) | — |
+| `sedStore` | detected sounds, options, loaded file info (`sed`) | progress, errors |
+| `uiStore` | global sound speed, mesh size, mesh settings (`ui`) | everything else (navigation / display) |
+| `speckleStore` | hide / isolate / exclude-from-acoustic intent (`speckle`) | selection, hover, colors, view mode |
+| `pyroomAcousticsStore`, `chorasStore`, `modalImpactStore` | — (runtime job state only) | all |

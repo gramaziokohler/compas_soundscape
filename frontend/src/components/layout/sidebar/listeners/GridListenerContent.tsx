@@ -9,7 +9,7 @@ import { Notice } from '@/components/ui/Notice';
 import { FpsLockedNotice } from './FpsLockedNotice';
 import { GRID_LISTENER_CONFIG } from '@/utils/constants';
 import { useGridListenersStore } from '@/store/gridListenersStore';
-import { useAreaDrawingStore } from '@/store';
+import { useAreaDrawingStore, pauseStore, commitStore } from '@/store';
 import { useObjectSelectionPhase } from '@/hooks/useObjectSelectionPhase';
 import { RefreshIcon } from '@/components/ui/Icon';
 import type { GridListenerData, GridPlacementMode } from '@/types/receiver';
@@ -164,8 +164,9 @@ export function GridListenerContent({
     };
   }, [grid.id]);
 
+  // One undo step per slider drag.
   const handleDragStart = useCallback(() => {
-    useGridListenersStore.temporal.getState().pause();
+    pauseStore('gridListeners');
   }, []);
 
   const handleSpacingChange = useCallback((field: 'xSpacing' | 'ySpacing' | 'zOffset', value: number) => {
@@ -174,7 +175,7 @@ export function GridListenerContent({
 
   const handleDragEnd = useCallback((field: 'xSpacing' | 'ySpacing' | 'zOffset', value: number) => {
     updateGridListener(grid.id, { [field]: value });
-    useGridListenersStore.temporal.getState().resume();
+    commitStore('gridListeners');
   }, [grid.id, updateGridListener]);
 
   const isAreaIdle = mode === 'area' && !hasBoundary && !isDrawingThisGrid;

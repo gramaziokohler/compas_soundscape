@@ -9,7 +9,11 @@
  * exposed via the legacy singular fields for consumers that assume one layer
  * (material assignment); isolation + simulation use the resolved geometry union.
  *
- * Persisted for refresh survival. Non-temporal (configuration, not user-drawing state).
+ * Persisted for refresh survival. Undoable: the user's region selection is an
+ * edit (it changes what gets simulated). Auto-detection / persisted-selection
+ * validation are loads (runAsLoad) and resolved geometry ids are derived — none
+ * of those create a step. A whole Re-assign flow (clear → pick → confirm or
+ * cancel) is ONE step via the capture/restore/discard snapshot helpers.
  *
  * Producers : ObjectExplorer checkbox selection, useAcousticLayerIsolation auto-detect
  * Consumers : ObjectExplorer (tree filtering), useAcousticLayerIsolation (isolation effect),
@@ -19,6 +23,14 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { devtools } from 'zustand/middleware';
+import { temporal } from 'zundo';
+import {
+  UNDO_HISTORY_LIMIT,
+  undoEquality,
+  pauseStore,
+  commitStore,
+  type RegisterTemporalStoreOptions,
+} from './undoRedoRegistry';
 import { getAcousticLayerAllIds } from './speckleStore';
 
 const initialState = {
@@ -83,8 +95,37 @@ interface AcousticLayerActions {
   clearAcousticLayer: () => void;
 }
 
-export const useAcousticLayerStore = create<AcousticLayerState & AcousticLayerActions>()(
+type AcousticLayerStoreState = AcousticLayerState & AcousticLayerActions;
+
+// The selection (and the geometry it resolved to, restored as a coherent pair).
+// Derived geometry ids / face counts never create a step on their own.
+export const acousticLayerPartialize = (state: AcousticLayerStoreState) => ({
+  selectedAcousticLayerId: state.selectedAcousticLayerId,
+  selectedAcousticLayerName: state.selectedAcousticLayerName,
+  selectedAcousticLayerIds: state.selectedAcousticLayerIds,
+  selectedAcousticLayerNames: state.selectedAcousticLayerNames,
+  selectedAcousticGeometryIds: state.selectedAcousticGeometryIds,
+  selectedAcousticFaceCount: state.selectedAcousticFaceCount,
+  isWholeModel: state.isWholeModel,
+  autoDetected: state.autoDetected,
+});
+
+type AcousticLayerSnapshot = ReturnType<typeof acousticLayerPartialize>;
+
+const acousticLayerEquality = (a: AcousticLayerSnapshot, b: AcousticLayerSnapshot): boolean => {
+  const { selectedAcousticGeometryIds: _ga, selectedAcousticFaceCount: _fa, ...restA } = a;
+  const { selectedAcousticGeometryIds: _gb, selectedAcousticFaceCount: _fb, ...restB } = b;
+  return undoEquality(restA, restB);
+};
+
+export const acousticLayerUndo: RegisterTemporalStoreOptions<AcousticLayerStoreState, AcousticLayerSnapshot> = {
+  partialize: acousticLayerPartialize,
+  equality: acousticLayerEquality,
+};
+
+export const useAcousticLayerStore = create<AcousticLayerStoreState>()(
   persist(
+    temporal(
     devtools(
       (set) => ({
         ...initialState,
@@ -184,6 +225,8 @@ export const useAcousticLayerStore = create<AcousticLayerState & AcousticLayerAc
       }),
       { name: 'acousticLayerStore' },
     ),
+      { partialize: acousticLayerPartialize, equality: acousticLayerEquality, limit: UNDO_HISTORY_LIMIT },
+    ),
     {
       name: 'compas-acoustic-layer',
       storage: createJSONStorage(() => localStorage),
@@ -244,6 +287,9 @@ let _reassignSnapshot: AcousticSelectionPayload | null = null;
  * assigned) leaves the snapshot null so Cancel simply aborts.
  */
 export function captureAcousticSelectionSnapshot(): void {
+  // The whole re-assign (clear → pick → confirm / cancel) records as ONE undo
+  // step from the pre-re-assign region; a cancel records nothing.
+  pauseStore('acousticLayer', { spanInteractions: true });
   const s = useAcousticLayerStore.getState();
   if (s.selectedAcousticLayerIds.length === 0) {
     _reassignSnapshot = null;
@@ -266,14 +312,15 @@ export function captureAcousticSelectionSnapshot(): void {
 export function restoreAcousticSelectionSnapshot(): boolean {
   const snap = _reassignSnapshot;
   _reassignSnapshot = null;
-  if (!snap) return false;
-  useAcousticLayerStore.getState().setAcousticSelection(snap);
-  return true;
+  if (snap) useAcousticLayerStore.getState().setAcousticSelection(snap);
+  commitStore('acousticLayer');
+  return !!snap;
 }
 
 /** Drop the snapshot after a re-assign is confirmed (no restore). */
 export function discardAcousticSelectionSnapshot(): void {
   _reassignSnapshot = null;
+  commitStore('acousticLayer');
 }
 
 /**

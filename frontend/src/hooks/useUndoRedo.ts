@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { globalUndo, globalRedo } from '@/store';
+import { globalUndo, globalRedo, installUndoInteractionTracking } from '@/store';
 import { hasModKey, isTypingTarget } from '@/lib/shortcuts/keyboard-utils';
 
 /**
@@ -7,10 +7,15 @@ import { hasModKey, isTypingTarget } from '@/lib/shortcuts/keyboard-utils';
  * shortcuts that undo/redo the most recent action across ALL registered zundo
  * stores in chronological order.
  *
+ * Also installs interaction tracking: every pointer press and every text-field
+ * edit records as ONE undo step (see installUndoInteractionTracking).
+ *
  * Mount once at the root of the app (page.tsx).
  * Skipped when focus is inside a text field or contenteditable element.
  */
 export function useUndoRedo(): void {
+  useEffect(() => installUndoInteractionTracking(), []);
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (!hasModKey(e) || e.altKey) return;

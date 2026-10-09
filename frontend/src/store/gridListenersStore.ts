@@ -17,6 +17,7 @@ import {
 } from '@/lib/three/grid-listener-geometry';
 import type { GridListenerData } from '@/types/receiver';
 import type { DrawnArea } from '@/types/area-drawing';
+import { UNDO_HISTORY_LIMIT, undoEquality, type RegisterTemporalStoreOptions } from './undoRedoRegistry';
 
 // ─── Grid computation ─────────────────────────────────────────────────────────
 
@@ -34,6 +35,11 @@ function layoutGridPoints(g: GridListenerData): [number, number, number][] {
 export const gridListenersPartialize = (state: GridListenersStoreState) => ({
   gridListeners: state.gridListeners,
 });
+
+export const gridListenersUndo: RegisterTemporalStoreOptions<
+  GridListenersStoreState,
+  ReturnType<typeof gridListenersPartialize>
+> = { partialize: gridListenersPartialize };
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -224,6 +230,6 @@ export const useGridListenersStore = create<GridListenersStoreState>()(
       }),
       { name: 'gridListenersStore' },
     ),
-    { partialize: gridListenersPartialize },
+    { partialize: gridListenersPartialize, equality: undoEquality, limit: UNDO_HISTORY_LIMIT },
   ),
 );

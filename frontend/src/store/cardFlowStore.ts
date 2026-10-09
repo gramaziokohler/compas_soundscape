@@ -9,10 +9,16 @@
  *
  * Also maintains parent→child index mappings for ctrl+drag copy support —
  * when a card is duplicated with linked results, we can find its children.
+ *
+ * The lineage is undoable together with the cards it describes (it is written
+ * in the same interaction, so both undo in one step). The active context /
+ * usage card is navigation and is not.
  */
 import { create } from 'zustand';
 import { devtools, persist } from 'zustand/middleware';
 import type { PersistStorage, StorageValue } from 'zustand/middleware';
+import { temporal } from 'zundo';
+import { UNDO_HISTORY_LIMIT, undoEquality, type RegisterTemporalStoreOptions } from './undoRedoRegistry';
 
 const cardFlowStorage: PersistStorage<CardFlowState> = {
   getItem: (name) => {
@@ -86,8 +92,20 @@ export interface CardFlowState {
   setActiveUsageOriginalIndex: (index: number | null) => void;
 }
 
+export const cardFlowPartialize = (state: CardFlowState) => ({
+  contextAdvanced: state.contextAdvanced,
+  usageAdvanced: state.usageAdvanced,
+  contextToUsageMap: state.contextToUsageMap,
+  usageToSoundMap: state.usageToSoundMap,
+});
+
+export const cardFlowUndo: RegisterTemporalStoreOptions<CardFlowState, ReturnType<typeof cardFlowPartialize>> = {
+  partialize: cardFlowPartialize,
+};
+
 export const useCardFlowStore = create<CardFlowState>()(
   persist(
+    temporal(
     devtools(
       (set, get) => ({
   contextAdvanced: new Set(),
@@ -152,6 +170,8 @@ export const useCardFlowStore = create<CardFlowState>()(
   setActiveUsageOriginalIndex: (index) => set({ activeUsageOriginalIndex: index }, false, 'cardFlow/setActiveUsage'),
     }),
     { name: 'cardFlowStore' },
+  ),
+    { partialize: cardFlowPartialize, equality: undoEquality, limit: UNDO_HISTORY_LIMIT },
   ),
   {
     name: 'compas-cardflow-state',

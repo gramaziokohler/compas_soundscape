@@ -7,11 +7,10 @@
  * they live as module-level refs. The store holds only the serializable/
  * displayable parts of the state.
  *
- * zundo partializes on the modal analysis result (the key "user intent" data).
+ * Analysis / synthesis output only — not part of undo/redo.
  */
 
 import { create } from 'zustand';
-import { temporal } from 'zundo';
 import { devtools } from 'zustand/middleware';
 import { apiService } from '@/services/api';
 import { ModalImpactSynthesizer } from '@/lib/audio/modal-impact-synthesis';
@@ -33,16 +32,6 @@ function getSynthesizer(): ModalImpactSynthesizer {
   if (!_synthesizer) _synthesizer = new ModalImpactSynthesizer();
   return _synthesizer;
 }
-
-// ─── Partialize ───────────────────────────────────────────────────────────────
-
-export const modalImpactPartialize = (state: ModalImpactStoreState) => ({
-  modalState: {
-    isAnalyzing: state.modalState.isAnalyzing,
-    result: state.modalState.result,
-    error: state.modalState.error,
-  },
-});
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -72,7 +61,6 @@ export interface ModalImpactStoreState {
 // ─── Store ────────────────────────────────────────────────────────────────────
 
 export const useModalImpactStore = create<ModalImpactStoreState>()(
-  temporal(
     devtools(
       (set, get) => ({
         modalState: { isAnalyzing: false, result: null, error: null },
@@ -230,6 +218,4 @@ export const useModalImpactStore = create<ModalImpactStoreState>()(
       }),
       { name: 'modalImpactStore' },
     ),
-    { partialize: modalImpactPartialize },
-  ),
 );
