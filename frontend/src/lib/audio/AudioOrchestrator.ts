@@ -59,7 +59,7 @@ import {
   getAudioBufferInfo,
   formatAudioBufferInfo
 } from './utils/audio-file-decoder';
-import { AUDIO_CONTROL, DEFAULT_SPEED_OF_SOUND, API_BASE_URL } from '@/utils/constants';
+import { AUDIO_CONTROL, AUDIO_SAMPLE_RATE, DEFAULT_SPEED_OF_SOUND, API_BASE_URL } from '@/utils/constants';
 import { registerOutputDeviceTarget } from './output-device';
 import { OutputLevelMeter } from './utils/output-level-meter';
 
@@ -1309,7 +1309,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     return {
       mode: this.currentMode,
       ambisonicOrder: this.ambisonicOrder,
-      sampleRate: this.audioContext?.sampleRate ?? 48000,
+      sampleRate: this.audioContext?.sampleRate ?? AUDIO_SAMPLE_RATE,
       sourceRegistry: new Map(this.sourceRegistry),
       listenerPosition,
       listenerOrientation,

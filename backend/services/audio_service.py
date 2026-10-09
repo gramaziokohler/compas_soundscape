@@ -13,8 +13,10 @@ from utils.audio_processing import (
     trim_to_noise_region,
     ensure_mono,
 )
+from utils.resampling import resample_tensor_to
 from config.constants import (
     TANGOFLUX_MODEL_NAME,
+    TANGOFLUX_NATIVE_SAMPLE_RATE,
     TANGOFLUX_DTYPE,
     TANGOFLUX_LOCAL_DIR,
     AUDIO_MODEL_TANGOFLUX,
@@ -243,6 +245,9 @@ class AudioService:
                     self.device = original_device
                 else:
                     raise
+
+            # Resample from TangoFlux's native rate to the master output rate
+            audio = resample_tensor_to(audio, TANGOFLUX_NATIVE_SAMPLE_RATE)
 
             # Step 1: Normalize to base RMS level
             audio = normalize_audio_rms(audio, target_rms=TARGET_RMS)

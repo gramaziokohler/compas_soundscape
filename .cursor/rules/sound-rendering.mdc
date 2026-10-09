@@ -24,6 +24,17 @@ Mode enum and type definitions: `frontend/src/types/audio.ts`
 - React components access the orchestrator via `useAudioOrchestrator` hook:
   `frontend/src/hooks/useAudioOrchestrator.ts`
 
+## Sample Rate — One Constant per Layer
+
+- Frontend: `AUDIO_SAMPLE_RATE` in `frontend/src/utils/constants.ts` (48 kHz) drives every
+  `AudioContext`, impact synthesis, and the ElevenLabs `pcm_<rate>` output format. Never hardcode
+  44100/48000 — fallbacks use the constant too.
+- Backend: `AUDIO_SAMPLE_RATE` in `backend/config/constants.py` (same value). Every written file is
+  converted with `backend/utils/resampling.py` (`resample_to` / `resample_tensor_to`) — the only
+  resampler; model/solver-native rates (TangoFlux, AudioLDM2, SA3, TTS, Choras DE) stay as named
+  "native" constants. Choras DG passes the rate to `edg_acoustics.Monopole_postprocessor(sampling_freq=…)`.
+- Keep the two constants equal. Files at other rates still play (decodeAudioData resamples).
+
 ## Mode Auto-Selection
 
 `frontend/src/lib/audio/utils/mode-selector.ts` selects the active mode based on:

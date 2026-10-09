@@ -11,6 +11,7 @@ import json
 import numpy as np
 from math import log, sqrt, factorial, pow
 import edg_acoustics
+from config.constants import AUDIO_SAMPLE_RATE
 import pandas as pd
 
 print(edg_acoustics.__file__)
@@ -299,8 +300,9 @@ def dg_method(json_file_path: str | Path, save_results_to_json: bool = True):
         json_file_path=json_file_path,
     )
 
-    results = edg_acoustics.Monopole_postprocessor(sim, 1)
-    # At this point IRnew is the resampled (44100 Hz) but uncorrected impulse response.
+    # Resample the solver output once, straight to the master output rate.
+    results = edg_acoustics.Monopole_postprocessor(sim, 1, sampling_freq=AUDIO_SAMPLE_RATE)
+    # At this point IRnew is the resampled (AUDIO_SAMPLE_RATE) but uncorrected impulse response.
     # Capture it BEFORE apply_correction() overwrites it — the correction divides by
     # TR_free which has zero energy at DC (the monopole source is a Gaussian derivative,
     # so its integral = 0), causing ifft(NaN) → entirely NaN corrected IR.
@@ -316,7 +318,7 @@ def dg_method(json_file_path: str | Path, save_results_to_json: bool = True):
             with open(json_file_path, "r", encoding="utf-8") as file:
                 data = json.load(file)
             for i in range(rec.shape[1]):
-                # Use pre-correction resampled IR — guaranteed non-NaN at 44100 Hz.
+                # Use pre-correction resampled IR — guaranteed non-NaN at AUDIO_SAMPLE_RATE.
                 data["results"][0]["responses"][i]["receiverResults"] = ir_resampled[i]
                 data["results"][0]["responses"][i]["receiverResultsUncorrected"] = results.IRold[i].tolist()
             with open(json_file_path, "w", encoding="utf-8") as file:

@@ -6,6 +6,7 @@ import numpy as np
 import librosa
 from config.constants import (
     AUDIO_RMS_EPSILON,
+    AUDIO_SAMPLE_RATE,
     CLIPPING_THRESHOLD,
     DBFS_CLIPPING_THRESHOLD,
     DEFAULT_DBFS,
@@ -461,7 +462,7 @@ def _get_channel_noise_profile(
 
 def apply_denoising(
     audio_tensor: torch.Tensor,
-    sample_rate: int = 44100,
+    sample_rate: int = AUDIO_SAMPLE_RATE,
     reduction: float = DENOISING_REDUCTION_STRENGTH,
 ) -> torch.Tensor:
     """Apply noise reduction to audio using spectral gating.
@@ -475,7 +476,7 @@ def apply_denoising(
 
     Args:
         audio_tensor: Audio tensor of shape (channels, samples).
-        sample_rate: Sample rate in Hz (default 44100).
+        sample_rate: Sample rate in Hz (default AUDIO_SAMPLE_RATE).
         reduction: Spectral-gating strength (``noisereduce`` ``prop_decrease``),
             clamped to [0, 1]. Defaults to ``DENOISING_REDUCTION_STRENGTH``.
 

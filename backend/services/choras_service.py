@@ -20,11 +20,11 @@ import numpy as np
 from config.constants import (
     CHORAS_ABSORPTION_MATERIALS,
     CHORAS_DE_SAMPLE_RATE,
-    CHORAS_DG_SAMPLE_RATE,
     CHORAS_RIR_DIR,
     CHORAS_DEFAULT_FREQUENCIES,
     AUDIO_SAMPLE_RATE
 )
+from utils.resampling import resample_to
 
 logger = logging.getLogger(__name__)
 
@@ -191,14 +191,14 @@ class ChorasService:
         difference of the squared pressure), not a signed pressure signal.
         To recover a perceptually plausible stochastic IR we:
 
-          1. Resample each band's envelope from 20 kHz to 44.1 kHz.
+          1. Resample each band's envelope from CHORAS_DE_SAMPLE_RATE to AUDIO_SAMPLE_RATE.
           2. Clip to non-negative (energy is always ≥ 0).
           3. Take the square root → amplitude envelope per band.
           4. Generate a single white-noise vector, then band-limit it with an
              8th-order Butterworth filter centred on each octave-band frequency.
           5. Multiply the per-band amplitude envelope by the corresponding
              filtered noise and sum all bands → broadband stochastic IR.
-          6. Normalise and write to 16-bit WAV at 44.1 kHz.
+          6. Normalise and write to 16-bit WAV at AUDIO_SAMPLE_RATE.
 
         Returns:
             Path to the WAV file, or ``None`` if no pressure CSV was found.
@@ -207,10 +207,10 @@ class ChorasService:
 
         import pandas as pd
         from scipy.io import wavfile
-        from scipy.signal import butter, resample_poly, sosfilt
+        from scipy.signal import butter, sosfilt
 
-        _FS_IN  = CHORAS_DE_SAMPLE_RATE   # 20 000 Hz (DE time step = 1/20000 s)
-        _FS_OUT = AUDIO_SAMPLE_RATE                    # standard audio output rate
+        _FS_IN  = CHORAS_DE_SAMPLE_RATE   # DE solver rate (1/dt of the pressure CSV)
+        _FS_OUT = AUDIO_SAMPLE_RATE       # master audio output rate
         _FILTER_ORDER = 8
         _NTH_OCTAVE   = 1                 # 1-octave bands
         _RANDOM_SEED  = 215
@@ -249,7 +249,7 @@ class ChorasService:
             n_out = ceil(n_in * _FS_OUT / _FS_IN)
             p_band_rs = np.zeros((nBands, n_out), dtype=np.float64)
             for i in range(nBands):
-                resampled = resample_poly(p_band[i], up=int(_FS_OUT), down=int(_FS_IN))
+                resampled = resample_to(p_band[i], _FS_IN, _FS_OUT)
                 p_band_rs[i, : len(resampled)] = resampled[:n_out]
 
             # ── 2. Clip to non-negative (energy derivative must be ≥ 0) ──────
@@ -331,7 +331,8 @@ class ChorasService:
         DG writes ``receiverResults`` (the corrected broadband IR time series)
         directly into ``json_path`` under ``results[0].responses[receiver_index]``.
 
-        Output WAV is written to ``CHORAS_RIR_DIR`` at 44.1 kHz.
+        Output WAV is written to ``CHORAS_RIR_DIR`` at AUDIO_SAMPLE_RATE (DGinterface
+        asks edg_acoustics to resample the solver output to that rate).
 
         Returns:
             Path to the WAV file, or ``None`` on failure.
@@ -365,7 +366,7 @@ class ChorasService:
             # is preserved. Closer receivers will have a larger peak than farther ones.
             Path(CHORAS_RIR_DIR).mkdir(parents=True, exist_ok=True)
             wav_path = Path(CHORAS_RIR_DIR) / f"choras_{pair_key}.wav"
-            wavfile.write(str(wav_path), CHORAS_DG_SAMPLE_RATE, ir.astype(np.float32))
+            wavfile.write(str(wav_path), AUDIO_SAMPLE_RATE, ir.astype(np.float32))
             logger.info(
                 f"[DG->WAV] Wrote {len(ir)} samples to {wav_path} "
                 f"(peak {np.max(np.abs(ir)):.4e})"

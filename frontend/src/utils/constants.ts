@@ -520,6 +520,9 @@ export const STABLE_AUDIO_EXTEND_MAX_SECONDS = 380;
 export const DEFAULT_SOUND_LOOP = false;
 export const ELEVENLABS_DURATION_MIN = 0.5;
 export const ELEVENLABS_DURATION_MAX = 30;
+// HTTP statuses ElevenLabs returns when an output format (e.g. pcm_48000) isn't
+// allowed for the account's plan → fall back to the default MP3 format.
+export const ELEVENLABS_FORMAT_REJECTED_STATUSES: ReadonlySet<number> = new Set([400, 403, 422]);
 // Only send an explicit duration to ElevenLabs for non-background sounds whose
 // target (LLM) duration is at least this long. Shorter events and background
 // beds omit it so the model picks the optimal length itself.
@@ -989,20 +992,14 @@ export const IMPULSE_RESPONSE = {
 // ============================================================================
 
 /**
- * Global audio sample rate for the entire application.
+ * Global audio sample rate for the entire application — the ONE frontend
+ * source of truth (mirror of backend `config/constants.py` AUDIO_SAMPLE_RATE).
  *
- * This value controls the AudioContext sample rate and ensures consistent
- * audio processing throughout the app. All audio buffers, HRTF data, and
- * impulse responses will be resampled to match this rate.
- *
- * Common values:
- * - 44100 Hz: CD quality, widely compatible
- * - 48000 Hz: Professional audio, video sync, modern browser default
- *
- * Note: Most modern browsers default to 48000 Hz. Using a different rate
- * may require resampling of audio resources.
+ * Controls the AudioContext rate (decoded buffers, HRTF data and impulse
+ * responses are resampled to it), the impact-sound synthesis rate, and the
+ * ElevenLabs PCM output format (`pcm_<rate>`).
  */
-export const AUDIO_SAMPLE_RATE = 44100
+export const AUDIO_SAMPLE_RATE = 48000
 
 // ============================================================================
 // Ambisonic Audio Configuration

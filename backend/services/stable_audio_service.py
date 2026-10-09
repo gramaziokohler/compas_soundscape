@@ -42,6 +42,7 @@ from config.constants import (
     DEFAULT_DBFS,
     AUDIO_SAMPLE_RATE,
 )
+from utils.resampling import resample_to
 
 
 class StableAudioCancelled(Exception):
@@ -226,10 +227,11 @@ class StableAudioService:
 
         if stage_callback:
             stage_callback("Post-processing...")
-        mono = torch.from_numpy(_to_mono_np(audio)).unsqueeze(0)  # (1, samples)
+        # Model-native rate -> master output rate, then (1, samples)
+        mono = torch.from_numpy(resample_to(_to_mono_np(audio), self.sample_rate)).float().unsqueeze(0)
         mono = _normalize_rms(mono)
         mono = _apply_dbfs(mono, dbfs)
 
         os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
-        sf.write(output_path, mono.squeeze(0).numpy(), self.sample_rate)
-        print(f"[sa3] wrote {output_path} ({self.sample_rate} Hz, {duration}s target)")
+        sf.write(output_path, mono.squeeze(0).numpy(), AUDIO_SAMPLE_RATE)
+        print(f"[sa3] wrote {output_path} ({AUDIO_SAMPLE_RATE} Hz, {duration}s target)")

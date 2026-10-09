@@ -19,6 +19,7 @@ from utils.audio_processing import (
     apply_dbfs_calibration,
     apply_denoising as denoise_audio
 )
+from utils.resampling import resample_tensor_to
 
 
 class AudioLDM2Service:
@@ -110,13 +111,8 @@ class AudioLDM2Service:
         # Extract audio tensor from result (shape: [batch, samples])
         audio = torch.from_numpy(audio_result.audios[0]).unsqueeze(0)  # Add channel dimension
 
-        # Resample from AudioLDM2's sample rate (16kHz) to target sample rate (44.1kHz)
-        if AUDIOLDM2_SAMPLE_RATE != AUDIO_SAMPLE_RATE:
-            resampler = torchaudio.transforms.Resample(
-                orig_freq=AUDIOLDM2_SAMPLE_RATE,
-                new_freq=AUDIO_SAMPLE_RATE
-            ).to(audio.device)
-            audio = resampler(audio)
+        # Resample from AudioLDM2's native rate to the master output rate
+        audio = resample_tensor_to(audio, AUDIOLDM2_SAMPLE_RATE)
 
         # Step 1: Normalize to base RMS level
         audio = normalize_audio_rms(audio, target_rms=TARGET_RMS)

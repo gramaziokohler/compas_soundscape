@@ -133,7 +133,10 @@ CLIPPING_THRESHOLD = 0.99  # Threshold to prevent clipping
 DBFS_CLIPPING_THRESHOLD = 0.99  # Threshold for dBFS calibration clipping prevention
 
 # Sample Rate
-AUDIO_SAMPLE_RATE = 44100  # Browser default AudioContext sample rate in Hz (matches Web Audio API default)
+AUDIO_SAMPLE_RATE = 48000  # MASTER output sample rate (Hz) for every file the backend writes.
+                           # Mirror of frontend/src/utils/constants.ts AUDIO_SAMPLE_RATE (AudioContext rate).
+                           # Model/solver-native rates below are resampled to this via utils/resampling.py.
+RESAMPLE_MAX_DENOMINATOR = 1000  # Max up/down factor when approximating a non-integer rate ratio (resample_poly)
 
 # Audio Processing Thresholds
 AUDIO_RMS_EPSILON = 1e-8  # Epsilon threshold for RMS calculation
@@ -177,6 +180,7 @@ FORCE_CPU_MODE = os.environ.get("FORCE_CPU_MODE", "false").lower() == "true"
 
 # TangoFlux Model
 TANGOFLUX_MODEL_NAME = "declare-lab/TangoFlux"
+TANGOFLUX_NATIVE_SAMPLE_RATE = 44100  # TangoFlux VAE output rate (resampled to AUDIO_SAMPLE_RATE)
 # Optional: "bfloat16" halves VRAM (~9-10GB vs ~18-20GB fp32) at a small quality cost.
 # Leave unset (None) for full fp32 precision.
 TANGOFLUX_DTYPE = os.environ.get("TANGOFLUX_DTYPE") or None
@@ -193,7 +197,7 @@ TANGOFLUX_WARMUP_STEPS = 2
 AUDIOLDM2_MODEL_NAME = "cvssp/audioldm2-large"
 AUDIOLDM2_INFERENCE_STEPS = 200  # Default number of inference steps for AudioLDM2
 AUDIOLDM2_NUM_WAVEFORMS = 1  # Number of waveforms to generate per prompt
-AUDIOLDM2_SAMPLE_RATE = 16000  # AudioLDM2 output sample rate
+AUDIOLDM2_SAMPLE_RATE = 16000  # AudioLDM2 native output rate (resampled to AUDIO_SAMPLE_RATE)
 
 # Stable Audio 3 (StabilityAI) — text-to-audio, audio-to-audio and inpainting.
 # Runs in an ISOLATED conda env (compas-sa3: Python 3.10, torch 2.7.1, transformers 5)
@@ -256,7 +260,7 @@ TTS_MODEL_NAMES = {
     TTS_MODEL_GEMINI_FLASH: "Gemini 3.8 Flash TTS",
     TTS_MODEL_GEMINI_FLASH_LITE: "Gemini 3.8 Flash-Lite TTS",
 }
-TTS_SAMPLE_RATE = 24000
+TTS_SAMPLE_RATE = 24000  # Gemini TTS native output rate (resampled to AUDIO_SAMPLE_RATE)
 TTS_DEFAULT_VOICE = "Kore"
 TTS_AVAILABLE_VOICES = [
     "Kore",
@@ -499,7 +503,7 @@ PREFLIGHT_MODEL_DIAGONAL_MAX_M = 1000.0       # Larger model bounding box -> uni
 PREFLIGHT_MAX_LISTED_ITEMS = 25               # Max objects listed per issue
 PREFLIGHT_MAX_ISSUE_FACE_IDS = 5000           # Max face ids attached to one issue (for highlighting)
 PREFLIGHT_PAYLOAD_DECIMALS = 4                # Vertex rounding in the preview payload (0.1 mm)
-PYROOMACOUSTICS_SAMPLE_RATE = 44100  # Sample rate -- uses n_bands = math.floor(np.log2(SAMPLE_RATE / BASE_FREQUENCY))
+PYROOMACOUSTICS_SAMPLE_RATE = AUDIO_SAMPLE_RATE  # Sample rate -- uses n_bands = math.floor(np.log2(SAMPLE_RATE / BASE_FREQUENCY))
 PYROOMACOUSTICS_USE_RAND_ISM = False  # Use randomized ISM for better realism
 PYROOMACOUSTICS_IR_TRIM_THRESHOLD = 0.01  # Fraction of peak amplitude below which trailing IR samples are trimmed
 PYROOMACOUSTICS_TASK_CLEANUP_DELAY_SECONDS = 600  # 10 minutes after completion
@@ -782,7 +786,7 @@ CHORAS_DE_DEFAULT_IR_LENGTH    = 0.5        # IR length in seconds
 CHORAS_DE_DEFAULT_LC           = 1        # Mesh characteristic length (m)
 CHORAS_DE_DEFAULT_EDT          = 35         # EDT target (dB)
 CHORAS_DE_DEFAULT_SIM_LEN_TYPE = "edt"     # "edt" or "ir_length"
-CHORAS_DE_SAMPLE_RATE          = 44100      # WAV sample rate (1/dt from DEinterface)
+CHORAS_DE_SAMPLE_RATE          = 44100      # DE solver INPUT rate (1/dt of the pressure CSV); resampled to AUDIO_SAMPLE_RATE
 
 # DG (Discontinuous Galerkin) defaults
 CHORAS_DG_DEFAULT_C0          = 343         # Speed of sound (m/s)
@@ -792,7 +796,6 @@ CHORAS_DG_DEFAULT_FREQ_UPPER  = 200         # Upper frequency limit (Hz)
 CHORAS_DG_DEFAULT_POLY_ORDER  = 4           # Polynomial order
 CHORAS_DG_DEFAULT_PPW         = 2           # Points per wavelength
 CHORAS_DG_DEFAULT_CFL         = 1.0         # CFL number
-CHORAS_DG_SAMPLE_RATE         = 44100       # Output WAV sample rate
 
 # Frequency bands (shared by DE and DG)
 CHORAS_DEFAULT_FREQUENCIES = [125, 250, 500, 1000, 2000, 4000, 8000]

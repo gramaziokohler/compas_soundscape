@@ -9,7 +9,7 @@ import {
   useSoundscapeStore,
   useUIStore,
 } from '@/store';
-import { API_BASE_URL, DEFAULT_DBFS, FLOATING_WINDOW, UI_BORDER_RADIUS, normalizeSoundCategory } from '@/utils/constants';
+import { API_BASE_URL, AUDIO_SAMPLE_RATE, DEFAULT_DBFS, FLOATING_WINDOW, UI_BORDER_RADIUS, normalizeSoundCategory } from '@/utils/constants';
 import { useFloatingWindow } from '@/hooks/useFloatingWindow';
 import { ResizeHandles } from '@/components/ui/ResizeHandles';
 import { apiService } from '@/services/api';
@@ -429,7 +429,7 @@ export function SoundEditorWindow() {
             soundId={soundId}
             chain={chain}
             analyser={analyser}
-            sampleRate={buffer?.sampleRate ?? 44100}
+            sampleRate={buffer?.sampleRate ?? AUDIO_SAMPLE_RATE}
             onBypass={(id, enabled) => engineRef.current?.setInstanceBypass(id, enabled)}
             onParamsLive={(id: string, params: FxParams) => engineRef.current?.updateInstanceParams(id, params)}
             onStructuralChange={rebuild}

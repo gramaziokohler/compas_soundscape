@@ -51,6 +51,7 @@ compas_soundscape/
 │   │   ├── __init__.py
 │   │   ├── acoustic_measurement.py  # Acoustic measurement utilities
 │   │   ├── audio_processing.py      # Audio manipulation utilities
+│   │   ├── resampling.py            # Single resampler → AUDIO_SAMPLE_RATE (numpy/scipy only)
 │   │   ├── file_operations.py       # File I/O and cleanup
 │   │   ├── helpers.py               # General helpers
 │   │   ├── mesh_topology.py         # KD-tree weld, dedupe, edges, components, loops

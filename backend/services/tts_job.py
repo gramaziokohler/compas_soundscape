@@ -12,11 +12,13 @@ import time
 
 from services.tts_service import TTSService
 from utils.audio_processing import apply_dbfs_calibration, normalize_audio_rms
+from utils.resampling import resample_to
 from config.constants import (
     DEFAULT_TTS_MODEL,
     FILENAME_MAX_LENGTH,
     WINDOWS_ILLEGAL_FILENAME_CHARS,
     TARGET_RMS,
+    AUDIO_SAMPLE_RATE,
 )
 
 # The Gemini TTS API can return 400 INVALID_ARGUMENT or empty content when
@@ -27,7 +29,8 @@ TTS_RETRY_DELAYS_S = [3, 6, 12, 24]
 
 
 def _calibrate_wav_to_dbfs(input_path: str, target_dbfs: float) -> None:
-    """Normalize RMS then apply dBFS calibration to a WAV in place — mirrors
+    """Resample to AUDIO_SAMPLE_RATE, normalize RMS, then apply dBFS calibration
+    to a WAV in place — mirrors
     the TangoFlux/AudioLDM2 and /api/calibrate-audio post-processing so TTS
     speech sits at the same dBFS anchor as every other sound mode."""
     import soundfile as sf
@@ -37,10 +40,11 @@ def _calibrate_wav_to_dbfs(input_path: str, target_dbfs: float) -> None:
     audio_np, sample_rate = sf.read(input_path)
     if audio_np.ndim > 1:
         audio_np = audio_np.mean(axis=1)
+    audio_np = resample_to(audio_np, sample_rate)
     audio_tensor = torch.from_numpy(audio_np).float().unsqueeze(0)
     audio_tensor = normalize_audio_rms(audio_tensor, target_rms=TARGET_RMS)
     audio_tensor = apply_dbfs_calibration(audio_tensor, target_dbfs=target_dbfs)
-    torchaudio.save(input_path, audio_tensor.cpu(), sample_rate)
+    torchaudio.save(input_path, audio_tensor.cpu(), AUDIO_SAMPLE_RATE)
 
 
 def sanitize_filename(text: str) -> str:

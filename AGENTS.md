@@ -47,7 +47,7 @@ python -m workers.worker_main --role choras --slots 1 --worker-id choras-1
 # Stable Audio 3 (stable-audio-3-small-sfx, the default TTA model) MUST run in the
 # isolated compas-sa3 env (torch 2.7.1 / transformers 5 for T5Gemma; incompatible
 # with compas-toy). Full env setup on a new machine: deploy/README.md §0.1. One-time:
-#   mamba activate compas-sa3 && pip install redis python-dotenv
+#   mamba activate compas-sa3 && pip install redis python-dotenv scipy
 mamba activate compas-sa3 && python -m workers.worker_main --role sa3 --slots 1 --worker-id sa3-1
 
 # Frontend (from repo root), to run the app

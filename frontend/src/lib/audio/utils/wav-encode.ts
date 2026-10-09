@@ -5,6 +5,9 @@
  * saved files use the same encoder.
  */
 
+const WAV_HEADER_BYTES = 44;
+const PCM16_BYTES_PER_SAMPLE = 2;
+
 function setInt24(view: DataView, offset: number, value: number): void {
   const clamped = Math.max(-1, Math.min(1, value));
   const intVal = clamped < 0
@@ -90,4 +93,30 @@ export function audioBufferToWavBlob24(buffer: AudioBuffer): Blob {
   }
 
   return new Blob([arrayBuffer], { type: 'audio/wav' });
+}
+
+/**
+ * Wrap raw interleaved 16-bit little-endian PCM (e.g. ElevenLabs `pcm_*`
+ * output) in a WAV header — lossless, no decode/re-encode.
+ */
+export function pcm16ToWavBlob(pcm: Uint8Array, sampleRate: number, numChannels = 1): Blob {
+  const header = new ArrayBuffer(WAV_HEADER_BYTES);
+  const view = new DataView(header);
+  const blockAlign = numChannels * PCM16_BYTES_PER_SAMPLE;
+
+  writeStr(view, 0,  'RIFF');
+  view.setUint32(4,  WAV_HEADER_BYTES - 8 + pcm.byteLength, true);
+  writeStr(view, 8,  'WAVE');
+  writeStr(view, 12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1,  true);
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * blockAlign, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, PCM16_BYTES_PER_SAMPLE * 8, true);
+  writeStr(view, 36, 'data');
+  view.setUint32(40, pcm.byteLength, true);
+
+  return new Blob([header, pcm as BlobPart], { type: 'audio/wav' });
 }

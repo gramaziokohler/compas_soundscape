@@ -5,6 +5,7 @@ from enum import Enum
 from typing import Any, Literal
 from typing import Optional
 
+from config.constants import AUDIO_SAMPLE_RATE
 from config.constants import BUG_REPORT_MAX_DESCRIPTION_CHARS
 from config.constants import DEFAULT_AUDIO_MODEL
 from config.constants import DEFAULT_DBFS
@@ -183,7 +184,7 @@ class ModalAnalysisResponse(BaseModel):
 
 class PyroomacousticsSettings(BaseModel):
     """Settings for pyroomacoustics simulation"""
-    fs: int = 48000
+    fs: int = AUDIO_SAMPLE_RATE
     max_order: Optional[int] = None  # Auto-calculate if None
     use_ray_tracing: bool = False
     rir_duration: float = 1.0

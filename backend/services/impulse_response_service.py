@@ -19,6 +19,7 @@ from config.constants import (
     AUDIO_SAMPLE_RATE
 )
 from models.schemas import ImpulseResponseMetadata, IRFormat
+from utils.resampling import resample_to
 
 
 class ImpulseResponseService:
@@ -174,13 +175,7 @@ class ImpulseResponseService:
         # Resample if needed
         if sample_rate != AUDIO_SAMPLE_RATE:
             print(f"Resampling IR from {sample_rate} Hz to {AUDIO_SAMPLE_RATE} Hz")
-            import scipy.signal
-            audio_data = scipy.signal.resample_poly(
-                audio_data, 
-                AUDIO_SAMPLE_RATE, 
-                sample_rate,
-                axis=1
-            )
+            audio_data = resample_to(audio_data, sample_rate, axis=1)
             sample_rate = AUDIO_SAMPLE_RATE
         
         # Generate unique filename using UUID so every upload has a unique ID
