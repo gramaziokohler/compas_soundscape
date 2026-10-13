@@ -8,11 +8,11 @@ import type { BugReportContext } from '@/types';
 /**
  * Build the diagnostics snapshot attached to a bug report.
  *
- * The base fields (URL, model, UI mode, browser, viewport) are always sent so a
- * report can be located; `includeDiagnostics` adds recent notifications,
- * in-flight jobs, console errors, and failed API requests.
+ * Base fields (URL, model, UI mode, browser, viewport) locate the report;
+ * recent notifications, in-flight jobs, console errors, and failed API
+ * requests help reproduce it.
  */
-export function collectBugReportContext(includeDiagnostics: boolean): BugReportContext {
+export function collectBugReportContext(): BugReportContext {
   const url = new URL(window.location.href);
   const context: BugReportContext = {
     page_url: url.toString(),
@@ -25,7 +25,6 @@ export function collectBugReportContext(includeDiagnostics: boolean): BugReportC
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     client_time: new Date().toISOString(),
   };
-  if (!includeDiagnostics) return context;
 
   const { logs, failedRequests } = getDiagnosticsSnapshot();
   context.notifications = useErrorsStore
@@ -38,7 +37,7 @@ export function collectBugReportContext(includeDiagnostics: boolean): BugReportC
   return context;
 }
 
-/** Counts shown in the panel's "What's included" preview. */
+/** Counts shown in the panel's "what's included" note. */
 export function summarizeDiagnostics(): { logs: number; failedRequests: number; notifications: number } {
   const { logs, failedRequests } = getDiagnosticsSnapshot();
   return {

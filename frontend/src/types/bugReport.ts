@@ -46,6 +46,8 @@ export interface BugReportPayload {
   context: BugReportContext;
   /** PNG/JPEG data URL. */
   screenshot?: string;
+  /** Store the report without the sender's identity (email / user / workspace). */
+  anonymous: boolean;
 }
 
 export interface BugReportCreated {

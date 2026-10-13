@@ -232,6 +232,29 @@ export interface Orientation {
   roll: number;  // Radians, rotation around Z-axis (head tilt)
 }
 
+/**
+ * A mode's pre-decoder ambisonic bus, exposed for the multichannel send.
+ * By contract the signal is ACN/SN3D (AmbiX) with (order+1)² channels.
+ */
+export interface AmbisonicSendTap {
+  node: AudioNode;
+  order: AmbisonicOrder;
+  /** True when the mode already rotated the field into the listener frame (Resonance). */
+  preRotated: boolean;
+}
+
+/** State of the multichannel ambisonic send, reported back to the UI. */
+export interface AmbisonicSendStatus {
+  enabled: boolean;
+  /** Send order; the device receives (order+1)² channels. */
+  order: AmbisonicOrder;
+  /** maxChannelCount of the send device, once known. */
+  deviceChannels: number | null;
+  /** False when the browser cannot route a context to a chosen device (Safari). */
+  sinkSelectable: boolean;
+  error?: string;
+}
+
 // Ambisonic Encoding Coefficients (FOA)
 export interface FOACoefficients {
   W: number;

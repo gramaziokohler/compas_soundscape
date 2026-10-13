@@ -20,7 +20,8 @@ import type {
   AcousticSimulationMode,
   ImpulseResponseMetadata,
   OutputDiagnostics,
-  OutputSourceDiagnostics
+  OutputSourceDiagnostics,
+  AmbisonicSendStatus
 } from '@/types/audio';
 import { AudioMode } from '@/types/audio';
 
@@ -62,6 +63,7 @@ import {
 import { AUDIO_CONTROL, AUDIO_SAMPLE_RATE, DEFAULT_SPEED_OF_SOUND, API_BASE_URL } from '@/utils/constants';
 import { registerOutputDeviceTarget } from './output-device';
 import { OutputLevelMeter } from './utils/output-level-meter';
+import { AmbisonicSendController } from './output/AmbisonicSendController';
 
 export class AudioOrchestrator implements IAudioOrchestrator {
   private audioContext: AudioContext | null = null;
@@ -76,6 +78,12 @@ export class AudioOrchestrator implements IAudioOrchestrator {
 
   // Binaural decoder (shared by all ambisonic modes)
   private binauralDecoder: IBinauralDecoder | null = null;
+
+  // Last listener orientation, re-applied when the decoder is rebuilt.
+  private lastListenerOrientation: Orientation = { yaw: 0, pitch: 0, roll: 0 };
+
+  // Multichannel (16-ch AmbiX) send to Dante / a DAW, replacing binaural while on.
+  private ambisonicSend: AmbisonicSendController | null = null;
 
   // IR state
   private irState: IRState = {
@@ -231,6 +239,15 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     this.limiter.connect(this.outputMeter.node);
     this.outputMeter.node.connect(audioContext.destination);
 
+    // Multichannel ambisonic send: follows the active mode's pre-decoder bus
+    // across every graph rebuild (mode switch, order change, IR order change).
+    this.ambisonicSend = new AmbisonicSendController(
+      audioContext,
+      this.outputMeter.node,
+      () => this.currentModeInstance?.getAmbisonicSendTap() ?? null
+    );
+    this.onGraphChanged(() => this.ambisonicSend?.refreshTap());
+
     try {
       // Test ambisonic order support
       const foaSupported = isAmbisonicOrderSupported(audioContext, 1);
@@ -315,6 +332,20 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   }
 
   /**
+   * Wire the anechoic mode through the shared binaural decoder to the limiter.
+   * Must run after every decoder (re)build — `setOrder()` replaces the renderer,
+   * so both its input and its output need reconnecting.
+   */
+  private wireAnechoicToDecoder(mode: AnechoicMode): void {
+    if (!this.binauralDecoder?.isReady() || !this.limiter) return;
+    safeConnect(mode.getOutputNode(), this.binauralDecoder.getInputNode());
+    safeConnect(this.binauralDecoder.getOutputNode(), this.limiter);
+    // Anechoic encodes world-space; delegate head rotation to the decoder
+    this.binauralDecoder.setRotationEnabled(true);
+    this.binauralDecoder.updateOrientation(this.lastListenerOrientation);
+  }
+
+  /**
    * Connect a mode's output through the limiter to destination
    * @param mode - Mode instance to connect
    */
@@ -390,18 +421,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
             await this.anechoicMode.initialize(this.audioContext, this.ambisonicOrder);
 
             // Connect to binaural decoder, then to limiter
-            if (this.binauralDecoder) {
-              safeConnect(
-                this.anechoicMode.getOutputNode(),
-                this.binauralDecoder.getInputNode()
-              );
-              safeConnect(
-                this.binauralDecoder.getOutputNode(),
-                this.limiter!
-              );
-              // Anechoic encodes world-space; delegate head rotation to the decoder
-              this.binauralDecoder.setRotationEnabled(true);
-            }
+            this.wireAnechoicToDecoder(this.anechoicMode);
           }
           return this.anechoicMode;
 
@@ -499,6 +519,16 @@ export class AudioOrchestrator implements IAudioOrchestrator {
           await this.binauralDecoder.setOrder(resolvedOrder);
         }
         this.ambisonicOrder = resolvedOrder;
+
+        // setOrder() replaced the decoder's renderer. A cached anechoic instance was
+        // built for the old order and wired to the dead renderer: drop it so
+        // initializeMode rebuilds it (an active one is disposed after the crossfade).
+        if (this.anechoicMode && this.anechoicMode.getAmbisonicOrder() !== resolvedOrder) {
+          if (this.anechoicMode !== this.currentModeInstance) {
+            this.anechoicMode.dispose();
+          }
+          this.anechoicMode = null;
+        }
       }
 
       const oldMode = this.currentModeInstance;
@@ -548,6 +578,10 @@ export class AudioOrchestrator implements IAudioOrchestrator {
           oldMode.stopAllSources();
         } catch {
           // Already stopped
+        }
+        // An anechoic instance orphaned by an order change is no longer cached.
+        if (oldMode instanceof AnechoicMode && oldMode !== this.anechoicMode) {
+          oldMode.dispose();
         }
       }
 
@@ -1130,11 +1164,8 @@ export class AudioOrchestrator implements IAudioOrchestrator {
       this.anechoicMode = new AnechoicMode();
       await this.anechoicMode.initialize(this.audioContext!, order);
 
-      // Reconnect to decoder
-      if (this.binauralDecoder) {
-        this.anechoicMode.getOutputNode().connect(this.binauralDecoder.getInputNode());
-        this.binauralDecoder.setRotationEnabled(true);
-      }
+      // Reconnect to the rebuilt decoder (input AND output)
+      this.wireAnechoicToDecoder(this.anechoicMode);
 
       // Swap the active instance, rebuild its sources, and let playback re-dispatch
       // onto it while the crossfade ramps it up (same handover as setMode). The new
@@ -1252,6 +1283,8 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     this._pendingSpeedOfSound = c;
     if (this.resonanceMode) {
       await this.resonanceMode.setSpeedOfSound(c);
+      // A new Resonance scene brings a new ambisonic output node.
+      this.ambisonicSend?.refreshTap();
     }
   }
 
@@ -1662,9 +1695,11 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     this.currentModeInstance.updateListener(position, orientation);
 
     // Update binaural decoder (for head rotation)
+    this.lastListenerOrientation = orientation;
     if (this.binauralDecoder) {
       this.binauralDecoder.updateOrientation(orientation);
     }
+    this.ambisonicSend?.setOrientation(orientation);
   }
 
   /**
@@ -1702,12 +1737,38 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   setMasterVolume(volume: number): void {
     // Persist before the mode guard so the value survives a later mode switch.
     this.pendingMasterVolume = volume;
+    // The send taps before each mode's masterGain, so it applies master volume itself.
+    this.ambisonicSend?.setVolume(volume);
 
     if (!this.currentModeInstance) {
       return;
     }
 
     this.currentModeInstance.setMasterVolume(volume);
+  }
+
+  /**
+   * Stream the active mode's AmbiX bus at `order` ((order+1)² channels) to
+   * `deviceId` (e.g. Dante Virtual Soundcard) instead of binaural, or return to
+   * binaural. Resolves with the resulting status (including why enabling failed).
+   */
+  async setAmbisonicSend(
+    enabled: boolean,
+    deviceId: string,
+    order: AmbisonicOrder
+  ): Promise<AmbisonicSendStatus | null> {
+    if (!this.ambisonicSend) return null;
+    return this.ambisonicSend.setEnabled(enabled, deviceId, order);
+  }
+
+  /** Rotate the sent field with the listener (camera), or keep it world-fixed. */
+  setAmbisonicSendRotateWithListener(enabled: boolean): void {
+    this.ambisonicSend?.setRotateWithListener(enabled);
+  }
+
+  /** Subscribe to send status changes (enabled/disabled/errors). */
+  onAmbisonicSendStatus(listener: (status: AmbisonicSendStatus) => void): () => void {
+    return this.ambisonicSend?.onStatus(listener) ?? (() => {});
   }
 
   /** Current master volume (0..1), including values set before the mode existed. */
@@ -1773,6 +1834,9 @@ export class AudioOrchestrator implements IAudioOrchestrator {
    */
   dispose(): void {
     console.log('[AudioOrchestrator] Disposing');
+
+    this.ambisonicSend?.dispose();
+    this.ambisonicSend = null;
 
     this.outputMeter?.dispose();
     this.outputMeter = null;

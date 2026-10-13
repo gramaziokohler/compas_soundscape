@@ -1,3 +1,5 @@
+import type { RenderStyle } from '@/types/speckle-scene';
+
 // ============================================================================
 // API Configuration
 // ============================================================================
@@ -1027,6 +1029,36 @@ export const AMBISONIC = {
 
   // Front direction for ambisonic decoding (constant -Z axis in Three.js)
   FRONT_DIRECTION: { x: 0, y: 0, z: -1 } as const,
+} as const;
+
+// ============================================================================
+// Ambisonic Send (multichannel B-format output to Dante / a DAW)
+// ============================================================================
+export const AMBISONIC_SEND = {
+  // Send order → (order+1)² discrete ACN/SN3D (AmbiX) channels. Third order
+  // (16 ch) for the dome; first order (4 ch) fits devices limited to < 16 ch
+  // (e.g. a Windows virtual cable for home tests). Lower-order modes are
+  // zero-padded and higher-order ones truncated, so the patch never changes.
+  DEFAULT_ORDER: AMBISONIC.ORDER.TOA,
+  ORDER_OPTIONS: [
+    { order: AMBISONIC.ORDER.TOA, label: '3rd order · 16 ch' },
+    { order: AMBISONIC.ORDER.SOA, label: '2nd order · 9 ch' },
+    { order: AMBISONIC.ORDER.FOA, label: '1st order · 4 ch' },
+  ],
+
+  // Crossfade window when the send moves from one mode's tap to the next
+  // (matches the mode-transition crossfade).
+  TAP_CROSSFADE_SEC: 0.08,
+
+  // Time constant for master-volume changes on the send output.
+  VOLUME_RAMP_SEC: 0.02,
+
+  // Rotate the sent field with the in-app listener (camera) by default.
+  DEFAULT_ROTATE_WITH_LISTENER: true,
+
+  // Device labels of Dante Virtual Soundcard endpoints. On Windows (WDM) DVS
+  // exposes 8 separate stereo devices ("DVS Transmit 1-2", …), never one 16-ch device.
+  DANTE_LABEL_PATTERN: /dante|dvs/i,
 } as const;
 
 
@@ -2300,6 +2332,31 @@ export const SCENE_BOTTOM_BAR = {
   /** Object Explorer toggle â€” Simple-mode SectionHighlight target for materials. */
   OBJECT_EXPLORER_BUTTON_ID: 'scene-bottom-bar-object-explorer',
 } as const;
+
+// Viewport render styles (bottom-bar dropdown → useSpeckleRenderStyle →
+// lib/three/speckle-render-style.ts). Edge values start from Speckle's
+// DefaultEdgesPipelineOptions (thickness 1, opacity 0.75, color 0x323232).
+export const RENDER_STYLE = {
+  GHOST_COLOR: 0xdfe3ea,
+  GHOST_OPACITY: 0.18,
+  /** Filter-colored surfaces (Acoustics materials, linked objects) in Ghosted — higher so the color reads. */
+  GHOST_FILTERED_OPACITY: 0.4,
+  WIREFRAME_COLOR: 0x3a3f4b,
+  WIREFRAME_OPACITY: 0.85,
+  EDGE_OUTLINE_THICKNESS: 1,
+  EDGE_OUTLINE_OPACITY: 0.75,
+  EDGE_OUTLINE_COLOR: 0x323232,
+  POPOVER_WIDTH: 240, // px
+  /** Shown in the dropdown while the Sounds view mode owns the lighting. */
+  SOUNDS_MODE_NOTE: 'Sounds view uses its own lighting — styles apply in Default & Acoustics.',
+} as const;
+
+export const RENDER_STYLE_OPTIONS: ReadonlyArray<{ value: RenderStyle; label: string; description: string }> = [
+  { value: 'rendered', label: 'Rendered', description: 'Shaded with ambient light and edges' },
+  { value: 'ghosted', label: 'Ghosted', description: 'See-through surfaces with crisp edges' },
+  { value: 'arctic', label: 'Arctic', description: 'White clay with soft shadows' },
+  { value: 'wireframe', label: 'Wireframe', description: 'Every mesh triangle edge, see-through' },
+];
 
 // In-app bug reports (components/scene/BugReportButton.tsx → POST /api/bug-reports).
 // Category ids / size caps mirror BUG_REPORT_* in backend/config/constants.py.

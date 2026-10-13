@@ -4,8 +4,8 @@ export type { CardType, CardBaseConfig, CardState, CardProps, CardHeaderProps, C
 export { CARD_TYPE_LABELS } from './card';
 
 // Import and re-export Speckle Scene types
-import type { SpeckleSceneProps, SpeckleGeometryNode } from './speckle-scene';
-export type { SpeckleSceneProps, SpeckleGeometryNode };
+import type { SpeckleSceneProps, SpeckleGeometryNode, RenderStyle } from './speckle-scene';
+export type { SpeckleSceneProps, SpeckleGeometryNode, RenderStyle };
 
 // Import and re-export SED types
 import type { SEDAudioInfo, DetectedSound, SEDAnalysisResult, SEDAnalysisOptions, SEDUIState, UseSEDReturn } from './sed';

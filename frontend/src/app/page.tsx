@@ -48,6 +48,7 @@ import { useUserPreferencesSync } from "@/hooks/useUserPreferencesSync";
 import { reapplyUserPreferences } from "@/lib/user-preferences-sync";
 import { useAudioOrchestrator } from "@/hooks/useAudioOrchestrator";
 import { useAudioOutputDeviceSync } from "@/hooks/useAudioOutputDeviceSync";
+import { useAmbisonicSendSync } from "@/hooks/useAmbisonicSendSync";
 import { applyOutputDevice } from "@/lib/audio/output-device";
 import { useViewportScale } from "@/hooks/useViewportScale";
 import { useUndoRedo } from "@/hooks/useUndoRedo";
@@ -914,6 +915,9 @@ function HomeContent() {
 
   // Fall back to the system default when the selected device is unplugged.
   useAudioOutputDeviceSync();
+
+  // Multichannel ambisonic send (16-ch AmbiX → Dante / DAW) settings ↔ orchestrator.
+  useAmbisonicSendSync(audioOrchestrator.orchestrator);
 
   // Audio feature hooks (modular, integrate with orchestrator)
   const audioNormalization = useAudioNormalization(audioOrchestrator.orchestrator);

@@ -310,6 +310,12 @@ Key facts (verified against `@speckle/viewer@2.26.9`):
 - `gql>=4`: `httpclient.execute(doc, variables)` raises `TypeError` — pass `variable_values=...`.
 - A `referencedObject` starting with `bundle.` is unreadable by the pinned viewer / old specklepy; it
   must be re-materialized (see § File Uploads above).
+- Viewer render styles own `renderer.pipeline` via `applyRenderStyle()` (`lib/three/speckle-render-style.ts`).
+  Never call the `ViewModes` extension alongside it: `ViewModes.setViewMode` no-ops when its cached
+  mode matches, so it desyncs from custom pipelines. To restyle meshes without touching filter or selection
+  colors, override a pass's `overrideBatchMaterial` (see `speckle-render-pipelines.ts`), not `setMaterial`.
+  That only hits the BASE material. To restyle user-colored surfaces too, patch the filter materials for
+  one frame via `FilterMaterialStyler`, which runs in `onBeforePipelineRender` and restores in `onAfterPipelineRender`.
 
 ## FilteringExtension — Semantics (verified @speckle/viewer@2.26.9)
 

@@ -30,6 +30,7 @@ import { useUIStore, selectHasSaveTarget, type AdvancedSettingsFocusTarget } fro
 import { CollaborationPanel } from "@/components/layout/CollaborationPanel";
 import { SimulationGeometrySettings } from "@/components/layout/sidebar/advanced/SimulationGeometrySettings";
 import { OutputDeviceSelector } from "@/components/audio/OutputDeviceSelector";
+import { AmbisonicSendControls } from "@/components/audio/AmbisonicSendControls";
 import type { ColorThemePreference } from "@/utils/color-theme";
 import {
   TTS_LANGUAGE,
@@ -139,7 +140,7 @@ type SettingKey =
   | 'llm-model' | 'tts-model' | 'tts-language' | 'audio-model'
   | 'diffusion-steps' | 'negative-prompt' | 'noise-reduction' | 'trim-silence'
   | 'listener-orientation' | 'spectrograms'
-  | 'base-spl' | 'max-foley' | 'output-device'
+  | 'base-spl' | 'max-foley' | 'output-device' | 'ambisonic-send'
   | 'collaboration'
   | 'auto-save' | 'delete-history';
 
@@ -178,6 +179,7 @@ const SETTINGS: SettingEntry[] = [
   { section: 'llm', key: 'trim-silence', terms: ['trim silence', 'silence', 'trim', 'text-to-audio settings'] },
 
   { section: 'rendering', key: 'output-device', terms: ['output device', 'audio device', 'sound device', 'audio card', 'sound card', 'speaker', 'output', 'sink', 'device'] },
+  { section: 'rendering', key: 'ambisonic-send', terms: ['ambisonic send', 'ambisonics', 'ambix', 'multichannel', 'dante', 'holophonix', 'reaper', 'daw', 'b-format', 'stream', 'loudspeaker', 'dome'] },
   { section: 'rendering', key: 'spectrograms', terms: ['spectrograms', 'spectrogram'] },
   { section: 'rendering', key: 'base-spl', terms: ['base level', 'base spl', 'spl', 'volume', 'db', 'decibel'] },
   { section: 'rendering', key: 'max-foley', terms: ['max sounds', 'max foley', 'foley', 'maximum sounds', 'prompt'] },
@@ -971,6 +973,9 @@ export function AdvancedSettingsSection({
             <div className="flex flex-col gap-2">
               {isVisible('output-device') && (
                 <OutputDeviceSelector />
+              )}
+              {isVisible('ambisonic-send') && (
+                <AmbisonicSendControls />
               )}
               {isVisible('base-spl') && (
                 <RangeSlider

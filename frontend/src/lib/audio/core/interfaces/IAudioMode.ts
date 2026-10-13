@@ -6,7 +6,7 @@
  * implements this interface to provide consistent audio source management.
  */
 
-import type { Position, Orientation, AudioMode } from '@/types/audio';
+import type { Position, Orientation, AudioMode, AmbisonicSendTap } from '@/types/audio';
 import type { FadeOptions } from '@/lib/audio/utils/fade-envelope';
 
 export interface IAudioMode {
@@ -159,6 +159,12 @@ export interface IAudioMode {
    * @param volume - Master volume level
    */
   setMasterVolume(volume: number): void;
+
+  /**
+   * Pre-decoder ambisonic bus (ACN/SN3D), before master volume, for the
+   * multichannel send. Null while the mode has no bus yet.
+   */
+  getAmbisonicSendTap(): AmbisonicSendTap | null;
 
   /**
    * Dispose of all resources

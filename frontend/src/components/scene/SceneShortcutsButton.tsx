@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useCallback, useRef } from 'react';
 import { BarButton } from '@/components/ui/BarButton';
+import { useDismissOnOutside } from '@/hooks/useDismissOnOutside';
 import { ShortcutKeys } from '@/components/ui/ShortcutKeys';
 import { useUIStore } from '@/store';
 import {
@@ -77,22 +78,8 @@ export function SceneShortcutsButton({ isFirstPersonMode }: SceneShortcutsButton
   const open = useUIStore((s) => s.shortcutsOpen);
   const setOpen = useUIStore((s) => s.setShortcutsOpen);
   const rootRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: PointerEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
-    };
-    window.addEventListener('pointerdown', onDown, true);
-    window.addEventListener('keydown', onKey);
-    return () => {
-      window.removeEventListener('pointerdown', onDown, true);
-      window.removeEventListener('keydown', onKey);
-    };
-  }, [open, setOpen]);
+  const close = useCallback(() => setOpen(false), [setOpen]);
+  useDismissOnOutside(rootRef, open, close);
 
   const sections: { title: string; rows: ShortcutRow[] }[] = [
     ...KEYBOARD_SECTIONS.map((section) =>

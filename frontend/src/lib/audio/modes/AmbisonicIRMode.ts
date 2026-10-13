@@ -40,14 +40,14 @@
  */
 
 import type { IAudioMode } from '../core/interfaces/IAudioMode';
-import type { Position, Orientation, AmbisonicOrder, SourceIRStatus } from '@/types/audio';
+import type { Position, Orientation, AmbisonicOrder, AmbisonicSendTap, SourceIRStatus } from '@/types/audio';
 import type { FadeOptions } from '../utils/fade-envelope';
 import { applyFadeInOut } from '../utils/fade-envelope';
 import type { IBinauralDecoder } from '../core/interfaces/IBinauralDecoder';
 import { AudioMode } from '@/types/audio';
 import { OmnitoneDecoder } from '../decoders/OmnitoneDecoder';
 import { SourceLevelMeter } from '../utils/source-level';
-import { AUDIO_CONTROL, IMPULSE_RESPONSE } from '@/utils/constants';
+import { AMBISONIC, AUDIO_CONTROL, IMPULSE_RESPONSE } from '@/utils/constants';
 import { linearToDbfs } from '@/utils/utils';
 
 // Lazy load ambisonics to avoid SSR issues (window is not defined)
@@ -108,6 +108,10 @@ export class AmbisonicIRMode implements IAudioMode {
   // Master output gain (user-facing volume control only)
   private masterGain: GainNode | null = null;
 
+  // Pre-decoder ambisonic bus (ACN/SN3D). Every convolver connects here once;
+  // only the bus is rewired when the decoder is rebuilt. Also the send tap.
+  private irMixBus: GainNode | null = null;
+
   // Per-source chains
   private sourceChains: Map<string, SourceChain> = new Map();
 
@@ -139,6 +143,11 @@ export class AmbisonicIRMode implements IAudioMode {
     this.masterGain = audioContext.createGain();
     this.masterGain.gain.value = 1.0;
     this.masterGain.connect(audioContext.destination);
+
+    // Discrete multichannel bus summing all convolver outputs (channelCount set per order)
+    this.irMixBus = audioContext.createGain();
+    this.irMixBus.channelCountMode = 'explicit';
+    this.irMixBus.channelInterpretation = 'discrete';
 
     // Initialize pipeline (even without IR buffer for simulation mode)
     await this.initializePipeline();
@@ -234,25 +243,13 @@ export class AmbisonicIRMode implements IAudioMode {
         }
       });
     } else {
-      // Same order - update IR buffers AND reconnect to new decoder
-      // (initializePipeline disposed the old decoder, so we must reconnect)
+      // Same order - update IR buffers. Convolvers stay on irMixBus, which
+      // initializePipeline already rewired to the new decoder.
       this.sourceChains.forEach((chain) => {
         this.updateChainIR(chain);
-        
-        // Reconnect convolver to new decoder
-        if (this.binauralDecoder && chain.convolver) {
-          try {
-            // Disconnect purely to be safe (though old destination is dead)
-            try { chain.convolver.out.disconnect(); } catch (e) {} 
-            
-            chain.convolver.out.connect(this.binauralDecoder.getInputNode());
-          } catch (e) {
-            console.warn('[AmbisonicIRMode] Failed to reconnect convolver:', e);
-          }
-        }
       });
       
-      console.log(`[AmbisonicIRMode] Updated IR and reconnected ${this.sourceChains.size} sources`);
+      console.log(`[AmbisonicIRMode] Updated IR on ${this.sourceChains.size} sources`);
     }
   }
 
@@ -289,18 +286,15 @@ export class AmbisonicIRMode implements IAudioMode {
         // Decoder may be partially initialized
       }
 
-      this.sourceChains.forEach((chain) => {
-        if (!chain.convolver?.out) return;
+      // Only drop the bus → old decoder link: a blanket disconnect() would also cut
+      // the multichannel send tapping this bus. (No input = never connected.)
+      if (this.irMixBus && oldInput) {
         try {
-          if (oldInput) {
-            chain.convolver.out.disconnect(oldInput);
-          } else {
-            chain.convolver.out.disconnect();
-          }
+          this.irMixBus.disconnect(oldInput);
         } catch {
           // Already disconnected
         }
-      });
+      }
 
       if (oldOutput && this.masterGain) {
         try {
@@ -330,21 +324,16 @@ export class AmbisonicIRMode implements IAudioMode {
       return;
     }
 
-    // Reconnect convolvers to the new decoder input
-    const decoderInput = this.binauralDecoder.getInputNode();
-    this.sourceChains.forEach((chain) => {
-      if (!chain.convolver?.out) return;
-      try {
-        chain.convolver.out.connect(decoderInput);
-      } catch (e) {
-        console.warn('[AmbisonicIRMode] Failed to reconnect convolver after pipeline init:', e);
-      }
-    });
+    // Size the mix bus for the current order and feed it to the new decoder
+    if (this.irMixBus) {
+      this.irMixBus.channelCount = this.numAmbisonicChannels;
+      this.irMixBus.connect(this.binauralDecoder.getInputNode());
+    }
 
-    // Connect pipeline: Convolvers → Decoder → Master Gain → Destination
+    // Connect pipeline: Convolvers → MixBus → Decoder → Master Gain → Destination
     this.binauralDecoder.getOutputNode().connect(this.masterGain!);
 
-    console.log(`[AmbisonicIRMode] Pipeline: Convolver(s) → SceneRotator → BinDecoder → MasterGain → Destination`);
+    console.log(`[AmbisonicIRMode] Pipeline: Convolver(s) → MixBus → BinDecoder (rotation) → MasterGain → Destination`);
   }
 
   /**
@@ -473,16 +462,11 @@ export class AmbisonicIRMode implements IAudioMode {
     muteGainNode.connect(irGainNode);
     irGainNode.connect(convolver.in);
     
-    // Connect convolver directly to decoder input (Web Audio automatically sums)
-    // This matches JSAmbisonics approach and avoids GainNode channel routing issues
-    if (this.binauralDecoder) {
-      try {
-        convolver.out.connect(this.binauralDecoder.getInputNode());
-      } catch (e) {
-        console.warn('[AmbisonicIRMode] Error connecting convolver to decoder:', e);
-      }
+    // Connect convolver to the discrete mix bus (Web Audio sums all convolvers)
+    if (this.irMixBus) {
+      convolver.out.connect(this.irMixBus);
     } else {
-      console.warn('[AmbisonicIRMode] Cannot connect convolver - decoder not initialized');
+      console.warn('[AmbisonicIRMode] Cannot connect convolver - mix bus not initialized');
     }
 
     const chain: SourceChain = {
@@ -533,11 +517,12 @@ export class AmbisonicIRMode implements IAudioMode {
 
   /**
    * Convert stereo IR to FOA (4-channel) format
-   * Encodes L/R channels at ±30° azimuth (standard stereo speaker layout)
+   * Encodes L/R channels as plane waves at ±30° azimuth (standard stereo speaker layout)
+   * in ACN/SN3D (AmbiX): channel order W, Y, Z, X.
    */
   private convertStereoToFOA(stereoBuffer: AudioBuffer): AudioBuffer {
     const foaBuffer = this.audioContext!.createBuffer(
-      4, // FOA = 4 channels (W, X, Y, Z)
+      AMBISONIC.CHANNELS.FOA, // ACN order: W, Y, Z, X
       stereoBuffer.length,
       stereoBuffer.sampleRate
     );
@@ -545,18 +530,16 @@ export class AmbisonicIRMode implements IAudioMode {
     const leftData = stereoBuffer.getChannelData(0);
     const rightData = stereoBuffer.getChannelData(1);
 
-    const wData = foaBuffer.getChannelData(0);
-    const xData = foaBuffer.getChannelData(1);
-    const yData = foaBuffer.getChannelData(2);
-    // Z channel (up/down) remains zeros for horizontal stereo
+    const wData = foaBuffer.getChannelData(0); // ACN 0: W
+    const yData = foaBuffer.getChannelData(1); // ACN 1: Y (left/right)
+    // ACN 2: Z (up/down) remains zeros for horizontal stereo
+    const xData = foaBuffer.getChannelData(3); // ACN 3: X (front/back)
 
-    // FOA encoding coefficients for ±30° azimuth (standard stereo)
-    // Left speaker at +30° (azimuth = π/6), Right speaker at -30° (azimuth = -π/6)
-    const azLeft = Math.PI / 6;  // 30 degrees
-    const azRight = -Math.PI / 6; // -30 degrees
+    // Left speaker at +30° (azimuth = π/6, positive = left), right at -30°
+    const azLeft = Math.PI / 6;
+    const azRight = -Math.PI / 6;
 
-    // FOA encoding: W = 1/√2, X = cos(az), Y = sin(az) (for horizontal sources)
-    const wCoeff = 1 / Math.sqrt(2);
+    // SN3D horizontal plane wave: W = 1, Y = sin(az), X = cos(az)
     const xLeft = Math.cos(azLeft);
     const yLeft = Math.sin(azLeft);
     const xRight = Math.cos(azRight);
@@ -567,9 +550,9 @@ export class AmbisonicIRMode implements IAudioMode {
       const R = rightData[i];
 
       // Sum contributions from both channels
-      wData[i] = wCoeff * (L + R);
-      xData[i] = xLeft * L + xRight * R;
+      wData[i] = L + R;
       yData[i] = yLeft * L + yRight * R;
+      xData[i] = xLeft * L + xRight * R;
     }
 
     return foaBuffer;
@@ -1005,6 +988,15 @@ export class AmbisonicIRMode implements IAudioMode {
   }
 
   /**
+   * Pre-decoder ambisonic bus for the multichannel send (ACN/SN3D,
+   * receiver frame — rotation happens in the decoder).
+   */
+  getAmbisonicSendTap(): AmbisonicSendTap | null {
+    if (!this.irMixBus) return null;
+    return { node: this.irMixBus, order: this.ambisonicOrder, preRotated: false };
+  }
+
+  /**
    * Check if receiver mode is required (position locked, rotation only)
    */
   requiresReceiverMode(): boolean {
@@ -1071,6 +1063,11 @@ export class AmbisonicIRMode implements IAudioMode {
     if (this.masterGain) {
       this.masterGain.disconnect();
       this.masterGain = null;
+    }
+
+    if (this.irMixBus) {
+      this.irMixBus.disconnect();
+      this.irMixBus = null;
     }
 
     this.irBuffer = null;

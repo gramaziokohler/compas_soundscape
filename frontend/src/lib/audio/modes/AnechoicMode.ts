@@ -29,10 +29,10 @@
  */
 
 import type { IAudioMode } from '../core/interfaces/IAudioMode';
-import type { AudioMode, Position, Orientation, AmbisonicOrder } from '@/types/audio';
+import type { AudioMode, Position, Orientation, AmbisonicOrder, AmbisonicSendTap } from '@/types/audio';
 import type { FadeOptions } from '../utils/fade-envelope';
 import { applyFadeInOut } from '../utils/fade-envelope';
-import { cartesianToSpherical } from '../utils/ambisonic-utils';
+import { applySn3dToEncoder, cartesianToSpherical } from '../utils/ambisonic-utils';
 import { SourceLevelMeter } from '../utils/source-level';
 import { AUDIO_CONTROL } from '@/utils/constants';
 
@@ -179,6 +179,8 @@ export class AnechoicMode implements IAudioMode {
     encoder.azim = -spherical.azimuth * (180 / Math.PI);
     encoder.elev = spherical.elevation * (180 / Math.PI);
     encoder.updateGains();
+    // JSAmbisonics encodes N3D; the decoder and the send expect SN3D.
+    applySn3dToEncoder(encoder);
 
     const refDistance = 1.0;
     const distance = Math.max(refDistance, spherical.distance);
@@ -237,6 +239,7 @@ export class AnechoicMode implements IAudioMode {
     source.encoder.azim = -spherical.azimuth * (180 / Math.PI);
     source.encoder.elev = spherical.elevation * (180 / Math.PI);
     source.encoder.updateGains();
+    applySn3dToEncoder(source.encoder);
 
     if (source.distanceGainNode) {
       source.distanceGainNode.gain.setTargetAtTime(distanceGain, this.audioContext!.currentTime, 0.1);
@@ -467,6 +470,20 @@ export class AnechoicMode implements IAudioMode {
       throw new Error('[AnechoicMode] Not initialized');
     }
     return this.masterGain;
+  }
+
+  /** Ambisonic order this instance was built for (fixed for its lifetime). */
+  getAmbisonicOrder(): AmbisonicOrder {
+    return this.ambisonicOrder;
+  }
+
+  /**
+   * Pre-decoder ambisonic bus for the multichannel send: SN3D, world frame
+   * (head rotation is applied by the decoder), before master volume.
+   */
+  getAmbisonicSendTap(): AmbisonicSendTap | null {
+    if (!this.ambisonicMixBus) return null;
+    return { node: this.ambisonicMixBus, order: this.ambisonicOrder, preRotated: false };
   }
 
   /**

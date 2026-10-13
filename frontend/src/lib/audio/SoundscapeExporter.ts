@@ -20,7 +20,7 @@
 
 import type { TimelineSound, Position, Position3D, Orientation, AmbisonicOrder, IterationLink, TrimRange } from '@/types/audio';
 import { AudioMode } from '@/types/audio';
-import { cartesianToSpherical } from './utils/ambisonic-utils';
+import { applySn3dToEncoder, cartesianToSpherical } from './utils/ambisonic-utils';
 import { applyAmbisonicRotation } from './utils/ambisonic-rotation';
 import { OmnitoneDecoder } from './decoders/OmnitoneDecoder';
 import { applyFadeInOut, resolveClipFade, type FadeOptions } from './utils/fade-envelope';
@@ -334,12 +334,7 @@ async function buildAnechoicGraph(
     encoder.elev = spherical.elevation * (180 / Math.PI);
     encoder.updateGains();
     // Convert N3D encoder gains to SN3D (mixBus stays SN3D throughout)
-    for (let ch = 0; ch < numChannels; ch++) {
-      const n = Math.floor(Math.sqrt(ch));
-      if (n > 0) {
-        encoder.gainNodes[ch].gain.value /= Math.sqrt(2 * n + 1);
-      }
-    }
+    applySn3dToEncoder(encoder);
 
     gainNode.connect(distNode);
     distNode.connect(encoder.in);

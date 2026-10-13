@@ -1,6 +1,6 @@
 ---
 description: Spatial audio pipeline — AudioOrchestrator, audio modes, ambisonics, binaural decoding, HRTF
-globs: frontend/src/lib/audio/**,frontend/src/hooks/useAudioOrchestrator.ts,frontend/src/hooks/useAudioNormalization.ts,frontend/src/components/audio/AudioRenderingModeSelector.tsx
+globs: frontend/src/lib/audio/**,frontend/src/hooks/useAmbisonicSendSync.ts,frontend/src/components/audio/AmbisonicSendControls.tsx,frontend/src/hooks/useAudioOrchestrator.ts,frontend/src/hooks/useAudioNormalization.ts,frontend/src/components/audio/AudioRenderingModeSelector.tsx
 ---
 
 # Sound Rendering Rules
@@ -67,21 +67,32 @@ for the full contract. The parts the audio engine owns:
 
 ```
 Sound source (mono)
-  └─ JSAmbisonics monoEncoder       # encode point source to B-format (order 1/2/3)
-        └─ [AMBISONIC_IR] convolver  # convolve with room IR (JSAmbisonics)
-              └─ sceneRotator        # apply head/receiver rotation (quaternion input)
-                    └─ BinauralDecoder  # HRTF convolution → stereo headphone output
+  └─ [ANECHOIC]     JSAmbisonics monoEncoder → applySn3dToEncoder → ambisonicMixBus
+  └─ [AMBISONIC_IR] JSAmbisonics convolver (AmbiX IR)            → irMixBus
+        └─ OmnitoneDecoder (rotation via setRotationMatrix3 + built-in HRIRs) → stereo
+  └─ [NO_IR_RESONANCE] Resonance scene (own Omnitone; ambisonicOutput is listener-rotated)
 ```
 
-### Normalization — SN3D ↔ N3D
+- `decoders/OmnitoneDecoder.ts` is the only binaural decoder: `createFOARenderer` for order 1,
+  `createHOARenderer` for orders 2/3. HRIRs are Omnitone's built-in set (no custom HRTF loading).
+- Anechoic shares the orchestrator's decoder; AmbisonicIRMode owns its own. **After any
+  `decoder.setOrder()` both its input and output must be rewired** — use
+  `AudioOrchestrator.wireAnechoicToDecoder()`; never connect only the input.
+- Head rotation happens inside the decoder; the matrix comes from
+  `orientationToRotationMatrix3()` (`utils/ambisonic-utils.ts`) — never re-derive it inline.
 
-IR files may use SN3D or N3D normalization. Convert before feeding the convolver.
-Coefficients are in `frontend/src/utils/constants.ts` → `AMBISONIC.SN3D_TO_N3D`:
+### Normalization — every mode bus is ACN/SN3D (AmbiX)
+
+Omnitone, the IR files (backend AmbiX) and the multichannel send all use **SN3D**.
+JSAmbisonics `monoEncoder` produces **N3D** (`computeRealSH` scales order n by √(2n+1)):
 
 ```typescript
-// Multiply channel n of an SN3D signal by this factor to get N3D
-AMBISONIC.SN3D_TO_N3D[order][channelIndex]
+encoder.updateGains();
+applySn3dToEncoder(encoder); // ALWAYS, after every updateGains() — it rewrites the gains
 ```
+
+Synthetic IR conversions (`AmbisonicIRMode.convertMonoToFOA/convertStereoToFOA`) write ACN order
+**W, Y, Z, X** with SN3D coefficients (W = 1 per plane wave).
 
 ### Ambisonic Order Constants
 
@@ -92,36 +103,27 @@ AMBISONIC.CHANNELS = { FOA: 4, SOA: 9, TOA: 16 }
 
 Always use these constants — never hardcode channel counts.
 
-## Decoder Selection for FOA
+## Multichannel Ambisonic Send (Dante / DAW)
 
-Two decoders are available for 1st-order ambisonics (FOA):
+`lib/audio/output/` streams the active mode's pre-decoder bus as **(order+1)² discrete ACN/SN3D
+channels** to a chosen device (`AMBISONIC_SEND` constants; send order 3 = 16 ch by default, 1 = 4 ch
+for small devices). The bus width is fixed per `AmbisonicSendBus` instance — an order change
+rebuilds it. Contract:
 
-| Decoder | File | HRTFs |
-| ------- | ---- | ----- |
-| JSAmbisonics `BinauralDecoder` | `decoders/BinauralDecoder.ts` | Loaded from `public/hrtf/` |
-| Omnitone `OmnitoneFOADecoder` | `decoders/OmnitoneFOADecoder.ts` | Built-in Google SADIE HRTFs |
-
-Toggle via: `frontend/src/utils/constants.ts` → `AMBISONIC.USE_OMNITONE_FOR_FOA`
-
-When adding custom HRTF support, only modify `BinauralDecoder.ts` — Omnitone manages its own internal HRTFs and cannot be customised.
-
-## HRTF Loading (BinauralDecoder)
-
-```typescript
-// BinauralDecoder.ts — loading path
-async loadHRTFs(path?: string): Promise<void>
-// → ambisonics.HRIRloader_ircam(audioContext, order, callback)
-// → loader.load(hrtfPath)          // must be under /public/hrtf/
-// → callback(hoaBuffer) → binDecoder.updateFilters(hoaBuffer)
-```
-
-Config: `frontend/src/utils/constants.ts` → `HRTF.DEFAULT_HRTF_PATH`
-HRTF files: `frontend/public/hrtf/` — do not move or rename without updating the constant.
-
-Available HRTF datasets:
-- `IRC_1076_C_HRIR_48000.sofa.json` — full sphere, IRCAM
-- `HRTF_KEMAR_front.sofa.json` — front hemisphere, optimised
-- `D1_48K_24bit_256tap_FIR_SOFA.json` — high-quality 256-tap FIR
+- **Tap**: every mode implements `getAmbisonicSendTap()` → `{ node, order, preRotated }`. The node
+  is the pre-decoder bus, *before* the mode's masterGain, and MUST be SN3D. The discrete bus
+  zero-pads lower-order taps and truncates higher-order ones.
+- **Never blanket-`disconnect()` a tap node** while the mode is alive (`irMixBus`,
+  `ambisonicMixBus`) — that also cuts the send. Disconnect the specific destination.
+- **Reattach on graph rebuild**: the orchestrator calls `ambisonicSend.refreshTap()` from its own
+  `onGraphChanged` listener and after a Resonance speed-of-sound rebuild. A new rebuild path that
+  swaps a tap node must notify the graph or call `refreshTap()`.
+- **Rotation** (`AmbisonicSendBus`): `preRotated=false` → R when "rotate with listener", else
+  identity; `preRotated=true` (Resonance) → identity, else transpose(R).
+- **Master volume** is applied by the send itself (`setVolume`), not by the modes' masterGain.
+- While on, `outputMeter → destination` is cut and the context is pinned to the send device via
+  `setOutputDeviceOverride()`; other targets keep the regular device.
+- Feature-detected only (`setSinkId`, `maxChannelCount`, `sinkchange`) — no OS branches.
 
 ## Resonance Audio — SSR Safety
 

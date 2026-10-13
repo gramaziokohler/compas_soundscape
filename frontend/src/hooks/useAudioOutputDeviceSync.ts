@@ -1,10 +1,12 @@
 /**
  * useAudioOutputDeviceSync
  *
- * Always-on watchdog for the persisted audio output device. Whenever the set of
+ * Always-on watchdog for the persisted audio output devices — the regular
+ * output and the multichannel ambisonic send device. Whenever the set of
  * connected devices changes (unplug, driver reset, permission grant), it checks
- * whether the selected device still exists and, if not, resets the store to the
- * system default. Mount once at the app root so the fallback does not depend on
+ * whether each selected device still exists and, if not, resets it to the
+ * system default (and turns the send off, so it never lands on the default
+ * stereo output). Mount once at the app root so the fallback does not depend on
  * the Audio settings panel being open.
  *
  * Device ids are only usable once labels are exposed (i.e. after a media
@@ -16,8 +18,13 @@ import { useEffect } from "react";
 import { useAudioControlsStore } from "@/store";
 import { AUDIO_OUTPUT } from "@/utils/constants";
 
+function isMissing(deviceId: string, outputs: MediaDeviceInfo[]): boolean {
+  return deviceId !== AUDIO_OUTPUT.DEFAULT_DEVICE_ID && !outputs.some((d) => d.deviceId === deviceId);
+}
+
 export function useAudioOutputDeviceSync(): void {
   const outputDeviceId = useAudioControlsStore((s) => s.outputDeviceId);
+  const sendDeviceId = useAudioControlsStore((s) => s.ambisonicSendDeviceId);
 
   useEffect(() => {
     if (typeof navigator === "undefined" || !navigator.mediaDevices?.enumerateDevices) return;
@@ -33,10 +40,13 @@ export function useAudioOutputDeviceSync(): void {
         // Without permission the ids are empty and cannot be compared.
         if (!outputs.some((d) => d.deviceId)) return;
 
-        const current = useAudioControlsStore.getState().outputDeviceId;
-        if (current === AUDIO_OUTPUT.DEFAULT_DEVICE_ID) return;
-        if (!outputs.some((d) => d.deviceId === current)) {
-          useAudioControlsStore.getState().setOutputDeviceId(AUDIO_OUTPUT.DEFAULT_DEVICE_ID);
+        const store = useAudioControlsStore.getState();
+        if (isMissing(store.outputDeviceId, outputs)) {
+          store.setOutputDeviceId(AUDIO_OUTPUT.DEFAULT_DEVICE_ID);
+        }
+        if (isMissing(store.ambisonicSendDeviceId, outputs)) {
+          store.setAmbisonicSendEnabled(false);
+          store.setAmbisonicSendDeviceId(AUDIO_OUTPUT.DEFAULT_DEVICE_ID);
         }
       } catch {
         // enumerateDevices unavailable / denied — nothing to reconcile.
@@ -52,5 +62,5 @@ export function useAudioOutputDeviceSync(): void {
       cancelled = true;
       mediaDevices.removeEventListener("devicechange", sync);
     };
-  }, [outputDeviceId]);
+  }, [outputDeviceId, sendDeviceId]);
 }

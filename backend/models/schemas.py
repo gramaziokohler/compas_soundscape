@@ -974,11 +974,13 @@ class BugReportCreate(BaseModel):
 
     ``context`` is the client diagnostics snapshot (URL, UI mode, recent console
     errors, failed requests…); ``screenshot`` is an optional PNG/JPEG data URL.
+    ``anonymous`` stores the report without the sender's identity.
     """
     description: str = Field(..., min_length=1, max_length=BUG_REPORT_MAX_DESCRIPTION_CHARS)
     category: Literal["bug", "visual", "performance", "idea"] = "bug"
     context: dict[str, Any] = Field(default_factory=dict)
     screenshot: Optional[str] = None
+    anonymous: bool = False
 
 
 class BugReportCreated(BaseModel):

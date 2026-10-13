@@ -16,6 +16,7 @@
 import type { IBinauralDecoder } from '../core/interfaces/IBinauralDecoder';
 import type { Orientation } from '@/types/audio';
 import type { FOARenderer, HOARenderer } from 'omnitone';
+import { IDENTITY_MATRIX3, orientationToRotationMatrix3 } from '../utils/ambisonic-utils';
 
 type AnyRenderer = FOARenderer | HOARenderer;
 
@@ -83,7 +84,7 @@ export class OmnitoneDecoder implements IBinauralDecoder {
   setRotationEnabled(enabled: boolean): void {
     this.rotationEnabled = enabled;
     if (!enabled && this.renderer) {
-      this.renderer.setRotationMatrix3([1, 0, 0, 0, 1, 0, 0, 0, 1]);
+      this.renderer.setRotationMatrix3([...IDENTITY_MATRIX3]);
     }
   }
 
@@ -97,23 +98,9 @@ export class OmnitoneDecoder implements IBinauralDecoder {
     if (!this.renderer) return;
     this.currentOrientation = orientation;
 
-    if (!this.rotationEnabled) {
-      this.renderer.setRotationMatrix3([1, 0, 0, 0, 1, 0, 0, 0, 1]);
-      return;
-    }
-
-    const yaw = orientation.yaw,  pitch = orientation.pitch,  roll = orientation.roll;
-    const cosYaw = Math.cos(yaw),   sinYaw = Math.sin(yaw);
-    const cosPitch = Math.cos(pitch), sinPitch = Math.sin(pitch);
-    const cosRoll = Math.cos(roll),   sinRoll = Math.sin(roll);
-
-    // R = Ry(yaw) * Rx(pitch) * Rz(roll), column-major format for Omnitone.
-    // With roll = 0 this reduces to the previous Ry(yaw) * Rx(pitch) matrix.
-    this.renderer.setRotationMatrix3([
-      cosYaw*cosRoll + sinYaw*sinPitch*sinRoll,  cosPitch*sinRoll,                       -sinYaw*cosRoll + cosYaw*sinPitch*sinRoll,
-      -cosYaw*sinRoll + sinYaw*sinPitch*cosRoll,  cosPitch*cosRoll,                       sinYaw*sinRoll + cosYaw*sinPitch*cosRoll,
-      sinYaw*cosPitch,                            -sinPitch,                              cosYaw*cosPitch,
-    ]);
+    this.renderer.setRotationMatrix3(
+      this.rotationEnabled ? orientationToRotationMatrix3(orientation) : [...IDENTITY_MATRIX3]
+    );
   }
 
   isReady(): boolean {

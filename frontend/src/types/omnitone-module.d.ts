@@ -124,9 +124,26 @@ declare module 'omnitone/build/omnitone.esm.js' {
     config?: RendererConfig
   ): HOARenderer;
 
+  /**
+   * Ambisonic sound-field rotator (the same rotator the HOARenderer uses).
+   * Input is a discrete (order+1)²-channel splitter; output a matching merger.
+   */
+  export interface HOARotator {
+    input: AudioNode;
+    output: AudioNode;
+    /** 3x3 rotation matrix, column-major (same convention as the renderers). */
+    setRotationMatrix3(matrix: ArrayLike<number>): void;
+  }
+
+  export function createHOARotator(
+    audioContext: BaseAudioContext,
+    ambisonicOrder: number
+  ): HOARotator;
+
   const _default: {
     createFOARenderer: typeof createFOARenderer;
     createHOARenderer: typeof createHOARenderer;
+    createHOARotator: typeof createHOARotator;
   };
   export default _default;
 }

@@ -213,6 +213,10 @@ compas_soundscape/
 │       │   │   │   ├── BinauralDecoder.ts       # Binaural output decoder (IRCAM HRTFs)
 │       │   │   │   ├── OmnitoneFOADecoder.ts    # Omnitone FOA binaural decoder
 │       │   │   │   └── VirtualSpeakersDecoder.ts # Virtual speaker binaural decoder
+│       │   │   ├── output/                      # Multichannel ambisonic send (Dante / DAW)
+│       │   │   │   ├── AmbisonicSendController.ts # Send lifecycle: device, layout, binaural swap
+│       │   │   │   ├── AmbisonicSendBus.ts      # 16-ch bus: tap crossfade + HOA rotator
+│       │   │   │   └── destination-layout.ts    # 16-ch discrete destination / stereo restore
 │       │   │   └── utils/                       # Audio utilities
 │       │   │       ├── ambisonic-utils.ts       # Ambisonic encoding/decoding utilities
 │       │   │       ├── audio-file-decoder.ts    # Audio file decoding
@@ -578,6 +582,30 @@ Any new state keyed by an analysis card index must be added to `remapLinkedCardI
 └────────────────────────────────────────────────────────────┘
 ```
 
+### Viewport Render Styles
+
+```
+SceneBottomBar → SceneRenderStyleButton (dropdown: Rendered · Ghosted · Arctic · Wireframe)
+  → uiStore.renderStyle (persisted in compas-ui-state)
+  → useSpeckleRenderStyle (SpeckleScene, declared BEFORE useSpeckleDarkMode)
+      effective = viewMode === 'dark' ? 'rendered' : renderStyle
+  → lib/three/speckle-render-style.ts  applyRenderStyle(viewer, style)
+      renderer.pipeline = DefaultPipeline | ArcticViewPipeline (stock)
+                        | GhostedViewPipeline | WireframeViewPipeline (speckle-render-pipelines.ts)
+```
+
+- Ghosted / Wireframe use a pass's `overrideBatchMaterial`. Each frame, it swaps only the mesh batches'
+  *base* material.
+- Filter-colored surfaces (Acoustics materials, linked objects) are restyled per frame by
+  `FilterMaterialStyler` (`speckle-filter-material-styler.ts`). It patches them in
+  `onBeforePipelineRender` (translucent / wireframe, keeping their color) and restores them in
+  `onAfterPipelineRender`. Selection/hover (stencil) and hidden/ghost materials are untouched,
+  so no enforcement loop is needed. Arctic keeps filter colors solid.
+- The Sounds view (dark mode) always runs on the stock pipeline, because it hooks the current pipeline's
+  GEOMETRY passes when it enables. That is why the render-style hook must run first.
+- We set `renderer.pipeline` directly instead of using Speckle's `ViewModes` extension. That
+  extension caches its mode and would ignore "back to DEFAULT" after one of our custom pipelines.
+
 ### Audio Pipeline Architecture
 
 ```
@@ -625,6 +653,38 @@ Any new state keyed by an analysis card index must be added to `remapLinkedCardI
 └─────────────────────────────────────────────────────────────┘
 ```
 
+### Multichannel Ambisonic Send (Dante → Holophonix / DAW)
+
+Streams the active mode's **pre-decoder** bus live as (order+1)² discrete ACN/SN3D (AmbiX)
+channels — third order / 16 ch by default, first order / 4 ch for small devices — to a chosen output device — typically Dante Virtual Soundcard, routed in Dante
+Controller to a Holophonix processor (decodes to the loudspeaker dome) and optionally to a DAW
+recorder (Reaper) that only listens. Frontend-only (Chrome/Edge). Needs ONE output device with
+≥ (order+1)² channels: DVS on macOS works; DVS on Windows (WDM) only exposes stereo pairs, so it can't.
+The send picker probes channel counts (`lib/audio/output/probe-output-channels.ts`).
+
+```
+Mode pre-decoder bus (SN3D, before masterGain)          ── IAudioMode.getAmbisonicSendTap()
+  Anechoic: ambisonicMixBus (world frame)
+  AmbisonicIR: irMixBus (receiver frame)
+  Resonance: scene.ambisonicOutput (already listener-rotated)
+        ▼
+AmbisonicSendBus: tapGain (80 ms crossfade on graph rebuild) → HOARotator(3) → sum
+        │   rotation: R (rotate with listener) / identity / transpose(R) for pre-rotated taps
+        ▼
+outGain (= BottomBar master volume) → ctx.destination (16 ch, explicit, discrete)
+        ▼
+setSinkId override on the orchestrator context only → DVS TX 1–16 → Dante → Holophonix
+                                                                     └→ DVS RX 1–16 → Reaper
+```
+
+- While on, `limiter → meter → destination` is cut (one sink per context): no browser binaural.
+- Previews / modal impacts keep the regular output device (`setOutputDeviceOverride`).
+- The device must expose ≥ 16 channels (`destination.maxChannelCount`), else the send refuses
+  with an error. Lower-order modes are zero-padded, so the 16-ch patch never changes.
+- State: `audioControlsStore.ambisonicSend*` (device + rotate persisted, enabled session-only),
+  applied by `hooks/useAmbisonicSendSync.ts`; UI `components/audio/AmbisonicSendControls.tsx`
+  (Settings → Rendering). Setup guide: `docs/dante-ambisonic-send.md`.
+
 ### Low-Output Helper Hints
 
 When scene playback is too quiet, a popover above the bottom-bar play button explains why and
@@ -657,7 +717,7 @@ mirrors it onto the orchestrator.
 ### In-App Bug Reports
 
 A bug icon opens a "Report a problem" popover with a category, a description, an optional
-screenshot, and an optional diagnostics snapshot. In Detailed mode the icon sits at the far left
+screenshot, and an "anonymous" toggle (off by default); the diagnostics snapshot is always sent. In Detailed mode the icon sits at the far left
 of the bottom bar. In Simple mode it floats above the bar's left end and rises with the docked
 DAW. `useBubbleColumnSpace` shortens the Soundscapes column so the two never overlap.
 
@@ -674,7 +734,7 @@ apiService.submitBugReport → POST /api/bug-reports (routers/bug_reports.py)
             ▼
 BugReportService.save (asyncio.to_thread): validate, decode screenshot,
   data/bug_reports/<id>/screenshot.{png,jpg} + app.db `bug_reports` row
-  (identity from request.state, backend git commit added to the context)
+  (identity from request.state unless `anonymous`, backend git commit added to the context)
 ```
 
 There is deliberately no listing endpoint. To read reports on the server, run

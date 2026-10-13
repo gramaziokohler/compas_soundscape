@@ -36,7 +36,7 @@ export interface BugReportPanelProps extends UseBugReportResult {
  * BugReportPanel Component
  *
  * Popover body of the bug report button: category chips, description,
- * screenshot / diagnostics toggles, and Send (Ctrl+Enter). Marked with
+ * screenshot / anonymous toggles, and Send (Ctrl+Enter). Marked with
  * `BUG_REPORT.IGNORE_ATTR` so it never appears in its own screenshot.
  *
  * Usage:
@@ -137,13 +137,13 @@ export function BugReportPanel({ state, methods, style }: BugReportPanelProps) {
             hint="Captured when you press Send"
           />
           <CheckboxRow
-            checked={state.includeDiagnostics}
-            onChange={methods.setIncludeDiagnostics}
-            label="Include diagnostics"
-            hint={diagnosticsHint}
+            checked={state.anonymous}
+            onChange={methods.setAnonymous}
+            label="Send anonymously"
+            hint="Your name and workspace are not recorded"
           />
           <p className="bug-report__hint bug-report__note">
-            Page link, browser, and interface mode are always included.
+            Page link, browser, interface mode, and diagnostics ({diagnosticsHint}) are always included.
           </p>
 
           {state.error && <p className="bug-report__error" role="alert">{state.error}</p>}

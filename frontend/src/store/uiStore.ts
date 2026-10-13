@@ -18,7 +18,7 @@ import { create } from 'zustand';
 import { devtools, persist, createJSONStorage } from 'zustand/middleware';
 import { temporal } from 'zundo';
 import { UNDO_HISTORY_LIMIT, undoEquality, type RegisterTemporalStoreOptions } from './undoRedoRegistry';
-import type { LoadTab } from '@/types';
+import type { LoadTab, RenderStyle } from '@/types';
 import type { AudioRenderingMode } from '@/components/audio/AudioRenderingModeSelector';
 import {
   DEFAULT_SPEED_OF_SOUND,
@@ -143,6 +143,9 @@ export interface UIStoreState {
   /** Draw the dashed-arrow scenario parcours in the 3D viewer (scenario card footer toggle) */
   showScenarioParcours: boolean;
   setShowScenarioParcours: (v: boolean) => void;
+  /** Viewport render style (Rendered / Ghosted / Arctic / Wireframe) — bottom-bar dropdown */
+  renderStyle: RenderStyle;
+  setRenderStyle: (style: RenderStyle) => void;
 
   // ── Panel toggles ──────────────────────────────────────────────────────────
   showAdvancedSettings: boolean;
@@ -428,6 +431,8 @@ export const useUIStore = create<UIStoreState>()(
       setShowSceneListeners: (v) => set({ showSceneListeners: v }, false, 'ui/setShowSceneListeners'),
       showScenarioParcours: false,
       setShowScenarioParcours: (v) => set({ showScenarioParcours: v }, false, 'ui/setShowScenarioParcours'),
+      renderStyle: 'rendered' as RenderStyle,
+      setRenderStyle: (style) => set({ renderStyle: style }, false, 'ui/setRenderStyle'),
 
       // ── Panel toggles ────────────────────────────────────────────────────
       showAdvancedSettings: false,

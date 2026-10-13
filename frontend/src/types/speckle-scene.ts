@@ -60,3 +60,9 @@ export interface SpeckleGeometryNode {
   /** Raw Speckle object data */
   raw: any; // eslint-disable-line @typescript-eslint/no-explicit-any
 }
+
+/**
+ * Viewport render style — how the Speckle model is drawn, independent of the
+ * Sounds / Default / Acoustics view mode. Applied by useSpeckleRenderStyle.
+ */
+export type RenderStyle = 'rendered' | 'ghosted' | 'arctic' | 'wireframe';

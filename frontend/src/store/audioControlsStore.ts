@@ -23,7 +23,7 @@ import { temporal } from 'zundo';
 import { devtools, persist, createJSONStorage } from 'zustand/middleware';
 import { UNDO_HISTORY_LIMIT, undoEquality, runWithoutUndo, type RegisterTemporalStoreOptions } from './undoRedoRegistry';
 import type { SoundState, SoundGenerationConfig } from '@/types';
-import type { IterationLink, TrimRange } from '@/types/audio';
+import type { AmbisonicOrder, AmbisonicSendStatus, IterationLink, TrimRange } from '@/types/audio';
 import { iterationKey, remapIterationKeys, clearIterationKeysForSound } from '@/lib/audio/utils/iteration-keys';
 import { trimmedDuration } from '@/lib/audio/utils/iteration-trim';
 import { parseSoundCopyIndex } from '@/lib/audio/utils/variant-sound-id';
@@ -32,7 +32,7 @@ import { solveOrchestrateSchedule, scheduleEntryKey } from '@/lib/audio/orchestr
 import { serializeTrackOverlaps } from '@/lib/audio/utils/serialize-track-overlaps';
 import { parseAuthoredSeconds } from '@/lib/audio/utils/timeline-utils';
 import { pausePreviewInstance, pauseAllPreviewInstances } from '@/lib/audio/previewRegistry';
-import { AUDIO_CONTROL, AUDIO_PLAYBACK, AUDIO_TIMELINE, AUDIO_OUTPUT, DEFAULT_DBFS, DEFAULT_MAXIMUM_FOLEY_SOUNDS, TTS_DEFAULT_LANGUAGE } from '@/utils/constants';
+import { AMBISONIC_SEND, AUDIO_CONTROL, AUDIO_PLAYBACK, AUDIO_TIMELINE, AUDIO_OUTPUT, DEFAULT_DBFS, DEFAULT_MAXIMUM_FOLEY_SOUNDS, TTS_DEFAULT_LANGUAGE } from '@/utils/constants';
 import { apiService } from '@/services/api';
 import { useSoundscapeStore } from './soundscapeStore';
 import { useSpeckleEngineStore } from './speckleEngineStore';
@@ -259,6 +259,24 @@ export interface AudioControlsStoreState {
    */
   outputDeviceId: string;
   setOutputDeviceId: (deviceId: string) => void;
+  /**
+   * Multichannel ambisonic send (16-ch AmbiX to Dante / a DAW). Session-only so a
+   * reload never silently diverts playback away from the headphones.
+   */
+  ambisonicSendEnabled: boolean;
+  setAmbisonicSendEnabled: (enabled: boolean) => void;
+  /** Device the send is routed to (persisted; independent of `outputDeviceId`). */
+  ambisonicSendDeviceId: string;
+  setAmbisonicSendDeviceId: (deviceId: string) => void;
+  /** Send order: 3 (16 ch, dome) … 1 (4 ch, small virtual devices). Persisted. */
+  ambisonicSendOrder: AmbisonicOrder;
+  setAmbisonicSendOrder: (order: AmbisonicOrder) => void;
+  /** Rotate the sent field with the listener (camera) vs keep it world-fixed (persisted). */
+  ambisonicSendRotateWithListener: boolean;
+  setAmbisonicSendRotateWithListener: (enabled: boolean) => void;
+  /** Last status reported by the orchestrator (session-only). */
+  ambisonicSendStatus: AmbisonicSendStatus | null;
+  setAmbisonicSendStatus: (status: AmbisonicSendStatus | null) => void;
   /** Master output volume (0..1). Session-only; mirrored onto the AudioOrchestrator by SceneVolumeButton. */
   masterVolume: number;
   setMasterVolume: (volume: number) => void;
@@ -407,6 +425,11 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
         maximumFoleySounds: DEFAULT_MAXIMUM_FOLEY_SOUNDS,
         ttsLanguage: TTS_DEFAULT_LANGUAGE,
         outputDeviceId: AUDIO_OUTPUT.DEFAULT_DEVICE_ID,
+        ambisonicSendEnabled: false,
+        ambisonicSendDeviceId: AUDIO_OUTPUT.DEFAULT_DEVICE_ID,
+        ambisonicSendOrder: AMBISONIC_SEND.DEFAULT_ORDER,
+        ambisonicSendRotateWithListener: AMBISONIC_SEND.DEFAULT_ROTATE_WITH_LISTENER,
+        ambisonicSendStatus: null,
         normalizeImpulseResponses: false,
         masterVolume: AUDIO_CONTROL.MASTER_VOLUME.MAX,
         _generatedSounds: [],
@@ -917,6 +940,21 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
 
         setOutputDeviceId: (deviceId) =>
           set({ outputDeviceId: deviceId }, false, 'audio/setOutputDeviceId'),
+
+        setAmbisonicSendEnabled: (enabled) =>
+          set({ ambisonicSendEnabled: enabled }, false, 'audio/setAmbisonicSendEnabled'),
+
+        setAmbisonicSendDeviceId: (deviceId) =>
+          set({ ambisonicSendDeviceId: deviceId }, false, 'audio/setAmbisonicSendDeviceId'),
+
+        setAmbisonicSendOrder: (order) =>
+          set({ ambisonicSendOrder: order }, false, 'audio/setAmbisonicSendOrder'),
+
+        setAmbisonicSendRotateWithListener: (enabled) =>
+          set({ ambisonicSendRotateWithListener: enabled }, false, 'audio/setAmbisonicSendRotateWithListener'),
+
+        setAmbisonicSendStatus: (status) =>
+          set({ ambisonicSendStatus: status }, false, 'audio/setAmbisonicSendStatus'),
 
         setMasterVolume: (volume) =>
           set({ masterVolume: volume }, false, 'audio/setMasterVolume'),
@@ -1837,7 +1875,8 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
     partialize: (state: AudioControlsStoreState) => {
       const { individualSoundStates, previewingSoundId, _generatedSounds, _soundConfigs,
         soundBufferDurations, isBakingSchedule, isDeferredCycleBakePending,
-        _pendingPlayAllStagger, _generationInProgress, loopAnalysisInProgress, masterVolume, ...persistable } = state;
+        _pendingPlayAllStagger, _generationInProgress, loopAnalysisInProgress, masterVolume,
+        ambisonicSendEnabled, ambisonicSendStatus, ...persistable } = state;
       return {
         ...persistable,
         mutedSounds: [...(state.mutedSounds || [])],

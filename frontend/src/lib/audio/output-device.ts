@@ -8,6 +8,11 @@
  * - the ModalImpactSynthesizer AudioContext (modal impact playback)
  * - each WaveSurfer preview instance (card previews)
  *
+ * A single target can be pinned to a different device with
+ * `setOutputDeviceOverride` — used by the multichannel ambisonic send, which
+ * routes only the orchestrator context to e.g. Dante Virtual Soundcard while
+ * previews keep playing on the regular output.
+ *
  * Browsers only expose `AudioContext.setSinkId` from Chrome 110 and only a
  * media permission grant reveals device ids, so every call is feature-detected
  * and failures fall back to the system default output.
@@ -26,8 +31,17 @@ export interface OutputDeviceTarget {
 
 let currentDeviceId: string = AUDIO_OUTPUT.DEFAULT_DEVICE_ID;
 const targets = new Set<OutputDeviceTarget>();
+const overrides = new Map<OutputDeviceTarget, string>();
 
-function toSinkId(deviceId: string): string {
+/** True when the browser can route an AudioContext to a chosen device (Chrome/Edge ≥ 110). */
+export function isSinkSelectionSupported(): boolean {
+  if (typeof window === 'undefined') return false;
+  const proto = window.AudioContext?.prototype as OutputDeviceTarget | undefined;
+  return !!proto && typeof proto.setSinkId === 'function';
+}
+
+/** Store device id → `setSinkId` argument (`''` = system default output). */
+export function toSinkId(deviceId: string): string {
   // `''` tells the browser to use the system default output.
   return deviceId === AUDIO_OUTPUT.DEFAULT_DEVICE_ID ? '' : deviceId;
 }
@@ -63,8 +77,30 @@ export function getOutputDeviceId(): string {
 export function applyOutputDevice(deviceId: string): void {
   currentDeviceId = deviceId || AUDIO_OUTPUT.DEFAULT_DEVICE_ID;
   targets.forEach((target) => {
+    if (overrides.has(target)) return;
     void applyToTarget(target, currentDeviceId);
   });
+}
+
+/**
+ * Pin `target` to `deviceId`, independently of the global selection, or
+ * release it back to the global device with `null`. Resolves once the sink
+ * switch has settled.
+ *
+ * @returns false when the browser cannot select sinks (the target then stays
+ *   on the system default output)
+ */
+export async function setOutputDeviceOverride(
+  target: OutputDeviceTarget | AudioContext,
+  deviceId: string | null
+): Promise<boolean> {
+  const sinkTarget = target as OutputDeviceTarget;
+  if (deviceId === null) {
+    overrides.delete(sinkTarget);
+    return applyToTarget(sinkTarget, currentDeviceId);
+  }
+  overrides.set(sinkTarget, deviceId);
+  return applyToTarget(sinkTarget, deviceId);
 }
 
 /**
@@ -81,8 +117,9 @@ export function registerOutputDeviceTarget(target: OutputDeviceTarget | AudioCon
   // feature-detect the method at runtime inside applyToTarget.
   const sinkTarget = target as OutputDeviceTarget;
   targets.add(sinkTarget);
-  void applyToTarget(sinkTarget, currentDeviceId);
+  void applyToTarget(sinkTarget, overrides.get(sinkTarget) ?? currentDeviceId);
   return () => {
     targets.delete(sinkTarget);
+    overrides.delete(sinkTarget);
   };
 }

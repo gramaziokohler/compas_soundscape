@@ -26,6 +26,7 @@ import { useSpeckleSelection } from '@/components/scene/hooks/useSpeckleSelectio
 import { useSpeckleTimeline } from '@/components/scene/hooks/useSpeckleTimeline';
 import { useSpeckleAudioSync } from '@/components/scene/hooks/useSpeckleAudioSync';
 import { useSpeckleDarkMode } from '@/components/scene/hooks/useSpeckleDarkMode';
+import { useSpeckleRenderStyle } from '@/components/scene/hooks/useSpeckleRenderStyle';
 import { useSpeckleBoundingBox } from '@/components/scene/hooks/useSpeckleBoundingBox';
 // Phase 5 hooks
 import { useSpeckleSoundSpheres } from '@/components/scene/hooks/useSpeckleSoundSpheres';
@@ -492,6 +493,10 @@ export function SpeckleScene({
     soloedSounds,
     globalSoundSpeed,
   });
+
+  // ── Render Style ── (before Dark Mode: restores the stock pipeline before
+  // dark mode hooks its GEOMETRY passes when entering Sounds)
+  useSpeckleRenderStyle({ isViewerReady, viewMode });
 
   // ── Dark Mode ──
   useSpeckleDarkMode({

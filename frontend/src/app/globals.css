@@ -1419,6 +1419,41 @@ canvas {
   color: var(--color-primary);
   margin: 6px 0 2px;
 }
+/* Selectable rows in a bar popover (render style dropdown — SceneRenderStyleButton.tsx) */
+.bar-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  padding: 5px 8px;
+  border-radius: 6px;
+  text-align: left;
+  transition: background-color 0.15s;
+}
+.bar-option:hover {
+  background: var(--color-secondary-lighter);
+}
+.bar-option[data-active='true'] {
+  background: var(--color-border);
+}
+.bar-option__label {
+  font-size: 11px;
+  color: var(--foreground);
+}
+.bar-option[data-active='true'] .bar-option__label {
+  color: var(--color-primary);
+  font-weight: 600;
+}
+.bar-option__hint {
+  font-size: 10px;
+  color: var(--color-secondary-hover);
+}
+.bar-option__note {
+  font-size: 10px;
+  line-height: 1.35;
+  color: var(--color-secondary-hover);
+  padding: 2px 8px 4px;
+}
 /* Bug report popover (components/ui/BugReportPanel.tsx) and the Simple-mode
    floating trigger (components/scene/BugReportButton.tsx). */
 .bug-report {

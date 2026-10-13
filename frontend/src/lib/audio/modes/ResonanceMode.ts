@@ -22,7 +22,7 @@
  */
 
 import type { IAudioMode } from '../core/interfaces/IAudioMode';
-import type { Position, Orientation } from '@/types/audio';
+import type { Position, Orientation, AmbisonicSendTap } from '@/types/audio';
 import { AudioMode } from '@/types/audio';
 import type { FadeOptions } from '../utils/fade-envelope';
 import { applyFadeInOut } from '../utils/fade-envelope';
@@ -505,6 +505,17 @@ export class ResonanceMode implements IAudioMode {
       throw new Error('[ResonanceMode] Not initialized');
     }
     return this.masterGain;
+  }
+
+  /**
+   * Resonance's ambisonic bus (SN3D, third order, room reflections included) for
+   * the multichannel send. It is already rotated into the listener frame. A new
+   * scene (speed-of-sound change) brings a new node, so callers re-read this.
+   */
+  getAmbisonicSendTap(): AmbisonicSendTap | null {
+    const output: AudioNode | undefined = this.resonanceAudioScene?.ambisonicOutput;
+    if (!output) return null;
+    return { node: output, order: DEFAULT_AMBISONIC_ORDER, preRotated: true };
   }
 
   /**

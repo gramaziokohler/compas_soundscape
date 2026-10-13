@@ -49,7 +49,7 @@ export interface UseBugReportResult {
     description: string;
     category: BugReportCategory;
     includeScreenshot: boolean;
-    includeDiagnostics: boolean;
+    anonymous: boolean;
     status: BugReportStatus;
     reportId: string | null;
     error: string | null;
@@ -59,7 +59,7 @@ export interface UseBugReportResult {
     setDescription: (description: string) => void;
     setCategory: (category: BugReportCategory) => void;
     setIncludeScreenshot: (include: boolean) => void;
-    setIncludeDiagnostics: (include: boolean) => void;
+    setAnonymous: (anonymous: boolean) => void;
     submit: () => Promise<void>;
   };
 }
@@ -69,7 +69,8 @@ export interface UseBugReportResult {
  *
  * Starts the diagnostics capture on mount, keeps an unsent draft in
  * localStorage, and on submit captures an optional screenshot, collects the
- * diagnostics context, and posts it via `apiService.submitBugReport`.
+ * diagnostics context, and posts it via `apiService.submitBugReport`. When
+ * `anonymous` is set, the backend stores the report without the sender's identity.
  *
  * Usage:
  * ```tsx
@@ -82,7 +83,7 @@ export function useBugReport(): UseBugReportResult {
   const [description, setDescriptionState] = useState('');
   const [category, setCategoryState] = useState<BugReportCategory>('bug');
   const [includeScreenshot, setIncludeScreenshot] = useState(true);
-  const [includeDiagnostics, setIncludeDiagnostics] = useState(true);
+  const [anonymous, setAnonymous] = useState(false);
   const [status, setStatus] = useState<BugReportStatus>('idle');
   const [reportId, setReportId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -134,7 +135,7 @@ export function useBugReport(): UseBugReportResult {
     setStatus('sending');
     setError(null);
 
-    const context = collectBugReportContext(includeDiagnostics);
+    const context = collectBugReportContext();
     let screenshot: string | undefined;
     if (includeScreenshot) {
       try {
@@ -144,7 +145,7 @@ export function useBugReport(): UseBugReportResult {
       }
     }
 
-    const payload: BugReportPayload = { description: text, category, context, screenshot };
+    const payload: BugReportPayload = { description: text, category, context, screenshot, anonymous };
     try {
       const created = await apiService.submitBugReport(payload);
       setReportId(created.id);
@@ -157,10 +158,10 @@ export function useBugReport(): UseBugReportResult {
       setError(err instanceof Error ? err.message : 'Could not send the report');
       setStatus('error');
     }
-  }, [description, status, includeDiagnostics, includeScreenshot, category]);
+  }, [description, status, anonymous, includeScreenshot, category]);
 
   return {
-    state: { open, description, category, includeScreenshot, includeDiagnostics, status, reportId, error },
-    methods: { setOpen, setDescription, setCategory, setIncludeScreenshot, setIncludeDiagnostics, submit },
+    state: { open, description, category, includeScreenshot, anonymous, status, reportId, error },
+    methods: { setOpen, setDescription, setCategory, setIncludeScreenshot, setAnonymous, submit },
   };
 }
