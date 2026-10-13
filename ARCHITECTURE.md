@@ -219,6 +219,7 @@ compas_soundscape/
 │       │   │   │   └── destination-layout.ts    # 16-ch discrete destination / stereo restore
 │       │   │   └── utils/                       # Audio utilities
 │       │   │       ├── ambisonic-utils.ts       # Ambisonic encoding/decoding utilities
+│       │   │       ├── global-source.ts         # Global (non-spatial) background beds: omni encoder / W-only IR
 │       │   │       ├── audio-file-decoder.ts    # Audio file decoding
 │       │   │       ├── audio-info.ts            # Audio file loading & metadata
 │       │   │       ├── audio-upload.ts          # Audio upload utilities
@@ -684,6 +685,32 @@ setSinkId override on the orchestrator context only → DVS TX 1–16 → Dante 
 - State: `audioControlsStore.ambisonicSend*` (device + rotate persisted, enabled session-only),
   applied by `hooks/useAmbisonicSendSync.ts`; UI `components/audio/AmbisonicSendControls.tsx`
   (Settings → Rendering). Setup guide: `docs/dante-ambisonic-send.md`.
+
+### Global Background Sounds (non-spatial beds)
+
+Each background card has a **Global** switch beside its "Background" badge
+(`SoundGenerationConfig.global_playback`, unset = `GLOBAL_SOURCE.DEFAULT_ENABLED` = on; persisted
+in `soundscape.json` as `global_playback`). A global card plays without direction or distance
+attenuation, still through the room, and its sound sphere (label, dark-mode light) is hidden.
+
+```
+useSpeckleAudioSync: per event → card (utils/sound-card-match.ts) → isConfigGlobal(config)
+  ├─ orchestrator.setSourceGlobal(id, …)   (globalSources survive mode switches / re-creates)
+  │    Anechoic:    encoder W = OMNI_LEVEL_GAIN[order], directional ch = 0, distance gain 1
+  │    AmbisonicIR: convolver gets the IR's W channel × OMNI_LEVEL_GAIN (reverb, no direction);
+  │                 peak / L2 / normalization still measured on the original IR
+  │    Resonance:   source pinned to the listener, setSourceWidth(360) (Resonance's own compensation)
+  └─ soundSphereManager.setHiddenSounds(globalIds)  (picking / box-select skip invisible meshes)
+SoundscapeExporter mirrors it via config.globalSoundIds (= orchestrator.isSourceGlobal per track)
+```
+
+- **Levels:** W-only decodes quieter than a point source. `GLOBAL_SOURCE.OMNI_LEVEL_GAIN`
+  (FOA 1.297 / SOA 1.992 / TOA 2.033, measured on Omnitone's built-in HRIRs) makes a global
+  source as loud as the same sound at the 1 m reference distance, averaged over directions.
+- **Positions are never touched.** Hidden spheres keep their stored position (in AMBISONIC_IR it
+  still picks which simulation IR convolves the bed), so switching a card off re-spatializes it
+  and shows its sphere exactly where it was.
+- The bus stays ACN/SN3D, so the multichannel send carries global beds as an omni component.
 
 ### Low-Output Helper Hints
 

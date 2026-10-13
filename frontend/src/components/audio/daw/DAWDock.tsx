@@ -12,6 +12,7 @@ import { useDawView } from './useDawView';
 import { useClipSelection } from './useClipSelection';
 import { useClipGesture, ensureTrackMaterialized, readClipTrimCopy, type ClipDescriptor, type TriggerDep } from './useClipGesture';
 import { useClipTrimGesture } from './useClipTrimGesture';
+import { computeTimelineOverrun } from './daw-overrun';
 import type { ClipTrimCopy } from '@/store/audioControlsStore';
 import { parseTriggerExpression } from '@/lib/audio/utils/trigger-ref';
 import { useAudioControlsStore } from '@/store/audioControlsStore';
@@ -91,6 +92,8 @@ export function DAWDock({
   const isBakingSchedule = useAudioControlsStore((s) => s.isBakingSchedule);
   const storedSoundTimestamps = useAudioControlsStore((s) => s.soundTimestamps);
   const soundBufferDurations = useAudioControlsStore((s) => s.soundBufferDurations);
+  const soundIterationDurations = useAudioControlsStore((s) => s.soundIterationDurations);
+  const excludedIterations = useAudioControlsStore((s) => s.excludedIterations);
   const handleTimestampsChange = useAudioControlsStore((s) => s.handleTimestampsChange);
   const handleRemoveTimestamp = useAudioControlsStore((s) => s.handleRemoveTimestamp);
   const handleMute = useAudioControlsStore((s) => s.handleMute);
@@ -146,35 +149,19 @@ export function DAWDock({
     });
   }, [sounds]);
 
-  /* ---- Clips beyond the timeline (orchestrator-baked timestamps) ----
-     extractTimelineSounds silently drops any iteration that starts at/after the
-     timeline length, so a sound scene baked longer than the (per-scenario) timeline
-     hides those clips. Detect that situation over the current scene's tracks and
-     propose a duration that covers every stored timestamp + clip length. */
-  const timelineOverrun = useMemo(() => {
-    const limitMs = timelineDurationMs;
-    let outside = 0;
-    let maxEndMs = 0;
-    for (const sound of sounds) {
-      const tsSec = storedSoundTimestamps[sound.id];
-      if (!tsSec || tsSec.length === 0) continue;
-      const primaryDurMs =
-        soundBufferDurations[sound.id] != null
-          ? soundBufferDurations[sound.id] * 1000
-          : sound.soundDurationMs;
-      for (const sec of tsSec) {
-        const startMs = sec * 1000;
-        if (startMs < limitMs) continue; // still inside the timeline
-        outside += 1;
-        maxEndMs = Math.max(maxEndMs, startMs + primaryDurMs);
-      }
-    }
-    if (outside === 0) return null;
-    return {
-      iterationCount: outside,
-      proposedDurationMs: Math.max(limitMs, Math.ceil(maxEndMs / 1000) * 1000),
-    };
-  }, [sounds, storedSoundTimestamps, soundBufferDurations, timelineDurationMs]);
+  /* ---- Scheduled content past the timeline end (see daw-overrun.ts) ---- */
+  const timelineOverrun = useMemo(() => computeTimelineOverrun(
+    sounds.map((sound) => ({
+      startsSec: storedSoundTimestamps[sound.id],
+      iterationDurationsMs: soundIterationDurations[sound.id],
+      fallbackDurationMs: soundBufferDurations[sound.id] != null
+        ? soundBufferDurations[sound.id] * 1000
+        : sound.soundDurationMs,
+      excludedIndices: excludedIterations[sound.id],
+      isBackground: sound.soundGroup === 'background',
+    })),
+    timelineDurationMs,
+  ), [sounds, storedSoundTimestamps, soundIterationDurations, soundBufferDurations, excludedIterations, timelineDurationMs]);
 
   const handleExtendTimelineToFit = useCallback(() => {
     if (!timelineOverrun) return;
@@ -778,7 +765,7 @@ export function DAWDock({
               onStartEditDuration={() => setIsEditingDuration(true)}
               onStopEditDuration={() => setIsEditingDuration(false)}
               onDurationChange={setTimelineDurationMs}
-              overrunProposedMs={timelineOverrun?.proposedDurationMs ?? null}
+              overrun={timelineOverrun}
               onExtendTimeline={handleExtendTimelineToFit}
               isBakingSchedule={isBakingSchedule}
             />

@@ -28,6 +28,8 @@ import { audioBufferToWavBlob24 } from './utils/wav-encode';
 import { resolveVariantSoundIdByPrompt } from './utils/variant-sound-id';
 import { resolveIterationTrim } from './utils/iteration-trim';
 import { isSoundSilenced } from './utils/mute-solo';
+import { applyOmniToEncoder, toOmniFilter } from './utils/global-source';
+import { GLOBAL_SOURCE } from '@/utils/constants';
 
 // ============================================================================
 // Public Types
@@ -96,6 +98,9 @@ export interface SoundscapeExportConfig {
   /** Generated sound events — used to resolve variant ids by prompt_index. */
   variantEvents?: ReadonlyArray<{ id: string; prompt_index?: number | null; copy_index?: number | null }>;
 
+  /** Track ids rendered as global (non-spatial) beds, as in live playback. */
+  globalSoundIds?: ReadonlySet<string>;
+
   // ── Resonance Audio specific ──
 
   /** Room dimensions for Resonance mode { width, height, depth } */
@@ -134,6 +139,11 @@ function getFormatDescriptor(format: ExportFormat): FormatDescriptor {
     case 'foa':      return { channels: 4, order: 1, label: 'foa',      usePostLimiter: false, rawAmbisonic: true  };
     case 'toa':      return { channels: 16, order: 3, label: 'toa',     usePostLimiter: false, rawAmbisonic: true  };
   }
+}
+
+/** Whether a track renders as a global (non-spatial) bed — mirrors live playback. */
+function isGlobalSound(sound: TimelineSound, config: SoundscapeExportConfig): boolean {
+  return config.globalSoundIds?.has(sound.id) ?? false;
 }
 
 // ============================================================================
@@ -327,14 +337,20 @@ async function buildAnechoicGraph(
     const spherical = cartesianToSpherical({ x: headForward, y: -headRight, z: headUp });
     const refDist = 1.0;
     const dist = Math.max(refDist, spherical.distance);
-    distNode.gain.value = refDist / dist;
 
     const encoder = new ambisonics.monoEncoder(offlineCtx, encodeOrder);
-    encoder.azim = -spherical.azimuth * (180 / Math.PI);
-    encoder.elev = spherical.elevation * (180 / Math.PI);
-    encoder.updateGains();
-    // Convert N3D encoder gains to SN3D (mixBus stays SN3D throughout)
-    applySn3dToEncoder(encoder);
+    if (isGlobalSound(sound, config)) {
+      // Global bed: omni, level-matched, no distance attenuation
+      distNode.gain.value = 1.0;
+      applyOmniToEncoder(encoder, encodeOrder);
+    } else {
+      distNode.gain.value = refDist / dist;
+      encoder.azim = -spherical.azimuth * (180 / Math.PI);
+      encoder.elev = spherical.elevation * (180 / Math.PI);
+      encoder.updateGains();
+      // Convert N3D encoder gains to SN3D (mixBus stays SN3D throughout)
+      applySn3dToEncoder(encoder);
+    }
 
     gainNode.connect(distNode);
     distNode.connect(encoder.in);
@@ -448,7 +464,8 @@ async function buildAmbisonicIRGraph(
     gainNode.gain.value = soundGains.get(sound.id) ?? 1.0;
 
     const convolver = new ambisonics.convolver(offlineCtx, irOrder);
-    convolver.updateFilters(sourceIR);
+    // Global bed: the IR's omni (W) response only — room reverb, no direction
+    convolver.updateFilters(isGlobalSound(sound, config) ? toOmniFilter(offlineCtx, sourceIR) : sourceIR);
 
     gainNode.connect(convolver.in);
     convolver.out.connect(mixBus);
@@ -554,7 +571,12 @@ async function buildResonanceGraph(
       }
 
       const resonanceSource = scene.createSource();
-      const pos = sourceInfo.position;
+      // Global bed: omnidirectional source travelling with the listener
+      const isGlobal = isGlobalSound(sound, config);
+      const pos = isGlobal ? listenerPosition : sourceInfo.position;
+      (resonanceSource as any).setSourceWidth?.(isGlobal
+        ? GLOBAL_SOURCE.RESONANCE_SOURCE_WIDTH_DEG
+        : GLOBAL_SOURCE.RESONANCE_POINT_SOURCE_WIDTH_DEG);
       resonanceSource.setPosition(
         pos.x - centerOffset.x,
         pos.y - centerOffset.y,

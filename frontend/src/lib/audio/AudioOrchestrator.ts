@@ -122,6 +122,11 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   // Mute registry - persists mute state across mode switches
   private muteRegistry: Map<string, boolean> = new Map();
 
+  // Global (non-spatial) sources - persists across mode switches and may be set
+  // before a source's buffer has loaded. Positions stay in sourceRegistry either
+  // way, so turning a source back to spatial restores where its sphere is.
+  private globalSources: Set<string> = new Set();
+
   // Pending volumes - persists per-source volume across mode switches (and caches
   // values for sources not yet created while their buffer loads asynchronously).
   // New mode instances always build their chains at unity gain, so this registry is
@@ -1406,6 +1411,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     this.sourceRegistry.set(sourceId, { buffer: audioBuffer, position });
 
     this.currentModeInstance.createSource(sourceId, audioBuffer, position);
+    this.currentModeInstance.setSourceGlobal(sourceId, this.globalSources.has(sourceId));
 
     // Apply any pending volume that was set before the source was created
     const pendingVolume = this.pendingVolumes.get(sourceId);
@@ -1435,6 +1441,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     for (const [sourceId, { buffer, position }] of this.sourceRegistry) {
       try {
         this.currentModeInstance.createSource(sourceId, buffer, position);
+        this.currentModeInstance.setSourceGlobal(sourceId, this.globalSources.has(sourceId));
 
         // Reapply persisted volume — new mode chains always start at unity gain, so
         // without this the user's per-source fader is silently reset on every switch.
@@ -1731,6 +1738,22 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   }
 
   /**
+   * Play a source as a global bed (no direction or distance attenuation, still
+   * convolved / through the room) or as a spatial source at its stored position.
+   * Persisted so it survives mode switches and applies to sources created later.
+   */
+  setSourceGlobal(sourceId: string, isGlobal: boolean): void {
+    if (isGlobal) this.globalSources.add(sourceId);
+    else this.globalSources.delete(sourceId);
+    this.currentModeInstance?.setSourceGlobal(sourceId, isGlobal);
+  }
+
+  /** Whether a source currently plays as a global (non-spatial) bed. */
+  isSourceGlobal(sourceId: string): boolean {
+    return this.globalSources.has(sourceId);
+  }
+
+  /**
    * Set master/global volume (0.0 to 1.0)
    * Routes to current mode implementation
    */
@@ -1813,7 +1836,8 @@ export class AudioOrchestrator implements IAudioOrchestrator {
         position: { x, y, z },
         level: this.getSourceLevel(id),
         muted: this.muteRegistry.get(id) ?? false,
-        distance: distanceMatters && listener
+        // Global sources have no distance attenuation.
+        distance: distanceMatters && listener && !this.globalSources.has(id)
           ? Math.hypot(x - listener.x, y - listener.y, z - listener.z)
           : null,
         ir: irMode?.getSourceIRStatus(id) ?? null,

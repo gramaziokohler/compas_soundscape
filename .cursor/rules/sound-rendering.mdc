@@ -63,6 +63,26 @@ for the full contract. The parts the audio engine owns:
 - The orchestrator tracks `sourceIRSeq` (per-source monotonic seq, guards stale async IR downloads) and
   `sourceIRAppliedKey` (which posKey's IR is currently applied per source) — never bypass them.
 
+## Global (Non-Spatial) Background Sources
+
+`IAudioMode.setSourceGlobal(id, bool)` renders a source as a global bed — no direction, no distance
+attenuation, still through the room. Driven per card by `config.global_playback` (background cards
+only, default on — the "Global" switch beside the card's Background badge) via `useSpeckleAudioSync`,
+which also hides those spheres (`SoundSphereManager.setHiddenSounds`). Helpers in `utils/global-source.ts`.
+
+- Anechoic: `applyOmniToEncoder()` (W only) instead of `updateGains()` + `applySn3dToEncoder()`;
+  distance gain 1. AmbisonicIR: every filter goes through `loadFilter()`, which feeds global chains
+  `toOmniFilter()` (W × gain, directional channels zeroed) — never call `convolver.updateFilters`
+  directly. Resonance: pinned to the listener with `setSourceWidth(360)`.
+- **Level:** W gets `GLOBAL_SOURCE.OMNI_LEVEL_GAIN[order]` (diffuse-field match through Omnitone's
+  HRIRs). Resonance compensates its own 360° width — do not add the gain there.
+- **Never move the stored position for a global source.** Modes keep updating `position` and only
+  ignore it when encoding, so turning the flag off restores the sphere's position. In
+  AMBISONIC_IR the position still selects the simulation IR.
+- The flag lives in a per-mode `globalSourceIds` set (not on the chain) so internal chain rebuilds
+  (`ensureOrder`, IR order change, Resonance speed-of-sound rebuild) keep it.
+- `SoundscapeExporter` mirrors this via `config.globalSoundIds` (from `orchestrator.isSourceGlobal`).
+
 ## Ambisonic Signal Chain
 
 ```

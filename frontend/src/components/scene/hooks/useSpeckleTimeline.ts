@@ -303,6 +303,10 @@ export function useSpeckleTimeline({
         iterationLinks,
         simulationName: activeSimulation?.display_name ?? null,
         variantEvents: soundscapeData ?? [],
+        // Same per-track global flags as live playback (set by useSpeckleAudioSync)
+        globalSoundIds: new Set(
+          timelineSounds.filter((ts) => audioOrchestrator.isSourceGlobal(ts.id)).map((ts) => ts.id),
+        ),
       };
 
       await exportSoundscapeToWav(timelineSounds, timelineDurationMs, config);

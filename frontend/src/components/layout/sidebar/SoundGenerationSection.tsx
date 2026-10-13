@@ -34,6 +34,8 @@ import {
   soundCategoryTooltip,
 } from "@/utils/constants";
 import { getGenerationSignature, getModifiedGenerationFields, isGenerationDirty } from '@/utils/generationSignature';
+import { soundMatchesCard } from '@/utils/sound-card-match';
+import { isConfigGlobal } from '@/lib/audio/utils/global-source';
 
 /**
  * SoundGenerationSection Component
@@ -248,14 +250,8 @@ export function SoundGenerationSection({
     soundConfigs.length > 0 ? 0 : null
   );
 
-  const _soundMatchesCard = (sound: any, index: number): boolean => {
-    const configId = soundConfigs[index]?.config_id;
-    if (configId && sound.config_id) return sound.config_id === configId;
-    if (sound.prompt_index === index) return true;
-    const pi = sound.prompt_index;
-    if (pi != null && pi >= 10000 && Math.floor(pi / 10000) === index) return true;
-    return false;
-  };
+  const _soundMatchesCard = (sound: any, index: number): boolean =>
+    soundMatchesCard(sound, soundConfigs, index);
 
   // Helper to get generated sound for a config index (returns selected variant)
   const getGeneratedSound = useCallback((index: number): SoundEvent | undefined => {
@@ -1029,9 +1025,22 @@ export function SoundGenerationSection({
     // Category + trigger badges share a single wrapping row. As direct children
     // of the card body's flex-column `.card-stack`, each chip would stretch to
     // a full line; grouping keeps them side by side in one compact row.
+    // Background cards: per-card "Global" switch beside the badge. On = the bed
+    // plays without direction/distance (still convolved) and its sphere hides.
+    const globalToggle = categoryKey === 'background' ? (
+      <div title="Global: plays everywhere in the mix without direction or distance attenuation, still convolved by the room. Its sound sphere is hidden; turn off to hear it from the sphere again.">
+        <ToggleField
+          checked={isConfigGlobal(config)}
+          onChange={(v) => onUpdateConfig(originalIndex, 'global_playback', v)}
+          label="Global"
+        />
+      </div>
+    ) : null;
+
     const metaBadgeRow = (categoryBadge || triggerBadge) ? (
       <div className="flex flex-wrap items-center gap-1">
         {categoryBadge}
+        {globalToggle}
         {triggerBadge}
       </div>
     ) : null;

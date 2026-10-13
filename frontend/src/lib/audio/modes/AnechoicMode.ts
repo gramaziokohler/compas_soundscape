@@ -33,6 +33,7 @@ import type { AudioMode, Position, Orientation, AmbisonicOrder, AmbisonicSendTap
 import type { FadeOptions } from '../utils/fade-envelope';
 import { applyFadeInOut } from '../utils/fade-envelope';
 import { applySn3dToEncoder, cartesianToSpherical } from '../utils/ambisonic-utils';
+import { applyOmniToEncoder } from '../utils/global-source';
 import { SourceLevelMeter } from '../utils/source-level';
 import { AUDIO_CONTROL } from '@/utils/constants';
 
@@ -88,6 +89,10 @@ export class AnechoicMode implements IAudioMode {
   private ambisonicOrder: AmbisonicOrder = 1;
   private numChannels: number = 4; // FOA default
 
+  // Sources rendered as global (omni, no distance attenuation). Kept apart from
+  // `sources` so the flag survives chain rebuilds and can precede createSource.
+  private globalSourceIds: Set<string> = new Set();
+
   private enabled: boolean = false;
   private debug: boolean = false;
   private prevListenerPosition: Position | null = null;
@@ -139,6 +144,31 @@ export class AnechoicMode implements IAudioMode {
   }
 
   /**
+   * Write the encoder gains for a source and return its distance gain.
+   * Spatial: direction relative to the listener (SN3D), 1/r beyond 1 m.
+   * Global: omni (W only, level-matched), no distance attenuation — `position`
+   * is still stored by the caller so switching back re-encodes from it.
+   */
+  private encodeSource(sourceId: string, encoder: any, position: Position): number {
+    if (this.globalSourceIds.has(sourceId)) {
+      applyOmniToEncoder(encoder, this.ambisonicOrder);
+      return 1.0;
+    }
+
+    const spherical = this.worldSpaceSpherical(position, this.listenerPosition);
+
+    // Negate azimuth: JSAmbisonics monoEncoder internal convention
+    encoder.azim = -spherical.azimuth * (180 / Math.PI);
+    encoder.elev = spherical.elevation * (180 / Math.PI);
+    encoder.updateGains();
+    // JSAmbisonics encodes N3D; the decoder and the send expect SN3D.
+    applySn3dToEncoder(encoder);
+
+    const refDistance = 1.0;
+    return refDistance / Math.max(refDistance, spherical.distance);
+  }
+
+  /**
    * Create audio source at given position using JSAmbisonics monoEncoder
    *
    * Workflow:
@@ -172,20 +202,7 @@ export class AnechoicMode implements IAudioMode {
     // Create JSAmbisonics monoEncoder
     // Note: monoEncoder uses GainNode matrix, not ConvolverNode, so no normalize property to set
     const encoder = new ambisonics.monoEncoder(this.audioContext, this.ambisonicOrder);
-
-    const spherical = this.worldSpaceSpherical(position, this.listenerPosition);
-
-    // Negate azimuth: JSAmbisonics monoEncoder internal convention
-    encoder.azim = -spherical.azimuth * (180 / Math.PI);
-    encoder.elev = spherical.elevation * (180 / Math.PI);
-    encoder.updateGains();
-    // JSAmbisonics encodes N3D; the decoder and the send expect SN3D.
-    applySn3dToEncoder(encoder);
-
-    const refDistance = 1.0;
-    const distance = Math.max(refDistance, spherical.distance);
-    const distanceGain = refDistance / distance;
-    distanceGainNode.gain.value = distanceGain;
+    distanceGainNode.gain.value = this.encodeSource(sourceId, encoder, position);
 
     // Connect audio graph: Gain → LevelMeter → MuteGain → DistanceGain → Encoder
     gainNode.connect(levelMeter.node);
@@ -229,17 +246,7 @@ export class AnechoicMode implements IAudioMode {
 
     source.position = position;
 
-    const spherical = this.worldSpaceSpherical(position, this.listenerPosition);
-
-    const refDistance = 1.0;
-    const distance = Math.max(refDistance, spherical.distance);
-    const distanceGain = refDistance / distance;
-
-    // Negate azimuth: JSAmbisonics monoEncoder internal convention
-    source.encoder.azim = -spherical.azimuth * (180 / Math.PI);
-    source.encoder.elev = spherical.elevation * (180 / Math.PI);
-    source.encoder.updateGains();
-    applySn3dToEncoder(source.encoder);
+    const distanceGain = this.encodeSource(sourceId, source.encoder, position);
 
     if (source.distanceGainNode) {
       source.distanceGainNode.gain.setTargetAtTime(distanceGain, this.audioContext!.currentTime, 0.1);
@@ -510,6 +517,19 @@ export class AnechoicMode implements IAudioMode {
     source.isMuted = muted;
     const gainValue = muted ? AUDIO_CONTROL.DEFAULTS.MUTED_GAIN : AUDIO_CONTROL.DEFAULTS.UNMUTED_GAIN;
     source.muteGainNode.gain.setValueAtTime(gainValue, this.audioContext.currentTime);
+  }
+
+  /**
+   * Render a source omnidirectionally without distance attenuation, or return
+   * it to spatial encoding at its stored position.
+   */
+  setSourceGlobal(sourceId: string, isGlobal: boolean): void {
+    if (this.globalSourceIds.has(sourceId) === isGlobal) return;
+    if (isGlobal) this.globalSourceIds.add(sourceId);
+    else this.globalSourceIds.delete(sourceId);
+
+    const source = this.sources.get(sourceId);
+    if (source) this.updateSourcePosition(sourceId, source.position);
   }
 
   /**

@@ -69,7 +69,8 @@ export interface SceneBottomBarProps {
  *   center — playback of the selected scene: play/pause, stop, time, timeline,
  *            plus snap / zoom / export while the DAW is expanded (portaled by DAWDock);
  *            a low-output hint pops above it when playback is too quiet
- *   right  — view: Simple / Detailed interface toggle, volume, show/hide sounds & listeners,
+ *   right  — view: Simple / Detailed interface toggle (Detailed mode only — always
+ *            available in Settings → Display), volume, show/hide sounds & listeners,
  *            render style dropdown, reset view, refresh, Object Explorer / load model;
  *            then help & system: shortcuts, notifications, settings
  * The docked DAW opens above it; sidebars stop at its top edge. In Simple mode
@@ -216,23 +217,26 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
 
       {/* ── Right: view tools, then help & system ── */}
       <div className="scene-bottom-bar__group" style={{ justifySelf: 'end' }}>
-        <div className="bar-mode-toggle" role="group" aria-label="User interface level of detail" title="User interface level of detail">
-          {(['simple', 'expert'] as const).map((mode) => {
-            const selected = (mode === 'expert') === isExpert;
-            return (
-              <button
-                key={mode}
-                type="button"
-                className="bar-mode-toggle__btn"
-                data-active={selected}
-                aria-pressed={selected}
-                onClick={() => { if (!selected) switchUIMode(mode); }}
-              >
-                {mode === 'simple' ? 'Simple' : 'Detailed'}
-              </button>
-            );
-          })}
-        </div>
+        {/* Level-of-detail toggle lives in Settings → Display; mirrored here only in Detailed mode. */}
+        {isExpert && (
+          <div className="bar-mode-toggle" role="group" aria-label="User interface level of detail" title="User interface level of detail">
+            {(['simple', 'expert'] as const).map((mode) => {
+              const selected = (mode === 'expert') === isExpert;
+              return (
+                <button
+                  key={mode}
+                  type="button"
+                  className="bar-mode-toggle__btn"
+                  data-active={selected}
+                  aria-pressed={selected}
+                  onClick={() => { if (!selected) switchUIMode(mode); }}
+                >
+                  {mode === 'simple' ? 'Simple' : 'Detailed'}
+                </button>
+              );
+            })}
+          </div>
+        )}
         {isViewerReady && (
           <>
             <SceneVolumeButton audioOrchestrator={audioOrchestrator} />

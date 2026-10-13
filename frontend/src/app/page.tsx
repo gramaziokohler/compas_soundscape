@@ -56,6 +56,7 @@ import { scheduleUndoSafeDeletion } from "@/lib/undo-safe-deletion";
 import { useGlobalShortcuts } from "@/hooks/useGlobalShortcuts";
 import { useJobRecovery } from "@/hooks/useJobRecovery";
 import { useModelVersionWatcher } from "@/hooks/useModelVersionWatcher";
+import { useListenerOrientationAutosave } from "@/hooks/useListenerOrientationAutosave";
 import { apiService } from "@/services/api";
 import { API_BASE_URL, DEFAULT_BACKGROUND_DURATION_SECONDS, DEFAULT_DBFS, DEFAULT_NUM_SOUNDS, RECEIVER_CONFIG, SPIRAL_PLACEMENT, DEFAULT_LISTENER_ORIENTATION, TTS_DEFAULT_LANGUAGE, DEFAULT_MAXIMUM_FOLEY_SOUNDS, SANDBOX_MODEL_ID, MODEL_VERSION_WATCH } from "@/utils/constants";
 import { parseAuthoredSeconds } from "@/lib/audio/utils/timeline-utils";
@@ -1431,6 +1432,10 @@ function HomeContent() {
     if (!activeIRGroupId) return null;
     return receivers.receivers.some((r) => r.id === activeIRGroupId) ? activeIRGroupId : null;
   }, [activeIRGroupId, receivers.receivers]);
+
+  // Persist the FPS camera orientation to the powered listener (independent of
+  // whether its card is expanded or reduced)
+  useListenerOrientationAutosave(poweredListenerId);
 
   // Incremented on every FPS exit (clears the highlighted IR group in acoustics)
   const [fpsExitCount, setFpsExitCount] = useState(0);

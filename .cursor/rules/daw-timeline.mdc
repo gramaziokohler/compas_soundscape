@@ -23,7 +23,18 @@ Supporting hooks/utils, all in `frontend/src/components/audio/daw/`:
 `useDawView.ts` (zoom / snap mode / dock height — see "Zoom Auto-Fit" below), `useClipSelection.ts` (click / ctrl / shift / marquee
 selection), `useClipGesture.ts` (drag, group drag, duplicate — one store commit per gesture),
 `useClipTrimGesture.ts` (per-clip edge trim + reset), `daw-trim.ts` (pure trim math),
-`daw-snap.ts` (pure snap resolution: off / 0.1 / 0.5 / 1 / smart + edge magnetism).
+`daw-snap.ts` (pure snap resolution: off / 0.1 / 0.5 / 1 / smart + edge magnetism),
+`daw-overrun.ts` (pure: explicit `soundTimestamps` whose clips start or end past `timelineDurationMs`).
+
+## Timeline Overrun Warning
+
+A scenario timeline is a hard bound (the bake never auto-extends past it), so an orchestrated scene can
+be longer than the timeline: clips starting past the end are dropped, clips crossing it are cut.
+`computeTimelineOverrun` scans the explicit schedules (never the visible clips — they are already
+filtered), skipping auto/background tracks, excluded iterations and the `UNRESOLVED_TIMESTAMP_SEC`
+sentinel. `DAWRuler` then tints the duration pencil warning-colored (tooltip says how far the scene runs),
+shows "needs m:ss" next to the inline duration field while editing, and puts an "Extend" button in the
+sticky ruler head cell — never past the timeline end, which auto-fit zoom pushes off-screen.
 
 Kept unchanged: `DAWMiniTransport.tsx` (compact bar shown when the dock is collapsed),
 `DAWTransportBtn.tsx`, `frontend/src/lib/audio/peaks-cache.ts`.

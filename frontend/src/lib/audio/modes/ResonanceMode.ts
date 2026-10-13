@@ -27,7 +27,7 @@ import { AudioMode } from '@/types/audio';
 import type { FadeOptions } from '../utils/fade-envelope';
 import { applyFadeInOut } from '../utils/fade-envelope';
 import { SourceLevelMeter } from '../utils/source-level';
-import { AUDIO_CONTROL, DEFAULT_SPEED_OF_SOUND } from '@/utils/constants';
+import { AUDIO_CONTROL, DEFAULT_SPEED_OF_SOUND, GLOBAL_SOURCE } from '@/utils/constants';
 
 // Dynamic import type
 type ResonanceAudioClass = any;
@@ -89,6 +89,31 @@ export class ResonanceMode implements IAudioMode {
 
   /** Independent, transient playback voices per source (see startVoice/IAudioMode). */
   private voices: Map<string, Set<AudioBufferSourceNode>> = new Map();
+
+  /**
+   * Sources rendered as global: pinned to the listener (no direction, no
+   * distance attenuation) with full source width, still feeding the room.
+   * Kept apart from `resonanceSources` so it survives a scene rebuild.
+   */
+  private globalSourceIds: Set<string> = new Set();
+
+  /**
+   * Place a source in the Resonance room. Spatial sources sit at their stored
+   * world position; global ones follow the listener as an omnidirectional source
+   * (their stored position is kept for when they turn spatial again).
+   */
+  private placeSource(sourceId: string, entry: { source: any; position: { x: number; y: number; z: number } }): void {
+    const isGlobal = this.globalSourceIds.has(sourceId);
+    const at = isGlobal ? this.listenerPosition : entry.position;
+    entry.source.setSourceWidth(isGlobal
+      ? GLOBAL_SOURCE.RESONANCE_SOURCE_WIDTH_DEG
+      : GLOBAL_SOURCE.RESONANCE_POINT_SOURCE_WIDTH_DEG);
+    entry.source.setPosition(
+      at.x - this.roomCenterOffset.x,
+      at.y - this.roomCenterOffset.y,
+      at.z - this.roomCenterOffset.z
+    );
+  }
 
   /**
    * Load Resonance Audio library dynamically (browser-only)
@@ -211,15 +236,8 @@ export class ResonanceMode implements IAudioMode {
       resonanceSource.setMaxDistance(DEFAULT_MAX_DISTANCE);
       resonanceSource.setGain(1.0);
 
-      // Set initial position (offset by room center so it's relative to room origin)
-      resonanceSource.setPosition(
-        position.x - this.roomCenterOffset.x,
-        position.y - this.roomCenterOffset.y,
-        position.z - this.roomCenterOffset.z
-      );
-
       // Store source info
-      this.resonanceSources.set(sourceId, {
+      const entry = {
         source: resonanceSource,
         buffer: audioBuffer,
         position: { x: position.x, y: position.y, z: position.z },
@@ -229,7 +247,11 @@ export class ResonanceMode implements IAudioMode {
         levelMeter,
         isPlaying: false,
         isMuted: false
-      });
+      };
+      this.resonanceSources.set(sourceId, entry);
+
+      // Set initial position (offset by room center so it's relative to room origin)
+      this.placeSource(sourceId, entry);
 
       console.log(`[ResonanceMode] Created source: ${sourceId} at (${position.x.toFixed(1)}, ${position.y.toFixed(1)}, ${position.z.toFixed(1)})`);
     } catch (error) {
@@ -410,12 +432,8 @@ export class ResonanceMode implements IAudioMode {
       return;
     }
 
-    source.source.setPosition(
-      position.x - this.roomCenterOffset.x,
-      position.y - this.roomCenterOffset.y,
-      position.z - this.roomCenterOffset.z
-    );
     source.position = { x: position.x, y: position.y, z: position.z };
+    this.placeSource(sourceId, source);
   }
 
   /**
@@ -492,6 +510,12 @@ export class ResonanceMode implements IAudioMode {
         forward.x, forward.y, forward.z,
         up.x, up.y, up.z
       );
+
+      // Global sources travel with the listener.
+      this.globalSourceIds.forEach((sourceId) => {
+        const source = this.resonanceSources.get(sourceId);
+        if (source) this.placeSource(sourceId, source);
+      });
     } catch (error) {
       console.error('[ResonanceMode] Error updating listener:', error);
     }
@@ -579,6 +603,19 @@ export class ResonanceMode implements IAudioMode {
   }
 
   /**
+   * Pin a source to the listener as an omnidirectional source, or return it to
+   * its stored position as a point source.
+   */
+  setSourceGlobal(sourceId: string, isGlobal: boolean): void {
+    if (this.globalSourceIds.has(sourceId) === isGlobal) return;
+    if (isGlobal) this.globalSourceIds.add(sourceId);
+    else this.globalSourceIds.delete(sourceId);
+
+    const source = this.resonanceSources.get(sourceId);
+    if (source) this.placeSource(sourceId, source);
+  }
+
+  /**
    * Set master volume
    */
   setMasterVolume(volume: number): void {
@@ -656,13 +693,7 @@ export class ResonanceMode implements IAudioMode {
     });
 
     // Re-position all existing sources using the new offset
-    this.resonanceSources.forEach((source, sourceId) => {
-      source.source.setPosition(
-        source.position.x - this.roomCenterOffset.x,
-        source.position.y - this.roomCenterOffset.y,
-        source.position.z - this.roomCenterOffset.z
-      );
-    });
+    this.resonanceSources.forEach((source, sourceId) => this.placeSource(sourceId, source));
   }
 
   /**

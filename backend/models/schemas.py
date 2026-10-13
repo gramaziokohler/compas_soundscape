@@ -333,6 +333,8 @@ class SoundscapeSoundConfig(BaseModel):
     entity_meta: Optional[list[dict]] = None
     # Sound category from foley/scenario analysis (e.g. "background", "sound_event", "speech")
     category: Optional[str] = None
+    # Background card plays as a global (non-spatial) bed; None = default (on).
+    global_playback: Optional[bool] = None
     # Scenario pipeline reference (scenarioId + foley/speech ids + raw entry fields),
     # persisted so orchestration can be re-run from edited cards after refresh.
     scenario_source: Optional[dict] = None

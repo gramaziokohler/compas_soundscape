@@ -3,6 +3,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { NumberField } from '@/components/ui/NumberField';
 import { DAW } from '@/utils/constants';
+import type { TimelineOverrun } from './daw-overrun';
 
 const TICK_LADDER = [0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60] as const;
 
@@ -42,8 +43,8 @@ interface DAWRulerProps {
   onStartEditDuration: () => void;
   onStopEditDuration: () => void;
   onDurationChange: (ms: number) => void;
-  /** Duration (ms) that would include every clip beyond the timeline; null when everything fits. */
-  overrunProposedMs?: number | null;
+  /** Scheduled clips running past the timeline end; null when everything fits. */
+  overrun?: TimelineOverrun | null;
   onExtendTimeline?: () => void;
   /** Orchestrate schedule is being recomputed — shown in the ruler's head cell. */
   isBakingSchedule?: boolean;
@@ -52,7 +53,7 @@ interface DAWRulerProps {
 export function DAWRuler({
   totalDurationSec, pxPerSecond, onSeek, loopRegion, onLoopRegionChange,
   isEditingDuration, onStartEditDuration, onStopEditDuration, onDurationChange,
-  overrunProposedMs = null, onExtendTimeline, isBakingSchedule = false,
+  overrun = null, onExtendTimeline, isBakingSchedule = false,
 }: DAWRulerProps) {
   const labelStep = computeTickStep(pxPerSecond);
   const minorStep = computeMinorStep(labelStep);
@@ -151,6 +152,12 @@ export function DAWRuler({
 
   const activeLoop = dragLoopPreview ?? loopRegion;
 
+  const overrunEnd = overrun ? formatTime(overrun.proposedDurationMs / 1000, false) : '';
+  const overrunTitle = overrun
+    ? `The scheduled scene runs to ${overrunEnd} but the timeline ends at ${formatTime(totalDurationSec, false)} — `
+      + `${overrun.iterationCount} clip${overrun.iterationCount === 1 ? ' is' : 's are'} cut off.`
+    : '';
+
   return (
     <div
       ref={rulerRef}
@@ -189,6 +196,21 @@ export function DAWRuler({
             Computing schedule…
             <style>{`@keyframes daw-bake-pulse { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.3; transform: scale(0.7); } }`}</style>
           </>
+        )}
+        {!isBakingSchedule && overrun && onExtendTimeline && (
+          <button
+            onPointerDown={(e) => e.stopPropagation()}
+            onDoubleClick={(e) => e.stopPropagation()}
+            onClick={onExtendTimeline}
+            title={`${overrunTitle} Click to extend the timeline to ${overrunEnd}.`}
+            style={{
+              border: '1px solid var(--color-warning)', borderRadius: '3px', background: 'transparent',
+              color: 'var(--color-warning)', cursor: 'pointer', fontSize: '9px', lineHeight: 1,
+              padding: '2px 4px', whiteSpace: 'nowrap',
+            }}
+          >
+            ⚠ Scene runs to {overrunEnd} · Extend
+          </button>
         )}
       </div>
       <div style={{ position: 'relative', flex: 1 }}>
@@ -259,42 +281,39 @@ export function DAWRuler({
           }}
         >
           {isEditingDuration ? (
-            <NumberField
-              value={totalDurationSec}
-              precision={0}
-              autoFocus
-              onCommit={(v) => { if (v && v > 0) onDurationChange(v * 1000); onStopEditDuration(); }}
-              onKeyDown={(e) => { if (e.key === 'Escape') onStopEditDuration(); }}
-              containerStyle={{ width: '44px' }}
-              className="!text-xs !py-0.5"
-            />
+            <>
+              <NumberField
+                value={totalDurationSec}
+                precision={0}
+                autoFocus
+                onCommit={(v) => { if (v && v > 0) onDurationChange(v * 1000); onStopEditDuration(); }}
+                onKeyDown={(e) => { if (e.key === 'Escape') onStopEditDuration(); }}
+                containerStyle={{ width: '44px' }}
+                className="!text-xs !py-0.5"
+              />
+              {overrun && (
+                <span
+                  title={overrunTitle}
+                  style={{ fontSize: '9px', color: 'var(--color-warning)', whiteSpace: 'nowrap', lineHeight: 1 }}
+                >
+                  ⚠ needs {overrunEnd}
+                </span>
+              )}
+            </>
           ) : (
             <button
               onClick={onStartEditDuration}
-              title="Edit timeline duration (seconds)"
+              title={overrun ? `${overrunTitle} Click to edit the timeline duration (seconds).` : 'Edit timeline duration (seconds)'}
               style={{
                 width: DAW.RULER_EDIT_BUTTON_SIZE, height: DAW.RULER_EDIT_BUTTON_SIZE,
                 borderRadius: '3px', border: 'none', background: 'transparent',
-                color: 'var(--color-secondary-hover)', cursor: 'pointer',
+                color: overrun ? 'var(--color-warning)' : 'var(--color-secondary-hover)', cursor: 'pointer',
                 display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0,
               }}
             >
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
               </svg>
-            </button>
-          )}
-          {overrunProposedMs !== null && onExtendTimeline && !isEditingDuration && (
-            <button
-              onClick={onExtendTimeline}
-              title="Some clips start beyond the timeline — extend it to include them"
-              style={{
-                border: '1px solid var(--color-warning)', borderRadius: '3px', background: 'transparent',
-                color: 'var(--color-warning)', cursor: 'pointer', fontSize: '9px', lineHeight: 1,
-                padding: '2px 4px', whiteSpace: 'nowrap',
-              }}
-            >
-              Extend to {formatTime(overrunProposedMs / 1000, false)}
             </button>
           )}
         </div>

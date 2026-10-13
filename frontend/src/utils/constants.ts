@@ -1061,6 +1061,27 @@ export const AMBISONIC_SEND = {
   DANTE_LABEL_PATTERN: /dante|dvs/i,
 } as const;
 
+// ============================================================================
+// Global (non-spatial) sources — background beds in the DAW mix
+// ============================================================================
+export const GLOBAL_SOURCE = {
+  // Default of each background card's "Global" toggle (config.global_playback unset).
+  DEFAULT_ENABLED: true,
+
+  // A global source is encoded omnidirectionally (W channel only) with no
+  // distance attenuation. W-only decodes ~2–6 dB quieter than a point source, so
+  // W gets this gain per ambisonic order: it makes the omni source as loud as a
+  // point source at the 1 m reference distance with the same fader setting,
+  // averaged over all directions (diffuse-field energy). Derived from Omnitone's
+  // built-in HRIRs, per ear: sqrt(Σₙ Σₘ ‖h_nm‖² / (2n+1) / ‖h_W‖²).
+  OMNI_LEVEL_GAIN: { 1: 1.297, 2: 1.992, 3: 2.033 } as Readonly<Record<1 | 2 | 3, number>>,
+
+  // Resonance Audio source width for an omnidirectional source. Resonance
+  // applies its own energy compensation at full width (W × 2.397 at 3rd order).
+  RESONANCE_SOURCE_WIDTH_DEG: 360,
+  RESONANCE_POINT_SOURCE_WIDTH_DEG: 0,
+} as const;
+
 
 
 // ============================================================================
@@ -1824,6 +1845,9 @@ export const AUDIO_TIMELINE = {
   MIN_ITERATIONS_PER_SOUND: 3,
   // Maximum iterations to render per track (performance cap)
   MAX_ITERATIONS_TO_DISPLAY: 50,
+  // Sentinel start (seconds) the orchestrate bake writes for unresolved/excluded
+  // iterations — far beyond any real timeline, never a real clip position.
+  UNRESOLVED_TIMESTAMP_SEC: 999_999,
 
 } as const;
 
@@ -1892,6 +1916,8 @@ export const DAW = {
   RULER_END_CONTROL_GAP: 6,
   /** Size (px) of the ruler's "Edit timeline duration" button. */
   RULER_EDIT_BUTTON_SIZE: 16,
+  /** Clips may end this far (ms) past the timeline end before the overrun warning shows (float slack). */
+  OVERRUN_TOLERANCE_MS: 50,
   TOP_BAR_HEIGHT: 14,
   SNAP_MAGNET_PX: 6,
   EDGE_AUTOSCROLL_PX: 40,

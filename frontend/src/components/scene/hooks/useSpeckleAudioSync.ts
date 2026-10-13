@@ -1,8 +1,11 @@
 import { useEffect } from 'react';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { useAudioControlsStore } from '@/store/audioControlsStore';
+import { useSoundscapeStore } from '@/store/soundscapeStore';
 import { DEFAULT_DBFS } from '@/utils/constants';
 import { isSoundSilenced } from '@/lib/audio/utils/mute-solo';
+import { isConfigGlobal } from '@/lib/audio/utils/global-source';
+import { findCardIndexForSound } from '@/utils/sound-card-match';
 import type { SoundEvent } from '@/types';
 
 export function useSpeckleAudioSync({
@@ -25,6 +28,10 @@ export function useSpeckleAudioSync({
   // orchestrator's per-sound SPL (stored in event.volume_dbfs) audible instead
   // of every source playing at the uniform anchor.
   const globalBaseDbfs = useAudioControlsStore((s) => s.globalBaseDbfs);
+  // Each background card's own "Global" toggle lives on its config.
+  const soundConfigs = useSoundscapeStore((s) => s.soundConfigs);
+  // Re-run the global sync once the sphere manager exists (it may come up after the data).
+  const coordinator = useSpeckleEngineStore((s) => s.coordinator);
 
   // ============================================================================
   // Effect - Apply Volume Changes (dBFS-based)
@@ -84,6 +91,27 @@ export function useSpeckleAudioSync({
       });
     }
   }, [mutedSounds, soloedSounds, soundscapeData, audioOrchestrator]);
+
+  // ============================================================================
+  // Effect - Global (non-spatial) background sounds
+  // ============================================================================
+  // Every variant of a background card whose "Global" toggle is on plays as a
+  // global bed and its sphere is hidden. Positions are never touched, so turning
+  // the toggle off re-spatializes the sound and shows its sphere where it was.
+  useEffect(() => {
+    if (!soundscapeData) return;
+    const globalIds = new Set<string>();
+    soundscapeData.forEach((soundEvent) => {
+      const config = soundConfigs[findCardIndexForSound(soundEvent, soundConfigs)];
+      const isGlobal = isConfigGlobal({
+        category: config?.category ?? soundEvent.category,
+        global_playback: config?.global_playback,
+      });
+      audioOrchestrator?.setSourceGlobal(soundEvent.id, isGlobal);
+      if (isGlobal) globalIds.add(soundEvent.id);
+    });
+    coordinator?.getSoundSphereManager()?.setHiddenSounds(globalIds);
+  }, [soundConfigs, soundscapeData, audioOrchestrator, coordinator]);
 
   // ============================================================================
   // Effect - Speed of Sound

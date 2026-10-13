@@ -155,6 +155,16 @@ export interface IAudioMode {
   setSourceMute(sourceId: string, muted: boolean): void;
 
   /**
+   * Render a source as global (non-spatial): no direction, no distance
+   * attenuation, still through the room. The flag outlives the source chain
+   * (chains rebuilt internally keep it) and may be set before the source exists.
+   * The stored position is kept, so turning it off restores spatial rendering.
+   * @param sourceId - Source identifier
+   * @param isGlobal - Whether the source plays as a global bed
+   */
+  setSourceGlobal(sourceId: string, isGlobal: boolean): void;
+
+  /**
    * Set master/global volume for the entire mode (0.0 to 1.0)
    * @param volume - Master volume level
    */

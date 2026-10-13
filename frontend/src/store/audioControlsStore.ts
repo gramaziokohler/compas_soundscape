@@ -1412,7 +1412,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
           _pendingBakeNotify = false;
 
           // Apply resolved timestamps — use actual generated sound ID as key.
-          const UNRESOLVED = 999999; // >> any real timeline duration (seconds)
+          const UNRESOLVED = AUDIO_TIMELINE.UNRESOLVED_TIMESTAMP_SEC;
           const newTimestamps = { ...soundTimestamps };
           let anyChange = false;
           let maxResolvedSec = 0; // track furthest resolved timestamp for auto-extending
@@ -1479,7 +1479,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
           entryMap.forEach((entry) => {
             const { soundId, timestamps, isBackground } = entry;
             if (!soundId || isBackground) return;
-            const UNRESOLVED_CHECK = 999999;
+            const UNRESOLVED_CHECK = AUDIO_TIMELINE.UNRESOLVED_TIMESTAMP_SEC;
             const iterDursMs = timestamps.map((t, i) => {
               if (t === null || t >= UNRESOLVED_CHECK) return 0;
               return iterDurationSec(entry, i) * 1000;

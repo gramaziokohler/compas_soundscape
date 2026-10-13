@@ -1,33 +1,19 @@
 'use client';
 
-import { useEffect, useRef, useCallback } from 'react';
+import { useCallback } from 'react';
 import type { ReceiverData } from '@/types/receiver';
 import { useReceiversStore } from '@/store/receiversStore';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { RefreshIcon } from '@/components/ui/Icon';
 import { PositionWidget } from '@/components/ui/PositionWidget';
 import { LISTENER_ORIENTATION } from '@/utils/constants';
+import type { ListenerOrientation as Orientation } from '@/hooks/useListenerOrientationAutosave';
 
 const ORIENTATION_AXES = ['Y', 'P', 'R'] as const;
-
-interface Orientation {
-  yaw: number;
-  pitch: number;
-  roll: number;
-}
 
 const toDeg = (rad: number) => (isNaN(rad) ? 0 : (rad * 180) / Math.PI);
 const toRad = (deg: number) => (deg * Math.PI) / 180;
 const formatDeg = (rad: number) => toDeg(rad).toFixed(LISTENER_ORIENTATION.PRECISION);
-
-function sameOrientation(a: Orientation, b: Orientation): boolean {
-  const eps = LISTENER_ORIENTATION.EPSILON_RAD;
-  return Math.abs(a.yaw - b.yaw) <= eps && Math.abs(a.pitch - b.pitch) <= eps && Math.abs(a.roll - b.roll) <= eps;
-}
-
-function isFirstPersonActive(): boolean {
-  return useSpeckleEngineStore.getState().coordinator?.isFirstPersonMode() ?? false;
-}
 
 interface ListenerOrientationWidgetProps {
   receiver: ReceiverData;
@@ -40,7 +26,9 @@ interface ListenerOrientationWidgetProps {
  * Editable yaw / pitch / roll (degrees) of a single listener.
  *
  * - Powered: shows the live FPS camera orientation; edits rotate the camera,
- *   and every change is autosaved (debounced) to the listener.
+ *   and every change is autosaved (debounced) to the listener by
+ *   `useListenerOrientationAutosave` (page level, so it also runs while this
+ *   card is reduced).
  * - Not powered: shows and edits the saved orientation directly.
  */
 export function ListenerOrientationWidget({ receiver, color, isPowered }: ListenerOrientationWidgetProps) {
@@ -57,41 +45,7 @@ export function ListenerOrientationWidget({ receiver, color, isPowered }: Listen
     Math.abs(shown.pitch) > LISTENER_ORIENTATION.EPSILON_RAD ||
     Math.abs(shown.roll) > LISTENER_ORIENTATION.EPSILON_RAD;
 
-  // ── Live autosave while powered ─────────────────────────────────────────
-  // Values are captured when the save is scheduled (only while the FPS view is
-  // active), so the orbit-camera orientation restored after leaving FPS is
-  // never written. A pending save is flushed on power-off / unmount.
-  const pendingRef = useRef<Orientation | null>(null);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const receiverId = receiver.id;
-
-  const flushSave = useCallback(() => {
-    if (timerRef.current) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
-    const pending = pendingRef.current;
-    pendingRef.current = null;
-    if (!pending) return;
-    const current = useReceiversStore.getState().receivers.find((r) => r.id === receiverId);
-    if (!current) return;
-    const currentOri = { yaw: current.yaw ?? 0, pitch: current.pitch ?? 0, roll: current.roll ?? 0 };
-    if (sameOrientation(currentOri, pending)) return;
-    useReceiversStore.getState().updateReceiverOrientation(receiverId, pending.yaw, pending.pitch, pending.roll);
-  }, [receiverId]);
-
-  useEffect(() => {
-    if (!isPowered || !isFirstPersonActive()) return;
-    pendingRef.current = { yaw: live.yaw, pitch: live.pitch, roll: live.roll };
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(flushSave, LISTENER_ORIENTATION.SAVE_DEBOUNCE_MS);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [live.yaw, live.pitch, live.roll, isPowered, flushSave]);
-
-  useEffect(() => {
-    if (!isPowered) return;
-    return flushSave;
-  }, [isPowered, flushSave]);
 
   // ── Edits ───────────────────────────────────────────────────────────────
   const applyOrientation = useCallback((next: Orientation) => {
@@ -111,11 +65,8 @@ export function ListenerOrientationWidget({ receiver, color, isPowered }: Listen
   const handleReset = useCallback(() => {
     applyOrientation({ yaw: 0, pitch: 0, roll: 0 });
     // Clear the saved orientation right away (no debounce) when powered too.
-    if (isPowered) {
-      pendingRef.current = { yaw: 0, pitch: 0, roll: 0 };
-      flushSave();
-    }
-  }, [applyOrientation, isPowered, flushSave]);
+    if (isPowered) updateReceiverOrientation(receiverId, 0, 0, 0);
+  }, [applyOrientation, isPowered, receiverId, updateReceiverOrientation]);
 
   return (
     <div className="card-stack--tight">

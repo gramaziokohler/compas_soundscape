@@ -195,6 +195,12 @@ export interface SoundGenerationConfig {
   prompt_influence?: number;
   /** ElevenLabs seamless looping. Defaults to true at generation time for background beds. */
   loop?: boolean;
+  /**
+   * Background cards only: play as a global (non-spatial) bed — no direction or
+   * distance attenuation, still convolved by the room — with its sphere hidden.
+   * Unset = GLOBAL_SOURCE.DEFAULT_ENABLED. Playback-only: not a generation input.
+   */
+  global_playback?: boolean;
   negative_prompt: string;
   seed_copies: number;
   steps: number;

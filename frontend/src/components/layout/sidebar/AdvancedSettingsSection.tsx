@@ -22,7 +22,7 @@ import { apiService } from "@/services/api";
 import type { TokenStatus, LLMProviders } from "@/services/api";
 import type { SoundscapeStats } from "@/types/soundscape";
 import { useTextGenerationStore } from "@/store/textGenerationStore";
-import { useSoundscapeStore } from "@/store";
+import { useSoundscapeStore, useSceneWorkflowStore } from "@/store";
 import { setElevenLabsApiKey, isElevenLabsKeySet } from "@/services/elevenlabs";
 import { useServiceVersions } from "@/hooks/useServiceVersions";
 import { useAudioControlsStore } from "@/store/audioControlsStore";
@@ -133,7 +133,7 @@ const LLM_MODEL_OPTIONS = [LLM_MODEL_GEMINI_FLASH, LLM_MODEL_GEMINI_PRO];
 
 type SettingKey =
   | 'label-sprites' | 'hovering-highlight' | 'sound-spheres' | 'playing-highlight' | 'listeners' | 'ground-grid'
-  | 'appearance'
+  | 'appearance' | 'interface-detail'
   | 'grid-spacing' | 'grid-color' | 'grid-labels'
   | 'sound-speed' | 'mesh-length' | 'simulation-geometry'
   | 'tokens'
@@ -152,6 +152,7 @@ interface SettingEntry {
 
 const SETTINGS: SettingEntry[] = [
   { section: 'display', key: 'appearance', terms: ['appearance', 'theme', 'light', 'dark', 'color scheme', 'mode'] },
+  { section: 'display', key: 'interface-detail', terms: ['interface', 'level of detail', 'detail', 'detailed', 'simple', 'expert', 'ui mode'] },
   { section: 'display', key: 'label-sprites', terms: ['label sprites', 'label', 'sprite'] },
   { section: 'display', key: 'hovering-highlight', terms: ['hovering highlight', 'hover', 'highlight'] },
   { section: 'display', key: 'sound-spheres', terms: ['sound spheres', 'sphere'] },
@@ -645,6 +646,8 @@ export function AdvancedSettingsSection({
   const setEnableAutoSave = useUIStore((s) => s.setEnableAutoSave);
   const colorTheme = useUIStore((s) => s.colorTheme);
   const setColorTheme = useUIStore((s) => s.setColorTheme);
+  const uiMode = useUIStore((s) => s.uiMode);
+  const switchUIMode = useSceneWorkflowStore((s) => s.switchUIMode);
   const showGroundGridLabels = useUIStore((s) => s.showGroundGridLabels);
   const setShowGroundGridLabels = useUIStore((s) => s.setShowGroundGridLabels);
   const resolvedGridColor = groundGridColor || getCssColorString('--color-primary');
@@ -723,6 +726,20 @@ export function AdvancedSettingsSection({
                       { value: 'system', label: 'System' },
                       { value: 'light', label: 'Light' },
                       { value: 'dark', label: 'Dark' },
+                    ]}
+                  />
+                </div>
+              )}
+              {isVisible('interface-detail') && (
+                <div className="flex flex-col gap-2 py-0.5">
+                  <span className="text-[10px] whitespace-nowrap tracking-wider text-secondary-hover">Interface level of detail</span>
+                  <CardSelect
+                    compact
+                    value={uiMode}
+                    onChange={(v) => { if (v !== uiMode) switchUIMode(v as typeof uiMode); }}
+                    options={[
+                      { value: 'simple', label: 'Simple' },
+                      { value: 'expert', label: 'Detailed' },
                     ]}
                   />
                 </div>

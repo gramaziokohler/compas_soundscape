@@ -128,6 +128,12 @@ export class SoundSphereManager {
   /** Applied to objects created after a hide, so they never pop back in. */
   private spheresVisible = true;
   private labelsVisible = true;
+  /**
+   * Sounds playing as global (non-spatial) beds: sphere, label and dark-mode
+   * light are hidden. Positions stay in spherePositions/promptPositions, so a
+   * sound turned spatial again reappears where it was.
+   */
+  private hiddenSoundIds: Set<string> = new Set();
 
   // Surface markers for large entity-linked sounds (no sphere), keyed by prompt index
   private markerGroups: Map<number, THREE.Group> = new Map();
@@ -897,7 +903,7 @@ export class SoundSphereManager {
     // Set specific layers for Speckle compatibility
     // Use OVERLAY layer (4) to avoid problematic render passes
     sphereMesh.layers.enable(4);
-    sphereMesh.visible = this.spheresVisible;
+    sphereMesh.visible = this.isSphereShown(soundEvent.id);
 
     // Position from data (already resolved: stored > spiral > event)
     sphereMesh.position.fromArray(data.position);
@@ -1076,7 +1082,7 @@ export class SoundSphereManager {
     }
     const sprite = createLabelSprite(text);
     sprite.position.copy(position);
-    sprite.visible = this.labelsVisible;
+    sprite.visible = this.isLabelShown(id);
     this.soundSpheresGroup.add(sprite);
     this.labelSprites.set(id, sprite);
   }
@@ -1487,7 +1493,7 @@ export class SoundSphereManager {
     if (this.darkModePointLights.size > 0) {
       const candidates: Array<{ light: THREE.PointLight; dist: number }> = [];
       const tmpLightPos = new THREE.Vector3();
-      this.darkModePointLights.forEach((light) => {
+      this.darkModePointLights.forEach((light, soundId) => {
         // Per-sphere lights track their mesh (they are not mesh children, so
         // hiding sound spheres no longer hides the light).
         const owner = light.userData.ownerMesh as THREE.Mesh | undefined;
@@ -1496,7 +1502,9 @@ export class SoundSphereManager {
           light.position.copy(tmpLightPos);
         }
         const wants =
-          light.userData.muted !== true && light.userData.wantVisible !== false;
+          light.userData.muted !== true &&
+          light.userData.wantVisible !== false &&
+          !this.hiddenSoundIds.has(soundId);
         if (!wants) {
           light.visible = false;
           return;
@@ -1935,14 +1943,38 @@ export class SoundSphereManager {
   /** Show or hide all sound sphere meshes. */
   public setSoundSpheresVisible(visible: boolean): void {
     this.spheresVisible = visible;
-    this.soundMeshes.forEach(m => { m.visible = visible; });
+    this.applySphereVisibility();
   }
 
   /** Show or hide all label sprites (sphere-linked and entity-linked). */
   public setLabelSpritesVisible(visible: boolean): void {
     this.labelsVisible = visible;
-    this.labelSprites.forEach(s => { s.visible = visible; });
+    this.labelSprites.forEach((s, id) => { s.visible = this.isLabelShown(id); });
     this.entityLabelSprites.forEach(s => { s.visible = visible; });
+  }
+
+  /**
+   * Hide the sphere, label and dark-mode light of sounds playing as global
+   * (non-spatial) beds; every other sound is shown. Positions are kept.
+   */
+  public setHiddenSounds(soundIds: ReadonlySet<string>): void {
+    this.hiddenSoundIds = new Set(soundIds);
+    this.applySphereVisibility();
+    this.labelSprites.forEach((s, id) => { s.visible = this.isLabelShown(id); });
+  }
+
+  private isSphereShown(soundId: string): boolean {
+    return this.spheresVisible && !this.hiddenSoundIds.has(soundId);
+  }
+
+  private isLabelShown(soundId: string): boolean {
+    return this.labelsVisible && !this.hiddenSoundIds.has(soundId);
+  }
+
+  private applySphereVisibility(): void {
+    this.soundMeshes.forEach(m => {
+      m.visible = this.isSphereShown((m.userData.soundEvent?.id as string) ?? '');
+    });
   }
 
   /**
