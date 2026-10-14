@@ -4,21 +4,32 @@
  * Owns the lifecycle of the multichannel ambisonic send for the orchestrator's
  * AudioContext, so AudioOrchestrator only forwards calls:
  *
- * - pins the context to the send device (others keep the regular output)
- * - switches the destination to (order+1)² discrete channels (or reports why not)
- * - swaps the binaural output for the send bus, and back (rebuilds it on an order change)
+ * - routes the send bus to its target:
+ *   - `device`: pins the context to an output device (others keep the regular
+ *     output) and switches the destination to (order+1)² discrete channels
+ *     (or reports why not) — macOS DVS, BlackHole, any wide-enough device
+ *   - `bridge`: streams to the local ASIO bridge over a localhost WebSocket —
+ *     Windows DVS, whose WDM side only exposes stereo pairs to browsers
+ * - swaps the binaural output for the send, and back (rebuilds the bus on an order change)
  * - follows the active mode's tap, the listener orientation and master volume
- * - disables itself if the device stops exposing enough channels (`sinkchange`)
+ * - disables a device send if the device stops exposing enough channels (`sinkchange`)
  *
- * Nothing here is OS-specific: sink selection, channel count and `sinkchange`
- * are feature-detected, so the same code runs on Windows and macOS.
+ * Nothing here is OS-specific: sink selection, channel count, `sinkchange` and
+ * AudioWorklet are feature-detected.
  */
 
-import type { AmbisonicOrder, AmbisonicSendStatus, AmbisonicSendTap, Orientation } from '@/types/audio';
+import type {
+  AmbisonicOrder,
+  AmbisonicSendStatus,
+  AmbisonicSendTap,
+  AmbisonicSendTarget,
+  Orientation,
+} from '@/types/audio';
 import { AMBISONIC_SEND } from '@/utils/constants';
 import { isSinkSelectionSupported, setOutputDeviceOverride } from '../output-device';
 import { ambisonicChannelCount } from '../utils/ambisonic-utils';
 import { AmbisonicSendBus } from './AmbisonicSendBus';
+import { BridgeSendTransport, type BridgeState } from './BridgeSendTransport';
 import {
   InsufficientChannelsError,
   enableMultichannelDestination,
@@ -29,7 +40,10 @@ type StatusListener = (status: AmbisonicSendStatus) => void;
 
 export class AmbisonicSendController {
   private bus: AmbisonicSendBus | null = null;
-  private enabled = false;
+  private bridge: BridgeSendTransport | null = null;
+  private bridgeState: BridgeState = { connected: false };
+  /** Non-null exactly while the send is on. */
+  private target: AmbisonicSendTarget | null = null;
   private order: AmbisonicOrder = AMBISONIC_SEND.DEFAULT_ORDER;
   private status: AmbisonicSendStatus;
   private listeners = new Set<StatusListener>();
@@ -42,7 +56,7 @@ export class AmbisonicSendController {
   private queue: Promise<unknown> = Promise.resolve();
 
   private readonly onSinkChange = () => {
-    if (!this.enabled) return;
+    if (this.target?.kind !== 'device') return;
     const deviceChannels = this.context.destination.maxChannelCount;
     const required = ambisonicChannelCount(this.order);
     if (deviceChannels < required) {
@@ -63,6 +77,7 @@ export class AmbisonicSendController {
   ) {
     this.status = {
       enabled: false,
+      transport: 'device',
       order: this.order,
       deviceChannels: null,
       sinkSelectable: isSinkSelectionSupported(),
@@ -71,17 +86,16 @@ export class AmbisonicSendController {
   }
 
   /**
-   * Turn the send on (routing `order`'s (order+1)² channels to `deviceId`) or
-   * off. Calling it again while on with another device or order moves/rebuilds it.
+   * Turn the send on (routing `order`'s (order+1)² channels to `target`) or off.
+   * Calling it again while on with another target or order moves/rebuilds it.
    */
   setEnabled(
     enabled: boolean,
-    deviceId: string | null,
+    target: AmbisonicSendTarget | null,
     order: AmbisonicOrder,
     error?: string
   ): Promise<AmbisonicSendStatus> {
-    const run = () =>
-      enabled && deviceId !== null ? this.enable(deviceId, order) : this.disable(error);
+    const run = () => (enabled && target ? this.enable(target, order) : this.disable(error));
     const next = this.queue.then(run, run);
     this.queue = next;
     return next;
@@ -89,7 +103,16 @@ export class AmbisonicSendController {
 
   /** Re-read the active mode's tap — call after every audio-graph rebuild. */
   refreshTap(): void {
-    if (this.enabled) this.bus?.attach(this.getTap());
+<<<<<<< HEAD
+    if (!this.target || !this.bus) return;
+    const tap = this.getTap();
+    this.bus.attach(tap);
+    if (tap?.order !== this.status.sourceOrder) {
+      this.publish({ ...this.status, sourceOrder: tap?.order });
+    }
+=======
+    if (this.target) this.bus?.attach(this.getTap());
+>>>>>>> 9145e6a (dvs update)
   }
 
   setOrientation(orientation: Orientation): void {
@@ -120,26 +143,34 @@ export class AmbisonicSendController {
 
   dispose(): void {
     this.context.removeEventListener?.('sinkchange', this.onSinkChange);
+    this.bridge?.dispose();
+    this.bridge = null;
     this.bus?.dispose();
     this.bus = null;
     this.listeners.clear();
   }
 
-  private async enable(deviceId: string, order: AmbisonicOrder): Promise<AmbisonicSendStatus> {
+  private async enable(target: AmbisonicSendTarget, order: AmbisonicOrder): Promise<AmbisonicSendStatus> {
+    // Changing transport: undo the previous route (sink override / bridge) first.
+    if (this.target && this.target.kind !== target.kind) {
+      await this.teardown();
+    }
     this.order = order;
     const channels = ambisonicChannelCount(order);
     const sinkSelectable = isSinkSelectionSupported();
-    if (sinkSelectable) {
-      await setOutputDeviceOverride(this.context, deviceId);
-    }
 
-    let deviceChannels: number;
-    try {
-      // maxChannelCount reflects the new sink only once setSinkId has resolved.
-      deviceChannels = enableMultichannelDestination(this.context, channels);
-    } catch (error) {
-      if (!(error instanceof InsufficientChannelsError)) throw error;
-      return this.disable(error.message, error.deviceChannels);
+    let deviceChannels: number | null = null;
+    if (target.kind === 'device') {
+      if (sinkSelectable) {
+        await setOutputDeviceOverride(this.context, target.deviceId);
+      }
+      try {
+        // maxChannelCount reflects the new sink only once setSinkId has resolved.
+        deviceChannels = enableMultichannelDestination(this.context, channels);
+      } catch (error) {
+        if (!(error instanceof InsufficientChannelsError)) throw error;
+        return this.disable(error.message, error.deviceChannels);
+      }
     }
 
     // The bus width is fixed per instance: rebuild it when the order changes.
@@ -149,37 +180,86 @@ export class AmbisonicSendController {
     }
     if (!this.bus) {
       this.bus = await AmbisonicSendBus.create(this.context, order);
-      if (this.enabled) this.bus.connect(this.context.destination);
     }
     this.bus.setRotateWithListener(this.rotateWithListener);
     this.bus.setOrientation(this.orientation);
     this.bus.setVolume(this.volume);
 
-    if (!this.enabled) {
-      // The context has a single sink: binaural stops while the send is on.
+    let sink: AudioNode = this.context.destination;
+    if (target.kind === 'bridge') {
+      if (!this.bridge || !this.bridge.matches(target.url, channels)) {
+        this.bridge?.dispose();
+        this.bridgeState = { connected: false };
+        this.bridge = await BridgeSendTransport.create(this.context, channels, target.url, (state) =>
+          this.onBridgeState(state)
+        );
+        if (!this.bridge) return this.disable('AudioWorklet is not supported in this browser');
+      }
+      sink = this.bridge.input;
+    } else if (this.bridge) {
+      this.bridge.dispose();
+      this.bridge = null;
+    }
+
+    if (!this.target) {
+      // One sink per context: binaural stops while the send is on.
       try {
         this.binauralOutput.disconnect(this.context.destination);
       } catch {
         // Already disconnected
       }
-      this.bus.connect(this.context.destination);
-      this.enabled = true;
     }
+    this.bus.disconnect();
+    this.bus.connect(sink);
+    this.target = target;
+<<<<<<< HEAD
+    const tap = this.getTap();
+    this.bus.attach(tap);
+
+    console.log(`[AmbisonicSend] Enabled via ${target.kind}: order ${order}, ${channels} ch`);
+    const status: AmbisonicSendStatus = {
+      enabled: true,
+      transport: target.kind,
+      order,
+      sourceOrder: tap?.order,
+      deviceChannels,
+      sinkSelectable,
+    };
+=======
     this.bus.attach(this.getTap());
 
-    console.log(`[AmbisonicSend] Enabled: order ${order}, ${channels} ch → device with ${deviceChannels} ch`);
-    return this.publish({ enabled: true, order, deviceChannels, sinkSelectable });
+    console.log(`[AmbisonicSend] Enabled via ${target.kind}: order ${order}, ${channels} ch`);
+    const status: AmbisonicSendStatus = { enabled: true, transport: target.kind, order, deviceChannels, sinkSelectable };
+>>>>>>> 9145e6a (dvs update)
+    return this.publish(target.kind === 'bridge' ? this.withBridgeState(status) : status);
   }
 
   private async disable(error?: string, deviceChannels: number | null = null): Promise<AmbisonicSendStatus> {
     // Already off and nothing failed: keep the last status (and its error) visible.
-    if (!this.enabled && error === undefined) return this.status;
+    if (!this.target && error === undefined) return this.status;
 
-    if (this.enabled) {
+    const transport = this.target?.kind ?? this.status.transport;
+    await this.teardown();
+    return this.publish({
+      enabled: false,
+      transport,
+      order: this.order,
+      deviceChannels,
+      sinkSelectable: isSinkSelectionSupported(),
+      error,
+    });
+  }
+
+  /** Undo every route the send may have set up and restore binaural playback. */
+  private async teardown(): Promise<void> {
+    if (this.target) {
       this.bus?.attach(null);
       this.bus?.disconnect();
-      this.enabled = false;
     }
+    this.target = null;
+
+    this.bridge?.dispose();
+    this.bridge = null;
 
     restoreStereoDestination(this.context);
     try {
@@ -187,13 +267,27 @@ export class AmbisonicSendController {
     } catch {
       // Context closed
     }
-
-    const sinkSelectable = isSinkSelectionSupported();
-    if (sinkSelectable) {
+    if (isSinkSelectionSupported()) {
       await setOutputDeviceOverride(this.context, null);
     }
+  }
 
-    return this.publish({ enabled: false, order: this.order, deviceChannels, sinkSelectable, error });
+  /** Live bridge connection updates (the send stays on and keeps reconnecting). */
+  private onBridgeState(state: BridgeState): void {
+    this.bridgeState = state;
+    if (this.target?.kind !== 'bridge') return;
+    this.publish(this.withBridgeState(this.status));
+  }
+
+  private withBridgeState(status: AmbisonicSendStatus): AmbisonicSendStatus {
+    const state = this.bridgeState;
+    return {
+      ...status,
+      bridgeConnected: state.connected,
+      bridgeDevice: state.device,
+      deviceChannels: state.deviceChannels ?? null,
+      error: state.error,
+    };
   }
 
   private publish(status: AmbisonicSendStatus): AmbisonicSendStatus {

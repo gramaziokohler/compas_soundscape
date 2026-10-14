@@ -660,8 +660,11 @@ Streams the active mode's **pre-decoder** bus live as (order+1)² discrete ACN/S
 channels — third order / 16 ch by default, first order / 4 ch for small devices — to a chosen output device — typically Dante Virtual Soundcard, routed in Dante
 Controller to a Holophonix processor (decodes to the loudspeaker dome) and optionally to a DAW
 recorder (Reaper) that only listens. Frontend-only (Chrome/Edge). Needs ONE output device with
-≥ (order+1)² channels: DVS on macOS works; DVS on Windows (WDM) only exposes stereo pairs, so it can't.
-The send picker probes channel counts (`lib/audio/output/probe-output-channels.ts`).
+≥ (order+1)² channels: DVS on macOS works; DVS on Windows (WDM) only exposes stereo pairs, so
+Windows uses the **local ASIO bridge** instead: `BridgeSendTransport` (AudioWorklet
+`public/worklets/ambisonic-capture-processor.js` → `ws://127.0.0.1:8765`) →
+`scripts/ambisonic_bridge/ambisonic_bridge.py` (drift-compensating buffer → ASIO: DVS, or ReaRoute
+into Reaper). The send picker probes channel counts (`lib/audio/output/probe-output-channels.ts`).
 
 ```
 Mode pre-decoder bus (SN3D, before masterGain)          ── IAudioMode.getAmbisonicSendTap()

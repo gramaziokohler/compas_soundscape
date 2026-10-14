@@ -1059,6 +1059,20 @@ export const AMBISONIC_SEND = {
   // Device labels of Dante Virtual Soundcard endpoints. On Windows (WDM) DVS
   // exposes 8 separate stereo devices ("DVS Transmit 1-2", …), never one 16-ch device.
   DANTE_LABEL_PATTERN: /dante|dvs/i,
+
+  // Local ASIO bridge (scripts/ambisonic_bridge): the browser streams the send
+  // over a localhost WebSocket to a helper that plays it to an ASIO device
+  // (DVS in ASIO mode) — the Windows route to 16 aligned Dante channels.
+  BRIDGE: {
+    DEFAULT_URL: 'ws://127.0.0.1:8765',
+    WORKLET_URL: '/worklets/ambisonic-capture-processor.js',
+    PROCESSOR_NAME: 'ambisonic-capture-processor',
+    // Frames per WebSocket message (~10.7 ms at 48 kHz).
+    FRAMES_PER_MESSAGE: 512,
+    RECONNECT_MS: 2000,
+    // Drop chunks instead of queueing when the socket backs up (~0.5 s of 16 ch).
+    MAX_BUFFERED_BYTES: 1_600_000,
+  },
 } as const;
 
 // ============================================================================

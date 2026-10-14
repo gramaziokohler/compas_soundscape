@@ -21,7 +21,8 @@ import type {
   ImpulseResponseMetadata,
   OutputDiagnostics,
   OutputSourceDiagnostics,
-  AmbisonicSendStatus
+  AmbisonicSendStatus,
+  AmbisonicSendTarget
 } from '@/types/audio';
 import { AudioMode } from '@/types/audio';
 
@@ -78,6 +79,14 @@ export class AudioOrchestrator implements IAudioOrchestrator {
 
   // Binaural decoder (shared by all ambisonic modes)
   private binauralDecoder: IBinauralDecoder | null = null;
+
+  // Order the app / mode selector asked for, before the send's minimum applies.
+  private requestedAmbisonicOrder: AmbisonicOrder = 1;
+
+  // While the multichannel send is on, anechoic encodes at least at the send
+  // order — otherwise a 16-ch send carries FOA in ch 1–4 and silence above
+  // (the mode selector always picks FOA for anechoic).
+  private sendOrderFloor: AmbisonicOrder | null = null;
 
   // Last listener orientation, re-applied when the decoder is rebuilt.
   private lastListenerOrientation: Orientation = { yaw: 0, pitch: 0, roll: 0 };
@@ -502,7 +511,9 @@ export class AudioOrchestrator implements IAudioOrchestrator {
 
     // Skip if already in this mode with same ambisonic order AND mode instance exists
     // Must check currentModeInstance to ensure mode is actually initialized
-    const sameOrder = !config.ambisonicOrder || config.ambisonicOrder === this.ambisonicOrder;
+    if (config.ambisonicOrder) this.requestedAmbisonicOrder = config.ambisonicOrder;
+    const targetOrder = this.resolveOrder(this.requestedAmbisonicOrder);
+    const sameOrder = targetOrder === this.ambisonicOrder;
     if (newMode === this.currentMode && sameOrder && this.currentModeInstance) {
       console.log(`[AudioOrchestrator] Already in ${newMode} mode (order ${this.ambisonicOrder}), skipping switch`);
       return;
@@ -518,8 +529,8 @@ export class AudioOrchestrator implements IAudioOrchestrator {
       // initializeMode reads the updated order. This deliberately does NOT go
       // through setAmbisonicOrder() — that would recreate the outgoing mode just
       // to tear it down again immediately.
-      if (config.ambisonicOrder && config.ambisonicOrder !== this.ambisonicOrder) {
-        const resolvedOrder = this.clampToSupportedOrder(config.ambisonicOrder);
+      if (targetOrder !== this.ambisonicOrder) {
+        const resolvedOrder = targetOrder;
         if (this.binauralDecoder) {
           await this.binauralDecoder.setOrder(resolvedOrder);
         }
@@ -1142,13 +1153,37 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     if (!this.audioContext) {
       throw new Error('[AudioOrchestrator] Not initialized');
     }
+    this.requestedAmbisonicOrder = order;
+    await this.applyAmbisonicOrder(this.resolveOrder(order));
+  }
 
+  /**
+   * Requested order raised to the send's minimum (while the send is on) and
+   * clamped to what the browser supports.
+   */
+  private resolveOrder(requested: AmbisonicOrder): AmbisonicOrder {
+    const floor = this.sendOrderFloor ?? requested;
+    return this.clampToSupportedOrder(Math.max(requested, floor) as AmbisonicOrder);
+  }
+
+  /**
+   * Raise (or release, with null) the minimum encoding order the multichannel
+   * send needs. Applies immediately in anechoic mode; other modes pick it up on
+   * their next switch to anechoic (IR order comes from the IR, Resonance is TOA).
+   */
+  private async setSendOrderFloor(floor: AmbisonicOrder | null): Promise<void> {
+    if (floor === this.sendOrderFloor) return;
+    this.sendOrderFloor = floor;
+    if (this.initialized && this.currentMode === AudioMode.ANECHOIC) {
+      await this.applyAmbisonicOrder(this.resolveOrder(this.requestedAmbisonicOrder));
+    }
+  }
+
+  /** Rebuild the decoder (and anechoic mode) at an already-resolved order. */
+  private async applyAmbisonicOrder(order: AmbisonicOrder): Promise<void> {
     if (order === this.ambisonicOrder) {
       return;
     }
-
-    // Check browser support for requested order
-    order = this.clampToSupportedOrder(order);
 
     console.log(`[AudioOrchestrator] Changing ambisonic order from ${this.ambisonicOrder} to ${order}`);
 
@@ -1772,16 +1807,23 @@ export class AudioOrchestrator implements IAudioOrchestrator {
 
   /**
    * Stream the active mode's AmbiX bus at `order` ((order+1)² channels) to
-   * `deviceId` (e.g. Dante Virtual Soundcard) instead of binaural, or return to
-   * binaural. Resolves with the resulting status (including why enabling failed).
+   * `target` — an output device (e.g. DVS on macOS) or the local ASIO bridge
+   * (DVS on Windows) — instead of binaural, or return to binaural. Resolves with
+   * the resulting status (including why enabling failed).
    */
   async setAmbisonicSend(
     enabled: boolean,
-    deviceId: string,
+    target: AmbisonicSendTarget,
     order: AmbisonicOrder
   ): Promise<AmbisonicSendStatus | null> {
     if (!this.ambisonicSend) return null;
-    return this.ambisonicSend.setEnabled(enabled, deviceId, order);
+<<<<<<< HEAD
+    const status = await this.ambisonicSend.setEnabled(enabled, target, order);
+    await this.setSendOrderFloor(status.enabled ? status.order : null);
+    return status;
+=======
+    return this.ambisonicSend.setEnabled(enabled, target, order);
+>>>>>>> 9145e6a (dvs update)
   }
 
   /** Rotate the sent field with the listener (camera), or keep it world-fixed. */

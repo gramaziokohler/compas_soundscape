@@ -244,14 +244,38 @@ export interface AmbisonicSendTap {
 }
 
 /** State of the multichannel ambisonic send, reported back to the UI. */
+/** How the send leaves the browser. */
+export type AmbisonicSendTransport = 'device' | 'bridge';
+
+/**
+ * Where the send goes: an audio output device the browser opens itself, or the
+ * local ASIO bridge (scripts/ambisonic_bridge) over a localhost WebSocket.
+ */
+export type AmbisonicSendTarget =
+  | { kind: 'device'; deviceId: string }
+  | { kind: 'bridge'; url: string };
+
 export interface AmbisonicSendStatus {
   enabled: boolean;
+  transport: AmbisonicSendTransport;
   /** Send order; the device receives (order+1)² channels. */
   order: AmbisonicOrder;
-  /** maxChannelCount of the send device, once known. */
+<<<<<<< HEAD
+  /**
+   * Order of the content actually feeding the send (the active mode's bus).
+   * Lower than `order` when e.g. a first-order IR is active: upper channels are silent.
+   */
+  sourceOrder?: AmbisonicOrder;
+=======
+>>>>>>> 9145e6a (dvs update)
+  /** Channels of the output device (browser device, or the bridge's ASIO device), once known. */
   deviceChannels: number | null;
   /** False when the browser cannot route a context to a chosen device (Safari). */
   sinkSelectable: boolean;
+  /** Bridge transport only: socket up and the bridge opened its ASIO device. */
+  bridgeConnected?: boolean;
+  /** Bridge transport only: name of the ASIO device the bridge plays to. */
+  bridgeDevice?: string;
   error?: string;
 }
 

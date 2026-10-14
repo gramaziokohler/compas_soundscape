@@ -23,7 +23,7 @@ import { temporal } from 'zundo';
 import { devtools, persist, createJSONStorage } from 'zustand/middleware';
 import { UNDO_HISTORY_LIMIT, undoEquality, runWithoutUndo, type RegisterTemporalStoreOptions } from './undoRedoRegistry';
 import type { SoundState, SoundGenerationConfig } from '@/types';
-import type { AmbisonicOrder, AmbisonicSendStatus, IterationLink, TrimRange } from '@/types/audio';
+import type { AmbisonicOrder, AmbisonicSendStatus, AmbisonicSendTransport, IterationLink, TrimRange } from '@/types/audio';
 import { iterationKey, remapIterationKeys, clearIterationKeysForSound } from '@/lib/audio/utils/iteration-keys';
 import { trimmedDuration } from '@/lib/audio/utils/iteration-trim';
 import { parseSoundCopyIndex } from '@/lib/audio/utils/variant-sound-id';
@@ -268,6 +268,12 @@ export interface AudioControlsStoreState {
   /** Device the send is routed to (persisted; independent of `outputDeviceId`). */
   ambisonicSendDeviceId: string;
   setAmbisonicSendDeviceId: (deviceId: string) => void;
+  /** How the send leaves the browser: an output device, or the local ASIO bridge (persisted). */
+  ambisonicSendTransport: AmbisonicSendTransport;
+  setAmbisonicSendTransport: (transport: AmbisonicSendTransport) => void;
+  /** WebSocket URL of the local ASIO bridge (persisted). */
+  ambisonicSendBridgeUrl: string;
+  setAmbisonicSendBridgeUrl: (url: string) => void;
   /** Send order: 3 (16 ch, dome) … 1 (4 ch, small virtual devices). Persisted. */
   ambisonicSendOrder: AmbisonicOrder;
   setAmbisonicSendOrder: (order: AmbisonicOrder) => void;
@@ -428,6 +434,8 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
         ambisonicSendEnabled: false,
         ambisonicSendDeviceId: AUDIO_OUTPUT.DEFAULT_DEVICE_ID,
         ambisonicSendOrder: AMBISONIC_SEND.DEFAULT_ORDER,
+        ambisonicSendTransport: 'device',
+        ambisonicSendBridgeUrl: AMBISONIC_SEND.BRIDGE.DEFAULT_URL,
         ambisonicSendRotateWithListener: AMBISONIC_SEND.DEFAULT_ROTATE_WITH_LISTENER,
         ambisonicSendStatus: null,
         normalizeImpulseResponses: false,
@@ -946,6 +954,12 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
 
         setAmbisonicSendDeviceId: (deviceId) =>
           set({ ambisonicSendDeviceId: deviceId }, false, 'audio/setAmbisonicSendDeviceId'),
+
+        setAmbisonicSendTransport: (transport) =>
+          set({ ambisonicSendTransport: transport }, false, 'audio/setAmbisonicSendTransport'),
+
+        setAmbisonicSendBridgeUrl: (url) =>
+          set({ ambisonicSendBridgeUrl: url }, false, 'audio/setAmbisonicSendBridgeUrl'),
 
         setAmbisonicSendOrder: (order) =>
           set({ ambisonicSendOrder: order }, false, 'audio/setAmbisonicSendOrder'),

@@ -141,9 +141,17 @@ rebuilds it. Contract:
 - **Rotation** (`AmbisonicSendBus`): `preRotated=false` → R when "rotate with listener", else
   identity; `preRotated=true` (Resonance) → identity, else transpose(R).
 - **Master volume** is applied by the send itself (`setVolume`), not by the modes' masterGain.
+- **Order floor**: while the send is on, `AudioOrchestrator.resolveOrder()` raises the anechoic
+  encoding order to the send order (`sendOrderFloor`); `requestedAmbisonicOrder` keeps what the
+  mode selector asked for so it is restored when the send stops. Never compare a requested order
+  to `this.ambisonicOrder` directly — go through `resolveOrder()`.
 - While on, `outputMeter → destination` is cut and the context is pinned to the send device via
   `setOutputDeviceOverride()`; other targets keep the regular device.
-- Feature-detected only (`setSinkId`, `maxChannelCount`, `sinkchange`) — no OS branches.
+- Feature-detected only (`setSinkId`, `maxChannelCount`, `sinkchange`, AudioWorklet) — no OS branches.
+- Two transports (`AmbisonicSendTarget`): `device` (bus → destination on a pinned sink) and
+  `bridge` (bus → 0-output capture worklet → WebSocket → `scripts/ambisonic_bridge`, ASIO). The
+  bridge protocol (hello/ready/stats/error + Float32 interleaved frames) is defined once in the
+  bridge's docstring — keep `BridgeSendTransport.ts` and the worklet in sync with it.
 
 ## Resonance Audio — SSR Safety
 

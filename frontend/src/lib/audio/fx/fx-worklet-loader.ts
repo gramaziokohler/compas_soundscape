@@ -1,7 +1,5 @@
 import { SOUND_FX } from '@/utils/constants';
-
-const loaded = new WeakSet<BaseAudioContext>();
-const inflight = new WeakMap<BaseAudioContext, Promise<void>>();
+import { ensureWorkletModules } from '../utils/worklet-loader';
 
 /**
  * Idempotent AudioWorklet module load. Safe to call for both live AudioContext
@@ -10,34 +8,7 @@ const inflight = new WeakMap<BaseAudioContext, Promise<void>>();
  * Loads every FX worklet module (gate + pitch) in one shot.
  */
 export async function ensureFxWorklet(ctx: BaseAudioContext): Promise<boolean> {
-  if (loaded.has(ctx)) return true;
-  const existing = inflight.get(ctx);
-  if (existing) {
-    try {
-      await existing;
-      return loaded.has(ctx);
-    } catch {
-      return false;
-    }
-  }
-
-  if (!('audioWorklet' in ctx)) return false;
-
-  const promise = (async () => {
-    await ctx.audioWorklet.addModule(SOUND_FX.WORKLET_URL);
-    await ctx.audioWorklet.addModule(SOUND_FX.PITCH_WORKLET_URL);
-    loaded.add(ctx);
-  })();
-  inflight.set(ctx, promise);
-
-  try {
-    await promise;
-    return true;
-  } catch (err) {
-    console.warn('[fx-worklet] Failed to load FX worklets:', err);
-    inflight.delete(ctx);
-    return false;
-  }
+  return ensureWorkletModules(ctx, [SOUND_FX.WORKLET_URL, SOUND_FX.PITCH_WORKLET_URL]);
 }
 
 export const FX_WORKLET_PROCESSOR = 'fx-dynamics-processor';

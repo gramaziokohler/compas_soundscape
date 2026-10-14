@@ -45,7 +45,8 @@ export function useAudioOutputDeviceSync(): void {
           store.setOutputDeviceId(AUDIO_OUTPUT.DEFAULT_DEVICE_ID);
         }
         if (isMissing(store.ambisonicSendDeviceId, outputs)) {
-          store.setAmbisonicSendEnabled(false);
+          // The bridge transport doesn't use this device — only stop a device send.
+          if (store.ambisonicSendTransport === "device") store.setAmbisonicSendEnabled(false);
           store.setAmbisonicSendDeviceId(AUDIO_OUTPUT.DEFAULT_DEVICE_ID);
         }
       } catch {
