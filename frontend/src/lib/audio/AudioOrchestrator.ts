@@ -1817,13 +1817,9 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     order: AmbisonicOrder
   ): Promise<AmbisonicSendStatus | null> {
     if (!this.ambisonicSend) return null;
-<<<<<<< HEAD
     const status = await this.ambisonicSend.setEnabled(enabled, target, order);
     await this.setSendOrderFloor(status.enabled ? status.order : null);
     return status;
-=======
-    return this.ambisonicSend.setEnabled(enabled, target, order);
->>>>>>> 9145e6a (dvs update)
   }
 
   /** Rotate the sent field with the listener (camera), or keep it world-fixed. */

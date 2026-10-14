@@ -260,14 +260,11 @@ export interface AmbisonicSendStatus {
   transport: AmbisonicSendTransport;
   /** Send order; the device receives (order+1)² channels. */
   order: AmbisonicOrder;
-<<<<<<< HEAD
   /**
    * Order of the content actually feeding the send (the active mode's bus).
    * Lower than `order` when e.g. a first-order IR is active: upper channels are silent.
    */
   sourceOrder?: AmbisonicOrder;
-=======
->>>>>>> 9145e6a (dvs update)
   /** Channels of the output device (browser device, or the bridge's ASIO device), once known. */
   deviceChannels: number | null;
   /** False when the browser cannot route a context to a chosen device (Safari). */

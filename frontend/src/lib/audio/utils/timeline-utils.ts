@@ -35,9 +35,6 @@ function getIterationVariantInfo(
     soundEvents ?? [],
   );
   const variantMeta = soundMetadata.get(variantId);
-  if (link?.variantIndex !== undefined) {
-    console.log(`[DEBUG-TIMELINE-VARIANT] iterLink[${primarySoundId}-${iterationIndex}] variantIdx=${link.variantIndex} variantId=${variantId} metaFound=${variantMeta !== undefined} variantHasBuffer=${!!variantMeta?.buffer}`);
-  }
   const eventOverride = soundEvents?.find((e) => e.id === variantId);
 
   // Trim is PER-VARIANT: each copy has its own trim (set from the sound card), so
@@ -324,8 +321,6 @@ export function extractTimelineSoundsFromData(
     // Get color based on generation method
     const color = getSoundColor(metadata);
 
-    console.log(`[DEBUG-TIMELINE] soundId=${soundId} cat="${(eventOverride as any)?.category ?? (metadata.soundEvent as any).category ?? 'MISSING'}" promptIdx=${eventOverride?.prompt_index ?? metadata.soundEvent.prompt_index}`);
-
     // ── Resolve the track's source schedule (seconds) ────────────────────────
     // Explicit store schedules (DAW drag, "Distribute evenly", orchestration) win
     // for EVERY category — including background. With no explicit entry a track is
@@ -506,12 +501,6 @@ export function extractTimelineSoundsFromData(
       'eventOverride:', !!eventOverride,
       'iterations:', iterations.length);
   });
-
-  console.log('[DEBUG-TIMELINE] === extractTimelineSoundsFromData summary ===');
-  console.log('[DEBUG-TIMELINE] total timelineSounds:', timelineSounds.length);
-  for (const ts of timelineSounds) {
-    console.log(`[DEBUG-TIMELINE]   sound id=${ts.id} name="${ts.displayName}" group=${ts.soundGroup} iterations=${ts.scheduledIterations.length}`);
-  }
 
   return timelineSounds;
 }

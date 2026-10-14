@@ -1,12 +1,10 @@
 'use client';
 
-import { useState, useCallback, useRef, useEffect } from 'react';
 import { AdvancedSettingsSection } from '@/components/layout/sidebar/AdvancedSettingsSection';
 import type { AdvancedSettingsSectionProps } from '@/components/layout/sidebar/AdvancedSettingsSection';
-import { getScale, clampToViewportWidth } from '@/utils/scale';
-
-const MIN_WIDTH = 300;
-const PANEL_MARGIN = 12;
+import { ResizeHandles } from '@/components/ui/ResizeHandles';
+import { useFloatingWindow } from '@/hooks/useFloatingWindow';
+import { FLOATING_WINDOW } from '@/utils/constants';
 
 interface AdvancedSettingsPanelProps extends AdvancedSettingsSectionProps {
   isVisible: boolean;
@@ -14,86 +12,34 @@ interface AdvancedSettingsPanelProps extends AdvancedSettingsSectionProps {
 }
 
 export function AdvancedSettingsPanel({ isVisible, onClose, ...settingsProps }: AdvancedSettingsPanelProps) {
-  // SSR-safe: start offscreen, correct after mount
-  const [position, setPosition] = useState({ x: -9999, y: -9999 });
-  const [width, setWidth] = useState(MIN_WIDTH);
-  const [positionReady, setPositionReady] = useState(false);
-  const contentRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const el = contentRef.current;
-    const naturalWidth = el ? Math.max(MIN_WIDTH, el.scrollWidth + 24) : MIN_WIDTH;
-    const clampedWidth = clampToViewportWidth(naturalWidth, MIN_WIDTH, PANEL_MARGIN);
-    setWidth(clampedWidth);
-    const vp = getScale().viewport;
-    setPosition({
-      x: Math.max(PANEL_MARGIN, vp.width / 2 - clampedWidth / 2),
-      y: Math.max(PANEL_MARGIN, vp.height / 4),
-    });
-    setPositionReady(true);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const isDraggingRef = useRef(false);
-  const dragStartRef = useRef({ mouseX: 0, mouseY: 0, panelX: 0, panelY: 0 });
-
-  const positionRef = useRef(position);
-  useEffect(() => { positionRef.current = position; }, [position]);
-
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (isDraggingRef.current) {
-        const dx = e.clientX - dragStartRef.current.mouseX;
-        const dy = e.clientY - dragStartRef.current.mouseY;
-        setPosition({
-          x: dragStartRef.current.panelX + dx,
-          y: dragStartRef.current.panelY + dy,
-        });
-      }
-    };
-
-    const handleMouseUp = () => {
-      isDraggingRef.current = false;
-    };
-
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, []);
-
-  const handleDragStart = useCallback((e: React.MouseEvent) => {
-    if ((e.target as HTMLElement).closest('[data-no-drag]')) return;
-    isDraggingRef.current = true;
-    dragStartRef.current = {
-      mouseX: e.clientX,
-      mouseY: e.clientY,
-      panelX: positionRef.current.x,
-      panelY: positionRef.current.y,
-    };
-    e.preventDefault();
-  }, []);
+  const { rect, startDrag, startResize } = useFloatingWindow({
+    storageKey: FLOATING_WINDOW.SETTINGS_PANEL_STORAGE_KEY,
+    defaultSize: FLOATING_WINDOW.SETTINGS_PANEL_DEFAULT_SIZE,
+    minSize: FLOATING_WINDOW.SETTINGS_PANEL_MIN_SIZE,
+    active: isVisible,
+  });
 
   return (
     <div
       className="fixed flex flex-col backdrop-blur-sm shadow-2xl"
       style={{
-        left: position.x,
-        top: position.y,
-        width: width,
+        left: rect?.x ?? 0,
+        top: rect?.y ?? 0,
+        width: rect?.w ?? FLOATING_WINDOW.SETTINGS_PANEL_DEFAULT_SIZE.w,
+        height: rect?.h ?? FLOATING_WINDOW.SETTINGS_PANEL_DEFAULT_SIZE.h,
         zIndex: 9999,
-        display: (isVisible && positionReady) ? 'flex' : 'none',
+        display: (isVisible && rect) ? 'flex' : 'none',
         backgroundColor: 'var(--background)',
         border: '1.5px solid var(--color-primary)',
         borderRadius: '8px',
         overflow: 'hidden',
       }}
     >
+      <ResizeHandles onStart={startResize} />
+
       {/* Header — drag handle */}
       <div
-        className="flex items-center justify-between px-3 flex-shrink-0"
+        className="flex items-center justify-between px-3 flex-shrink-0 touch-none"
         style={{
           height: '40px',
           borderBottom: '1px solid var(--color-secondary-light)',
@@ -101,11 +47,10 @@ export function AdvancedSettingsPanel({ isVisible, onClose, ...settingsProps }: 
           userSelect: 'none',
           backgroundColor: 'var(--background)',
         }}
-        onMouseDown={handleDragStart}
+        onPointerDown={startDrag}
       >
         <span className="text-sm font-semibold text-foreground">Settings</span>
         <button
-          data-no-drag
           onClick={onClose}
           className="flex items-center justify-center rounded transition-colors"
           style={{
@@ -125,8 +70,8 @@ export function AdvancedSettingsPanel({ isVisible, onClose, ...settingsProps }: 
         </button>
       </div>
 
-      {/* Content */}
-      <div ref={contentRef} style={{ padding: '12px' }}>
+      {/* Content — scrolls when the panel is smaller than its settings */}
+      <div className="flex-1 min-h-0 overflow-auto" style={{ padding: '12px' }}>
         <AdvancedSettingsSection {...settingsProps} />
       </div>
     </div>

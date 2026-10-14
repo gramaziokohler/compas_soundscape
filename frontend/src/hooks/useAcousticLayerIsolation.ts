@@ -97,7 +97,6 @@ export function useAcousticLayerIsolation(
       const counts = computeGeometryFaceCounts(viewer, Array.from(ids));
       const total = Array.from(counts.values()).reduce((sum, n) => sum + n, 0);
       if (total === 0 && attempts < 30) return false; // BVHs not built yet — retry
-      console.log('[dbg:faces] computed face counts', { ids: counts.size, total, attempts });
       useAcousticLayerStore.getState().setModelFaceCounts(Object.fromEntries(counts));
       return true;
     };

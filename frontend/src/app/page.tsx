@@ -2298,8 +2298,6 @@ function HomeContent() {
         // entry — the rest stay "auto" and re-derive a default loop from
         // interval_seconds.
         useAudioControlsStore.getState().restoreSoundTimestamps(restored.soundTimestamps);
-        console.log('[DEBUG-LOAD] after restoreSoundTimestamps:');
-        console.log('[DEBUG-LOAD]   timestamps keys:', Object.keys(useAudioControlsStore.getState().soundTimestamps));
 
         // Extend timeline duration to accommodate all restored timestamps
         // (bakeOrchestrateSchedule is suppressed during load, so auto-extend
@@ -2342,15 +2340,6 @@ function HomeContent() {
           restored.excludedIterations,
           restored.exclusionReasons,
         );
-
-        console.log('[DEBUG-LOAD] after restoreIterationLinks + restoreMuteSolo:');
-        const postLinks = useAudioControlsStore.getState().iterationLinks;
-        console.log('[DEBUG-LOAD]   iterationLinks keys:', Object.keys(postLinks).length);
-        for (const [k, v] of Object.entries(postLinks)) {
-          console.log(`[DEBUG-LOAD]   link[${k}] = ${JSON.stringify(v)}`);
-        }
-        console.log('[DEBUG-LOAD]   mutedSounds:', [...useAudioControlsStore.getState().mutedSounds]);
-        console.log('[DEBUG-LOAD]   soloedSounds:', [...useAudioControlsStore.getState().soloedSounds]);
 
         // Restore receivers (authoritative — the domain was reset above)
         receivers.restoreReceivers(restored.receivers, restored.selectedReceiverId);
@@ -2414,10 +2403,6 @@ function HomeContent() {
         // Restore analysis state (cards, results)
         if (loadResponse.soundscape_data.analysis_state) {
           const analysisRestored = restoreAnalysisState(loadResponse.soundscape_data.analysis_state);
-          console.log('[DEBUG-LOAD-ANALYSIS] restored configs:', analysisRestored.analysisConfigs.length,
-            'results:', analysisRestored.analysisResults.length,
-            'parentIndices:', analysisRestored.soundConfigParentIndices.size,
-            'cardFlow:', analysisRestored.cardFlowState ? `${analysisRestored.cardFlowState.contextAdvanced.length}c/${analysisRestored.cardFlowState.usageAdvanced.length}u ctx→use:${Object.keys(analysisRestored.cardFlowState.contextToUsage).length} use→snd:${Object.keys(analysisRestored.cardFlowState.usageToSound).length}` : 'null');
           analysis.restoreAnalysisState({
             analysisConfigs: analysisRestored.analysisConfigs,
             analysisResults: analysisRestored.analysisResults,

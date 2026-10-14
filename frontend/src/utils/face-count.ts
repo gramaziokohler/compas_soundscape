@@ -60,8 +60,8 @@ export function computeGeometryFaceCounts(
       }
       counts.set(id, tris);
     }
-  } catch (err) {
-    console.warn('[dbg:faces] computeGeometryFaceCounts failed:', err);
+  } catch {
+    // Viewer internals not ready — return whatever counts were collected.
   }
 
   return counts;

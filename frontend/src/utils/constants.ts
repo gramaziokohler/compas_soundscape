@@ -156,6 +156,9 @@ export const DARK_MODE = {
 export const FLOATING_WINDOW = {
   SOUND_EDITOR_STORAGE_KEY: 'compas-sound-editor-window',
   SOUND_EDITOR_DEFAULT_SIZE: { w: 832, h: 640 },
+  SETTINGS_PANEL_STORAGE_KEY: 'compas-settings-panel-window',
+  SETTINGS_PANEL_DEFAULT_SIZE: { w: 380, h: 560 },
+  SETTINGS_PANEL_MIN_SIZE: { w: 300, h: 200 },
   MIN_SIZE: { w: 420, h: 320 },
   /** Px of the window that must stay inside the viewport when dragged. */
   VIEWPORT_MARGIN: 48,

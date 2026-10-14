@@ -33,22 +33,16 @@ import { captureGenerationSignature } from '@/utils/generationSignature';
  * schema requires `list[float]`, but a stale localStorage / legacy payload can
  * carry `MM:SS` strings or numeric strings that would otherwise fail save
  * validation ("Input should be a valid number"). `MM:SS` is parsed, numbers and
- * numeric strings pass through; anything unparseable is dropped with a debug log.
+ * numeric strings pass through; anything unparseable is dropped.
  */
-function toNumericTimestamps(ts: unknown, soundId?: string): number[] | undefined {
+function toNumericTimestamps(ts: unknown): number[] | undefined {
   if (!Array.isArray(ts) || ts.length === 0) return undefined;
   const out: number[] = [];
-  let coerced = false;
   for (const v of ts) {
     const n = parseAuthoredSeconds(v);
-    if (typeof v !== 'number') coerced = true;
-    if (!Number.isFinite(n)) {
-      console.warn('[dbg:save-ts] dropping unparseable timestamp', { soundId, value: v });
-      continue;
-    }
+    if (!Number.isFinite(n)) continue;
     out.push(n);
   }
-  if (coerced) console.warn('[dbg:save-ts] coerced non-numeric timestamps', { soundId, from: ts, to: out });
   return out.length > 0 ? out : undefined;
 }
 
@@ -136,11 +130,8 @@ export function buildSoundscapeSavePayload(
   iterationTrims?: Record<string, { start: number; end: number }>,
 ): SoundscapeSavePayload {
   // Map runtime configs to serializable configs
-  console.log('[DEBUG-SERIALIZE-SAVE] configs count:', soundConfigs.length);
   const serializedConfigs: SoundscapeSoundConfig[] = soundConfigs.map(
     (config, index) => {
-      const cat = (config as any).category;
-      if (cat) console.log(`[DEBUG-SERIALIZE-SAVE] config[${index}] category="${cat}" prompt="${config.prompt?.substring(0, 30)}"`);
       return {
       index,
       config_id: config.config_id || undefined,
@@ -222,15 +213,7 @@ export function buildSoundscapeSavePayload(
       // Stored per-track explicit schedule (only tracks that have been baked/edited
       // have an entry — untouched tracks re-derive their auto loop on load).
       // Always normalize to numbers: the backend schema requires list[float].
-      const trackTimestamps = toNumericTimestamps(soundTimestamps?.[event.id], event.id);
-
-      console.log('[serializer:save] event:', event.id, 'promptIdx:', event.prompt_index,
-        'ts:', trackTimestamps?.length ?? 0);
-      const evCat = (event as any).category;
-      const evCopyIdx = (event as any).copy_index;
-      if (evCat || evCopyIdx != null) {
-        console.log(`[DEBUG-SERIALIZE-SAVE] event ${event.id} category="${evCat}" copy_index=${evCopyIdx} tsCount=${trackTimestamps?.length ?? 0}`);
-      }
+      const trackTimestamps = toNumericTimestamps(soundTimestamps?.[event.id]);
 
       // Resolve entity_node_id from the matching config (events only have entity_index)
       const eventEntityNodeId = event.prompt_index !== undefined
@@ -556,22 +539,6 @@ export function restoreSoundscapeState(
   excludedIterations: Record<string, number[]>;
   exclusionReasons: Record<string, string>;
 } {
-  console.log('[DEBUG-DESERIALIZE] === restore begin ===');
-  console.log('[DEBUG-DESERIALIZE] loadedData.muted_sounds:', JSON.stringify(loadedData.muted_sounds));
-  console.log('[DEBUG-DESERIALIZE] loadedData.soloed_sounds:', JSON.stringify(loadedData.soloed_sounds ?? loadedData.soloed_sound));
-  console.log('[DEBUG-DESERIALIZE] loadedData.iteration_links keys:', loadedData.iteration_links ? Object.keys(loadedData.iteration_links).length : 0);
-  console.log('[DEBUG-DESERIALIZE] loadedData.sound_configs count:', loadedData.sound_configs?.length);
-  console.log('[DEBUG-DESERIALIZE] loadedData.sound_events count:', loadedData.sound_events?.length);
-  if (loadedData.sound_events) {
-    for (const se of loadedData.sound_events.slice(0, 5)) {
-      console.log(`[DEBUG-DESERIALIZE]   event id=${se.id} pi=${se.prompt_index} cat="${se.category}" copyIdx=${se.copy_index} schedMode="${se.scheduling_mode}" ts=${se.timestamps?.length ?? 0}`);
-    }
-  }
-  if (loadedData.sound_configs) {
-    for (const sc of loadedData.sound_configs) {
-      console.log(`[DEBUG-DESERIALIZE]   config pi=${sc.index} cat="${sc.category}" prompt="${sc.prompt?.substring(0, 30)}"`);
-    }
-  }
   // Normalize the base URL (remove trailing slash) — used for both event audio
   // URLs below and the clip re-attach pass after events are rebuilt.
   const baseUrl = (audioBaseUrl || '').replace(/\/$/, '');
@@ -659,17 +626,9 @@ export function restoreSoundscapeState(
     if (saved.current_volume_dbfs != null) {
       soundVolumes[saved.id] = saved.current_volume_dbfs;
     }
-    const restoredTs = toNumericTimestamps(saved.timestamps, saved.id);
+    const restoredTs = toNumericTimestamps(saved.timestamps);
     if (restoredTs) {
       soundTimestamps[saved.id] = restoredTs;
-      console.log('[serializer:load] restored ts for', saved.id, 'promptIdx:', saved.prompt_index,
-        'ts:', restoredTs);
-    } else {
-      console.log('[serializer:load] no ts for', saved.id, 'promptIdx:', saved.prompt_index);
-    }
-    const cat = (saved as any).category;
-    if (cat) {
-      console.log(`[DEBUG-DESERIALIZE] event ${saved.id} restored: cat="${cat}" tsCount=${saved.timestamps?.length ?? 0} copyIdx=${saved.copy_index}`);
     }
 
     // Build the event — only include entity_index when it's a real number.
@@ -1187,8 +1146,6 @@ if (mc.analysisResult?.architecturalObjects) {
     usageToSoundMap: mergedUsageToSound,
   };
 
-  console.log('[DEBUG-ANALYSIS-SAVE] card_flow:', JSON.stringify(analysisState.card_flow, null, 2));
-
   return {
     analysis_state: analysisState,
     analysis_ids,
@@ -1278,10 +1235,6 @@ export function restoreAnalysisState(analysisState: AnalysisState): {
   analysisConfigs.forEach((c) => Object.assign(c, captureGenerationSignature(c)));
 
   const parentIndices = buildParentIndexMap(analysisState.configs);
-  console.log('[DEBUG-ANALYSIS-LOAD] configs count:', analysisConfigs.length,
-    'results:', analysisResults.length,
-    'cardFlow:', analysisState.card_flow ? `${analysisState.card_flow.contextAdvanced.length}c/${analysisState.card_flow.usageAdvanced.length}u` : 'null',
-    'parentIndices:', parentIndices.size);
 
   return {
     analysisConfigs,

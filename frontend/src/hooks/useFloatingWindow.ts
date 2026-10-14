@@ -24,15 +24,17 @@ interface UseFloatingWindowOptions {
   defaultSize: { w: number; h: number };
   /** Only initialise/track while the window is open. */
   active: boolean;
+  /** Smallest size the user can resize to. Defaults to `FLOATING_WINDOW.MIN_SIZE`. */
+  minSize?: { w: number; h: number };
 }
 
-const { MIN_SIZE, VIEWPORT_MARGIN } = FLOATING_WINDOW;
+const { VIEWPORT_MARGIN } = FLOATING_WINDOW;
 
-function clampRect(r: FloatingRect): FloatingRect {
+function clampRect(r: FloatingRect, minSize: { w: number; h: number }): FloatingRect {
   const vw = window.innerWidth;
   const vh = window.innerHeight;
-  const w = Math.min(Math.max(r.w, MIN_SIZE.w), vw);
-  const h = Math.min(Math.max(r.h, MIN_SIZE.h), vh);
+  const w = Math.min(Math.max(r.w, minSize.w), vw);
+  const h = Math.min(Math.max(r.h, minSize.h), vh);
   const x = Math.min(Math.max(r.x, VIEWPORT_MARGIN - w), vw - VIEWPORT_MARGIN);
   const y = Math.min(Math.max(r.y, 0), vh - VIEWPORT_MARGIN);
   return { x, y, w, h };
@@ -75,23 +77,28 @@ function centeredRect(size: { w: number; h: number }): FloatingRect {
  * `rect` is null until the window opens (first render), then restored from
  * localStorage (clamped to the current viewport) or centered.
  */
-export function useFloatingWindow({ storageKey, defaultSize, active }: UseFloatingWindowOptions) {
+export function useFloatingWindow({
+  storageKey,
+  defaultSize,
+  active,
+  minSize = FLOATING_WINDOW.MIN_SIZE,
+}: UseFloatingWindowOptions) {
   const [rect, setRect] = useState<FloatingRect | null>(null);
   const rectRef = useRef<FloatingRect | null>(null);
   rectRef.current = rect;
 
   useEffect(() => {
     if (!active) return;
-    setRect(clampRect(loadRect(storageKey) ?? centeredRect(defaultSize)));
-  }, [active, storageKey, defaultSize]);
+    setRect(clampRect(loadRect(storageKey) ?? centeredRect(defaultSize), minSize));
+  }, [active, storageKey, defaultSize, minSize]);
 
   // Keep the window reachable when the viewport shrinks.
   useEffect(() => {
     if (!active) return;
-    const onResize = () => setRect((r) => (r ? clampRect(r) : r));
+    const onResize = () => setRect((r) => (r ? clampRect(r, minSize) : r));
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
-  }, [active]);
+  }, [active, minSize]);
 
   const beginGesture = useCallback(
     (e: ReactPointerEvent, compute: (start: FloatingRect, dx: number, dy: number) => FloatingRect) => {
@@ -101,7 +108,7 @@ export function useFloatingWindow({ storageKey, defaultSize, active }: UseFloati
       const originX = e.clientX;
       const originY = e.clientY;
       const onMove = (ev: PointerEvent) => {
-        setRect(clampRect(compute(start, ev.clientX - originX, ev.clientY - originY)));
+        setRect(clampRect(compute(start, ev.clientX - originX, ev.clientY - originY), minSize));
       };
       const onUp = () => {
         window.removeEventListener('pointermove', onMove);
@@ -113,7 +120,7 @@ export function useFloatingWindow({ storageKey, defaultSize, active }: UseFloati
       window.addEventListener('pointerup', onUp);
       window.addEventListener('pointercancel', onUp);
     },
-    [storageKey],
+    [storageKey, minSize],
   );
 
   /** Attach to the title bar; ignores presses that start on buttons. */
@@ -133,17 +140,17 @@ export function useFloatingWindow({ storageKey, defaultSize, active }: UseFloati
         if (edges.e) w = s.w + dx;
         if (edges.s) h = s.h + dy;
         if (edges.w) {
-          w = Math.max(s.w - dx, MIN_SIZE.w);
+          w = Math.max(s.w - dx, minSize.w);
           x = s.x + (s.w - w);
         }
         if (edges.n) {
-          h = Math.max(s.h - dy, MIN_SIZE.h);
+          h = Math.max(s.h - dy, minSize.h);
           y = s.y + (s.h - h);
         }
         return { x, y, w, h };
       });
     },
-    [beginGesture],
+    [beginGesture, minSize],
   );
 
   return { rect, startDrag, startResize };

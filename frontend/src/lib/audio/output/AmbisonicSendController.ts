@@ -103,16 +103,12 @@ export class AmbisonicSendController {
 
   /** Re-read the active mode's tap — call after every audio-graph rebuild. */
   refreshTap(): void {
-<<<<<<< HEAD
     if (!this.target || !this.bus) return;
     const tap = this.getTap();
     this.bus.attach(tap);
     if (tap?.order !== this.status.sourceOrder) {
       this.publish({ ...this.status, sourceOrder: tap?.order });
     }
-=======
-    if (this.target) this.bus?.attach(this.getTap());
->>>>>>> 9145e6a (dvs update)
   }
 
   setOrientation(orientation: Orientation): void {
@@ -212,7 +208,6 @@ export class AmbisonicSendController {
     this.bus.disconnect();
     this.bus.connect(sink);
     this.target = target;
-<<<<<<< HEAD
     const tap = this.getTap();
     this.bus.attach(tap);
 
@@ -225,12 +220,6 @@ export class AmbisonicSendController {
       deviceChannels,
       sinkSelectable,
     };
-=======
-    this.bus.attach(this.getTap());
-
-    console.log(`[AmbisonicSend] Enabled via ${target.kind}: order ${order}, ${channels} ch`);
-    const status: AmbisonicSendStatus = { enabled: true, transport: target.kind, order, deviceChannels, sinkSelectable };
->>>>>>> 9145e6a (dvs update)
     return this.publish(target.kind === 'bridge' ? this.withBridgeState(status) : status);
   }
 
