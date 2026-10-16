@@ -5,6 +5,8 @@
  * Analyze model → Scenario → Foley + Speech → Generate all sounds.
  */
 
+import type { FoleySoundDetail } from './analysis';
+
 /** Top-level UI presentation. `simple` = floating bubbles, `expert` = sidebars + cards. */
 export type UIMode = 'simple' | 'expert';
 
@@ -31,6 +33,8 @@ export interface SceneWorkflowOptions {
   peopleCount: number;
   /** Scenario agent: plausibility of the scenario (1 = unusual … 10 = typical). */
   likeliness: number;
+  /** Foley agent: how finely the scenario's actions are split into sound events. */
+  soundDetail: FoleySoundDetail;
   /** Language of the generated speech, free text (e.g. "Swiss German"). Empty keeps
    *  the app-wide TTS language; otherwise it becomes the app-wide TTS language. */
   speechLanguage: string;
@@ -40,10 +44,17 @@ export interface SceneWorkflowOptions {
   reanalyze: boolean;
 }
 
-export type SceneRunStatus = 'queued' | 'running' | 'error' | 'stopped';
+export type SceneRunStatus = 'running' | 'error' | 'stopped';
 
-/** Runtime state of one scene workflow, keyed by its scenario card index. */
+/**
+ * Runtime state of one scene workflow, keyed by its scenario card index.
+ * Scenes run concurrently and independently (no queue).
+ */
 export interface SceneRun {
+  /** Stable id of this run (the usage index shifts when an earlier card is removed). */
+  runId: string;
+  /** Start time (ms epoch) — the most recently started running scene is the focus. */
+  startedAt: number;
   usageIndex: number;
   contextIndex: number;
   options: SceneWorkflowOptions;
@@ -56,7 +67,7 @@ export interface SceneRun {
 }
 
 /** Derived per-scene display state for a bubble. */
-export type SceneBubbleStatus = 'queued' | 'running' | 'error' | 'incomplete' | 'done';
+export type SceneBubbleStatus = 'running' | 'error' | 'incomplete' | 'done';
 
 export interface SceneProgress {
   status: SceneBubbleStatus;
@@ -64,6 +75,12 @@ export interface SceneProgress {
   /** Global advancement across all steps, 0..1. */
   fraction: number;
   statusText: string;
+  /** Advancement of the running step, 0..100 (0 when idle). */
+  stepPercent: number;
+  /** Live thinking text of the running step's agent ('' when none). */
+  thinking: string;
+  /** The generate step is running this scene's timeline orchestration. */
+  orchestrating: boolean;
 }
 
 /** One sound scene (a usage card with its sound children) shown as a bubble. */

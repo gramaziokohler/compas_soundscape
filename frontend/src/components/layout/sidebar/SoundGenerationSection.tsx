@@ -36,6 +36,7 @@ import {
 import { getGenerationSignature, getModifiedGenerationFields, isGenerationDirty } from '@/utils/generationSignature';
 import { soundMatchesCard } from '@/utils/sound-card-match';
 import { isConfigGlobal } from '@/lib/audio/utils/global-source';
+import { parseSoundCopyIndex } from '@/lib/audio/utils/variant-sound-id';
 
 /**
  * SoundGenerationSection Component
@@ -284,9 +285,7 @@ export function SoundGenerationSection({
     });
     byConfig.forEach((sounds, ci) => {
       const sorted = [...sounds].sort((a: any, b: any) => {
-        const ciA = (a.copy_index ?? parseInt(a.id?.split('_').pop() ?? '0', 10)) || 0;
-        const ciB = (b.copy_index ?? parseInt(b.id?.split('_').pop() ?? '0', 10)) || 0;
-        return ciA - ciB;
+        return parseSoundCopyIndex(a.id ?? '', a.copy_index) - parseSoundCopyIndex(b.id ?? '', b.copy_index);
       });
       if (sorted[0]?.id) map.set(ci, sorted[0].id);
     });
@@ -1328,16 +1327,9 @@ export function SoundGenerationSection({
     const pendingIndices = filteredCardItems
       .filter((item) => !isSoundGenerated(item.originalIndex))
       .map((item) => item.originalIndex);
-    const hasOrchestrate = soundConfigs.some(
-      (_, i) => pendingIndices.includes(i) && soundConfigs[i].orchestrateMeta
-    );
-    if (hasOrchestrate) {
-      const audioStore = useAudioControlsStore.getState();
-      audioStore.setGenerationInProgress(true);
-      audioStore.bakeOrchestrateSchedule();
-    }
+    // The bake gate + pre-generation bake are owned by handleGenerateInternal.
     onGenerateFiltered(pendingIndices);
-  }, [filteredCardItems, isSoundGenerated, soundConfigs, onGenerateFiltered]);
+  }, [filteredCardItems, isSoundGenerated, onGenerateFiltered]);
 
   // Pending count for the generate-all button visibility gate (hide unless ≥ 2 pending)
   const pendingCardCount = useMemo(

@@ -57,7 +57,6 @@ function collectPreferences(): UserPreferences {
     normalizeImpulseResponses: audio.normalizeImpulseResponses,
     outputDeviceId: audio.outputDeviceId,
     globalBaseDbfs: audio.globalBaseDbfs,
-    maximumFoleySounds: audio.maximumFoleySounds,
     ttsLanguage: audio.ttsLanguage,
     diffusionSteps: sc.globalSteps,
     negativePrompt: sc.globalNegativePrompt,
@@ -105,7 +104,6 @@ export function applyPreferences(prefs: UserPreferences): void {
   }
   if (prefs.outputDeviceId !== undefined) audio.setOutputDeviceId(prefs.outputDeviceId);
   if (prefs.globalBaseDbfs !== undefined) audio.setGlobalBaseDbfs(prefs.globalBaseDbfs);
-  if (prefs.maximumFoleySounds !== undefined) audio.setMaximumFoleySounds(prefs.maximumFoleySounds);
   if (prefs.ttsLanguage !== undefined) audio.setTtsLanguage(prefs.ttsLanguage);
 
   if (prefs.diffusionSteps !== undefined) sc.handleGlobalStepsChange(prefs.diffusionSteps);

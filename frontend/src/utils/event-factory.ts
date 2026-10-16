@@ -8,18 +8,7 @@
 import type { SoundEvent, SoundGenerationConfig, CompasGeometry } from "@/types";
 // import { calculateSoundPositionWithSpacing, type GeometryBounds } from "@/utils/positioning"; // Bounding-box positioning removed — camera-front placement used instead
 import { DEFAULT_SOUND_CONFIG } from "@/utils/constants";
-
-/**
- * Generate unique sound ID.
- *
- * @param prefix - ID prefix (e.g., 'sound', 'uploaded', 'library')
- * @param index - Sound index
- * @param variant - Variant number (default: 0)
- * @returns Unique sound ID string
- */
-export function generateSoundId(prefix: string, index: number, variant: number = 0): string {
-  return `${prefix}-${index}-${variant}`;
-}
+import { cardEventId } from "@/utils/config-id";
 
 /**
  * Create a SoundEvent from a configuration and audio URL.
@@ -90,7 +79,8 @@ export function createSoundEventFromUpload(
   }
 
   return {
-    id: generateSoundId(idPrefix, originalIndex, 0),
+    // Keyed on the card identity, never its index (indices are recycled).
+    id: cardEventId(idPrefix, config.config_id, 0),
     url,
     position,
     geometry: config.entities?.[0]?.geometry || createEmptyGeometry(),

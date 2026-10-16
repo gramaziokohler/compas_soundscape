@@ -11,13 +11,15 @@ import {
   resumeOrchestrateJob,
 } from '@/store/soundscapeStore';
 import { useSEDStore } from '@/store/sedStore';
-import { useAnalysisStore, applyRecoveredLlmResult, resumeLlmJob } from '@/store/analysisStore';
+import { applyRecoveredLlmResult, resumeLlmJob } from '@/store/analysisStore';
 import { useAcousticsSimulationStore } from '@/store/acousticsSimulationStore';
 import { useReceiversStore } from '@/store/receiversStore';
 import { useGridListenersStore } from '@/store/gridListenersStore';
 import { useAudioControlsStore } from '@/store/audioControlsStore';
 import { collapseVariantsToOne, groupSoundsByPosition } from '@/utils/positionKey';
 import { isFreshHomeUrl } from '@/utils/homeStage';
+import { cardEventId } from '@/utils/config-id';
+import { parseSoundCopyIndex } from '@/lib/audio/utils/variant-sound-id';
 import {
   importPyroomIRFiles,
   importChorasIRFiles,
@@ -193,16 +195,10 @@ function recoverLlmJob(record: JobRecord, status: Awaited<ReturnType<typeof apiS
   const configIndex = record.meta?.configIndex;
   const scenarioId = record.meta?.scenarioId;
 
+  // Nothing was marked as analyzing for this job yet (resumeLlmJob does that),
+  // and other recovered jobs may already run — no store state to reset.
   if (status.cancelled || status.error) {
     removeInflightJob(jobId);
-    if (kind !== 'orchestrate') {
-      useAnalysisStore.setState({
-        isAnalyzing: false,
-        analysisStatus: '',
-        analysisProgress: 0,
-        analyzingConfigIndex: null,
-      });
-    }
     return;
   }
 
@@ -383,6 +379,31 @@ function resetJobState(jobType: JobType, record: JobRecord): void {
   }
 }
 
+/**
+ * Re-key a recovered backend sound onto its card's `config_id` — the same id the
+ * live generation path assigns — so the existing-id dedupe below matches events
+ * that were merged (and autosaved) before the refresh. Backend ids and
+ * `prompt_index` are batch/index-relative; the job record's
+ * `configIdByPromptIndex` maps them to the owning card. Records without it
+ * (legacy, or discovered only via the backend listing) keep the raw sound.
+ */
+function rekeyRecoveredSound(s: any, prefix: 'generated' | 'tts', record: JobRecord): any {
+  const configId = s.prompt_index !== undefined
+    ? record.meta?.configIdByPromptIndex?.[s.prompt_index]
+    : undefined;
+  const copyIdx = parseSoundCopyIndex(String(s.id ?? ''), s.copy_index);
+  const suffix = prefix === 'tts' ? s.voice_name || 'TTS' : undefined;
+  // No mapping: keep the backend id (fresh unique key only if it sent none).
+  if (!configId) return s.id ? s : { ...s, id: cardEventId(prefix, undefined, copyIdx, suffix) };
+  const cardIdx = useSoundscapeStore.getState().soundConfigs.findIndex((c) => c.config_id === configId);
+  return {
+    ...s,
+    id: cardEventId(prefix, configId, copyIdx, suffix),
+    config_id: configId,
+    ...(cardIdx >= 0 ? { prompt_index: cardIdx } : {}),
+  };
+}
+
 async function processCompletedJob(
   jobType: JobType,
   jobId: string,
@@ -394,7 +415,7 @@ async function processCompletedJob(
       const store = useSoundscapeStore.getState();
       if (result && Array.isArray(result)) {
         const events = result.map((s: any) => ({
-          ...s,
+          ...rekeyRecoveredSound(s, 'generated', record),
           geometry: s.geometry || { vertices: [], faces: [] },
           isUploaded: true,
         }));
@@ -423,8 +444,7 @@ async function processCompletedJob(
       const store = useSoundscapeStore.getState();
       if (result && Array.isArray(result)) {
         const events = result.map((s: any) => ({
-          ...s,
-          id: s.id || `tts_${s.prompt_index ?? 0}_${s.copy_index ?? 0}_${s.voice_name || 'TTS'}`,
+          ...rekeyRecoveredSound(s, 'tts', record),
           geometry: s.geometry || { vertices: [], faces: [] },
           isUploaded: true,
           category: 'speech',

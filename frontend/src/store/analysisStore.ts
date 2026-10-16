@@ -25,11 +25,13 @@ import type {
   FoleyResult,
   SpeechResult,
   FreeformConfig,
+  CardAnalysisStatus,
 } from '@/types/analysis';
 import type { CardType } from '@/types/card';
 import {
   API_BASE_URL,
   DEFAULT_DBFS,
+  DEFAULT_FOLEY_SOUND_DETAIL,
   DBFS_MIN,
   LLM_JOB_STATUS_MISS_TOLERANCE,
   LLM_SUGGESTED_INTERVAL_SECONDS,
@@ -42,7 +44,8 @@ import {
 } from '@/utils/constants';
 import { loadAudioFileWithBuffer } from '@/lib/audio/utils/audio-info';
 import { apiService } from '@/services/api';
-import { startPolling, createPollRegistry } from '@/lib/poll-until-done';
+import { startPolling } from '@/lib/poll-until-done';
+import { createLiveIndexRegistry, type LiveIndexRef } from '@/utils/liveIndexRegistry';
 import { recordInflightJob, removeInflightJob } from '@/lib/job-tracker';
 import { generatePositionsInArea, generatePositionsInBounds } from '@/utils/positioning';
 import { getAnalysisGroupColor } from '@/utils/utils';
@@ -66,7 +69,9 @@ import {
 import type { IndexMapper } from '@/utils/cardIndexRemap';
 import {
   createInsertionIndexMapper,
+  createMoveIndexMapper,
   createRemovalIndexMapper,
+  remapIndexKeyedRecord,
   remapIndexSet,
   remapNullableIndex,
   remapOptionalIndex,
@@ -74,11 +79,146 @@ import {
 
 // ─── Module-level refs ────────────────────────────────────────────────────────
 
-let _analysisAbortController: AbortController | null = null;
-let _sedTaskId: string | null = null;
-let _sedPollInterval: ReturnType<typeof setInterval> | null = null;
-const llmPollRegistry = createPollRegistry();
-const _llmJobIds = new Set<string>();
+// Analyses run per card and concurrently (Simple-mode scenes run in parallel).
+// In-flight work follows its card through a LiveIndexRef (indices shift when
+// another card is removed) and registers a CardJob so a stop can target one card.
+
+/** Live refs of every card with in-flight analysis work; remapped with the cards. */
+const analysisCardRefs = createLiveIndexRegistry();
+
+/** One stoppable unit of in-flight work for a card (a poll, a stream, a SED task). */
+interface CardJob {
+  ref: LiveIndexRef;
+  /** Stops the work locally and cancels it server-side. Idempotent. */
+  stop: () => void;
+}
+const _cardJobs = new Set<CardJob>();
+
+function registerCardJob(ref: LiveIndexRef, stop: () => void): CardJob {
+  const job: CardJob = { ref, stop };
+  _cardJobs.add(job);
+  return job;
+}
+
+/** Stop the in-flight work of one card (`index`), or of every card. */
+function stopCardJobs(index?: number): void {
+  for (const job of [..._cardJobs]) {
+    if (index !== undefined && job.ref.current !== index) continue;
+    _cardJobs.delete(job);
+    job.stop();
+  }
+}
+
+function abortError(): Error {
+  const err = new Error('AbortError');
+  err.name = 'AbortError';
+  return err;
+}
+
+const IDLE_CARD_STATUS: CardAnalysisStatus = { status: '', thinking: '', progress: 0 };
+
+/**
+ * Mark a card as analyzing. Returns whether this call owns the run — a nested
+ * call for the same card (handleAnalyze → handleScenarioAnalyze) does not, and
+ * must not end it.
+ */
+function beginCardAnalysis(ref: LiveIndexRef, status = ''): boolean {
+  const index = ref.current;
+  if (index === null) return false;
+  const s = useAnalysisStore.getState();
+  if (s.analyzingConfigIndices.has(index)) return false;
+  const analyzingConfigIndices = new Set(s.analyzingConfigIndices);
+  analyzingConfigIndices.add(index);
+  useAnalysisStore.setState(
+    {
+      analyzingConfigIndices,
+      analysisStatusByIndex: { ...s.analysisStatusByIndex, [index]: { ...IDLE_CARD_STATUS, status } },
+      isAnalyzing: true,
+      analyzingConfigIndex: index,
+      analysisError: null,
+      analysisStatus: status,
+      analysisThinking: '',
+      analysisProgress: 0,
+    },
+    false,
+  );
+  return true;
+}
+
+/** Update a card's live status (the global fields mirror the latest writer). */
+function patchCardAnalysis(ref: LiveIndexRef, patch: Partial<CardAnalysisStatus>): void {
+  const index = ref.current;
+  if (index === null) return;
+  const s = useAnalysisStore.getState();
+  if (!s.analyzingConfigIndices.has(index)) return;
+  const next = { ...(s.analysisStatusByIndex[index] ?? IDLE_CARD_STATUS), ...patch };
+  useAnalysisStore.setState(
+    {
+      analysisStatusByIndex: { ...s.analysisStatusByIndex, [index]: next },
+      analyzingConfigIndex: index,
+      analysisStatus: next.status,
+      analysisThinking: next.thinking,
+      analysisProgress: next.progress,
+    },
+    false,
+  );
+}
+
+/** End a card's run (only when `owned`); the global fields reset once no card runs. */
+function endCardAnalysis(ref: LiveIndexRef, owned: boolean): void {
+  if (!owned) return;
+  const index = ref.current;
+  const s = useAnalysisStore.getState();
+  const analyzingConfigIndices = new Set(s.analyzingConfigIndices);
+  const analysisStatusByIndex = { ...s.analysisStatusByIndex };
+  if (index !== null) {
+    analyzingConfigIndices.delete(index);
+    delete analysisStatusByIndex[index];
+  }
+  const remaining = [...analyzingConfigIndices];
+  const latest = remaining.length > 0 ? remaining[remaining.length - 1] : null;
+  const latestStatus = latest !== null ? analysisStatusByIndex[latest] ?? IDLE_CARD_STATUS : IDLE_CARD_STATUS;
+  useAnalysisStore.setState(
+    {
+      analyzingConfigIndices,
+      analysisStatusByIndex,
+      isAnalyzing: remaining.length > 0,
+      analyzingConfigIndex: latest,
+      analysisStatus: latestStatus.status,
+      analysisThinking: latestStatus.thinking,
+      analysisProgress: latestStatus.progress,
+    },
+    false,
+  );
+}
+
+/**
+ * Follow cards across insertion / removal / reorder: remap every live ref, and
+ * stop the in-flight work of removed cards (its results have nowhere to go).
+ */
+function remapCardRefs(mapIndex: IndexMapper): void {
+  analysisCardRefs.remap(mapIndex);
+  for (const job of [..._cardJobs]) {
+    if (job.ref.current !== null) continue;
+    _cardJobs.delete(job);
+    job.stop();
+  }
+}
+
+/** Apply a config update to the card a ref follows (dropped once it was removed). */
+function updateCard(ref: LiveIndexRef, updates: Partial<AnalysisConfig>): void {
+  if (ref.current !== null) useAnalysisStore.getState().handleUpdateConfig(ref.current, updates);
+}
+
+/** Track a card for the duration of `work`. */
+async function withCardRef<T>(index: number, work: (ref: LiveIndexRef) => Promise<T>): Promise<T> {
+  const ref = analysisCardRefs.track(index);
+  try {
+    return await work(ref);
+  } finally {
+    analysisCardRefs.release(ref);
+  }
+}
 
 // Upload token used only as a URL path segment for the session-scoped
 // soundscape audio endpoint — the backend writes to the session's audio dir
@@ -155,16 +295,33 @@ interface LlmPartial {
   space_description?: string;
 }
 
+/**
+ * Enqueue an LLM job for the card `ref` follows and poll it to completion.
+ * Status lands in that card's `analysisStatusByIndex` entry; the job is
+ * stoppable per card through `stopCardJobs`.
+ */
 async function pollLlmJob(
   path: string,
   body: object,
-  configIndex: number,
+  ref: LiveIndexRef,
   kind: string,
   onPartial?: (partial: LlmPartial) => void,
 ): Promise<any> {
-  const { job_id } = await apiService.enqueueLlmJob(path, body);
-  recordInflightJob(job_id, 'llm', { configIndex, kind });
-  _llmJobIds.add(job_id);
+  // A stop that landed before the job was enqueued must not leave it running.
+  let stoppedEarly = false;
+  const earlyJob = registerCardJob(ref, () => { stoppedEarly = true; });
+  let enqueued: { job_id: string };
+  try {
+    enqueued = await apiService.enqueueLlmJob(path, body);
+  } finally {
+    _cardJobs.delete(earlyJob);
+  }
+  const { job_id } = enqueued;
+  if (stoppedEarly || ref.current === null) {
+    apiService.cancelJob(job_id).catch(() => {});
+    throw abortError();
+  }
+  recordInflightJob(job_id, 'llm', { configIndex: ref.current, kind });
   // A momentary status miss (getJobStatus resolves with the
   // "Job not found or expired" sentinel on ANY fetch error) must not abort the
   // poll — the in-process job is still running server-side. Tolerate a run of
@@ -184,20 +341,25 @@ async function pollLlmJob(
       return s;
     },
     onStatus: (s) => {
-      useAnalysisStore.setState({
-        analysisStatus: s.status || '',
-        analysisProgress: typeof s.progress === 'number' ? s.progress : 0,
-        analysisThinking: typeof s.partial?.thinking === 'string' ? s.partial.thinking : '',
+      patchCardAnalysis(ref, {
+        status: s.status || '',
+        progress: typeof s.progress === 'number' ? s.progress : 0,
+        thinking: typeof s.partial?.thinking === 'string' ? s.partial.thinking : '',
       });
-      if (s.partial && onPartial) onPartial(s.partial as LlmPartial);
+      if (s.partial && onPartial && ref.current !== null) onPartial(s.partial as LlmPartial);
     },
   });
-  llmPollRegistry.track(controller);
+  const job = registerCardJob(ref, () => {
+    controller.stop(abortError());
+    apiService.cancelJob(job_id).catch(() => {});
+  });
   try {
-    return await controller.done;
+    const result = await controller.done;
+    // The card was removed while the job ran — its result has nowhere to go.
+    if (ref.current === null) throw abortError();
+    return result;
   } finally {
-    llmPollRegistry.release(controller);
-    _llmJobIds.delete(job_id);
+    _cardJobs.delete(job);
     removeInflightJob(job_id);
   }
 }
@@ -469,7 +631,12 @@ function remapCardLinks(configs: AnalysisConfig[], mapIndex: IndexMapper): Analy
 function remapConfigIndexState(
   state: Pick<
     AnalysisStoreState,
-    'uploadingConfigs' | 'rehydratingAudioConfigs' | 'audioRehydrateFailedConfigs' | 'analyzingConfigIndex'
+    | 'uploadingConfigs'
+    | 'rehydratingAudioConfigs'
+    | 'audioRehydrateFailedConfigs'
+    | 'analyzingConfigIndex'
+    | 'analyzingConfigIndices'
+    | 'analysisStatusByIndex'
   >,
   mapIndex: IndexMapper,
 ) {
@@ -478,6 +645,8 @@ function remapConfigIndexState(
     rehydratingAudioConfigs: remapIndexSet(state.rehydratingAudioConfigs, mapIndex),
     audioRehydrateFailedConfigs: remapIndexSet(state.audioRehydrateFailedConfigs, mapIndex),
     analyzingConfigIndex: remapNullableIndex(state.analyzingConfigIndex, mapIndex),
+    analyzingConfigIndices: remapIndexSet(state.analyzingConfigIndices, mapIndex),
+    analysisStatusByIndex: remapIndexKeyedRecord(state.analysisStatusByIndex, mapIndex),
   };
 }
 
@@ -501,7 +670,12 @@ export interface AnalysisStoreState {
   /** Full thinking text of the running LLM agent (live, not persisted). */
   analysisThinking: string;
   analysisProgress: number;
+  /** Most recently active analyzing card (mirror; cards analyze concurrently — see analyzingConfigIndices). */
   analyzingConfigIndex: number | null;
+  /** Every card with a running analysis. */
+  analyzingConfigIndices: Set<number>;
+  /** Live status of each running card, keyed by card index. */
+  analysisStatusByIndex: Record<number, CardAnalysisStatus>;
 
   handleAddConfig: (type: CardType, initialSpeckleData?: any) => void;
   handleRemoveConfig: (index: number) => void;
@@ -517,7 +691,10 @@ export interface AnalysisStoreState {
   rehydrateAudioContextSources: (audioBaseUrl: string) => Promise<void>;
 
   handleAnalyze: (index: number) => Promise<void>;
+  /** Stop every running analysis. */
   handleStopAnalysis: () => void;
+  /** Stop one card's analysis only (other cards keep running). */
+  handleStopCardAnalysis: (index: number) => void;
 
   handleReorderConfigs: (from: number, to: number) => void;
   /** Ctrl+drag duplicate — deep-clones the config at `from` (and its result) and inserts at `toInsertion`. */
@@ -574,6 +751,8 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
         analysisThinking: '',
         analysisProgress: 0,
         analyzingConfigIndex: null,
+        analyzingConfigIndices: new Set<number>(),
+        analysisStatusByIndex: {},
 
         handleAddConfig: (type, initialSpeckleData) => {
           const { analysisConfigs } = get();
@@ -721,6 +900,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           const newTab = removeSet.has(activeAnalysisTab)
             ? (remainingIndices.length > 0 ? remainingIndices.length - 1 : 0)
             : (mapIndex(activeAnalysisTab) ?? 0);
+          remapCardRefs(mapIndex);
           set(
             {
               analysisConfigs: newConfigs,
@@ -761,8 +941,17 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           if (newTab === from) newTab = to;
           else if (from < to && newTab > from && newTab <= to) newTab--;
           else if (from > to && newTab >= to && newTab < from) newTab++;
+          const mapIndex = createMoveIndexMapper(from, to);
+          remapCardRefs(mapIndex);
           set(
-            { analysisConfigs: newConfigs, analysisResults: newResults, activeAnalysisTab: newTab },
+            {
+              analysisConfigs: newConfigs,
+              analysisResults: newResults,
+              activeAnalysisTab: newTab,
+              analyzingConfigIndices: remapIndexSet(get().analyzingConfigIndices, mapIndex),
+              analysisStatusByIndex: remapIndexKeyedRecord(get().analysisStatusByIndex, mapIndex),
+              analyzingConfigIndex: remapNullableIndex(get().analyzingConfigIndex, mapIndex),
+            },
             false,
             'analysis/reorderConfigs',
           );
@@ -812,6 +1001,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             cloned.drawnArea = { ...cloned.drawnArea, cardIndex: insertAt };
           }
           newConfigs.splice(insertAt, 0, cloned);
+          remapCardRefs(mapIndex);
           remapLinkedCardIndices(mapIndex);
 
           // Shift every result past the insertion, then duplicate the source's result
@@ -1015,14 +1205,13 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           const config = analysisConfigs[index];
           if (!config) return;
 
-          _analysisAbortController = new AbortController();
-          const signal = _analysisAbortController.signal;
-
-          set(
-            { isAnalyzing: true, analysisError: null, analyzingConfigIndex: index, analysisStatus: '', analysisThinking: '' },
-            false,
-            'analysis/analyzeStart',
-          );
+          // The card is followed by a live ref: removing another card mid-run shifts its index.
+          const ref = analysisCardRefs.track(index);
+          const abortController = new AbortController();
+          const signal = abortController.signal;
+          const owned = beginCardAnalysis(ref);
+          // Aborting also ends a SED poll: its next tick sees the signal and cancels the task.
+          const job = registerCardJob(ref, () => abortController.abort());
 
           try {
             let prompts: TextPromptResult[] = [];
@@ -1048,7 +1237,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
               const audioConfig = config as AudioAnalysisConfig;
               if (!audioConfig.audioFile) throw new Error('No audio file uploaded');
 
-              set({ analysisStatus: 'Uploading audio file...' }, false, 'analysis/analyzingAudio');
+              patchCardAnalysis(ref, { status: 'Uploading audio file...' });
 
               const formData = new FormData();
               formData.append('file', audioConfig.audioFile);
@@ -1063,45 +1252,32 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
               );
               formData.append('top_n_classes', SED_TOP_N_CLASSES);
 
-              const { task_id } = await apiService.startSEDAnalysis(formData);
-              _sedTaskId = task_id;
-              set({ analysisStatus: 'Queued...' }, false, 'analysis/sedQueued');
+              const { task_id: sedTaskId } = await apiService.startSEDAnalysis(formData);
+              patchCardAnalysis(ref, { status: 'Queued...' });
 
               const sedResult = await new Promise<any>((resolve, reject) => {
-                _sedPollInterval = setInterval(async () => {
+                const sedPollInterval = setInterval(async () => {
                   if (signal.aborted) {
-                    clearInterval(_sedPollInterval!);
-                    _sedPollInterval = null;
-                    if (_sedTaskId) {
-                      apiService.cancelSEDAnalysis(_sedTaskId).catch(() => {});
-                      _sedTaskId = null;
-                    }
-                    reject(new Error('AbortError'));
+                    clearInterval(sedPollInterval);
+                    apiService.cancelSEDAnalysis(sedTaskId).catch(() => {});
+                    reject(abortError());
                     return;
                   }
                   try {
-                    const s = await apiService.getSEDAnalysisStatus(_sedTaskId!);
-                    if (s.status) set({ analysisStatus: s.status }, false, 'analysis/sedPoll');
+                    const s = await apiService.getSEDAnalysisStatus(sedTaskId);
+                    if (s.status) patchCardAnalysis(ref, { status: s.status });
                     if (s.cancelled) {
-                      clearInterval(_sedPollInterval!);
-                      _sedPollInterval = null;
-                      _sedTaskId = null;
-                      reject(new Error('AbortError'));
+                      clearInterval(sedPollInterval);
+                      reject(abortError());
                     } else if (s.error) {
-                      clearInterval(_sedPollInterval!);
-                      _sedPollInterval = null;
-                      _sedTaskId = null;
+                      clearInterval(sedPollInterval);
                       reject(new Error(s.error));
                     } else if (s.completed && s.result) {
-                      clearInterval(_sedPollInterval!);
-                      _sedPollInterval = null;
-                      _sedTaskId = null;
+                      clearInterval(sedPollInterval);
                       resolve(s.result);
                     }
                   } catch (pollErr: any) {
-                    clearInterval(_sedPollInterval!);
-                    _sedPollInterval = null;
-                    _sedTaskId = null;
+                    clearInterval(sedPollInterval);
                     reject(pollErr);
                   }
                 }, 1500);
@@ -1163,15 +1339,11 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                 throw new Error('Please enter a text description');
               }
 
-              set(
-                {
-                  analysisStatus: useAnalysis
-                    ? 'Reading 3D model analysis and generating sound prompts...'
-                    : 'Generating sound prompts...',
-                },
-                false,
-                'analysis/generatingText',
-              );
+              patchCardAnalysis(ref, {
+                status: useAnalysis
+                  ? 'Reading 3D model analysis and generating sound prompts...'
+                  : 'Generating sound prompts...',
+              });
 
               const requestBody: any = {
                 context: textConfig.textInput,
@@ -1192,7 +1364,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                 // The LLM guesses a 2-3 word soundscape title — use it as the card title.
                 if (p.soundscape_title && p.soundscape_title !== appliedTitle) {
                   appliedTitle = p.soundscape_title;
-                  handleUpdateConfig(index, { display_name: p.soundscape_title });
+                  updateCard(ref, { display_name: p.soundscape_title });
                 }
                 const prompt: TextPromptResult = {
                   id: `${index}-${soundIdx++}`,
@@ -1207,10 +1379,12 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                   },
                 };
                 prompts.push(prompt);
+                const liveIndex = ref.current;
+                if (liveIndex === null) continue;
                 set(
                   (s) => {
-                    const ex = s.analysisResults.findIndex((r) => r.configIndex === index);
-                    const partial = { configIndex: index, prompts: [...prompts], generatedAt: new Date() };
+                    const ex = s.analysisResults.findIndex((r) => r.configIndex === liveIndex);
+                    const partial = { configIndex: liveIndex, prompts: [...prompts], generatedAt: new Date() };
                     return {
                       analysisResults:
                         ex >= 0
@@ -1226,7 +1400,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
               // Placement precedence for prompts that are NOT linked to an analysis
               // group: drawn area → model bounding box → (left unset, camera-front fallback).
               const linked = (p: TextPromptResult) => (p.entities?.length ?? 0) > 0 || !!p.position;
-              const drawnArea = useAreaDrawingStore.getState().getArea(index);
+              const drawnArea = ref.current !== null ? useAreaDrawingStore.getState().getArea(ref.current) : undefined;
               if (drawnArea) {
                 const needingPositions = prompts.filter((p) => !linked(p));
                 if (needingPositions.length > 0) {
@@ -1236,7 +1410,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                     if (posIdx < positions.length) prompt.position = positions[posIdx++];
                   }
                 }
-                useAreaDrawingStore.getState().setAreaVisualState(index, 'generated');
+                if (ref.current !== null) useAreaDrawingStore.getState().setAreaVisualState(ref.current, 'generated');
               } else {
                 const bounds = getModelBounds();
                 if (bounds) {
@@ -1252,15 +1426,17 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
               }
             }
 
+            const liveIndex = ref.current;
+            if (liveIndex === null) return;
             const newResult: AnalysisResult = {
-              configIndex: index,
+              configIndex: liveIndex,
               prompts,
               generatedAt: new Date(),
             };
 
             set(
               (s) => {
-                const existing = s.analysisResults.findIndex((r) => r.configIndex === index);
+                const existing = s.analysisResults.findIndex((r) => r.configIndex === liveIndex);
                 return {
                   analysisResults:
                     existing >= 0
@@ -1268,7 +1444,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                       : [...s.analysisResults, newResult],
                   // Snapshot the inputs this result was made from (drives "Regenerate").
                   analysisConfigs: s.analysisConfigs.map((c, i) =>
-                    i === index ? { ...c, ...captureGenerationSignature(config) } : c,
+                    i === liveIndex ? { ...c, ...captureGenerationSignature(config) } : c,
                   ),
                 };
               },
@@ -1285,28 +1461,30 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
               set({ analysisError: errorMsg }, false, 'analysis/analyzeError');
             }
           } finally {
-            _analysisAbortController = null;
-            set({ isAnalyzing: false, analysisStatus: '', analysisThinking: '', analysisProgress: 0, analyzingConfigIndex: null }, false, 'analysis/analyzeEnd');
+            _cardJobs.delete(job);
+            endCardAnalysis(ref, owned);
+            analysisCardRefs.release(ref);
           }
         },
 
+        // A single card's run ends itself as its jobs unwind (endCardAnalysis).
+        handleStopCardAnalysis: (index) => stopCardJobs(index),
+
         handleStopAnalysis: () => {
-          _analysisAbortController?.abort();
-          _analysisAbortController = null;
-          if (_sedPollInterval) {
-            clearInterval(_sedPollInterval);
-            _sedPollInterval = null;
-          }
-          if (_sedTaskId) {
-            apiService.cancelSEDAnalysis(_sedTaskId).catch(() => {});
-            _sedTaskId = null;
-          }
-          llmPollRegistry.stopAll();
-          for (const jobId of [..._llmJobIds]) {
-            apiService.cancelJob(jobId).catch(() => {});
-          }
-          _llmJobIds.clear();
-          set({ isAnalyzing: false, analysisStatus: '', analysisThinking: '', analysisProgress: 0, analyzingConfigIndex: null }, false, 'analysis/stop');
+          stopCardJobs();
+          set(
+            {
+              isAnalyzing: false,
+              analysisStatus: '',
+              analysisThinking: '',
+              analysisProgress: 0,
+              analyzingConfigIndex: null,
+              analyzingConfigIndices: new Set<number>(),
+              analysisStatusByIndex: {},
+            },
+            false,
+            'analysis/stop',
+          );
         },
 
         handleTogglePromptSelection: (configIndex, promptId) =>
@@ -1673,17 +1851,13 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
         },
 
         handleAnalyzeModel: async (index) => {
-          const { analysisConfigs, handleUpdateConfig } = get();
+          const { analysisConfigs } = get();
           const config = analysisConfigs[index] as AnalyzeModelConfig;
           if (config?.type !== 'model-analysis') return;
 
-          _analysisAbortController = new AbortController();
-
-          set(
-            { isAnalyzing: true, analysisError: null, analyzingConfigIndex: index, analysisStatus: 'Analyzing 3D model...', analysisThinking: '' },
-            false,
-            'analysis/analyzeModelStart',
-          );
+          const ref = analysisCardRefs.track(index);
+          const owned = beginCardAnalysis(ref, 'Analyzing 3D model...');
+          if (!owned) patchCardAnalysis(ref, { status: 'Analyzing 3D model...' });
 
           const objects: ArchitecturalObject[] = [];
           const colorGroups: { objectIds: string[]; color: string }[] = [];
@@ -1896,7 +2070,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                 }
               }
               useSpeckleStore.getState().setAnalysisObjectGroups([...colorGroups], [...objects]);
-              handleUpdateConfig(index, {
+              updateCard(ref, {
                 analysisResult: { analysisId, architecturalObjects: [...objects], spaceTitle, spaceDescription },
               } as Partial<AnalyzeModelConfig>);
             };
@@ -1909,7 +2083,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                 user_context: config.userContext,
                 llm_model: config.llmModel ?? useSoundscapeStore.getState().llmModel,
               },
-              index,
+              ref,
               'analyze_3dmodel',
               (partial) => {
                 if (partial.analysis_id) analysisId = partial.analysis_id;
@@ -1918,7 +2092,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                 if (Array.isArray(partial.items)) {
                   ingestObjects(partial.items as ArchitecturalObject[]);
                 }
-                handleUpdateConfig(index, {
+                updateCard(ref, {
                   analysisResult: { analysisId, architecturalObjects: [...objects], spaceTitle, spaceDescription },
                 } as Partial<AnalyzeModelConfig>);
               },
@@ -1935,7 +2109,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
               spaceTitle: spaceTitle || undefined,
               spaceDescription: spaceDescription || undefined,
             };
-            handleUpdateConfig(index, { analysisResult: resultData } as Partial<AnalyzeModelConfig>);
+            updateCard(ref, { analysisResult: resultData } as Partial<AnalyzeModelConfig>);
             useSpeckleStore.getState().setAnalysisObjectGroups(colorGroups, objects);
 
           } catch (error) {
@@ -1948,8 +2122,8 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
               set({ analysisError: errorMsg }, false, 'analysis/analyzeModelError');
             }
           } finally {
-            _analysisAbortController = null;
-            set({ isAnalyzing: false, analysisStatus: '', analysisThinking: '', analysisProgress: 0, analyzingConfigIndex: null }, false, 'analysis/analyzeModelEnd');
+            endCardAnalysis(ref, owned);
+            analysisCardRefs.release(ref);
           }
         },
 
@@ -2110,31 +2284,20 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             analysisThinking: '',
             analysisProgress: 0,
             analyzingConfigIndex: null,
+            analyzingConfigIndices: new Set<number>(),
+            analysisStatusByIndex: {},
             rehydratingAudioConfigs: new Set<number>(),
             audioRehydrateFailedConfigs: new Set<number>(),
           });
         },
 
-        handleScenarioAnalyze: async (index) => {
+        handleScenarioAnalyze: (index) => withCardRef(index, async (ref) => {
           const { analysisConfigs, handleUpdateConfig } = get();
           const config = analysisConfigs[index] as ScenarioConfig;
           if (config?.type !== 'scenario') return;
 
-          const ownedRun = !get().isAnalyzing;
-          if (ownedRun) {
-            set(
-              {
-                isAnalyzing: true,
-                analysisError: null,
-                analyzingConfigIndex: index,
-                analysisStatus: 'Imagining usage scenarios…',
-                analysisThinking: '',
-                analysisProgress: 0,
-              },
-              false,
-              'analysis/scenarioStart',
-            );
-          }
+          const owned = beginCardAnalysis(ref, 'Imagining usage scenarios…');
+          if (!owned) patchCardAnalysis(ref, { status: 'Imagining usage scenarios…' });
 
           // Reset previous results
           handleUpdateConfig(index, {
@@ -2166,9 +2329,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             ? resolveParentAnalysisId(config, analysisConfigs)
             : undefined;
 
-          const { timelineDurationMs } = await import('@/store/audioControlsStore').then(
-            (m) => m.useAudioControlsStore.getState(),
-          );
+          const { timelineDurationMs } = useAudioControlsStore.getState();
           const scenarioDurationMs = config.timelineDurationMs ?? timelineDurationMs;
 
           const body = {
@@ -2188,7 +2349,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             const result = await pollLlmJob(
               '/api/scenarist',
               body,
-              index,
+              ref,
               'scenarist',
               (partial) => {
                 const items = Array.isArray(partial.items) ? partial.items : [];
@@ -2204,7 +2365,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                       events: next[scenario_index]?.events ?? [],
                     };
                     workingScenarios = next;
-                    handleUpdateConfig(index, {
+                    updateCard(ref, {
                       display_name: title,
                       scenarioResult: { scenarios: workingScenarios, scenarioId: '' },
                     } as Partial<ScenarioConfig>);
@@ -2220,7 +2381,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                         events: [...next[event.scenario_index].events, ev],
                       };
                       workingScenarios = next;
-                      handleUpdateConfig(index, {
+                      updateCard(ref, {
                         scenarioResult: { scenarios: workingScenarios, scenarioId: '' },
                       } as Partial<ScenarioConfig>);
                     }
@@ -2230,7 +2391,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             );
             const scenarios = (result?.scenarios ?? workingScenarios) as ScenarioResult['scenarios'];
             const scenarioId = (result?.scenario_id as string) ?? '';
-            handleUpdateConfig(index, {
+            updateCard(ref, {
               display_name: scenarios?.[0]?.title,
               scenarioResult: { scenarios, scenarioId },
               scenarioId,
@@ -2242,24 +2403,16 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             console.error('[handleScenarioAnalyze] job error:', e);
             notifySectionError(e instanceof Error ? e.message : 'Scenario analysis failed');
           } finally {
-            if (ownedRun) {
-              set(
-                { isAnalyzing: false, analysisStatus: '', analysisThinking: '', analysisProgress: 0, analyzingConfigIndex: null },
-                false,
-                'analysis/scenarioEnd',
-              );
-            }
+            endCardAnalysis(ref, owned);
           }
-        },
+        }),
 
-        handleFoleyArtist: async (index) => {
-          const { analysisConfigs, handleUpdateConfig } = get();
+        handleFoleyArtist: (index) => withCardRef(index, async (ref) => {
+          const { analysisConfigs } = get();
           const config = analysisConfigs[index] as ScenarioConfig;
           if (config?.type !== 'scenario' || !config.scenarioId) return;
-
-          const { maximumFoleySounds } = await import('@/store/audioControlsStore').then(
-            (m) => m.useAudioControlsStore.getState(),
-          );
+          const liveScenario = () =>
+            ref.current !== null ? (get().analysisConfigs[ref.current] as ScenarioConfig | undefined) : undefined;
 
           // Parent-only analysis resolution (never fall back to another card).
           const analysisId = config.useAnalysisResult
@@ -2280,14 +2433,14 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
               scenario_id: config.scenarioId,
               analysis_id: analysisId,
               llm_model: config.llmModel ?? DEFAULT_LLM_MODEL,
-              maximum_sounds: maximumFoleySounds,
+              sound_detail: config.soundDetail ?? DEFAULT_FOLEY_SOUND_DETAIL,
               bounding_box: getScenarioBounds(),
             };
             const speechBody = {
               scenario_id: config.scenarioId,
               analysis_id: analysisId,
               llm_model: config.llmModel ?? DEFAULT_LLM_MODEL,
-              language: (await import('@/store/audioControlsStore')).useAudioControlsStore.getState().ttsLanguage,
+              language: useAudioControlsStore.getState().ttsLanguage,
               bounding_box: getScenarioBounds(),
             };
 
@@ -2296,14 +2449,12 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                 const result = await pollLlmJob(
                   '/api/foley-artist',
                   foleyBody,
-                  index,
+                  ref,
                   'foley',
                   (partial) => {
                     const items = Array.isArray(partial.items) ? partial.items : [];
                     if (items.length === 0) return;
-                    const title =
-                      (get().analysisConfigs[index] as ScenarioConfig).scenarioResult?.scenarios?.[0]?.title
-                      || 'Scenario';
+                    const title = liveScenario()?.scenarioResult?.scenarios?.[0]?.title || 'Scenario';
                     const workingResult: FoleyResult = {
                       scenarios: [{ scenario_title: title, sound_events: items as FoleyResult['scenarios'][number]['sound_events'] }],
                       foleyId: '',
@@ -2311,12 +2462,10 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                     const selectedFoleyKeys = workingResult.scenarios.flatMap((s) =>
                       s.sound_events.map((e) => `${s.scenario_title}__${e.soundName}`),
                     );
-                    handleUpdateConfig(index, { foleyResult: workingResult, selectedFoleyKeys } as Partial<ScenarioConfig>);
+                    updateCard(ref, { foleyResult: workingResult, selectedFoleyKeys } as Partial<ScenarioConfig>);
                   },
                 );
-                const title =
-                  (get().analysisConfigs[index] as ScenarioConfig).scenarioResult?.scenarios?.[0]?.title
-                  || 'Scenario';
+                const title = liveScenario()?.scenarioResult?.scenarios?.[0]?.title || 'Scenario';
                 const scenarios = result?.scenarios ?? [{
                   scenario_title: title,
                   sound_events: result?.sounds ?? [],
@@ -2328,7 +2477,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                 const selectedFoleyKeys = finalResult.scenarios.flatMap((s) =>
                   s.sound_events.map((e) => `${s.scenario_title}__${e.soundName}`),
                 );
-                handleUpdateConfig(index, { foleyResult: finalResult, selectedFoleyKeys } as Partial<ScenarioConfig>);
+                updateCard(ref, { foleyResult: finalResult, selectedFoleyKeys } as Partial<ScenarioConfig>);
               } catch (e) {
                 if (e instanceof Error && e.name === 'AbortError') return;
                 console.error('[handleFoleyArtist] Foley job error:', e);
@@ -2341,12 +2490,12 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                 const result = await pollLlmJob(
                   '/api/speech-agent',
                   speechBody,
-                  index,
+                  ref,
                   'speech',
                   (partial) => {
                     const items = Array.isArray(partial.items) ? partial.items : [];
                     if (items.length === 0) return;
-                    handleUpdateConfig(index, {
+                    updateCard(ref, {
                       speechResult: { speeches: items as SpeechResult['speeches'], speechId: '' },
                     } as Partial<ScenarioConfig>);
                   },
@@ -2355,7 +2504,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                   speeches: result?.speeches ?? [],
                   speechId: result?.speech_id ?? '',
                 };
-                handleUpdateConfig(index, { speechResult: finalResult, speechId: finalResult.speechId } as Partial<ScenarioConfig>);
+                updateCard(ref, { speechResult: finalResult, speechId: finalResult.speechId } as Partial<ScenarioConfig>);
               } catch (e) {
                 if (e instanceof Error && e.name === 'AbortError') return;
                 console.error('[handleFoleyArtist] Speech job error:', e);
@@ -2365,7 +2514,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
 
             await Promise.all([foleyPromise, speechPromise]);
           }
-        },
+        }),
       }),
       { name: 'analysisStore' },
     ),
@@ -2431,23 +2580,19 @@ export function applyRecoveredLlmResult(kind: string, configIndex: number, resul
 }
 
 export function resumeLlmJob(jobId: string, configIndex: number | undefined, kind: string | undefined): void {
-  useAnalysisStore.setState({
-    isAnalyzing: true,
-    analyzingConfigIndex: configIndex ?? null,
-    analysisStatus: 'Resuming…',
-    analysisThinking: '',
-  });
-  _llmJobIds.add(jobId);
+  // A job recorded without a card (legacy entry) is followed as a detached ref.
+  const ref: LiveIndexRef = configIndex != null ? analysisCardRefs.track(configIndex) : { current: null };
+  const owned = beginCardAnalysis(ref, 'Resuming…');
   const controller = startPolling({
     fetchStatus: () => apiService.getJobStatus('llm', jobId),
     onStatus: (s) => {
-      useAnalysisStore.setState({
-        analysisStatus: s.status || '',
-        analysisProgress: typeof s.progress === 'number' ? s.progress : 0,
-        analysisThinking: typeof s.partial?.thinking === 'string' ? s.partial.thinking : '',
+      patchCardAnalysis(ref, {
+        status: s.status || '',
+        progress: typeof s.progress === 'number' ? s.progress : 0,
+        thinking: typeof s.partial?.thinking === 'string' ? s.partial.thinking : '',
       });
-      if (configIndex != null && kind === 'analyze_3dmodel' && s.partial) {
-        applyRecoveredLlmResult(kind, configIndex, {
+      if (ref.current !== null && kind === 'analyze_3dmodel' && s.partial) {
+        applyRecoveredLlmResult(kind, ref.current, {
           analysis_id: s.partial.analysis_id,
           objects: s.partial.items,
           space_title: s.partial.space_title,
@@ -2456,24 +2601,21 @@ export function resumeLlmJob(jobId: string, configIndex: number | undefined, kin
       }
     },
   });
-  llmPollRegistry.track(controller);
+  const job = registerCardJob(ref, () => {
+    controller.stop(abortError());
+    apiService.cancelJob(jobId).catch(() => {});
+  });
   void controller.done
     .then((result) => {
-      if (configIndex != null && kind) applyRecoveredLlmResult(kind, configIndex, result);
+      if (ref.current !== null && kind) applyRecoveredLlmResult(kind, ref.current, result);
     })
     .catch(() => {
       /* cancelled / error — flags cleared in finally */
     })
     .finally(() => {
-      llmPollRegistry.release(controller);
-      _llmJobIds.delete(jobId);
+      _cardJobs.delete(job);
       removeInflightJob(jobId);
-      useAnalysisStore.setState({
-        isAnalyzing: false,
-        analysisStatus: '',
-        analysisThinking: '',
-        analysisProgress: 0,
-        analyzingConfigIndex: null,
-      });
+      endCardAnalysis(ref, owned);
+      analysisCardRefs.release(ref);
     });
 }

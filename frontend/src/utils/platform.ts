@@ -6,11 +6,19 @@
  */
 import { SHORTCUT_KEY_SEPARATOR } from './constants';
 
-export function detectMac(): boolean {
-  if (typeof navigator === 'undefined') return false;
+/** Best-effort OS string from the browser ('' during SSR). */
+function platformString(): string {
+  if (typeof navigator === 'undefined') return '';
   const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
-  const platform = nav.userAgentData?.platform || navigator.platform || navigator.userAgent || '';
-  return /mac|iphone|ipad|ipod/i.test(platform);
+  return nav.userAgentData?.platform || navigator.platform || navigator.userAgent || '';
+}
+
+export function detectMac(): boolean {
+  return /mac|iphone|ipad|ipod/i.test(platformString());
+}
+
+export function detectWindows(): boolean {
+  return /win/i.test(platformString());
 }
 
 /**

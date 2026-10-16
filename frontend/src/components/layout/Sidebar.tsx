@@ -113,17 +113,13 @@ export function Sidebar(props: SidebarProps) {
       }
     }
 
-    // The user just switched here from Simple mode with a scene run (running,
-    // queued or finished) or an open scene circle: the persisted step/indices
+    // The user just switched here from Simple mode with a scene run (running
+    // or finished) or an open scene circle: the persisted step/indices
     // were written for that scene — don't let the content-based load guard
     // override them (it would fall back to Context with nothing expanded while
     // the scene has no sound cards yet).
     const workflow = useSceneWorkflowStore.getState();
-    if (
-      workflow.activeUsageIndex !== null ||
-      workflow.openSimplePanel !== null ||
-      Object.keys(workflow.runs).length > 0
-    ) {
+    if (workflow.openSimplePanel !== null || Object.keys(workflow.runs).length > 0) {
       hasInteractedRef.current = true;
     }
 

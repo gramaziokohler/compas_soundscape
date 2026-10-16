@@ -6,8 +6,9 @@ import { clampToViewport } from "@/utils/scale";
 import { NESTED_MENU } from "@/utils/constants";
 
 export type NestedMenuItem =
-  | { kind: "submenu"; key: string; label: string; hint?: string; items: NestedMenuItem[] }
-  | { kind: "radio"; key: string; label: string; checked: boolean; onSelect: () => void }
+  /** `title` (submenu / radio) is shown as the row's native hover text. */
+  | { kind: "submenu"; key: string; label: string; hint?: string; title?: string; items: NestedMenuItem[] }
+  | { kind: "radio"; key: string; label: string; title?: string; checked: boolean; onSelect: () => void }
   | { kind: "toggle"; key: string; label: string; checked: boolean; onChange: (checked: boolean) => void }
   | {
       kind: "stepper";
@@ -172,6 +173,7 @@ function MenuPanel({ x, y, items, onClose }: PanelProps) {
                 role="menuitem"
                 aria-haspopup="menu"
                 aria-expanded={isOpen}
+                title={item.title}
                 className={`nested-menu__row ${isOpen ? "nested-menu__row--open" : ""}`}
                 onMouseEnter={(e) => openSubmenu(item.key, e.currentTarget)}
                 onClick={(e) => openSubmenu(item.key, e.currentTarget)}
@@ -192,6 +194,7 @@ function MenuPanel({ x, y, items, onClose }: PanelProps) {
                 type="button"
                 role="menuitemradio"
                 aria-checked={item.checked}
+                title={item.title}
                 className="nested-menu__row"
                 onMouseEnter={closeSub}
                 onClick={() => { item.onSelect(); onClose(); }}

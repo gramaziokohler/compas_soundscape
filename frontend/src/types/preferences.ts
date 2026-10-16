@@ -43,7 +43,6 @@ export interface UserPreferences {
   listenerOrientation?: ListenerOrientation;
   outputDeviceId?: string;
   globalBaseDbfs?: number;
-  maximumFoleySounds?: number;
   showSpectrograms?: boolean;
   // History
   enableAutoSave?: boolean;

@@ -38,6 +38,8 @@ from config.constants import (
     LLM_MODEL_ANTHROPIC,
     DEFAULT_LLM_MODEL,
     LLM_MODEL_VERSIONS,
+    DEFAULT_FOLEY_SOUND_DETAIL,
+    FOLEY_SOUND_DETAIL_LEVELS,
     DEFAULT_DBFS,
     LLM_SUGGESTED_INTERVAL_SECONDS,
     DEFAULT_DURATION_SECONDS,
@@ -1826,16 +1828,38 @@ For the duration estimation (in seconds with 0.1 precision):
 
         return furniture_context, has_furniture, room_bounds
 
+    @staticmethod
+    def _foley_detail_rules(sound_detail: str) -> str:
+        """LEVEL OF DETAIL block for the foley prompt (see FOLEY_SOUND_DETAIL_LEVELS).
+
+        The level sets merge granularity plus an indicative ceiling on discrete
+        sound events; the scenario's own activity still decides the final count.
+        """
+        name = sound_detail if sound_detail in FOLEY_SOUND_DETAIL_LEVELS else DEFAULT_FOLEY_SOUND_DETAIL
+        level = FOLEY_SOUND_DETAIL_LEVELS[name]
+        return (
+            f"LEVEL OF DETAIL ({name}):\n"
+            f"- {level['granularity']}\n"
+            f"- For a busy scenario this means at most about {level['max_events']} \"sound event\" entries. "
+            "This is a ceiling, not a quota: the scenario's actual activity decides the count. If little "
+            "happens, return only a few sound events. NEVER invent actions, objects or sounds that are not "
+            "in the scenario to get closer to the ceiling.\n"
+            "- Background/ambient beds and speech are NOT counted in this number.\n\n"
+        )
+
     def _build_foley_prompts(
         self,
         scenarios_json: str,
         furniture_json: str,
+        sound_detail: str = DEFAULT_FOLEY_SOUND_DETAIL,
     ) -> tuple[str, str]:
         """Build system and user prompts for the foley artist agent.
 
         Single source of truth used by both foley_artist and async_foley_artist.
         Outputs a flat, globally-deduplicated list of sound types — no scenario grouping.
         Each entry carries either linked object IDs or a guessed spatial position.
+        ``sound_detail`` (a FOLEY_SOUND_DETAIL_LEVELS key) sets how finely actions
+        are split into separate sound types.
         """
         system_prompt = (
             "You are an expert foley artist specializing in architectural soundscapes. "
@@ -1862,10 +1886,11 @@ For the duration estimation (in seconds with 0.1 precision):
             "breathing, hair or skin contact, subtle fidgeting of fabric, or any sound a listener would struggle "
             "to hear over room ambience. When a narrative action would only produce such an inaudible sound, "
             "skip it entirely rather than fabricating a barely-audible entry.\n"
-            "3. STRICT GLOBAL DEDUPLICATION: You must group all actions of a similar audio category into a "
-            "single object entry, even if they happen multiple times in the script. "
-            'E.g.: "walking on the carpet", "footsteps on the floor", "John walks past the door" '
-            '→ 1 sound: "footsteps".\n'
+            "3. GLOBAL DEDUPLICATION: Every repeat of the same sound type is ONE entry, however many times "
+            'it happens in the script (list each occurrence in "timestamps"). '
+            'E.g.: "John walks past the door", "Mary walks to the window" → 1 sound: "footsteps". '
+            "How finely DIFFERENT actions are split into separate entries is set by the LEVEL OF DETAIL "
+            "section below.\n"
             '4. It is STRICTLY FORBIDDEN to append personal names, character roles, or scene numbers to the '
             '"soundName" or "id" fields (e.g., "laptop_placement_sarah" or "footsteps_michael" are WRONG).\n'
             '5. The "description" is the Text-to-Audio prompt for a SINGLE generic instance of that acoustic '
@@ -1895,6 +1920,7 @@ For the duration estimation (in seconds with 0.1 precision):
             "'timestamps'): a one-off sound or an always-identical texture gets 1; a sound that repeats a "
             "few times gets 2 to 3; a very frequent action (e.g. many footsteps, several door closings) "
             "gets 4 to 5. Background beds always get 1. Never exceed 5.\n\n"
+            f"{self._foley_detail_rules(sound_detail)}"
             "Output Format — respond ONLY with a JSON array:\n"
             "[\n"
             "  {\n"
@@ -2224,7 +2250,7 @@ For the duration estimation (in seconds with 0.1 precision):
         scenarist_agent_result: dict,
         furniture_list: dict | None = None,
         scenario_ids: list[int] | None = None,
-        maximum_number_of_sounds: int = 20,
+        sound_detail: str = DEFAULT_FOLEY_SOUND_DETAIL,
         llm_model: str = DEFAULT_LLM_MODEL,
     ) -> dict:
         """
@@ -2239,8 +2265,9 @@ For the duration estimation (in seconds with 0.1 precision):
             scenario_ids:             Indices (0-based) of scenarios to process from
                                       scenarist_agent_result. If None, all scenarios
                                       are processed.
-            maximum_number_of_sounds: Maximum total number of sound events to create
-                                      across all selected scenarios (default: 20).
+            sound_detail:             FOLEY_SOUND_DETAIL_LEVELS key: how finely actions
+                                      are split into sound events (background and
+                                      speech are not counted).
             llm_model:                Provider key ("gemini", "openai", "anthropic").
 
         Returns:
@@ -2264,7 +2291,7 @@ For the duration estimation (in seconds with 0.1 precision):
         scenarios_json = json.dumps({"scenarios": selected_scenarios}, indent=2)
         furniture_json = _furniture_prompt_json(furniture_list)
         system_prompt, user_prompt = self._build_foley_prompts(
-            scenarios_json, furniture_json
+            scenarios_json, furniture_json, sound_detail
         )
 
         # ── Call LLM with structured output ───────────────────────────────────
@@ -2281,7 +2308,7 @@ For the duration estimation (in seconds with 0.1 precision):
         self,
         scenarist_agent_result: dict,
         furniture_list: dict | None = None,
-        maximum_number_of_sounds: int = 20,  # kept for API backwards-compat; not used in prompt
+        sound_detail: str = DEFAULT_FOLEY_SOUND_DETAIL,
         llm_model: str = DEFAULT_LLM_MODEL,
         on_progress=None,
     ) -> dict:
@@ -2299,7 +2326,7 @@ For the duration estimation (in seconds with 0.1 precision):
         scenarios_json = json.dumps({"scenarios": all_scenarios}, indent=2)
         furniture_json = _furniture_prompt_json(furniture_list)
         system_prompt, user_prompt = self._build_foley_prompts(
-            scenarios_json, furniture_json
+            scenarios_json, furniture_json, sound_detail
         )
 
         result = await self._call_llm(
@@ -2317,7 +2344,7 @@ For the duration estimation (in seconds with 0.1 precision):
         self,
         scenarist_agent_result: dict,
         furniture_list: dict | None = None,
-        maximum_number_of_sounds: int = 20,
+        sound_detail: str = DEFAULT_FOLEY_SOUND_DETAIL,
         llm_model: str = DEFAULT_LLM_MODEL,
         on_progress=None,
     ):
@@ -2335,7 +2362,7 @@ For the duration estimation (in seconds with 0.1 precision):
             result = await self.async_foley_artist(
                 scenarist_agent_result=scenarist_agent_result,
                 furniture_list=furniture_list,
-                maximum_number_of_sounds=maximum_number_of_sounds,
+                sound_detail=sound_detail,
                 llm_model=llm_model,
                 on_progress=on_progress,
             )

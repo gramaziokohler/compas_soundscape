@@ -2,7 +2,13 @@ import { useMemo } from 'react';
 import { useAnalysisStore, useSoundscapeStore, useSceneWorkflowStore } from '@/store';
 import type { SceneProgress, SceneWorkflowStep, SoundScene } from '@/types/sceneWorkflow';
 import { SIMPLE_MODE } from '@/utils/constants';
-import { SCENE_WORKFLOW_STEPS, hasModelAnalysisResult } from '@/utils/sceneWorkflow';
+import {
+  SCENE_WORKFLOW_STEPS,
+  getSceneSoundIndices,
+  hasModelAnalysisResult,
+  isSoundConfigGenerated,
+} from '@/utils/sceneWorkflow';
+import { useCardAnalysisStatus } from './useCardAnalysisStatus';
 
 const PERCENT = 100;
 
@@ -20,12 +26,16 @@ function weightBefore(step: SceneWorkflowStep): number {
   return total;
 }
 
+const IDLE_DETAIL = { stepPercent: 0, thinking: '', orchestrating: false } as const;
+
 /**
  * Display state of a scene bubble: status, current step, global advancement
  * (0..1) across the four pipeline steps, and a one-line status text.
  *
- * Running scenes read live store progress; idle scenes derive their state from
- * the cards (scenario / foley results, generated sounds).
+ * Scenes run concurrently, so a running scene reads only its own live state:
+ * its card's analysis status (the context card during Analyze), its sound
+ * cards' generation progress, and its scenario's orchestration. Idle scenes
+ * derive their state from the cards (scenario / foley results, generated sounds).
  *
  * Usage:
  * ```tsx
@@ -35,27 +45,56 @@ function weightBefore(step: SceneWorkflowStep): number {
 export function useSceneProgress(scene: SoundScene): SceneProgress {
   const run = useSceneWorkflowStore((s) => s.runs[scene.usageIndex]);
   const analysisConfigs = useAnalysisStore((s) => s.analysisConfigs);
-  const analysisStatus = useAnalysisStore((s) => s.analysisStatus);
-  const analysisProgress = useAnalysisStore((s) => s.analysisProgress);
-  const soundGenProgress = useSoundscapeStore((s) => s.soundGenProgress);
-  const soundGenProgressValue = useSoundscapeStore((s) => s.soundGenProgressValue);
-  const isOrchestrating = useSoundscapeStore((s) => s.isOrchestrating);
+  const running = run?.status === 'running';
+  // The Analyze step reports on the context card; the other LLM steps on the scene card.
+  const cardAnalysis = useCardAnalysisStatus(
+    running ? (run.step === 'analyze' ? run.contextIndex : scene.usageIndex) : null,
+  );
+  const soundConfigs = useSoundscapeStore((s) => s.soundConfigs);
+  const generatedSounds = useSoundscapeStore((s) => s.generatedSounds);
+  const soundGenCardProgress = useSoundscapeStore((s) => s.soundGenCardProgress);
+  const soundGenCardStatus = useSoundscapeStore((s) => s.soundGenCardStatus);
+  const scenario = analysisConfigs[scene.usageIndex];
+  const scenarioId = scenario?.type === 'scenario' ? scenario.scenarioId : null;
+  const orchestrating = useSoundscapeStore(
+    (s) => !!scenarioId && s.orchestratingScenarioIds.includes(scenarioId),
+  );
+  const orchestrateThinking = useSoundscapeStore((s) => s.orchestrateThinking);
 
   return useMemo<SceneProgress>(() => {
-    if (run?.status === 'queued') {
-      return { status: 'queued', step: null, fraction: 0, statusText: 'Queued' };
-    }
-
-    if (run?.status === 'running' && run.step) {
-      const stepPct = run.step === 'generate' ? soundGenProgressValue : analysisProgress;
+    if (running && run.step) {
+      let stepPercent: number;
+      let detail: string;
+      let thinking: string;
+      if (run.step === 'generate') {
+        // Average of the scene's sound cards (generated cards count as complete).
+        const indices = getSceneSoundIndices(soundConfigs, scene.usageIndex);
+        const percents = indices.map((i) =>
+          isSoundConfigGenerated(soundConfigs, generatedSounds, i) ? PERCENT : soundGenCardProgress[i] ?? 0,
+        );
+        stepPercent = percents.length > 0 ? percents.reduce((a, b) => a + b, 0) / percents.length : 0;
+        const active = indices.find((i) => soundGenCardStatus[i] && soundGenCardStatus[i] !== 'Pending…');
+        detail = orchestrating ? '' : (active !== undefined ? soundGenCardStatus[active] : '');
+        thinking = orchestrating ? orchestrateThinking : '';
+      } else {
+        stepPercent = cardAnalysis.progress;
+        detail = cardAnalysis.status;
+        thinking = cardAnalysis.thinking;
+      }
       const fraction = clamp01(
-        weightBefore(run.step) + SIMPLE_MODE.STEP_WEIGHTS[run.step] * clamp01(stepPct / PERCENT),
+        weightBefore(run.step) + SIMPLE_MODE.STEP_WEIGHTS[run.step] * clamp01(stepPercent / PERCENT),
       );
-      const detail = run.step === 'generate' ? soundGenProgress : analysisStatus;
-      const label = run.step === 'generate' && isOrchestrating
-        ? SIMPLE_MODE.ORCHESTRATE_LABEL
-        : SIMPLE_MODE.STEP_LABELS[run.step];
-      return { status: 'running', step: run.step, fraction, statusText: detail ? `${label} · ${detail}` : `${label}…` };
+      const showsOrchestrate = run.step === 'generate' && orchestrating;
+      const label = showsOrchestrate ? SIMPLE_MODE.ORCHESTRATE_LABEL : SIMPLE_MODE.STEP_LABELS[run.step];
+      return {
+        status: 'running',
+        step: run.step,
+        fraction,
+        statusText: detail ? `${label} · ${detail}` : `${label}…`,
+        stepPercent: Math.max(0, Math.min(PERCENT, stepPercent)),
+        thinking,
+        orchestrating: showsOrchestrate,
+      };
     }
 
     if (run?.status === 'error') {
@@ -64,20 +103,20 @@ export function useSceneProgress(scene: SoundScene): SceneProgress {
         step: run.step,
         fraction: run.step ? weightBefore(run.step) : 0,
         statusText: run.error ?? 'Failed',
+        ...IDLE_DETAIL,
       };
     }
 
     // Idle: derive completed steps from the cards.
     if (scene.soundCount > 0 && scene.generatedCount === scene.soundCount) {
-      return { status: 'done', step: null, fraction: 1, statusText: `${scene.soundCount} sounds` };
+      return { status: 'done', step: null, fraction: 1, statusText: `${scene.soundCount} sounds`, ...IDLE_DETAIL };
     }
-    const cfg = analysisConfigs[scene.usageIndex];
     let fraction = 0;
-    if (cfg?.type === 'scenario') {
+    if (scenario?.type === 'scenario') {
       const ctx = scene.contextIndex !== null ? analysisConfigs[scene.contextIndex] : undefined;
       if (ctx?.type !== 'model-analysis' || hasModelAnalysisResult(ctx)) fraction += SIMPLE_MODE.STEP_WEIGHTS.analyze;
-      if (cfg.scenarioId) fraction += SIMPLE_MODE.STEP_WEIGHTS.scenario;
-      if (cfg.foleyResult) fraction += SIMPLE_MODE.STEP_WEIGHTS.foley;
+      if (scenario.scenarioId) fraction += SIMPLE_MODE.STEP_WEIGHTS.scenario;
+      if (scenario.foleyResult) fraction += SIMPLE_MODE.STEP_WEIGHTS.foley;
     } else {
       fraction = weightBefore('generate');
     }
@@ -89,6 +128,10 @@ export function useSceneProgress(scene: SoundScene): SceneProgress {
       step: run?.step ?? null,
       fraction: clamp01(fraction),
       statusText: run?.status === 'stopped' ? 'Stopped' : 'Not finished',
+      ...IDLE_DETAIL,
     };
-  }, [run, scene, analysisConfigs, analysisStatus, analysisProgress, soundGenProgress, soundGenProgressValue, isOrchestrating]);
+  }, [
+    run, running, scene, scenario, analysisConfigs, cardAnalysis, soundConfigs, generatedSounds,
+    soundGenCardProgress, soundGenCardStatus, orchestrating, orchestrateThinking,
+  ]);
 }

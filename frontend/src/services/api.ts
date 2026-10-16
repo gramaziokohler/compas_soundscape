@@ -320,7 +320,6 @@ const PREF_WIRE_KEYS: Record<keyof UserPreferences, string> = {
   listenerOrientation: 'listener_orientation',
   outputDeviceId: 'output_device_id',
   globalBaseDbfs: 'global_base_dbfs',
-  maximumFoleySounds: 'maximum_foley_sounds',
   showSpectrograms: 'show_spectrograms',
   enableAutoSave: 'enable_auto_save',
   seenHints: 'seen_hints',

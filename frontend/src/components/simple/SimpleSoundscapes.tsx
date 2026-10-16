@@ -73,9 +73,8 @@ function SceneBubble({ scene, selected, open, onClick, onTogglePower }: SceneBub
   const envelope = useSceneWaveform(scene);
   const status =
     progress.status === 'running' ? 'running'
-      : progress.status === 'queued' ? 'queued'
-        : progress.status === 'error' ? 'error'
-          : 'idle';
+      : progress.status === 'error' ? 'error'
+        : 'idle';
   const ready = progress.status === 'done';
   const detail = `${progress.statusText} · click to ${open ? 'reduce' : 'open'}`;
   return (
@@ -96,14 +95,13 @@ function SceneBubble({ scene, selected, open, onClick, onTogglePower }: SceneBub
 
 // ─── Panels ──────────────────────────────────────────────────────────────────
 
-function WorkflowPanel({ scene, powered, onTogglePower, onReduce, onShowSounds, onRemove, removeDisabledReason }: {
+function WorkflowPanel({ scene, powered, onTogglePower, onReduce, onShowSounds, onRemove }: {
   scene: SoundScene;
   powered: boolean;
   onTogglePower: () => void;
   onReduce: () => void;
   onShowSounds: () => void;
   onRemove: () => void;
-  removeDisabledReason?: string;
 }) {
   const progress = useSceneProgress(scene);
   const switchUIMode = useSceneWorkflowStore((s) => s.switchUIMode);
@@ -117,7 +115,6 @@ function WorkflowPanel({ scene, powered, onTogglePower, onReduce, onShowSounds, 
       onRemove={onRemove}
       removeTitle="Remove scene"
       removeConfirmMessage={REMOVE_SCENE_MESSAGE}
-      removeDisabledReason={removeDisabledReason}
       onTogglePower={isPlayable(scene) ? onTogglePower : undefined}
       powered={powered}
       powerTitle={powerTitle(powered)}
@@ -165,8 +162,6 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
   const scenes = useSoundScenes();
   const activeSoundParentIndex = useUIStore((s) => s.activeSoundParentIndex);
   const isInSoundsStep = useUIStore((s) => s.isInSoundsStep);
-  const activeUsageIndex = useSceneWorkflowStore((s) => s.activeUsageIndex);
-  const queueLength = useSceneWorkflowStore((s) => s.queue.length);
   const startScene = useSceneWorkflowStore((s) => s.startScene);
 
   const columnSpace = useBubbleColumnSpace();
@@ -194,9 +189,6 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
   const frontLayer = useBubbleFrontLayer(
     panel ? (panel.kind === 'composer' ? 'composer' : `${panel.kind}:${panel.usageIndex}`) : null,
   );
-
-  const busy = activeUsageIndex !== null || queueLength > 0;
-  const removeDisabledReason = busy ? 'Wait until the running scene finishes' : undefined;
 
   const closePanel = useCallback(() => setPanel(null), []);
 
@@ -294,8 +286,9 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
   }, [startScene]);
 
   const removeScene = useCallback((usageIndex: number) => {
-    // Removal re-keys every usage-index link (scene runs, active sound parent) —
-    // the removed scene's run and selection are dropped there, later ones shift.
+    // Scenes are independent: removing one (even while it or others run) stops
+    // only its own jobs. Removal re-keys every usage-index link (scene runs,
+    // in-flight jobs, active sound parent) — later scenes shift, keep running.
     // The highlight toggles hold raw card indices: drop them rather than remap.
     useSceneHighlightStore.getState().reset();
     useAnalysisStore.getState().handleRemoveConfig(usageIndex);
@@ -361,7 +354,7 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
             width={SIMPLE_MODE.COMPOSER_WIDTH}
             style={{ position: 'fixed', left: PANEL_LEFT, top: COLUMN_TOP }}
           >
-            <ScenePromptComposer willQueue={busy} onSubmit={handleSubmit} onClose={closePanel} />
+            <ScenePromptComposer onSubmit={handleSubmit} onClose={closePanel} />
           </BubblePanel>
         </div>
       )}
@@ -374,7 +367,6 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
           onReduce={closePanel}
           onShowSounds={() => setPanel({ kind: 'scene', usageIndex: panelScene.usageIndex })}
           onRemove={() => removeScene(panelScene.usageIndex)}
-          removeDisabledReason={removeDisabledReason}
         />
       )}
 
@@ -387,7 +379,6 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
           onRemove={() => removeScene(panelScene.usageIndex)}
           removeTitle="Remove scene"
           removeConfirmMessage={REMOVE_SCENE_MESSAGE}
-          removeDisabledReason={removeDisabledReason}
           onTogglePower={isPlayable(panelScene) ? () => toggleScenePower(panelScene) : undefined}
           powered={isPowered(panelScene.usageIndex)}
           powerTitle={powerTitle(isPowered(panelScene.usageIndex))}

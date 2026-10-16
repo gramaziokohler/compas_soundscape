@@ -30,6 +30,8 @@ import {
   useRoomMaterialsStore,
   useRightSidebarStore,
   useAcousticLayerStore,
+  getAcousticSelectionForSave,
+  restoreAcousticSelection,
   useUIStore,
   selectHasSaveTarget,
   useGridListenersStore,
@@ -58,7 +60,7 @@ import { useJobRecovery } from "@/hooks/useJobRecovery";
 import { useModelVersionWatcher } from "@/hooks/useModelVersionWatcher";
 import { useListenerOrientationAutosave } from "@/hooks/useListenerOrientationAutosave";
 import { apiService } from "@/services/api";
-import { API_BASE_URL, DEFAULT_BACKGROUND_DURATION_SECONDS, DEFAULT_DBFS, DEFAULT_NUM_SOUNDS, RECEIVER_CONFIG, SPIRAL_PLACEMENT, DEFAULT_LISTENER_ORIENTATION, TTS_DEFAULT_LANGUAGE, DEFAULT_MAXIMUM_FOLEY_SOUNDS, SANDBOX_MODEL_ID, MODEL_VERSION_WATCH } from "@/utils/constants";
+import { API_BASE_URL, DEFAULT_BACKGROUND_DURATION_SECONDS, DEFAULT_DBFS, DEFAULT_NUM_SOUNDS, RECEIVER_CONFIG, SPIRAL_PLACEMENT, DEFAULT_LISTENER_ORIENTATION, TTS_DEFAULT_LANGUAGE, SANDBOX_MODEL_ID, MODEL_VERSION_WATCH } from "@/utils/constants";
 import { parseAuthoredSeconds } from "@/lib/audio/utils/timeline-utils";
 import { getCameraFrontSpiralPosition } from "@/lib/three/spiral-placement";
 import type { LoadTab, SoundGenerationConfig, SoundEvent } from "@/types";
@@ -256,6 +258,8 @@ function applyRestoredSoundscapePayload(
       roomMaterials: rcfg.roomMaterials,
     });
   }
+  // The domain was reset before this load — re-apply the model's saved region.
+  restoreAcousticSelection(restored.acousticRegion);
   // User preferences win over the project's saved generation settings so the
   // person's Advanced Settings follow them across models/workspaces.
   reapplyUserPreferences();
@@ -539,6 +543,8 @@ function HomeContent() {
     const unsubGridListeners = useGridListenersStore.subscribe(() => scheduleAutosave('gridListenersStore'));
     const unsubSim = useAcousticsSimulationStore.subscribe(() => scheduleAutosave('acousticsSimulationStore'));
     const unsubAnalysis = useAnalysisStore.subscribe(() => scheduleAutosave('analysisStore'));
+    // Region edits are saved too; derived ticks (face counts) are no-ops via the signature.
+    const unsubAcousticLayer = useAcousticLayerStore.subscribe(() => scheduleAutosave('acousticLayerStore'));
     return () => {
       unsubUI();
       unsubSoundscape();
@@ -547,6 +553,7 @@ function HomeContent() {
       unsubGridListeners();
       unsubSim();
       unsubAnalysis();
+      unsubAcousticLayer();
       if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2395,6 +2402,9 @@ function HomeContent() {
           console.log('[page.tsx] Restored resonance audio config');
         }
 
+        // Restore the acoustic region (reset with the domain above)
+        restoreAcousticSelection(restored.acousticRegion);
+
         console.log(
           `[page.tsx] Restored ${restored.soundConfigs.length} configs, ` +
           `${restored.soundEvents.length} events`
@@ -2581,6 +2591,7 @@ function HomeContent() {
         useAudioControlsStore.getState().excludedIterations,
         useAudioControlsStore.getState().exclusionReasons,
         useAudioControlsStore.getState().iterationTrims,
+        getAcousticSelectionForSave(),
       );
 
       // Embed analysis state in the soundscape data
@@ -3144,7 +3155,6 @@ function HomeContent() {
     audio.resetGlobalBaseDbfs();
     audio.setTtsLanguage(TTS_DEFAULT_LANGUAGE);
     audio.resetTimelineDurationMs();
-    audio.setMaximumFoleySounds(DEFAULT_MAXIMUM_FOLEY_SOUNDS);
     useUIStore.getState().setEnableAutoSave(true);
     setShowGroundGrid(false);
     setGroundGridSpacing(2);
@@ -3166,10 +3176,7 @@ function HomeContent() {
     } catch {
       // proceed with reload even if API fails
     }
-    // The acoustic region is persisted separately from the project soundscape —
-    // reset it so a deleted project does not resurrect its assigned layers.
-    useAcousticLayerStore.getState().clearAcousticLayer();
-    try { localStorage.removeItem('compas-acoustic-layer'); } catch { /* ignore */ }
+    // The acoustic region lives in the deleted soundscape.json — nothing else to reset.
     window.location.reload();
   }, []);
 
@@ -4150,7 +4157,6 @@ export default function Home() {
     (useCardFlowStore as any).persist?.rehydrate?.();
     (useAudioControlsStore as any).persist?.rehydrate?.();
     (useRightSidebarStore as any).persist?.rehydrate?.();
-    (useAcousticLayerStore as any).persist?.rehydrate?.();
     // Rehydrating persisted state is not an edit.
     clearUndoHistory();
     // Rehydration restores the persisted open/closed state of the floating

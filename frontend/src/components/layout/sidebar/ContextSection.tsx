@@ -121,9 +121,9 @@ export function ContextSection({
   const handlePreviewStop = useAudioControlsStore((s) => s.handlePreviewStop);
   const serviceVersions = useServiceVersions();
   const llmModel = useSoundscapeStore((s) => s.llmModel);
-  const analysisStatus = useAnalysisStore((s) => s.analysisStatus);
-  const analysisProgress = useAnalysisStore((s) => s.analysisProgress);
-  const analyzingConfigIndex = useAnalysisStore((s) => s.analyzingConfigIndex);
+  // Cards analyze concurrently — each card follows only its own run.
+  const analyzingConfigIndices = useAnalysisStore((s) => s.analyzingConfigIndices);
+  const analysisStatusByIndex = useAnalysisStore((s) => s.analysisStatusByIndex);
   const rehydratingAudioConfigs = useAnalysisStore((s) => s.rehydratingAudioConfigs);
   const audioRehydrateFailedConfigs = useAnalysisStore((s) => s.audioRehydrateFailedConfigs);
   const handleReorderConfigs = useAnalysisStore((s) => s.handleReorderConfigs);
@@ -277,7 +277,7 @@ export function ContextSection({
             <AnalyzeModelContent
               config={config as AnalyzeModelConfig}
               index={originalIndex}
-              isAnalyzing={isRunning}
+              isAnalyzing={analyzingConfigIndices.has(originalIndex)}
               onUpdateConfig={onUpdateConfig}
             />
           );
@@ -286,7 +286,7 @@ export function ContextSection({
             <AudioContextContent
               config={config as AudioAnalysisConfig}
               index={originalIndex}
-              isAnalyzing={isRunning}
+              isAnalyzing={analyzingConfigIndices.has(originalIndex)}
               isPreviewPlaying={previewingSoundId === `context-audio:${originalIndex}`}
               onPreviewPlayPause={() => handlePreviewPlayPause(`context-audio:${originalIndex}`)}
               onPreviewStop={() => handlePreviewStop(`context-audio:${originalIndex}`)}
@@ -323,7 +323,7 @@ export function ContextSection({
           return null;
       }
     },
-    [isRunning, onUpdateConfig, analysisConfigs, previewingSoundId, handlePreviewPlayPause, handlePreviewStop],
+    [analyzingConfigIndices, onUpdateConfig, analysisConfigs, previewingSoundId, handlePreviewPlayPause, handlePreviewStop],
   );
 
   const getAfterContent = useCallback(
@@ -486,15 +486,15 @@ export function ContextSection({
           isExpanded={isExpanded}
           hasResult={configHasResult}
           result={getResult(originalIndex)}
-          isRunning={(isRunning && analyzingConfigIndex === originalIndex) || isExtracting}
+          isRunning={analyzingConfigIndices.has(originalIndex) || isExtracting}
           status={
             isExtracting
               ? 'Extracting…'
-              : analyzingConfigIndex === originalIndex
-                ? analysisStatus || 'Analyzing 3D model...'
+              : analyzingConfigIndices.has(originalIndex)
+                ? analysisStatusByIndex[originalIndex]?.status || 'Analyzing 3D model...'
                 : undefined
           }
-          progress={analyzingConfigIndex === originalIndex ? analysisProgress : 0}
+          progress={analysisStatusByIndex[originalIndex]?.progress ?? 0}
           collapsedInfo={getCollapsedInfo(config, originalIndex)}
           isPlayingCollapsedInfo={isAudio && previewingSoundId === `context-audio:${originalIndex}`}
           keepContentMountedWhenCollapsed={isAudio && previewingSoundId === `context-audio:${originalIndex}`}
@@ -545,10 +545,8 @@ export function ContextSection({
       indexMap,
       hasResult,
       getResult,
-      isRunning,
-      analyzingConfigIndex,
-      analysisStatus,
-      analysisProgress,
+      analyzingConfigIndices,
+      analysisStatusByIndex,
       getCollapsedInfo,
       getActionButton,
       getBeforeContent,

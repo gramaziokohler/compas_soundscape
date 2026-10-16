@@ -73,7 +73,7 @@ export interface SidebarProps {
   onSoundTypeChange: (index: number, type: CardType) => Promise<void>;
   onGenerateSounds: () => void;
   onGenerateSingleSound: (index: number) => Promise<void>;
-  onGenerateFilteredSounds: (indices: number[]) => Promise<void>;
+  onGenerateFilteredSounds: (indices: number[]) => Promise<unknown>;
   onStopSoundGeneration: () => void;
   onGlobalDurationChange: (duration: number) => void;
   onGlobalStepsChange: (steps: number) => void;
@@ -213,7 +213,7 @@ export interface SoundGenerationSectionProps {
   onSetActiveTab: (index: number) => void;
   onGenerate: () => void;
   onGenerateSingle: (index: number) => Promise<void>;
-  onGenerateFiltered: (indices: number[]) => Promise<void>;
+  onGenerateFiltered: (indices: number[]) => Promise<unknown>;
   onStopGeneration: () => void;
   generatedSounds: SoundEvent[];
   globalDuration: number;

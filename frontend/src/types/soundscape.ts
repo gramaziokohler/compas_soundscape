@@ -8,6 +8,7 @@
 import type { DrawnArea } from './area-drawing';
 import type { GridPlacementMode } from './receiver';
 import type { IRAcousticParameters } from './audio';
+import type { FoleySoundDetail } from './analysis';
 
 /** Global generation settings for a soundscape session */
 export interface SoundscapeGlobalSettings {
@@ -251,6 +252,8 @@ export interface SoundscapeData {
   selected_receiver_id?: string;
   simulation_configs?: SoundscapeSimulationConfig[];
   active_simulation_index?: number;
+  /** Live acoustic region of the model (Object Explorer selection) — survives refresh. */
+  acoustic_region?: SoundscapeAcousticSelection;
   // Analysis state persistence
   analysis_state?: AnalysisState;
   // Resonance audio persistence
@@ -349,6 +352,8 @@ export interface SerializedAnalysisConfig {
   drawnArea?: DrawnArea | null;
   peopleCount?: number;
   likeliness?: number;
+  /** Scenario cards: foley sound detail level. */
+  soundDetail?: FoleySoundDetail;
   /** Per-scenario DAW sound-scene length in ms (scenario cards only). */
   timelineDurationMs?: number;
   analysisOptions?: Record<string, boolean>;

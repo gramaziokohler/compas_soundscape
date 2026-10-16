@@ -35,10 +35,11 @@ const ORDER_SELECT_OPTIONS = AMBISONIC_SEND.ORDER_OPTIONS.map((o) => ({
   label: o.label,
 }));
 
-const TRANSPORT_OPTIONS: { value: AmbisonicSendTransport; label: string }[] = [
-  { value: "device", label: "Audio device (macOS DVS, BlackHole…)" },
-  { value: "bridge", label: "Local ASIO bridge (Windows DVS)" },
-];
+/** Transport is picked from the detected OS by `useAmbisonicSendSync`; shown read-only. */
+const TRANSPORT_LABELS: Record<AmbisonicSendTransport, string> = {
+  device: "Browser output device",
+  bridge: "Local ASIO bridge (Windows)",
+};
 
 function parseOrder(value: string): AmbisonicOrder {
   const match = AMBISONIC_SEND.ORDER_OPTIONS.find((o) => String(o.order) === value);
@@ -55,7 +56,6 @@ export function AmbisonicSendControls() {
   const rotateWithListener = useAudioControlsStore((s) => s.ambisonicSendRotateWithListener);
   const setRotateWithListener = useAudioControlsStore((s) => s.setAmbisonicSendRotateWithListener);
   const transport = useAudioControlsStore((s) => s.ambisonicSendTransport);
-  const setTransport = useAudioControlsStore((s) => s.setAmbisonicSendTransport);
   const bridgeUrl = useAudioControlsStore((s) => s.ambisonicSendBridgeUrl);
   const status = useAudioControlsStore((s) => s.ambisonicSendStatus);
   const { devices, supported, labelsHidden, requesting, requestLabels, channelCounts } =
@@ -91,12 +91,9 @@ export function AmbisonicSendControls() {
         badge="AmbiX"
       />
 
-      <span className="text-[10px] text-secondary-hover">Output</span>
-      <CardSelect
-        value={transport}
-        onChange={(value) => setTransport(value === "bridge" ? "bridge" : "device")}
-        options={TRANSPORT_OPTIONS}
-      />
+      <span className="text-[10px] text-secondary-hover" title="Detected from your operating system">
+        {`Output · ${TRANSPORT_LABELS[transport]}`}
+      </span>
 
       <span className="text-[10px] text-secondary-hover">Send order</span>
       <CardSelect
@@ -118,7 +115,7 @@ export function AmbisonicSendControls() {
             <Notice
               type="warning"
               variant="tag"
-              message={`Dante Virtual Soundcard only exposes stereo pairs to the browser on Windows (WDM). Switch Output to "Local ASIO bridge" — see docs/dante-ambisonic-send.md`}
+              message="Dante Virtual Soundcard only exposes stereo pairs to the browser on Windows (WDM). Use the local ASIO bridge — see docs/dante-ambisonic-send.md"
             />
           )}
           {!danteStereoPairsOnly && isTooNarrow(deviceId) && (

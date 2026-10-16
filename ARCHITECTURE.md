@@ -490,7 +490,16 @@ Bubble cards vs docked DAW (stacking):
     = 'panel' → z SIMPLE_MODE.PANEL_RAISED_Z_INDEX (205, above DAW 200, below bottom bar 210);
     DAWDock pointerdown (capture) → 'daw' → cards drop back to SIMPLE_MODE.Z_INDEX.
 
-sceneWorkflowStore (one run at a time, FIFO queue, keyed by scenario card index)
+sceneWorkflowStore (scenes run concurrently + independently, no frontend queue; runs keyed by
+  scenario card index, each with a stable runId)
+  Throttling is backend-side only: LLM steps → io_jobs LLM_SEMAPHORE, generate → worker queues.
+  analysisStore runs per card (analyzingConfigIndices / analysisStatusByIndex,
+  handleStopCardAnalysis); soundscapeStore generations are per invocation
+  (handleStopGenerationFor, handleGenerateFiltered(…, { audioModel })).
+  In-flight jobs follow their card through a LiveIndexRef (utils/liveIndexRegistry), so removing
+  one scene never corrupts or blocks another. Scenes sharing an un-analyzed context await one
+  analysis of it. Only the focus scene (selectFocusRun: open panel, else latest started) drives
+  the expert sidebar, the DAW / 3D scene and the 3D highlights.
   analyze   → analysisStore.handleAnalyze(context)        (skipped/reused if analyzed)
   scenario  → analysisStore.handleScenarioAnalyze(usage)
   foley     → analysisStore.handleAnalyze(usage)          (foley + speech; ScenarioConfig.includeSpeech)

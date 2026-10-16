@@ -9,7 +9,10 @@
  * exposed via the legacy singular fields for consumers that assume one layer
  * (material assignment); isolation + simulation use the resolved geometry union.
  *
- * Persisted for refresh survival. Undoable: the user's region selection is an
+ * Model-bound domain state: saved in the model's soundscape.json (`acoustic_region`,
+ * via `getAcousticSelectionForSave` / `restoreAcousticSelection`), NOT localStorage —
+ * every model open/refresh resets the domain first, which would wipe a local copy
+ * before it rehydrates. Undoable: the user's region selection is an
  * edit (it changes what gets simulated). Auto-detection / persisted-selection
  * validation are loads (runAsLoad) and resolved geometry ids are derived — none
  * of those create a step. A whole Re-assign flow (clear → pick → confirm or
@@ -21,7 +24,6 @@
  */
 
 import { create } from 'zustand';
-import { persist, createJSONStorage } from 'zustand/middleware';
 import { devtools } from 'zustand/middleware';
 import { temporal } from 'zundo';
 import {
@@ -29,9 +31,11 @@ import {
   undoEquality,
   pauseStore,
   commitStore,
+  runAsLoad,
   type RegisterTemporalStoreOptions,
 } from './undoRedoRegistry';
 import { getAcousticLayerAllIds } from './speckleStore';
+import type { SimulationAcousticSelection } from '@/types/acoustics';
 
 const initialState = {
   /** Legacy singular fields — always mirror the FIRST selected node (or null). */
@@ -124,7 +128,6 @@ export const acousticLayerUndo: RegisterTemporalStoreOptions<AcousticLayerStoreS
 };
 
 export const useAcousticLayerStore = create<AcousticLayerStoreState>()(
-  persist(
     temporal(
     devtools(
       (set) => ({
@@ -227,50 +230,6 @@ export const useAcousticLayerStore = create<AcousticLayerStoreState>()(
     ),
       { partialize: acousticLayerPartialize, equality: acousticLayerEquality, limit: UNDO_HISTORY_LIMIT },
     ),
-    {
-      name: 'compas-acoustic-layer',
-      storage: createJSONStorage(() => localStorage),
-      skipHydration: true,
-      // v1 persisted only the singular `selectedAcousticLayerId`/`Name` pair.
-      // Rehydrating that shape into the multi-select store left the array fields
-      // empty, so a previously assigned region silently disappeared on refresh
-      // (`hasDefinedLayer` reads the array). Backfill the arrays on migration.
-      version: 2,
-      migrate: (persistedState: unknown, version: number) => {
-        const s = (persistedState ?? {}) as Partial<AcousticLayerState>;
-        if (version >= 2) return s as AcousticLayerState;
-        const ids = Array.isArray(s.selectedAcousticLayerIds) ? s.selectedAcousticLayerIds : [];
-        const names = Array.isArray(s.selectedAcousticLayerNames) ? s.selectedAcousticLayerNames : [];
-        const singleId = s.selectedAcousticLayerId ?? null;
-        const singleName = s.selectedAcousticLayerName ?? null;
-        if (ids.length === 0 && singleId) {
-          return {
-            ...s,
-            selectedAcousticLayerIds: [singleId],
-            selectedAcousticLayerNames: singleName ? [singleName] : [],
-          } as AcousticLayerState;
-        }
-        if (ids.length > 0 && (!singleId || !singleName)) {
-          return {
-            ...s,
-            selectedAcousticLayerId: singleId ?? ids[0],
-            selectedAcousticLayerName: singleName ?? names[0] ?? null,
-          } as AcousticLayerState;
-        }
-        return s as AcousticLayerState;
-      },
-      partialize: (state) => ({
-        selectedAcousticLayerId: state.selectedAcousticLayerId,
-        selectedAcousticLayerName: state.selectedAcousticLayerName,
-        selectedAcousticLayerIds: state.selectedAcousticLayerIds,
-        selectedAcousticLayerNames: state.selectedAcousticLayerNames,
-        selectedAcousticGeometryIds: state.selectedAcousticGeometryIds,
-        selectedAcousticFaceCount: state.selectedAcousticFaceCount,
-        isWholeModel: state.isWholeModel,
-        autoDetected: state.autoDetected,
-      }),
-    },
-  ),
 );
 
 /**
@@ -281,6 +240,48 @@ export const useAcousticLayerStore = create<AcousticLayerStoreState>()(
  */
 let _reassignSnapshot: AcousticSelectionPayload | null = null;
 
+/** The current selection as a payload, or null when no region is assigned. */
+function readAcousticSelection(): AcousticSelectionPayload | null {
+  const s = useAcousticLayerStore.getState();
+  if (s.selectedAcousticLayerIds.length === 0) return null;
+  return {
+    nodeIds: [...s.selectedAcousticLayerIds],
+    nodeNames: [...s.selectedAcousticLayerNames],
+    geometryIds: [...s.selectedAcousticGeometryIds],
+    faceCount: s.selectedAcousticFaceCount,
+    isWholeModel: s.isWholeModel,
+    autoDetected: s.autoDetected,
+  };
+}
+
+/**
+ * The region to write to soundscape.json. While a re-assign is in progress the
+ * live selection is temporarily cleared — save the pre-re-assign region instead
+ * so a save (or refresh) mid-pick never persists an empty region.
+ */
+export function getAcousticSelectionForSave(): SimulationAcousticSelection | null {
+  const sel = _reassignSnapshot ?? readAcousticSelection();
+  if (!sel) return null;
+  return {
+    nodeIds: sel.nodeIds,
+    nodeNames: sel.nodeNames,
+    geometryIds: sel.geometryIds ?? [],
+    isWholeModel: !!sel.isWholeModel,
+    autoDetected: !!sel.autoDetected,
+  };
+}
+
+/**
+ * Apply a region loaded from soundscape.json. A load, not an edit (no undo step).
+ * `null` (legacy save without a region) leaves the store untouched so
+ * auto-detection / the selection prompt run as before.
+ */
+export function restoreAcousticSelection(sel: SimulationAcousticSelection | null): void {
+  if (!sel || sel.nodeIds.length === 0) return;
+  console.log('[dbg:acoustic-region] restoring saved region', sel.nodeNames);
+  runAsLoad(() => useAcousticLayerStore.getState().setAcousticSelection(sel));
+}
+
 /**
  * Capture the current acoustic selection before it is cleared by a re-assign.
  * Call this immediately before `clearAcousticLayer()`. A no-op region (nothing
@@ -290,19 +291,7 @@ export function captureAcousticSelectionSnapshot(): void {
   // The whole re-assign (clear → pick → confirm / cancel) records as ONE undo
   // step from the pre-re-assign region; a cancel records nothing.
   pauseStore('acousticLayer', { spanInteractions: true });
-  const s = useAcousticLayerStore.getState();
-  if (s.selectedAcousticLayerIds.length === 0) {
-    _reassignSnapshot = null;
-    return;
-  }
-  _reassignSnapshot = {
-    nodeIds: [...s.selectedAcousticLayerIds],
-    nodeNames: [...s.selectedAcousticLayerNames],
-    geometryIds: [...s.selectedAcousticGeometryIds],
-    faceCount: s.selectedAcousticFaceCount,
-    isWholeModel: s.isWholeModel,
-    autoDetected: s.autoDetected,
-  };
+  _reassignSnapshot = readAcousticSelection();
 }
 
 /**

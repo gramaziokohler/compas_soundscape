@@ -77,13 +77,21 @@ export {
   captureAcousticSelectionSnapshot,
   restoreAcousticSelectionSnapshot,
   discardAcousticSelectionSnapshot,
+  getAcousticSelectionForSave,
+  restoreAcousticSelection,
 } from './acousticLayerStore';
 
 export { useUIStore };
 export { selectHasSaveTarget } from './uiStore';
 export type { UIStoreState, SidebarNavCommand } from './uiStore';
 
-export { useSceneWorkflowStore, registerSendToSoundGeneration, defaultSceneOptions } from './sceneWorkflowStore';
+export {
+  useSceneWorkflowStore,
+  registerSendToSoundGeneration,
+  defaultSceneOptions,
+  selectFocusRun,
+  selectHasRunningScene,
+} from './sceneWorkflowStore';
 export type { SceneWorkflowStoreState } from './sceneWorkflowStore';
 
 export { useFileUploadStore } from './fileUploadStore';

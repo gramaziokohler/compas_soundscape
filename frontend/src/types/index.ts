@@ -251,6 +251,20 @@ export interface SoundGenerationConfig {
   generatedSignature?: string;
 }
 
+/** Options of one sound-generation invocation (several may run concurrently). */
+export interface GenerateSoundsOptions {
+  /** Regenerate already-generated targets too (their events are replaced). */
+  force?: boolean;
+  /** Text-to-audio model for this invocation only (defaults to the app-wide setting). */
+  audioModel?: string;
+}
+
+/** Result of one sound-generation invocation. */
+export interface GenerateSoundsOutcome {
+  /** Why the invocation failed or stopped, or null. */
+  error: string | null;
+}
+
 /** A sound selected from the Google Sound Library catalog */
 export interface CatalogSoundSelection {
   name: string;
@@ -276,6 +290,10 @@ export interface JobRecord {
     instanceId?: string;
     /** loop: which sound the loop region applies to. */
     soundId?: string;
+    /** sound/tts: the backend-echoed `prompt_index` (batch index for sound, card
+     *  index for tts) → owning card's `config_id`, so recovery re-keys results
+     *  onto the same config-keyed ids the live path assigns. */
+    configIdByPromptIndex?: Record<number, string>;
   };
 }
 

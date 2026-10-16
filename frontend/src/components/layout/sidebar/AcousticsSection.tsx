@@ -2177,27 +2177,59 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   };
 
   if (presentation === 'bubbles') {
+    // A reduced bubble card is not rendered at all, so its headless material
+    // section (store activation + viewer colors) would unmount with it. Keep the
+    // active simulation's materials showing in Acoustics view while no card is
+    // open — exactly as if its card were expanded.
+    const activeConfig = activeSimulationIndex !== null ? simulationConfigs[activeSimulationIndex] : undefined;
+    const reducedActiveMaterials = expandedCardIndex === null
+      && activeSimulationIndex !== null
+      && activeConfig
+      && (activeConfig.type === 'pyroomacoustics' || activeConfig.type === 'choras') ? (
+        <SpeckleSurfaceMaterialsSection
+          key={activeConfig.id ?? activeSimulationIndex}
+          viewerRef={viewerRef}
+          worldTree={localWorldTree}
+          availableMaterials={activeConfig.type === 'choras' ? chorasMaterials : pyroomMaterials}
+          cardType={activeConfig.type}
+          filteringEnabled={filteringEnabled}
+          isReadOnly
+          isActive
+          onMaterialAssignmentsChange={(assignments, layerName, geometryObjectIds, scatteringAssignments) =>
+            handleSpeckleMaterialAssignments(activeSimulationIndex, assignments, layerName, geometryObjectIds, scatteringAssignments)
+          }
+          initialAssignments={(activeConfig as any).speckleMaterialAssignments}
+          initialLayerName={(activeConfig as any).speckleLayerName}
+          initialScatteringAssignments={(activeConfig as any).speckleScatteringAssignments}
+          initialIsolatedObjectIds={(activeConfig as any).speckleIsolatedObjectIds}
+          onIsolationChange={(ids) => handleUpdateConfig(activeSimulationIndex, { speckleIsolatedObjectIds: ids } as any)}
+        />
+      ) : null;
+
     return (
-      <AcousticsBubbles
-        simulationConfigs={simulationConfigs}
-        activeSimulationIndex={activeSimulationIndex}
-        openIndex={expandedCardIndex}
-        availableTypes={AVAILABLE_TYPES}
-        onAddItem={handleAddItem}
-        onSetActiveSimulation={onSetActiveSimulation}
-        onOpen={(index) => {
-          setExpandedCardIndex(index);
-          useUIStore.getState().setExpandedSimulationTabIndex(index);
-          // Same view switch as expanding a card in the sidebar (layer isolation + colors).
-          if (simulationConfigs[index]?.type !== 'resonance' && viewMode !== 'dark') setViewMode('acoustic');
-        }}
-        onReduce={() => {
-          // Reduce is not deactivate: the auralization keeps running with the panel closed.
-          setExpandedCardIndex(null);
-          useUIStore.getState().setExpandedSimulationTabIndex(null);
-        }}
-        renderCard={renderCard}
-      />
+      <>
+        {reducedActiveMaterials}
+        <AcousticsBubbles
+          simulationConfigs={simulationConfigs}
+          activeSimulationIndex={activeSimulationIndex}
+          openIndex={expandedCardIndex}
+          availableTypes={AVAILABLE_TYPES}
+          onAddItem={handleAddItem}
+          onSetActiveSimulation={onSetActiveSimulation}
+          onOpen={(index) => {
+            setExpandedCardIndex(index);
+            useUIStore.getState().setExpandedSimulationTabIndex(index);
+            // Same view switch as expanding a card in the sidebar (layer isolation + colors).
+            if (simulationConfigs[index]?.type !== 'resonance' && viewMode !== 'dark') setViewMode('acoustic');
+          }}
+          onReduce={() => {
+            // Reduce is not deactivate: the auralization keeps running with the panel closed.
+            setExpandedCardIndex(null);
+            useUIStore.getState().setExpandedSimulationTabIndex(null);
+          }}
+          renderCard={renderCard}
+        />
+      </>
     );
   }
 

@@ -96,13 +96,14 @@ export function BubblePanel({
           {onTogglePower && (
             <button
               type="button"
-              className={`bubble-panel__icon-btn${powered ? " power-btn--on" : ""}`}
+              className={`bubble-power${powered ? " power-btn--on" : ""}`}
+              style={{ width: SIMPLE_MODE.FLYOUT_POWER_SIZE, height: SIMPLE_MODE.FLYOUT_POWER_SIZE }}
               onClick={onTogglePower}
               title={powerTitle}
               aria-label={powerTitle ?? "Power"}
               aria-pressed={powered}
             >
-              <Power size={SIMPLE_MODE.POWER_ICON_SIZE - 1} strokeWidth={2.4} aria-hidden="true" />
+              <Power size={SIMPLE_MODE.POWER_ICON_SIZE} strokeWidth={2.4} aria-hidden="true" />
             </button>
           )}
           <div className="min-w-0 flex-1">

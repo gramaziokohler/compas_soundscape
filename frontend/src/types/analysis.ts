@@ -235,6 +235,9 @@ export interface ScenarioSource {
   voiceName?: string;
 }
 
+/** Foley "sound detail" level — how finely scenario actions are split into sound events. */
+export type FoleySoundDetail = 'essential' | 'balanced' | 'detailed' | 'exhaustive';
+
 /**
  * Scenario Config — streams a scenario from scenarist agent, then calls foley artist
  */
@@ -268,6 +271,8 @@ export interface ScenarioConfig extends AnalysisBaseConfig {
   orchestrateId: string | null;
   /** When `false`, the speech agent is skipped (foley only). Undefined = include speech. */
   includeSpeech?: boolean;
+  /** How finely the foley agent splits actions into sound events. Undefined = DEFAULT_FOLEY_SOUND_DETAIL. */
+  soundDetail?: FoleySoundDetail;
   /** Reference images (data URIs) sent to the scenarist. Transient — not saved or kept in undo history. */
   referenceImages?: string[];
 }
@@ -325,6 +330,15 @@ export interface AnalysisResult {
   configIndex: number;
   prompts: TextPromptResult[];
   generatedAt?: Date;
+}
+
+/** Live progress of one card's running analysis (cards analyze concurrently). */
+export interface CardAnalysisStatus {
+  status: string;
+  /** Full thinking text of the running LLM agent. */
+  thinking: string;
+  /** 0..100 */
+  progress: number;
 }
 
 // ============================================================================

@@ -154,6 +154,13 @@ Rules:
    (instanced geometry missing). `_strip_display_geometry_application_ids()` removes the mesh-level
    duplicates before `operations.send`; legacy copies created before that fix are healed on demand
    via `POST /api/speckle/models/{model_id}/ensure-ready` (called by `useSpeckleViewerInit`).
+7. **OBJ has no units, but `obj-rhino-converter` labels every mesh `mm`.** OBJ exports are almost
+   always metres, so the model loads 1000× too small, both in the viewer (`getConversionFactor(units)`)
+   and in `get_model_geometry`. For sources in `SPECKLE_UNITLESS_SOURCE_APPS`,
+   `_fix_unitless_source_units()` relabels mm → m when the largest extent is
+   ≤ `SPECKLE_UNITLESS_METRE_MAX_EXTENT` (200, since no room is under 0.2 m). Such copies carry
+   `[units-fix-v1]` in their message. `ensure_model_ready` re-materializes older OBJ copies with
+   `force=True`, because the cache maps the bundle to the stale copy. 3dm and IFC are never touched.
 
 ### gql 4 API change
 

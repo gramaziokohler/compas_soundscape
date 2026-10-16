@@ -37,7 +37,6 @@ export function HomeSceneComposer() {
   const isOpen = useHomeComposerStore((s) => s.isOpen);
   const onHomeStage = useUIStore((s) => !s.globalSpeckleData && !s.homeProject);
   const uiMode = useUIStore((s) => s.uiMode);
-  const busy = useSceneWorkflowStore((s) => s.activeUsageIndex !== null || s.queue.length > 0);
   const startScene = useSceneWorkflowStore((s) => s.startScene);
   const boxRef = useRef<HTMLDivElement>(null);
   const reducingRef = useRef(false);
@@ -100,7 +99,7 @@ export function HomeSceneComposer() {
           width={SIMPLE_MODE.COMPOSER_WIDTH}
           style={{ position: 'relative' }}
         >
-          <ScenePromptComposer willQueue={busy} onSubmit={handleSubmit} onClose={handleReduce} />
+          <ScenePromptComposer onSubmit={handleSubmit} onClose={handleReduce} />
         </BubblePanel>
       </div>
     </div>

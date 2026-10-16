@@ -7,7 +7,14 @@ import { TtsLanguageStatus } from '@/components/ui/TtsLanguageStatus';
 import { useTtsLanguageResolver } from '@/hooks/useTtsLanguageResolver';
 import { defaultSceneOptions, useAudioControlsStore, useUIStore } from '@/store';
 import type { SceneWorkflowOptions } from '@/types/sceneWorkflow';
-import { AUDIO_MODEL_NAMES, LLM_MODEL_NAMES, SCENARIO_TIMELINE, SIMPLE_MODE } from '@/utils/constants';
+import {
+  AUDIO_MODEL_NAMES,
+  FOLEY_SOUND_DETAIL_HINT,
+  FOLEY_SOUND_DETAIL_OPTIONS,
+  LLM_MODEL_NAMES,
+  SCENARIO_TIMELINE,
+  SIMPLE_MODE,
+} from '@/utils/constants';
 import { isModEnter } from '@/lib/shortcuts/keyboard-utils';
 import { formatSceneDuration, MS_PER_SECOND } from '@/utils/sceneWorkflow';
 
@@ -25,8 +32,6 @@ function readAsDataUrl(file: File): Promise<string> {
 }
 
 export interface ScenePromptComposerProps {
-  /** A scene is already running — the new one will be queued. */
-  willQueue: boolean;
   onSubmit: (prompt: string, options: SceneWorkflowOptions) => void;
   onClose: () => void;
 }
@@ -38,17 +43,17 @@ export interface ScenePromptComposerProps {
  * everyday options as chips (speech, people, duration — click cycles, double-click
  * types an exact value; no people means no speech), and a "+" that opens a
  * multi-level menu for the rest (text-to-audio model, LLM, scenario
- * plausibility, free-text speech language, reference image — used by
+ * plausibility, foley sound detail, free-text speech language, reference image — used by
  * the scenario, and by a fresh model analysis when a model is loaded). Enter sends,
  * Shift+Enter adds a new line, Escape closes. With a model loaded the prompt may be
  * left empty — the scenario is then imagined from the model analysis alone.
  *
  * Usage:
  * ```tsx
- * <ScenePromptComposer willQueue={isBusy} onSubmit={startScene} onClose={close} />
+ * <ScenePromptComposer onSubmit={startScene} onClose={close} />
  * ```
  */
-export function ScenePromptComposer({ willQueue, onSubmit, onClose }: ScenePromptComposerProps) {
+export function ScenePromptComposer({ onSubmit, onClose }: ScenePromptComposerProps) {
   const hasModel = useUIStore((s) => !!s.globalSpeckleData);
   // Empty speechLanguage = keep the app-wide TTS language (English by default).
   const appSpeechLanguage = useAudioControlsStore((s) => s.ttsLanguage);
@@ -152,6 +157,21 @@ export function ScenePromptComposer({ willQueue, onSubmit, onClose }: ScenePromp
           onChange: (v) => patch({ likeliness: v }),
         },
       ],
+    },
+    {
+      kind: 'submenu',
+      key: 'sound-detail',
+      label: 'Sound detail',
+      hint: FOLEY_SOUND_DETAIL_OPTIONS.find((o) => o.value === options.soundDetail)?.label,
+      title: FOLEY_SOUND_DETAIL_HINT,
+      items: FOLEY_SOUND_DETAIL_OPTIONS.map((o) => ({
+        kind: 'radio' as const,
+        key: o.value,
+        label: o.label,
+        title: o.title,
+        checked: options.soundDetail === o.value,
+        onSelect: () => patch({ soundDetail: o.value }),
+      })),
     },
     {
       kind: 'text',
@@ -265,10 +285,8 @@ export function ScenePromptComposer({ willQueue, onSubmit, onClose }: ScenePromp
           className="bubble-send ml-auto"
           onClick={submit}
           disabled={!canSend}
-          aria-label={willQueue ? 'Queue scene' : 'Generate scene'}
-          title={willQueue
-            ? 'Queue — starts when the current scene finishes'
-            : prompt.trim() ? 'Generate scene (Enter)' : 'Generate a scene from the model (Enter)'}
+          aria-label="Generate scene"
+          title={prompt.trim() ? 'Generate scene (Enter)' : 'Generate a scene from the model (Enter)'}
         >
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M8 13V3M3.5 7.5L8 3l4.5 4.5" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" />
@@ -276,7 +294,6 @@ export function ScenePromptComposer({ willQueue, onSubmit, onClose }: ScenePromp
         </button>
       </div>
       {speechOn && <TtsLanguageStatus resolver={languageResolver} />}
-      {willQueue && <div className="bubble-step__meta">A scene is generating — this one will start right after.</div>}
       {menu && <NestedMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />}
     </div>
   );

@@ -8,13 +8,19 @@
  * (analysisStore / soundscapeStore) exactly as the expert cards would, so the
  * same cards fill in live and Expert mode can take over at any point.
  *
- * - One scene runs at a time (analysisStore is single-run); later prompts queue.
+ * - Scenes run concurrently and independently — there is no frontend queue.
+ *   LLM jobs are throttled by the backend LLM pool, generation jobs by the
+ *   backend worker queues. Stopping or removing one scene never touches another.
+ * - Scenes sharing an un-analyzed model context wait for one analysis of it.
  * - Steps are state-derived and idempotent: a step whose result already exists
  *   is skipped. The same runner therefore powers "Resume" after a stop, an
  *   error, or a page refresh.
- * - A scene is identified by its scenario (usage) card index. Runs are
- *   transient (not persisted); a finished run is dropped and the bubble derives
- *   its state from the cards.
+ * - A scene is identified by its scenario (usage) card index; its run carries a
+ *   stable `runId` since that index shifts when an earlier card is removed.
+ *   Runs are transient (not persisted); a finished run is dropped and the bubble
+ *   derives its state from the cards.
+ * - Only the focus scene (selectFocusRun) drives the expert sidebar and the
+ *   DAW / 3D scene; background scenes never steal them.
  */
 
 import { create } from 'zustand';
@@ -26,9 +32,11 @@ import type {
   SceneWorkflowStep,
   UIMode,
 } from '@/types/sceneWorkflow';
-import { SIMPLE_MODE } from '@/utils/constants';
+import { DEFAULT_FOLEY_SOUND_DETAIL, SIMPLE_MODE } from '@/utils/constants';
 import type { IndexMapper } from '@/utils/cardIndexRemap';
 import { remapIndexKeyedRecord } from '@/utils/cardIndexRemap';
+import { createLiveIndexRegistry, type LiveIndexRef } from '@/utils/liveIndexRegistry';
+import { newConfigId } from '@/utils/config-id';
 import {
   SCENE_WORKFLOW_STEPS,
   deriveSceneTitle,
@@ -52,14 +60,24 @@ import { notifySectionError } from './errorsStore';
  * viewer to resolve foley object ids into entities, so it cannot live in a store.
  */
 let _sendToSoundGeneration: ((usageIndex: number) => void) | null = null;
-let _stopRequested = false;
-let _pumping = false;
+
+/** Run ids whose scene was asked to stop (checked between and after steps). */
+const _stopRequested = new Set<string>();
+
+/**
+ * In-flight model analyses started by a scene, keyed by a live ref of the
+ * context card, so concurrent scenes on the same context analyze it once.
+ */
+const contextRefs = createLiveIndexRegistry();
+const _contextAnalyses = new Map<LiveIndexRef, Promise<void>>();
 
 export function registerSendToSoundGeneration(fn: ((usageIndex: number) => void) | null): void {
   _sendToSoundGeneration = fn;
 }
 
 class StepError extends Error {}
+/** The scene's card was removed (or the run replaced by a resume) — unwind silently. */
+class SceneGoneError extends Error {}
 
 type StepOutcome = 'ran' | 'reused' | 'skipped';
 
@@ -76,6 +94,22 @@ function speechDone(sc: ScenarioConfig): boolean {
 
 function failureMessage(fallback: string): string {
   return useAnalysisStore.getState().analysisError || fallback;
+}
+
+function inFlightContextAnalysis(contextIndex: number): Promise<void> | undefined {
+  for (const [ref, promise] of _contextAnalyses) {
+    if (ref.current === contextIndex) return promise;
+  }
+  return undefined;
+}
+
+function trackContextAnalysis(contextIndex: number, promise: Promise<void>): void {
+  const ref = contextRefs.track(contextIndex);
+  _contextAnalyses.set(ref, promise);
+  void promise.finally(() => {
+    _contextAnalyses.delete(ref);
+    contextRefs.release(ref);
+  });
 }
 
 /**
@@ -141,40 +175,36 @@ function ensureSceneContext(fresh?: { prompt: string; options: SceneWorkflowOpti
 export interface SceneWorkflowStoreState {
   /** Runs keyed by scenario (usage) card index. Finished runs are removed. */
   runs: Record<number, SceneRun>;
-  /** FIFO of queued usage indices. */
-  queue: number[];
-  /** Usage index of the scene currently running, or null. */
-  activeUsageIndex: number | null;
 
-  /** Create the scene's cards and queue its pipeline. Returns the scene's usage index. */
+  /** Create the scene's cards and start its pipeline at once. Returns the scene's usage index. */
   startScene: (prompt: string, options: SceneWorkflowOptions) => number;
-  /** Re-queue an incomplete scene; completed steps are skipped. */
+  /** Restart an incomplete scene; completed steps are skipped. */
   resumeScene: (usageIndex: number, options?: Partial<SceneWorkflowOptions>) => void;
-  /** Stop the running scene, or drop a queued one. */
+  /** Stop one running scene (other scenes keep running). */
   stopScene: (usageIndex: number) => void;
   /** Forget a scene's run state (e.g. after its card is removed). */
   clearRun: (usageIndex: number) => void;
   /**
-   * Follow analysis cards across insertion/removal: re-key runs and the queue,
-   * and stop (then drop) a scene whose card was removed.
+   * Follow analysis cards across insertion/removal: re-key runs, and stop a
+   * scene whose card was removed (its in-flight jobs were already stopped).
    */
   remapUsageIndices: (mapIndex: IndexMapper) => void;
-  /**
-   * Scene whose panel Simple mode should open when it mounts (set when leaving
-   * Expert mode, so the user lands on the scene they were working on).
-   */
   /** The scene panel Simple mode currently has open (null = none); Detailed mode opens the same scene. */
   openSimplePanel: { kind: 'scene' | 'workflow'; usageIndex: number } | null;
   setOpenSimplePanel: (panel: { kind: 'scene' | 'workflow'; usageIndex: number } | null) => void;
   /** Simple mode: which overlapping window was clicked last and is drawn in front (scene panel or docked DAW). */
   simpleFrontLayer: 'panel' | 'daw';
   setSimpleFrontLayer: (layer: 'panel' | 'daw') => void;
+  /**
+   * Scene whose panel Simple mode should open when it mounts (set when leaving
+   * Expert mode, so the user lands on the scene they were working on).
+   */
   pendingSimpleFocus: number | null;
   consumeSimpleFocus: () => number | null;
   /**
    * Switch Simple/Expert and carry the focus across:
    * - to Expert: expand the left sidebar on the Sounds step of `focusUsageIndex`,
-   *   else the selected scene, else the running one (its current step while it
+   *   else the selected scene, else the focus run (its current step while it
    *   has no sounds yet).
    * - to Simple: open the panel of the scene the expert sidebar was showing.
    */
@@ -190,6 +220,7 @@ export function defaultSceneOptions(): SceneWorkflowOptions {
     llmModel: useSoundscapeStore.getState().llmModel,
     peopleCount: SIMPLE_MODE.SCENARIO_PEOPLE_COUNT,
     likeliness: SIMPLE_MODE.SCENARIO_LIKELINESS,
+    soundDetail: DEFAULT_FOLEY_SOUND_DETAIL,
     // Empty = keep the app-wide TTS language (Settings › Audio).
     speechLanguage: '',
     image: null,
@@ -197,64 +228,122 @@ export function defaultSceneOptions(): SceneWorkflowOptions {
   };
 }
 
+// ─── Selectors ────────────────────────────────────────────────────────────────
+
+/** Whether any scene's pipeline is running. */
+export function selectHasRunningScene(s: Pick<SceneWorkflowStoreState, 'runs'>): boolean {
+  return Object.values(s.runs).some((r) => r.status === 'running');
+}
+
+/**
+ * The running scene that drives the expert sidebar / DAW / 3D highlights: the
+ * one whose Simple-mode panel is open, else the most recently started.
+ */
+export function selectFocusRun(
+  s: Pick<SceneWorkflowStoreState, 'runs' | 'openSimplePanel'>,
+): SceneRun | null {
+  let latest: SceneRun | null = null;
+  for (const run of Object.values(s.runs)) {
+    if (run.status !== 'running') continue;
+    if (s.openSimplePanel?.usageIndex === run.usageIndex) return run;
+    if (!latest || run.startedAt > latest.startedAt) latest = run;
+  }
+  return latest;
+}
+
 // ─── Store ────────────────────────────────────────────────────────────────────
 
 export const useSceneWorkflowStore = create<SceneWorkflowStoreState>()(
   devtools(
     (set, get) => {
-      const patchRun = (usageIndex: number, patch: Partial<SceneRun>) =>
+      /** The run with this id, at its current usage index (undefined once removed / replaced). */
+      const currentRun = (runId: string): SceneRun | undefined =>
+        Object.values(get().runs).find((r) => r.runId === runId);
+
+      /** `currentRun`, or unwind the scene's loop when it is gone. */
+      const requireRun = (runId: string): SceneRun => {
+        const run = currentRun(runId);
+        if (!run) throw new SceneGoneError();
+        return run;
+      };
+
+      const isStopped = (runId: string) => _stopRequested.has(runId);
+
+      const isFocus = (runId: string) => selectFocusRun(get())?.runId === runId;
+
+      const patchRun = (runId: string, patch: Partial<SceneRun>) =>
         set(
           (s) => {
-            const run = s.runs[usageIndex];
+            const run = Object.values(s.runs).find((r) => r.runId === runId);
             if (!run) return s;
-            return { runs: { ...s.runs, [usageIndex]: { ...run, ...patch } } };
+            return { runs: { ...s.runs, [run.usageIndex]: { ...run, ...patch } } };
           },
           false,
           'sceneWorkflow/patchRun',
         );
 
-      // ── Steps ────────────────────────────────────────────────────────────
+      /** Navigate the expert sidebar to this run's step — only for the focus scene. */
+      const navigateIfFocus = (run: SceneRun, step: 0 | 1 | 2) => {
+        if (isFocus(run.runId)) syncExpertNavigation(step, run.contextIndex, run.usageIndex);
+      };
 
-      async function runAnalyze(run: SceneRun): Promise<StepOutcome> {
+      // ── Steps ────────────────────────────────────────────────────────────
+      // Each step re-reads its run after every await: removing an earlier card
+      // shifts the scene's indices (remapUsageIndices re-keys the run).
+
+      async function runAnalyze(runId: string): Promise<StepOutcome> {
+        const run = requireRun(runId);
         const ctx = useAnalysisStore.getState().analysisConfigs[run.contextIndex];
         if (ctx?.type !== 'model-analysis') return 'skipped';
         if (hasModelAnalysisResult(ctx)) return 'reused';
-        syncExpertNavigation(0, run.contextIndex, run.usageIndex);
-        if (!ctx.llmModel) {
-          useAnalysisStore.getState().handleUpdateConfig(run.contextIndex, { llmModel: run.options.llmModel });
+        navigateIfFocus(run, 0);
+
+        // Another scene on the same context is already analyzing it — wait for that run.
+        const pending = inFlightContextAnalysis(run.contextIndex);
+        if (pending) {
+          await pending;
+        } else {
+          if (!ctx.llmModel) {
+            useAnalysisStore.getState().handleUpdateConfig(run.contextIndex, { llmModel: run.options.llmModel });
+          }
+          const analysis = useAnalysisStore.getState().handleAnalyze(run.contextIndex);
+          trackContextAnalysis(run.contextIndex, analysis);
+          await analysis;
         }
-        await useAnalysisStore.getState().handleAnalyze(run.contextIndex);
-        if (_stopRequested) return 'ran';
-        if (!hasModelAnalysisResult(useAnalysisStore.getState().analysisConfigs[run.contextIndex])) {
+        if (isStopped(runId)) return 'ran';
+        const after = requireRun(runId);
+        if (!hasModelAnalysisResult(useAnalysisStore.getState().analysisConfigs[after.contextIndex])) {
           throw new StepError(failureMessage('Model analysis failed'));
         }
         return 'ran';
       }
 
-      async function runScenario(run: SceneRun): Promise<StepOutcome> {
+      async function runScenario(runId: string): Promise<StepOutcome> {
+        const run = requireRun(runId);
         const sc = scenarioAt(run.usageIndex);
         if (!sc) throw new StepError('Scene card not found');
         if (sc.scenarioId) return 'skipped';
-        syncExpertNavigation(1, run.contextIndex, run.usageIndex);
+        navigateIfFocus(run, 1);
         // Called directly (not via handleAnalyze) so a partially streamed,
         // id-less scenario is regenerated instead of being routed to foley.
         await useAnalysisStore.getState().handleScenarioAnalyze(run.usageIndex);
-        if (_stopRequested) return 'ran';
-        if (!scenarioAt(run.usageIndex)?.scenarioId) {
+        if (isStopped(runId)) return 'ran';
+        if (!scenarioAt(requireRun(runId).usageIndex)?.scenarioId) {
           throw new StepError(failureMessage('Scenario generation failed'));
         }
         return 'ran';
       }
 
-      async function runFoley(run: SceneRun): Promise<StepOutcome> {
+      async function runFoley(runId: string): Promise<StepOutcome> {
+        const run = requireRun(runId);
         const sc = scenarioAt(run.usageIndex);
         if (!sc) throw new StepError('Scene card not found');
         if (sc.foleyResult && speechDone(sc)) return 'skipped';
-        syncExpertNavigation(1, run.contextIndex, run.usageIndex);
+        navigateIfFocus(run, 1);
         // handleAnalyze dispatches a scenario with a result to foley + speech.
         await useAnalysisStore.getState().handleAnalyze(run.usageIndex);
-        if (_stopRequested) return 'ran';
-        const after = scenarioAt(run.usageIndex);
+        if (isStopped(runId)) return 'ran';
+        const after = scenarioAt(requireRun(runId).usageIndex);
         const foleyCount = after?.foleyResult?.scenarios?.reduce((n, s) => n + s.sound_events.length, 0) ?? 0;
         const speechCount = after?.speechResult?.speeches?.length ?? 0;
         if (foleyCount + speechCount === 0) {
@@ -263,10 +352,11 @@ export const useSceneWorkflowStore = create<SceneWorkflowStoreState>()(
         return 'ran';
       }
 
-      async function runGenerate(run: SceneRun): Promise<StepOutcome> {
-        syncExpertNavigation(2, run.contextIndex, run.usageIndex);
-        // The scene being generated becomes the one shown in the DAW / 3D scene.
-        useUIStore.getState().setActiveSoundParentIndex(run.usageIndex);
+      async function runGenerate(runId: string): Promise<StepOutcome> {
+        const run = requireRun(runId);
+        navigateIfFocus(run, 2);
+        // The focus scene becomes the one shown in the DAW / 3D scene.
+        if (isFocus(runId)) useUIStore.getState().setActiveSoundParentIndex(run.usageIndex);
 
         let indices = getSceneSoundIndices(useSoundscapeStore.getState().soundConfigs, run.usageIndex);
         if (indices.length === 0) {
@@ -279,31 +369,25 @@ export const useSceneWorkflowStore = create<SceneWorkflowStoreState>()(
         }
 
         const sound = useSoundscapeStore.getState();
-        if (sound.audioModel !== run.options.audioModel) sound.setAudioModel(run.options.audioModel);
-
         const pending = indices.filter(
           (i) => !isSoundConfigGenerated(sound.soundConfigs, sound.generatedSounds, i),
         );
         if (pending.length === 0) return 'skipped';
 
-        // Mirrors SoundGenerationSection.handleGenerateAll.
-        if (pending.some((i) => sound.soundConfigs[i]?.orchestrateMeta)) {
-          const audio = useAudioControlsStore.getState();
-          audio.setGenerationInProgress(true);
-          audio.bakeOrchestrateSchedule();
-        }
-        await useSoundscapeStore.getState().handleGenerateFiltered(pending);
-        if (_stopRequested) return 'ran';
+        // Submitted at once — the backend worker queues order the heavy jobs.
+        // The model is per invocation, so concurrent scenes never flip the app-wide one.
+        const outcome = await sound.handleGenerateFiltered(pending, { audioModel: run.options.audioModel });
+        if (isStopped(runId)) return 'ran';
 
         const after = useSoundscapeStore.getState();
-        const anyGenerated = indices.some((i) =>
+        const anyGenerated = getSceneSoundIndices(after.soundConfigs, requireRun(runId).usageIndex).some((i) =>
           isSoundConfigGenerated(after.soundConfigs, after.generatedSounds, i),
         );
-        if (!anyGenerated) throw new StepError(after.soundGenError || 'Sound generation failed');
+        if (!anyGenerated) throw new StepError(outcome.error || 'Sound generation failed');
         return 'ran';
       }
 
-      const STEP_RUNNERS: Record<SceneWorkflowStep, (run: SceneRun) => Promise<StepOutcome>> = {
+      const STEP_RUNNERS: Record<SceneWorkflowStep, (runId: string) => Promise<StepOutcome>> = {
         analyze: runAnalyze,
         scenario: runScenario,
         foley: runFoley,
@@ -312,81 +396,71 @@ export const useSceneWorkflowStore = create<SceneWorkflowStoreState>()(
 
       // ── Runner ───────────────────────────────────────────────────────────
 
-      /**
-       * Runs the active scene. Its usage index is re-read before each step because
-       * removing an earlier card shifts it (remapUsageIndices); null = card removed.
-       */
-      async function runWorkflow(): Promise<void> {
-        _stopRequested = false;
-        let usageIndex = get().activeUsageIndex;
-        for (const step of SCENE_WORKFLOW_STEPS) {
-          usageIndex = get().activeUsageIndex;
-          if (usageIndex === null) return;
-          const run = get().runs[usageIndex];
-          if (!run) return;
-          if (_stopRequested) {
-            patchRun(usageIndex, { status: 'stopped' });
-            return;
-          }
-          patchRun(usageIndex, { step, status: 'running' });
-          try {
-            const outcome = await STEP_RUNNERS[step](run);
-            usageIndex = get().activeUsageIndex;
-            if (usageIndex === null) return;
-            if (outcome === 'reused') {
-              patchRun(usageIndex, { reusedSteps: [...(get().runs[usageIndex]?.reusedSteps ?? []), step] });
-            }
-          } catch (err) {
-            usageIndex = get().activeUsageIndex;
-            if (usageIndex === null) return;
-            const message = err instanceof Error ? err.message : 'Scene generation failed';
-            patchRun(usageIndex, { status: 'error', error: message });
-            // Store-level failures were already toasted by the store itself.
-            if (err instanceof StepError) notifySectionError(message);
-            return;
-          }
-          if (_stopRequested) {
-            patchRun(usageIndex, { status: 'stopped' });
-            return;
-          }
-        }
-        // Finished — the bubble now derives its state from the cards.
-        if (usageIndex !== null) get().clearRun(usageIndex);
-      }
-
-      async function pump(): Promise<void> {
-        // A separate lock: activeUsageIndex goes null when the running scene's card is
-        // removed, but its in-flight step still has to unwind before the next starts.
-        if (_pumping) return;
-        const [next, ...rest] = get().queue;
-        if (next === undefined) return;
-        _pumping = true;
-        set({ queue: rest, activeUsageIndex: next }, false, 'sceneWorkflow/dequeue');
+      /** Runs one scene's pipeline; any number run concurrently. */
+      async function runWorkflow(runId: string): Promise<void> {
         try {
-          await runWorkflow();
+          for (const step of SCENE_WORKFLOW_STEPS) {
+            if (!currentRun(runId)) return;
+            if (isStopped(runId)) {
+              patchRun(runId, { status: 'stopped' });
+              return;
+            }
+            patchRun(runId, { step, status: 'running' });
+            try {
+              const outcome = await STEP_RUNNERS[step](runId);
+              if (outcome === 'reused') {
+                patchRun(runId, { reusedSteps: [...(currentRun(runId)?.reusedSteps ?? []), step] });
+              }
+            } catch (err) {
+              if (err instanceof SceneGoneError) return;
+              if (isStopped(runId)) {
+                patchRun(runId, { status: 'stopped' });
+                return;
+              }
+              const message = err instanceof Error ? err.message : 'Scene generation failed';
+              patchRun(runId, { status: 'error', error: message });
+              // Store-level failures were already toasted by the store itself.
+              if (err instanceof StepError) notifySectionError(message);
+              return;
+            }
+            if (isStopped(runId)) {
+              patchRun(runId, { status: 'stopped' });
+              return;
+            }
+          }
+          // Finished — the bubble now derives its state from the cards.
+          const done = currentRun(runId);
+          if (done) get().clearRun(done.usageIndex);
         } finally {
-          _pumping = false;
-          set({ activeUsageIndex: null }, false, 'sceneWorkflow/runEnd');
-          void pump();
+          _stopRequested.delete(runId);
         }
       }
 
-      function enqueue(run: SceneRun): void {
+      /** Register a run as running and start its loop right away. */
+      function launch(run: Omit<SceneRun, 'runId' | 'startedAt' | 'status' | 'error' | 'reusedSteps'>): void {
+        const runId = newConfigId();
         set(
           (s) => ({
-            runs: { ...s.runs, [run.usageIndex]: run },
-            queue: s.queue.includes(run.usageIndex) ? s.queue : [...s.queue, run.usageIndex],
+            runs: {
+              ...s.runs,
+              [run.usageIndex]: {
+                ...run,
+                runId,
+                startedAt: Date.now(),
+                status: 'running',
+                reusedSteps: [],
+                error: null,
+              },
+            },
           }),
           false,
-          'sceneWorkflow/enqueue',
+          'sceneWorkflow/launch',
         );
-        void pump();
+        void runWorkflow(runId);
       }
 
       return {
         runs: {},
-        queue: [],
-        activeUsageIndex: null,
 
         startScene: (prompt, options) => {
           const contextIndex = ensureSceneContext(options.reanalyze ? { prompt, options } : undefined);
@@ -409,50 +483,45 @@ export const useSceneWorkflowStore = create<SceneWorkflowStoreState>()(
             llmModel: options.llmModel,
             timelineDurationMs: options.durationMs,
             includeSpeech: options.includeSpeech,
+            soundDetail: options.soundDetail,
             useAnalysisResult: !!useUIStore.getState().globalSpeckleData,
             // The reference image also grounds the scenario directly — the only
             // way it is used when no model is loaded (no analysis to re-run).
             referenceImages: options.image ? [options.image.dataUrl] : undefined,
           } as Partial<ScenarioConfig>);
 
-          enqueue({
-            usageIndex,
-            contextIndex,
-            options,
-            status: 'queued',
-            step: null,
-            reusedSteps: [],
-            error: null,
-          });
+          launch({ usageIndex, contextIndex, options, step: null });
           return usageIndex;
         },
 
         resumeScene: (usageIndex, options) => {
           const sc = scenarioAt(usageIndex);
-          if (!sc || get().activeUsageIndex === usageIndex || get().queue.includes(usageIndex)) return;
           const prev = get().runs[usageIndex];
-          enqueue({
+          if (!sc || prev?.status === 'running') return;
+          // A new run id: a stopped loop still unwinding sees its run replaced and exits.
+          launch({
             usageIndex,
             contextIndex: sc.parentContextOriginalIndex ?? ensureSceneContext(),
             options: { ...(prev?.options ?? defaultSceneOptions()), ...options },
-            status: 'queued',
             step: prev?.step ?? null,
-            reusedSteps: [],
-            error: null,
           });
         },
 
         stopScene: (usageIndex) => {
-          if (get().activeUsageIndex === usageIndex) {
-            _stopRequested = true;
-            useAnalysisStore.getState().handleStopAnalysis();
-            useSoundscapeStore.getState().handleStopGeneration();
-            return;
-          }
-          if (get().queue.includes(usageIndex)) {
-            set((s) => ({ queue: s.queue.filter((i) => i !== usageIndex) }), false, 'sceneWorkflow/dequeueStopped');
-            patchRun(usageIndex, { status: 'stopped' });
-          }
+          const run = get().runs[usageIndex];
+          if (!run || run.status !== 'running') return;
+          _stopRequested.add(run.runId);
+          patchRun(run.runId, { status: 'stopped' });
+          const analysis = useAnalysisStore.getState();
+          analysis.handleStopCardAnalysis(usageIndex);
+          // The model context is shared — stop its analysis only when no other
+          // running scene is waiting on it.
+          const contextShared = Object.values(get().runs).some(
+            (r) => r.runId !== run.runId && r.status === 'running' && r.contextIndex === run.contextIndex,
+          );
+          if (!contextShared) analysis.handleStopCardAnalysis(run.contextIndex);
+          const soundIndices = getSceneSoundIndices(useSoundscapeStore.getState().soundConfigs, usageIndex);
+          if (soundIndices.length > 0) useSoundscapeStore.getState().handleStopGenerationFor(soundIndices);
         },
 
         clearRun: (usageIndex) =>
@@ -467,10 +536,12 @@ export const useSceneWorkflowStore = create<SceneWorkflowStoreState>()(
           ),
 
         remapUsageIndices: (mapIndex) => {
-          const { activeUsageIndex } = get();
-          if (activeUsageIndex !== null && mapIndex(activeUsageIndex) === null) {
-            get().stopScene(activeUsageIndex);
-          }
+          contextRefs.remap(mapIndex);
+          // A removed scene's loop must not continue (its cards' jobs were stopped
+          // by the analysis / sound stores when the cards went away).
+          Object.values(get().runs).forEach((run) => {
+            if (run.status === 'running' && mapIndex(run.usageIndex) === null) _stopRequested.add(run.runId);
+          });
           set(
             (s) => ({
               runs: remapIndexKeyedRecord(s.runs, mapIndex, (run, usageIndex) => ({
@@ -478,8 +549,6 @@ export const useSceneWorkflowStore = create<SceneWorkflowStoreState>()(
                 usageIndex,
                 contextIndex: mapIndex(run.contextIndex) ?? run.contextIndex,
               })),
-              queue: s.queue.map(mapIndex).filter((i): i is number => i !== null),
-              activeUsageIndex: s.activeUsageIndex === null ? null : mapIndex(s.activeUsageIndex),
             }),
             false,
             'sceneWorkflow/remapUsageIndices',
@@ -505,11 +574,12 @@ export const useSceneWorkflowStore = create<SceneWorkflowStoreState>()(
         switchUIMode: (mode, focusUsageIndex) => {
           const ui = useUIStore.getState();
           if (mode === 'expert') {
-            const { activeUsageIndex, runs, openSimplePanel } = get();
+            const { runs, openSimplePanel } = get();
             const selected = ui.isInSoundsStep ? ui.activeSoundParentIndex : null;
             // The scene whose circle is expanded in Simple mode wins, so Detailed
             // mode opens the same cards / sections.
-            const target = focusUsageIndex ?? openSimplePanel?.usageIndex ?? selected ?? activeUsageIndex;
+            const target =
+              focusUsageIndex ?? openSimplePanel?.usageIndex ?? selected ?? selectFocusRun(get())?.usageIndex ?? null;
             if (target !== null && target >= 0) {
               const cfg = useAnalysisStore.getState().analysisConfigs[target];
               const hasSounds =

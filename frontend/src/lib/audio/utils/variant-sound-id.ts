@@ -1,6 +1,8 @@
 /**
  * Helpers for mapping a primary timeline sound ID to per-variant copy IDs.
- * Primary ID = lowest copy_index for a prompt (e.g. generated_4_0, tts_9_0_Kore).
+ * Primary ID = lowest copy_index for a prompt (e.g. generated_{card}_0, tts_{card}_0_Kore).
+ * `{card}` is the card's config_id (utils/config-id.ts cardEventId, never contains `_`);
+ * legacy saves carry the card index there instead. Only the prefix and copy segment are parsed.
  */
 
 /** Parse the 0-based copy/variant index from a sound id or explicit field. */
@@ -21,10 +23,11 @@ export function parseSoundCopyIndex(soundId: string, copyIndex?: number | null):
 
 /**
  * Build the sound ID for a specific variant copy from the primary timeline sound ID,
- * by PARSING the id's string shape (`generated_{card}_{copy}`, `tts_{card}_{copy}_{voice}`).
+ * by PARSING the id's string shape (`generated_{card}_{copy}`, `tts_{card}_{copy}_{voice}`,
+ * where `{card}` is the config_id key — or the card index in legacy saves).
  *
  * This only works for ids with one of those two shapes. Duplicated/copied tracks get
- * ids like `duplicate-{n}-{v}-{ts}` or `sed-{pi}-{vi}-{ts}` — this function silently
+ * ids like `duplicate-{config_id}-{v}` or `sed-{config_id}-{vi}` — this function silently
  * returns `primarySoundId` unchanged for those, which is why applying a variant to a
  * copied track appeared to "revert": the id shape didn't match either branch.
  *

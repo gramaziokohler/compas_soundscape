@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import {
+  selectFocusRun,
   useAnalysisStore,
   useScenarioPreviewStore,
   useSceneHighlightStore,
@@ -12,7 +13,7 @@ import { buildScenarioPreview } from '@/utils/scenarioObjectRefs';
 /**
  * Owns the 3D highlights of Simple mode (the expert cards that normally drive
  * them are unmounted there):
- *   - model-analysis group colors while the running scene's Analyze step runs,
+ *   - model-analysis group colors while the focus scene's Analyze step runs,
  *     or while the panel's "Show colors" toggle is on (a hovered group alone);
  *   - scenario object highlight while the Scenario step streams, or while the
  *     "Show objects" toggle is on.
@@ -22,14 +23,11 @@ import { buildScenarioPreview } from '@/utils/scenarioObjectRefs';
  * Usage: call once in `SimpleSoundscapes`.
  */
 export function useSimpleSceneHighlights(): void {
-  const runningStep = useSceneWorkflowStore((s) => {
-    const run = s.activeUsageIndex !== null ? s.runs[s.activeUsageIndex] : undefined;
-    return run?.status === 'running' ? run.step : null;
-  });
-  const activeUsageIndex = useSceneWorkflowStore((s) => s.activeUsageIndex);
-  const activeContextIndex = useSceneWorkflowStore((s) =>
-    s.activeUsageIndex !== null ? s.runs[s.activeUsageIndex]?.contextIndex ?? null : null,
-  );
+  // Scenes run concurrently — only the focus scene drives the live highlights.
+  const focusRun = useSceneWorkflowStore(selectFocusRun);
+  const runningStep = focusRun?.step ?? null;
+  const activeUsageIndex = focusRun?.usageIndex ?? null;
+  const activeContextIndex = focusRun?.contextIndex ?? null;
   const analysisToggle = useSceneHighlightStore((s) => s.analysisContextIndex);
   const scenarioToggle = useSceneHighlightStore((s) => s.scenarioUsageIndex);
   const focusedGroup = useSceneHighlightStore((s) => s.focusedGroup);

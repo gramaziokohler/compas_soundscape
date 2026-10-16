@@ -9,8 +9,10 @@ from config.constants import AUDIO_SAMPLE_RATE
 from config.constants import BUG_REPORT_MAX_DESCRIPTION_CHARS
 from config.constants import DEFAULT_AUDIO_MODEL
 from config.constants import DEFAULT_DBFS
+from config.constants import DEFAULT_FOLEY_SOUND_DETAIL
 from config.constants import DEFAULT_LLM_MODEL
 from config.constants import DEFAULT_TTS_MODEL
+from config.constants import FOLEY_SOUND_DETAIL_LEVELS
 from config.constants import DEFAULT_SPEED_OF_SOUND
 from config.constants import PYROOMACOUSTICS_DEFAULT_ABSORPTION
 from config.constants import PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION
@@ -473,6 +475,15 @@ class SoundscapeSimulationSettings(BaseModel):
     enable_grid: bool = False
 
 
+class SoundscapeAcousticSelection(BaseModel):
+    """Acoustic region (Object Explorer selection): tree-node ids + resolved geometry."""
+    node_ids: list[str] = []
+    node_names: list[str] = []
+    geometry_ids: list[str] = []
+    is_whole_model: bool = False
+    auto_detected: bool = False
+
+
 class SoundscapeSimulationConfig(BaseModel):
     """Serializable simulation configuration"""
     id: str
@@ -485,6 +496,8 @@ class SoundscapeSimulationConfig(BaseModel):
     speckle_layer_name: Optional[str] = None
     speckle_geometry_object_ids: Optional[list[str]] = None
     speckle_scattering_assignments: Optional[dict[str, float]] = None
+    # Acoustic region this card was simulated with (detects later re-assignment)
+    speckle_acoustic_selection: Optional[SoundscapeAcousticSelection] = None
     simulation_results: Optional[str] = None
     current_simulation_id: Optional[str] = None
     current_simulation_run_id: Optional[str] = None
@@ -517,6 +530,8 @@ class SoundscapeData(BaseModel):
     selected_receiver_id: Optional[str] = None
     simulation_configs: list[SoundscapeSimulationConfig] = []
     active_simulation_index: Optional[int] = None
+    # Live acoustic region of the model (survives refresh / re-open)
+    acoustic_region: Optional[SoundscapeAcousticSelection] = None
     # Analysis state persistence
     analysis_state: Optional[dict] = None
     # Resonance audio persistence
@@ -842,8 +857,17 @@ class FoleyArtistRequest(BaseModel):
     scenario_id: str
     analysis_id: str | None = None
     llm_model: str = DEFAULT_LLM_MODEL
-    maximum_sounds: int = 20
+    # How finely scenario actions are split into sound-event cards
+    # (a FOLEY_SOUND_DETAIL_LEVELS key; background and speech are not counted).
+    sound_detail: str = DEFAULT_FOLEY_SOUND_DETAIL
     bounding_box: dict | None = None
+
+    @field_validator("sound_detail")
+    @classmethod
+    def _check_sound_detail(cls, v: str) -> str:
+        if v not in FOLEY_SOUND_DETAIL_LEVELS:
+            raise ValueError(f"sound_detail must be one of {list(FOLEY_SOUND_DETAIL_LEVELS)}")
+        return v
 
 
 # ============================================================================
@@ -961,7 +985,6 @@ class UserPreferences(BaseModel):
     listener_orientation: Optional[ListenerOrientation] = None
     output_device_id: Optional[str] = None
     global_base_dbfs: Optional[float] = None
-    maximum_foley_sounds: Optional[int] = None
     show_spectrograms: Optional[bool] = None
     # History
     enable_auto_save: Optional[bool] = None

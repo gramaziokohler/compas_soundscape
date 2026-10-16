@@ -127,6 +127,17 @@ export const useAudioStore = create<...>()((set) => ({
 }))
 ```
 
+## Async Work That Outlives a Card Index (Live Index Refs)
+
+Cards are addressed by array index, and indices shift when another card is inserted or removed.
+Async work that can run while other cards change (LLM polls, generation lanes, Simple-mode
+scenes running in parallel) must never keep a captured index. Track a `LiveIndexRef`
+(`utils/liveIndexRegistry.ts`) and read `ref.current` after every `await` (`null` = card removed →
+drop the result). The owning store remaps its registry wherever it builds an `IndexMapper`
+(`analysisStore.remapCardRefs`, `soundscapeStore.remapGenerationIndices`). Per-card live state
+(`analyzingConfigIndices`, `analysisStatusByIndex`, `soundGenCardProgress`, …) is remapped with it,
+and concurrent runs merge into / remove only their own keys — never reset shared maps wholesale.
+
 ## Pause / Commit Pattern (explicit gestures)
 
 Interactions already batch, so explicit gestures are only needed for flows that

@@ -288,7 +288,7 @@ async def generate_prompts_stream(request: UnifiedPromptGenerationRequest):
                 async for sound in llm_service.stream_generate_prompts_for_entities(
                     entities_to_use, request.num_sounds, context, llm_model=request.llm_model
                 ):
-                    # Resolve entity_indices â†’ fully-hydrated entities list so the frontend
+                    # Resolve entity_indices → fully-hydrated entities list so the frontend
                     # doesn't need to re-resolve from an index cache.
                     entity_indices = sound.get("entity_indices", [])
                     sound["entities"] = [
@@ -323,7 +323,7 @@ async def generate_prompts_stream(request: UnifiedPromptGenerationRequest):
     )
 
 
-# â”€â”€â”€ 3D Model Analysis (pollable IO job) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─── 3D Model Analysis (pollable IO job) ───────────────────────────────────────
 
 
 class AnalyzeModelRequest(BaseModel):
@@ -540,7 +540,7 @@ async def foley_artist(request: FoleyArtistRequest, req: Request):
     """Enqueue foley artist. Poll GET /api/jobs/{job_id} for thought progress."""
     scenario_data = _load_json_id_file("scenarios", request.scenario_id, "scenario_id")
     furniture_list = _load_furniture_list(request.analysis_id, request.bounding_box)
-    maximum_sounds = request.maximum_sounds
+    sound_detail = request.sound_detail
     llm_model = request.llm_model
 
     async def _run(job_id: str) -> None:
@@ -552,7 +552,7 @@ async def foley_artist(request: FoleyArtistRequest, req: Request):
             stream = llm_service.stream_foley_artist(
                 scenarist_agent_result=scenario_data,
                 furniture_list=furniture_list,
-                maximum_number_of_sounds=maximum_sounds,
+                sound_detail=sound_detail,
                 llm_model=llm_model,
                 on_progress=on_progress,
             )

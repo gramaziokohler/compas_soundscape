@@ -28,6 +28,16 @@ export function createRemovalIndexMapper(removed: Iterable<number>): IndexMapper
   };
 }
 
+/** Mapper for moving the card at `from` to `to` (drag reorder): cards in between shift by one. */
+export function createMoveIndexMapper(from: number, to: number): IndexMapper {
+  return (index) => {
+    if (index === from) return to;
+    if (from < to && index > from && index <= to) return index - 1;
+    if (from > to && index >= to && index < from) return index + 1;
+    return index;
+  };
+}
+
 /** Remap a nullable index; a removed target becomes `null`. */
 export function remapNullableIndex(index: number | null, mapIndex: IndexMapper): number | null {
   return index === null ? null : mapIndex(index);

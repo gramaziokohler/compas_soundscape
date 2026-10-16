@@ -67,6 +67,8 @@ from config.constants import (
     SPECKLE_SUPPORTED_FORMATS,
     SPECKLE_MATERIALIZE_WORKERS,
     SPECKLE_MATERIALIZING_MESSAGE,
+    SPECKLE_UNITLESS_SOURCE_APPS,
+    SPECKLE_UNITLESS_METRE_MAX_EXTENT,
     REDIS_URL,
 )
 
@@ -103,6 +105,11 @@ _PROJECTION_FIX_MARKER = "[geo-fix-v1]"
 _LEGACY_VERSION_MESSAGE = (
     f"Legacy copy materialized for the soundscape viewer {_PROJECTION_FIX_MARKER}"
 )
+# Appended when a unitless source (OBJ) went through the units heuristic. A copy of a
+# unitless source without it predates the fix and is re-materialized on demand.
+_UNITS_FIX_MARKER = "[units-fix-v1]"
+
+_MILLIMETRE_UNITS = {"mm", "millimeter", "millimeters", "millimetre", "millimetres"}
 
 
 def _get_redis():
@@ -198,6 +205,76 @@ def _strip_display_geometry_application_ids(base: Base) -> bool:
 
     walk(base)
     return changed
+
+
+def _fix_unitless_source_units(base: Base) -> Optional[str]:
+    """Relabel a unitless (OBJ) model from ``mm`` to ``m`` when its size says metres.
+
+    OBJ files carry no units and Speckle's OBJ converter stamps every mesh ``mm``, while
+    OBJ exports are almost always in metres — the viewer and the acoustic pipeline then
+    scale the model 1000× too small. When every mesh is labelled mm and the model's
+    largest extent is at most ``SPECKLE_UNITLESS_METRE_MAX_EXTENT`` (a sub-0.2 m room is
+    implausible), ``units`` is rewritten to ``m`` on every mesh and on every object that
+    declares units (root, collections).
+
+    Returns the new unit (``"m"``) or None when nothing was changed.
+    """
+    meshes: list[Base] = []
+    unit_holders: list[Base] = []
+    visited: set[int] = set()
+
+    def walk(obj: Base) -> None:
+        if id(obj) in visited:
+            return
+        visited.add(id(obj))
+
+        names = obj.get_member_names()
+        vertices = getattr(obj, "vertices", None)
+        if isinstance(vertices, list) and "faces" in names:
+            meshes.append(obj)
+        elif "units" in names:
+            unit_holders.append(obj)
+
+        for name in names:
+            value = getattr(obj, name, None)
+            if isinstance(value, Base):
+                walk(value)
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, Base):
+                        walk(item)
+
+    walk(base)
+    if not meshes:
+        return None
+
+    def declared_unit(obj: Base) -> str:
+        units = getattr(obj, "units", None)
+        return str(getattr(units, "value", units) or "").lower()
+
+    if any(declared_unit(m) not in _MILLIMETRE_UNITS for m in meshes):
+        return None
+
+    lo = [float("inf")] * 3
+    hi = [float("-inf")] * 3
+    for mesh in meshes:
+        vertices = mesh.vertices
+        for axis in range(3):
+            coords = vertices[axis::3]
+            if coords:
+                lo[axis] = min(lo[axis], min(coords))
+                hi[axis] = max(hi[axis], max(coords))
+    max_extent = max(h - l for h, l in zip(hi, lo))
+    if not (0 < max_extent <= SPECKLE_UNITLESS_METRE_MAX_EXTENT):
+        return None
+
+    for obj in (*meshes, *unit_holders):
+        obj.units = "m"
+    logger.info(
+        f"Relabelled unitless model mm -> m (max extent {max_extent:.3f} declared units, "
+        f"{len(meshes)} meshes)"
+    )
+    return "m"
 
 
 class SpeckleService:
@@ -399,7 +476,9 @@ class SpeckleService:
             logger.error(f"Model exists but cannot be retrieved. Available models: {fetch_model_by_name('')}")
             raise Exception(f"Could not create or find model '{model_name}'. The model exists but cannot be retrieved. Error: {create_error}")
 
-    def _materialize_legacy_version(self, bundle_version_id: str) -> Optional[Dict[str, str]]:
+    def _materialize_legacy_version(
+        self, bundle_version_id: str, force: bool = False
+    ) -> Optional[Dict[str, str]]:
         """
         Convert a bundle-only version into a classic legacy version the app can load.
 
@@ -411,11 +490,13 @@ class SpeckleService:
 
         Args:
             bundle_version_id: A version id whose ``referencedObject`` is a bundle ref.
+            force: Ignore the cached legacy copy and materialize again (used to heal
+                copies created before a projection fix).
 
         Returns:
             dict: {"version_id", "object_id"} of the legacy version, or None on failure.
         """
-        cached = _cache_get_legacy_version(bundle_version_id)
+        cached = None if force else _cache_get_legacy_version(bundle_version_id)
         if cached:
             return cached
 
@@ -427,7 +508,7 @@ class SpeckleService:
             # Serialize the heavy materialization: concurrent ingestion polls must not
             # each download + re-send the (potentially large) bundle.
             with _MATERIALIZE_LOCK:
-                cached = _cache_get_legacy_version(bundle_version_id)
+                cached = None if force else _cache_get_legacy_version(bundle_version_id)
                 if cached:
                     return cached
 
@@ -472,13 +553,18 @@ class SpeckleService:
                         "Stripped duplicate displayValue applicationIds from projection "
                         f"of {bundle_version_id}"
                     )
+                # Unitless sources (OBJ) arrive labelled mm; relabel by model size.
+                message = _LEGACY_VERSION_MESSAGE
+                if getattr(version, "source_application", None) in SPECKLE_UNITLESS_SOURCE_APPS:
+                    _fix_unitless_source_units(base)
+                    message = f"{message} {_UNITS_FIX_MARKER}"
                 legacy_object_id = operations.send(base, [transport])
                 legacy_version = self.client.version.create(
                     CreateVersionInput(
                         project_id=self.project_id,
                         model_id=bundle_model_id,
                         object_id=legacy_object_id,
-                        message=_LEGACY_VERSION_MESSAGE,
+                        message=message,
                         source_application="compas-soundscape",
                     )
                 )
@@ -548,9 +634,10 @@ class SpeckleService:
                     ),
                 }
 
-            # A copy we materialized before the geometry fix → re-materialize from the
-            # newest bundle version still present in the model.
-            if source_app == "compas-soundscape" and _PROJECTION_FIX_MARKER not in message:
+            # A copy we materialized before the geometry fix (or, for a unitless OBJ
+            # source, before the units fix) → re-materialize from the newest bundle
+            # version still present in the model.
+            if source_app == "compas-soundscape":
                 bundle_version = next(
                     (
                         v
@@ -559,8 +646,16 @@ class SpeckleService:
                     ),
                     None,
                 )
-                if bundle_version is not None:
-                    healed = self._materialize_legacy_version(bundle_version.id)
+                needs_units_fix = (
+                    bundle_version is not None
+                    and getattr(bundle_version, "source_application", None)
+                    in SPECKLE_UNITLESS_SOURCE_APPS
+                    and _UNITS_FIX_MARKER not in message
+                )
+                needs_heal = _PROJECTION_FIX_MARKER not in message or needs_units_fix
+                if bundle_version is not None and needs_heal:
+                    # The cache maps the bundle to the stale copy — bypass it.
+                    healed = self._materialize_legacy_version(bundle_version.id, force=True)
                     if healed:
                         logger.info(
                             f"Healed pre-fix legacy copy {latest.id} for model {model_id} "

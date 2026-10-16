@@ -118,9 +118,9 @@ export function UsageSection({
   const serviceVersions = useServiceVersions();
   const llmModel = useSoundscapeStore((s) => s.llmModel);
   const soundConfigs = useSoundscapeStore((s) => s.soundConfigs);
-  const analysisStatus = useAnalysisStore((s) => s.analysisStatus);
-  const analysisProgress = useAnalysisStore((s) => s.analysisProgress);
-  const analyzingConfigIndex = useAnalysisStore((s) => s.analyzingConfigIndex);
+  // Cards analyze concurrently — each card follows only its own run.
+  const analyzingConfigIndices = useAnalysisStore((s) => s.analyzingConfigIndices);
+  const analysisStatusByIndex = useAnalysisStore((s) => s.analysisStatusByIndex);
   const handleReorderConfigs = useAnalysisStore((s) => s.handleReorderConfigs);
   const duplicateConfigAt = useAnalysisStore((s) => s.duplicateConfigAt);
   const usageAdvanced = useCardFlowStore((s) => s.usageAdvanced);
@@ -274,7 +274,7 @@ export function UsageSection({
       const sc = config as ScenarioConfig;
       if (!sc.foleyResult) continue;
       // Wait until foley streaming finishes — foleyResult is set incrementally during streaming
-      if (isRunning && analyzingConfigIndex === originalIndex) {
+      if (analyzingConfigIndices.has(originalIndex)) {
         console.log('[UsageSection] Foley streaming in progress for config', originalIndex, '— deferring auto-send');
         continue;
       }
@@ -290,7 +290,7 @@ export function UsageSection({
       // Do NOT call onSendToSoundGeneration() separately — it would push all configs unfiltered
       onAdvanceToSounds(originalIndex, scenarioTitle);
     }
-  }, [analysisConfigs, isRunning, analyzingConfigIndex, onAdvanceToSounds]);
+  }, [analysisConfigs, analyzingConfigIndices, onAdvanceToSounds]);
 
   // Check if config has result (for floating action visibility)
   // afterContent for cards
@@ -385,7 +385,7 @@ export function UsageSection({
             <TextContextContent
               config={config as TextAnalysisConfig}
               index={originalIndex}
-              isAnalyzing={isRunning}
+              isAnalyzing={analyzingConfigIndices.has(originalIndex)}
               onUpdateConfig={onUpdateConfig}
             />
           );
@@ -394,7 +394,7 @@ export function UsageSection({
             <ScenarioContent
               config={config as ScenarioConfig}
               index={originalIndex}
-              isAnalyzing={isRunning && analyzingConfigIndex === originalIndex}
+              isAnalyzing={analyzingConfigIndices.has(originalIndex)}
               onUpdateConfig={onUpdateConfig}
             />
           );
@@ -426,7 +426,7 @@ export function UsageSection({
           return null;
       }
     },
-    [isRunning, analyzingConfigIndex, onUpdateConfig, soundConfigs],
+    [analyzingConfigIndices, onUpdateConfig, soundConfigs],
   );
 
   const getCardVersion = useCallback(
@@ -473,8 +473,7 @@ export function UsageSection({
       if (config.type === 'scenario') {
         const sc = config as ScenarioConfig;
         const isFoleyLoading =
-          isRunning &&
-          analyzingConfigIndex === originalIndex &&
+          analyzingConfigIndices.has(originalIndex) &&
           sc.scenarioId !== null &&
           !sc.foleyResult;
         const sentToSounds = usageAdvanced.has(originalIndex);
@@ -524,6 +523,8 @@ export function UsageSection({
         actionButtonLabel = 'Go to Sounds';
       }
 
+      const cardAnalyzing = analyzingConfigIndices.has(originalIndex);
+      const cardStatus = analysisStatusByIndex[originalIndex];
       const card = (
         <Card
           config={config}
@@ -531,33 +532,28 @@ export function UsageSection({
           isExpanded={isExpanded}
           hasResult={configHasResult}
           result={undefined}
-          isRunning={
-            refreshingScenarioIndex === originalIndex ||
-            (isRunning && analyzingConfigIndex === originalIndex)
-          }
+          isRunning={refreshingScenarioIndex === originalIndex || cardAnalyzing}
           status={
-            analyzingConfigIndex === originalIndex
+            cardAnalyzing
               ? config.type === 'scenario'
                 ? getScenarioPipelineStatus(
                     config as ScenarioConfig,
                     true,
-                    analysisStatus,
-                    analysisProgress,
+                    cardStatus?.status ?? '',
+                    cardStatus?.progress ?? 0,
                   ).status
-                : analysisStatus
+                : cardStatus?.status ?? ''
               : undefined
           }
           progress={
             config.type === 'scenario'
               ? getScenarioPipelineStatus(
                   config as ScenarioConfig,
-                  analyzingConfigIndex === originalIndex,
-                  analyzingConfigIndex === originalIndex ? analysisStatus : undefined,
-                  analysisProgress,
+                  cardAnalyzing,
+                  cardAnalyzing ? cardStatus?.status ?? '' : undefined,
+                  cardStatus?.progress ?? 0,
                 ).progress
-              : analyzingConfigIndex === originalIndex
-                ? analysisProgress
-                : 0
+              : cardStatus?.progress ?? 0
           }
           collapsedInfo={getCollapsedInfo(config, originalIndex)}
           defaultName={
@@ -609,7 +605,7 @@ export function UsageSection({
                 <RegenerateButton
                   title="Regenerate scenario with the same data"
                   onClick={() => handleRegenerateScenario(originalIndex)}
-                  disabled={isRunning && analyzingConfigIndex === originalIndex}
+                  disabled={cardAnalyzing}
                 />
                 {(config as ScenarioConfig).foleyResult && usageAdvanced.has(originalIndex) ? (
                   <RegenerateButton
@@ -622,7 +618,7 @@ export function UsageSection({
               <RegenerateButton
                 title="Regenerate sound prompts with the same data"
                 onClick={() => handleRegenerateText(originalIndex)}
-                disabled={isRunning && analyzingConfigIndex === originalIndex}
+                disabled={cardAnalyzing}
               />
             ) : undefined
           }
@@ -642,10 +638,8 @@ export function UsageSection({
       indexMap,
       hasResult,
       getCollapsedInfo,
-      isRunning,
-      analyzingConfigIndex,
-      analysisStatus,
-      analysisProgress,
+      analyzingConfigIndices,
+      analysisStatusByIndex,
       analysisResult,
       getBeforeContent,
       getAfterContent,

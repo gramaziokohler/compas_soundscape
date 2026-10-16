@@ -720,8 +720,7 @@ canvas {
   --power-on-fg: var(--color-on-blue);
 }
 .power-btn--on,
-.power-btn--on:hover,
-.bubble-panel__icon-btn.power-btn--on:hover:not(:disabled) {
+.power-btn--on:hover {
   background: var(--power-on-bg);
   color: var(--power-on-fg);
 }

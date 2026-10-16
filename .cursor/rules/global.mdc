@@ -87,6 +87,25 @@ and return `{job_id, position, total}` immediately.
 
 ---
 
+## File Encoding (UTF-8 only)
+
+All source files are UTF-8 without BOM (`.editorconfig` `charset = utf-8`). Commit `63496ba`
+rewrote `utils/constants.ts` as UTF-8-read-as-cp1252, so every `…`, `—`, `→`, `é` and emoji in
+the UI turned into 2–4 character garbage starting with `â` / `Ã` / `ð` (e.g. the Speckle upload
+status messages). Examples are described rather than pasted here so this file passes its own grep.
+
+- **Never rewrite source files through Windows PowerShell 5.1 text cmdlets without an encoding.**
+  `Get-Content`/`Set-Content`/`Add-Content` default to the ANSI codepage (cp1252). Use the Edit/Write
+  tools, or pass `-Encoding utf8` to both the read and the write (and `-Raw` to keep line endings).
+  Same for Python: always `open(path, encoding="utf-8")`, never the platform default.
+- **After any scripted bulk edit, grep for mojibake** before committing:
+  `[âÃÂð][\x{80}-\x{BF}\x{152}-\x{2122}]` (ripgrep) — should match nothing.
+- **To repair a corrupted file**, run `python scripts/fix_mojibake.py <file>...`. It only reverses
+  runs that decode cleanly, so correct characters added later are left alone. Don't retype the
+  characters by hand, and check `git diff --stat` shows the same line count afterwards.
+
+---
+
 ## Debugging Discipline
 
 Applies to any unexpected-behavior bug (state sync, timing/race conditions, stale values) — not

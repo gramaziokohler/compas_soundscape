@@ -19,7 +19,9 @@ import type {
   SerializedAnalysisConfig,
   AnalysisState,
   SoundscapeIterationLink,
+  SoundscapeAcousticSelection,
 } from '@/types/soundscape';
+import type { SimulationAcousticSelection } from '@/types/acoustics';
 import type { GridListenerData } from '@/types/receiver';
 import type { ImpulseResponseMetadata, SourceReceiverIRMapping, ResonanceAudioConfig } from '@/types/audio';
 import type { AnalysisConfig, AnalysisResult, TextPromptResult } from '@/types/analysis';
@@ -63,6 +65,34 @@ function extractFilename(url: string): string {
     // Fallback: just split by /
     return url.split('/').pop() || '';
   }
+}
+
+/** Runtime acoustic-region selection → persisted (snake_case) shape. */
+function serializeAcousticSelection(
+  sel: SimulationAcousticSelection | null | undefined,
+): SoundscapeAcousticSelection | undefined {
+  if (!sel) return undefined;
+  return {
+    node_ids: sel.nodeIds,
+    node_names: sel.nodeNames,
+    geometry_ids: sel.geometryIds,
+    is_whole_model: sel.isWholeModel,
+    auto_detected: sel.autoDetected,
+  };
+}
+
+/** Persisted acoustic-region selection → runtime (camelCase) shape. */
+function deserializeAcousticSelection(
+  saved: SoundscapeAcousticSelection | null | undefined,
+): SimulationAcousticSelection | undefined {
+  if (!saved) return undefined;
+  return {
+    nodeIds: saved.node_ids ?? [],
+    nodeNames: saved.node_names ?? [],
+    geometryIds: saved.geometry_ids ?? [],
+    isWholeModel: !!saved.is_whole_model,
+    autoDetected: !!saved.auto_detected,
+  };
 }
 
 /**
@@ -128,6 +158,8 @@ export function buildSoundscapeSavePayload(
   exclusionReasons?: Record<string, string>,
   /** Per-clip DAW trim overrides, keyed `${soundId}-${iterationIndex}` (from audioControls) */
   iterationTrims?: Record<string, { start: number; end: number }>,
+  /** Live acoustic region of the model (from acousticLayerStore) */
+  acousticRegion?: SimulationAcousticSelection | null,
 ): SoundscapeSavePayload {
   // Map runtime configs to serializable configs
   const serializedConfigs: SoundscapeSoundConfig[] = soundConfigs.map(
@@ -350,13 +382,7 @@ export function buildSoundscapeSavePayload(
     const speckleScatteringAssignments = pyConfig.speckleScatteringAssignments as Record<string, number> | undefined;
     // Acoustic region the card was generated with — lets the Object Explorer warn
     // when the live region was re-assigned and offer to restore this one.
-    const speckleAcousticSelection = pyConfig.speckleAcousticSelection as {
-      nodeIds: string[];
-      nodeNames: string[];
-      geometryIds: string[];
-      isWholeModel: boolean;
-      autoDetected: boolean;
-    } | undefined;
+    const speckleAcousticSelection = pyConfig.speckleAcousticSelection as SimulationAcousticSelection | undefined;
 
     // Build receiver position map from the receivers array
     // This captures the authoritative dragged positions at save time
@@ -414,13 +440,7 @@ export function buildSoundscapeSavePayload(
       speckle_layer_name: speckleLayerName,
       speckle_geometry_object_ids: speckleGeometryObjectIds,
       speckle_scattering_assignments: speckleScatteringAssignments,
-      speckle_acoustic_selection: speckleAcousticSelection ? {
-        node_ids: speckleAcousticSelection.nodeIds,
-        node_names: speckleAcousticSelection.nodeNames,
-        geometry_ids: speckleAcousticSelection.geometryIds,
-        is_whole_model: speckleAcousticSelection.isWholeModel,
-        auto_detected: speckleAcousticSelection.autoDetected,
-      } : undefined,
+      speckle_acoustic_selection: serializeAcousticSelection(speckleAcousticSelection),
       simulation_results: pyConfig.simulationResults,
       current_simulation_id: pyConfig.currentSimulationId,
       current_simulation_run_id: pyConfig.currentSimulationRunId,
@@ -474,6 +494,7 @@ export function buildSoundscapeSavePayload(
     selected_receiver_id: selectedReceiverId ?? undefined,
     simulation_configs: serializedSimConfigs.length > 0 ? serializedSimConfigs : undefined,
     active_simulation_index: activeSimulationIndex ?? undefined,
+    acoustic_region: serializeAcousticSelection(acousticRegion),
     resonance_audio_config: resonanceAudioConfig ? {
       enabled: resonanceAudioConfig.enabled,
       ambisonic_order: resonanceAudioConfig.ambisonicOrder,
@@ -534,6 +555,8 @@ export function restoreSoundscapeState(
   simulationConfigs: SimulationConfig[];
   activeSimulationIndex: number | null;
   resonanceAudioConfig: ResonanceAudioConfig | null;
+  /** Saved acoustic region, or null for legacy saves (auto-detect / prompt instead). */
+  acousticRegion: SimulationAcousticSelection | null;
   mutedSounds: string[];
   soloedSounds: string[];
   excludedIterations: Record<string, number[]>;
@@ -900,13 +923,7 @@ export function restoreSoundscapeState(
       speckleLayerName: saved.speckle_layer_name,
       speckleGeometryObjectIds: saved.speckle_geometry_object_ids,
       speckleScatteringAssignments: saved.speckle_scattering_assignments,
-      speckleAcousticSelection: saved.speckle_acoustic_selection ? {
-        nodeIds: saved.speckle_acoustic_selection.node_ids,
-        nodeNames: saved.speckle_acoustic_selection.node_names,
-        geometryIds: saved.speckle_acoustic_selection.geometry_ids,
-        isWholeModel: saved.speckle_acoustic_selection.is_whole_model,
-        autoDetected: saved.speckle_acoustic_selection.auto_detected,
-      } : undefined,
+      speckleAcousticSelection: deserializeAcousticSelection(saved.speckle_acoustic_selection),
       // Import-IRs advanced settings
       irGain: saved.ir_gain ?? undefined,
       irNormalizeEnabled: saved.ir_normalize_enabled ?? undefined,
@@ -951,6 +968,7 @@ export function restoreSoundscapeState(
     simulationConfigs: restoredSimConfigs,
     activeSimulationIndex,
     resonanceAudioConfig,
+    acousticRegion: deserializeAcousticSelection(loadedData.acoustic_region) ?? null,
     mutedSounds: loadedData.muted_sounds ?? [],
     // Legacy saves stored one soloed id; restoreMuteSolo expands ids to whole tracks.
     soloedSounds: loadedData.soloed_sounds ?? (loadedData.soloed_sound ? [loadedData.soloed_sound] : []),
@@ -997,6 +1015,7 @@ export function buildAnalysisStateSave(
     }
     if ('peopleCount' in config) base.peopleCount = (config as any).peopleCount;
     if ('likeliness' in config) base.likeliness = (config as any).likeliness;
+    if (config.type === 'scenario' && config.soundDetail) base.soundDetail = config.soundDetail;
     if ('timelineDurationMs' in config) base.timelineDurationMs = (config as any).timelineDurationMs;
     if ('analysisOptions' in config) base.analysisOptions = (config as any).analysisOptions;
     if ('applyNoiseReduction' in config) base.applyNoiseReduction = (config as any).applyNoiseReduction;
@@ -1180,6 +1199,7 @@ export function restoreAnalysisState(analysisState: AnalysisState): {
     if (saved.useAnalysisResult !== undefined) config.useAnalysisResult = saved.useAnalysisResult;
     if (saved.peopleCount !== undefined) config.peopleCount = saved.peopleCount;
     if (saved.likeliness !== undefined) config.likeliness = saved.likeliness;
+    if (saved.soundDetail !== undefined) config.soundDetail = saved.soundDetail;
     if (saved.timelineDurationMs !== undefined) config.timelineDurationMs = saved.timelineDurationMs;
     if (saved.analysisOptions) config.analysisOptions = saved.analysisOptions;
     if (saved.applyNoiseReduction !== undefined) config.applyNoiseReduction = saved.applyNoiseReduction;

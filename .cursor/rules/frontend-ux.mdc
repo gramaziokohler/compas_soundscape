@@ -29,7 +29,11 @@ Rules:
    (`handleAnalyze`, `handleScenarioAnalyze`, page's `handleSendAnalysisToGeneration`,
    `handleGenerateFiltered`). Add pipeline behaviour to those actions, not to the workflow store.
    Steps are idempotent (skip when the card already has the result) — that is what makes Resume work.
-4. One run at a time (analysisStore is single-run); further prompts queue.
+4. Scenes run concurrently and independently — no frontend queue, no per-scene cap (the backend
+   LLM pool / worker queues throttle). Stop and remove act on one scene only; never gate them on
+   "another scene is running". Per-scene UI reads per-card state (`useSceneProgress`,
+   `useCardAnalysisStatus`), never the global `analysisStatus` / `soundGenProgress` mirrors. Only
+   `selectFocusRun` may drive the expert sidebar, the powered scene and the 3D highlights.
 5. Expert Sidebar follows a running pipeline via `uiStore.sidebarNavCommand` (seq-based, not persisted).
 6. Scene panel body = the real `SoundGenerationSection`; build its props with
    `buildSoundGenerationSectionProps` (`components/layout/sidebar/soundSectionProps.ts`), shared

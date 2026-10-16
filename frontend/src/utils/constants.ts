@@ -1,4 +1,5 @@
 import type { RenderStyle } from '@/types/speckle-scene';
+import type { FoleySoundDetail } from '@/types/analysis';
 
 // ============================================================================
 // API Configuration
@@ -11,10 +12,10 @@ import type { RenderStyle } from '@/types/speckle-scene';
  * Logic:
  * - If NEXT_PUBLIC_API_BASE_URL is set in .env.local, use it (for manual override)
  * - Otherwise, detect the current hostname:
- *   - localhost/127.0.0.1 â†’ http://localhost:8000 (local dev, cross-port)
- *   - Anything else (production behind the nginx origin) â†’ '' so every request
+ *   - localhost/127.0.0.1 → http://localhost:8000 (local dev, cross-port)
+ *   - Anything else (production behind the nginx origin) → '' so every request
  *     is SAME-ORIGIN (/api, /static, /soundscapes are reverse-proxied to the
- *     FastAPI backend by nginx) â€” no CORS, no cookie friction.
+ *     FastAPI backend by nginx) — no CORS, no cookie friction.
  */
 function getApiBaseUrl(): string {
   // If explicitly set in environment, use that
@@ -89,14 +90,14 @@ export const DARK_MODE = {
   ENTITY_LIGHT_INTENSITY: 10.0,
   ENTITY_LIGHT_DISTANCE: 50,
 
-  // Entity-linked Speckle object surface material â€” max emissive so tone mapping blooms it
+  // Entity-linked Speckle object surface material — max emissive so tone mapping blooms it
   ENTITY_EMISSIVE_INTENSITY: 8.0,
 
   // Shadow configuration for point lights
   SHADOW_MAP_SIZE: 512,       // per-face resolution of the cube shadow map
   SHADOW_CAMERA_NEAR: 0.1,   // near plane of the shadow frustum
   SHADOW_BIAS: -0.005,        // reduces shadow acne on angled surfaces
-  /** Extra normal offset sampling â€” the main cure for cube-shadow banding
+  /** Extra normal offset sampling — the main cure for cube-shadow banding
    *  (stripes) on grazed surfaces from point lights. */
   SHADOW_NORMAL_BIAS: 0.05,
 
@@ -105,16 +106,16 @@ export const DARK_MODE = {
   // ---------------------------------------------------------------------------
   /**
    * Maximum number of sound point lights allowed to cast shadows. A shadow-
-   * casting PointLight renders the scene 6Ã— into a cube map, so this is the
+   * casting PointLight renders the scene 6× into a cube map, so this is the
    * dominant GPU cost with many sources. Default 0 = shadows off entirely
    * (shadow maps were the main source of blotchy/streaked shading with several
-   * overlapping lights). Raise to 1â€“2 to re-enable.
+   * overlapping lights). Raise to 1–2 to re-enable.
    */
   MAX_SHADOW_CASTING_LIGHTS: 0,
   /**
    * Hard cap on simultaneously VISIBLE sound point lights. Three includes every
    * visible light in every standard material's shader; beyond this the fragment
-   * uniform budget can be exceeded on modest GPUs (shader link failure â†’ objects
+   * uniform budget can be exceeded on modest GPUs (shader link failure → objects
    * render unlit/black). Lights beyond the cap (furthest from the camera) are
    * hidden each frame. Raise only if you know the GPU can take it.
    */
@@ -123,7 +124,7 @@ export const DARK_MODE = {
    *  unless the visibility/selection/link signature actually changed. */
   ENFORCEMENT_INTERVAL_MS: 300,
   /** Light intensity multipliers around the light's base value while playing.
-   *  level 0 â†’ MIN, level 1 â†’ MAX. Idle lights are restored to base (1.0). */
+   *  level 0 → MIN, level 1 → MAX. Idle lights are restored to base (1.0). */
   PLAYING_LIGHT_MIN_FACTOR: 0.25,
   PLAYING_LIGHT_MAX_FACTOR: 1.8,
   /** Sound-sphere scale pulse amplitude while playing (0 = no pulse). */
@@ -214,7 +215,7 @@ export const UI_LINE_THICKNESS = {
   EXTRA_THICK: 4,
 } as const;
 
-// Shadows (CSS box-shadow values â€” defined in globals.css)
+// Shadows (CSS box-shadow values — defined in globals.css)
 export const UI_SHADOWS = {
   NONE: "none",
   MD: "var(--shadow-md)",
@@ -252,7 +253,7 @@ export const UI_CARD = {
 /** CardSelect with this many options or fewer renders as TextSelect (inline labels). */
 export const CARD_SELECT_INLINE_MAX_OPTIONS = 3;
 
-/** Material dropdown max widths â€” trigger crops text; menu fits longest option up to max. */
+/** Material dropdown max widths — trigger crops text; menu fits longest option up to max. */
 export const MATERIAL_SELECT = {
   OBJECT_EXPLORER_TRIGGER_MAX_PX: 180,
   OBJECT_EXPLORER_MENU_MAX_PX: 220,
@@ -275,35 +276,35 @@ export const UI_OVERLAY = {
   VERTICAL_STACK_OFFSET: 230, // Offset when stacking Entity UI above Sound UI (EntityBox ~110px + GAP 20px + clearance ~130px)
 } as const;
 
-// Sidebar breadcrumb right-click menu â€” lists the sibling cards at a parent
+// Sidebar breadcrumb right-click menu — lists the sibling cards at a parent
 // section level and re-scopes the current child section without changing step.
 // Sizing/placement tokens for `components/ui/ContextMenu.tsx`.
 export const SIDEBAR_BREADCRUMB_MENU = {
-  WIDTH: 200,                 // px â€” fixed menu width
-  ESTIMATED_ITEM_HEIGHT: 30,  // px â€” used to clamp before the real height is measured
-  VIEWPORT_MARGIN: 8,         // px â€” minimum distance from viewport edges after clamping
-  Z_INDEX: 9999,              // matches the card context menu â€” both are body-portaled popups
+  WIDTH: 200,                 // px — fixed menu width
+  ESTIMATED_ITEM_HEIGHT: 30,  // px — used to clamp before the real height is measured
+  VIEWPORT_MARGIN: 8,         // px — minimum distance from viewport edges after clamping
+  Z_INDEX: 9999,              // matches the card context menu — both are body-portaled popups
 } as const;
 
 // Viewer right-click menu (components/ui/ActionMenu.tsx + scene/SceneContextMenu.tsx).
 export const ACTION_MENU = {
   MIN_WIDTH: 220,             // px
-  ICON_SIZE: 16,              // px â€” lucide icon size
+  ICON_SIZE: 16,              // px — lucide icon size
   ICON_STROKE: 1.75,          // lucide stroke width
-  ESTIMATED_ITEM_HEIGHT: 34,  // px â€” used to clamp before the real height is measured
-  VIEWPORT_MARGIN: 8,         // px â€” minimum distance from viewport edges after clamping
+  ESTIMATED_ITEM_HEIGHT: 34,  // px — used to clamp before the real height is measured
+  VIEWPORT_MARGIN: 8,         // px — minimum distance from viewport edges after clamping
   Z_INDEX: 9999,              // body-portaled popup, same layer as the other context menus
 } as const;
 
-// Card info ("i") popover â€” click-to-open explanation panel on every card
+// Card info ("i") popover — click-to-open explanation panel on every card
 // (bottom-right corner). Sizing/placement tokens for `components/ui/InfoPopover.tsx`.
 export const CARD_INFO_POPOVER = {
-  PANEL_WIDTH: 260,      // px â€” fixed panel width; text wraps inside it
-  GAP: 6,                // px â€” gap between the "i" trigger and the panel
-  VIEWPORT_MARGIN: 8,    // px â€” minimum distance from viewport edges after clamping
+  PANEL_WIDTH: 260,      // px — fixed panel width; text wraps inside it
+  GAP: 6,                // px — gap between the "i" trigger and the panel
+  VIEWPORT_MARGIN: 8,    // px — minimum distance from viewport edges after clamping
   TRIGGER_SIZE: "22px",  // circular trigger diameter
   ICON_SIZE: "11px",     // info glyph size inside the trigger
-  Z_INDEX: 9999,         // matches the card context menu â€” both are body-portaled popups
+  Z_INDEX: 9999,         // matches the card context menu — both are body-portaled popups
 } as const;
 
 // 3D Scene Control Buttons (bottom-right corner)
@@ -322,10 +323,10 @@ export const NOTIFICATIONS = {
   BADGE_MAX: 9,                         // counts above this render as "9+"
 } as const;
 
-// Helper hint â€” transient bottom-right viewer hint positioned left of the scene control buttons.
+// Helper hint — transient bottom-right viewer hint positioned left of the scene control buttons.
 export const UI_HELPER_HINT = {
   BOTTOM: 56,                 // px above the bottom edge (clears the Object Explorer toggle)
-  BUTTON_COLUMN_MARGIN: 10,   // px â€” same margin the scene control buttons use from the screen edge
+  BUTTON_COLUMN_MARGIN: 10,   // px — same margin the scene control buttons use from the screen edge
   GAP_BETWEEN_BUTTONS: 10,    // px gap between the control button column and the hint
   Z_INDEX: 300,               // above the timeline panel (z-index 200) so it is always on top
   DURATION_MS: 6000,          // how long the hint stays visible before fading away
@@ -366,8 +367,8 @@ export const UI_RIGHT_SIDEBAR = {
   PADDING: UI_SPACING.MD,    // Internal padding
   TREE_ITEM_HEIGHT: 40,      // Height of each tree item in pixels
   TREE_MAX_HEIGHT: 700,      // Maximum height of scrolling tree view
-  // Background: 'white' â€” inlined in RightSidebar.tsx
-  // Border color: 'var(--color-secondary-light)' â€” inlined in RightSidebar.tsx
+  // Background: 'white' — inlined in RightSidebar.tsx
+  // Border color: 'var(--color-secondary-light)' — inlined in RightSidebar.tsx
   BORDER_WIDTH: UI_LINE_THICKNESS.THIN,
 } as const;
 
@@ -385,42 +386,42 @@ export const UI_SIDEBAR_RESIZE = {
   RIGHT_MAX_WIDTH: 640,
   RIGHT_DEFAULT_WIDTH: 280,
 
-  // Right sidebar vertical split â€” fraction of height taken by the Acoustics
+  // Right sidebar vertical split — fraction of height taken by the Acoustics
   // (simulation) section; the Listeners section fills the remainder.
   RIGHT_SPLIT_DEFAULT_RATIO: 0.65,
   RIGHT_SPLIT_MIN_RATIO: 0.25,
   RIGHT_SPLIT_MAX_RATIO: 0.85,
 
   // Resize handle visual / hit area
-  HANDLE_WIDTH: 3,           // px â€” visible highlight bar
-  HANDLE_HIT_AREA: 8,        // px â€” actual pointer hit area
+  HANDLE_WIDTH: 3,           // px — visible highlight bar
+  HANDLE_HIT_AREA: 8,        // px — actual pointer hit area
 } as const;
 
-// Collapse/expand toggle handle â€” a soft circular button offset from the
+// Collapse/expand toggle handle — a soft circular button offset from the
 // sidebar edge with a fixed gap (both states). When expanded, the sidebar's
 // own edge gets a smooth inward notch (see utils/sidebarEdgeNotch.ts) near
 // the button instead of a hard straight border. See Sidebar.tsx / RightSidebar.tsx.
 export const UI_SIDEBAR_TOGGLE = {
-  DIAMETER: 30,              // px â€” circle diameter
+  DIAMETER: 30,              // px — circle diameter
   ICON_WIDTH: 12,
   ICON_HEIGHT: 12,
-  MARGIN: 12,                // px â€” gap between the sidebar edge and the button
-  LABEL_OFFSET: 10,          // px â€” gap between the button and its hover label
-  NOTCH_HEIGHT: 100,         // px â€” total vertical span of the expanded-state edge notch
-  NOTCH_DEPTH: 12,           // px â€” how far inward the sidebar edge dips at the notch
+  MARGIN: 12,                // px — gap between the sidebar edge and the button
+  LABEL_OFFSET: 10,          // px — gap between the button and its hover label
+  NOTCH_HEIGHT: 100,         // px — total vertical span of the expanded-state edge notch
+  NOTCH_DEPTH: 12,           // px — how far inward the sidebar edge dips at the notch
   // Transient reminder flashed on the collapsed expand handle when "Play all"
   // starts while an applied (completed) acoustic card is expanded.
   CONVOLUTION_HINT: 'An acoustic card is currently applied',
-  HINT_DURATION: 3000,       // ms â€” how long the transient hint stays visible
+  HINT_DURATION: 3000,       // ms — how long the transient hint stays visible
 } as const;
 
 // ============================================================================
 // Fluid Design Tokens (UI Scale System)
 // ============================================================================
 // Assigns every layout surface a scaling class (see utils/scale.ts):
-//   physical  â€” constant CSS px, zoom/DPI invariant (text, hit targets, hairlines)
-//   fluid     â€” proportional to the viewport (constant fraction of the window)
-//   clamped   â€” fluid between a hard physical min/max
+//   physical  — constant CSS px, zoom/DPI invariant (text, hit targets, hairlines)
+//   fluid     — proportional to the viewport (constant fraction of the window)
+//   clamped   — fluid between a hard physical min/max
 //
 // Left/right sidebar widths are NOT fluid. They are fixed CSS px per
 // resolution band (`--sidebar-*-width` in globals.css), with JS fallbacks in
@@ -458,10 +459,21 @@ export const DEFAULT_DBFS = -18;
 export const DBFS_MIN = -60;
 export const DBFS_MAX = 0;
 
-// Scenario / Foley Artist
-export const DEFAULT_MAXIMUM_FOLEY_SOUNDS = 10;
-export const MAXIMUM_FOLEY_SOUNDS_MIN = 1;
-export const MAXIMUM_FOLEY_SOUNDS_MAX = 20;
+// Scenario / Foley Artist — "Sound detail" level sent as `sound_detail` to
+// /api/foley-artist. Mirrors FOLEY_SOUND_DETAIL_LEVELS in backend/config/constants.py.
+export const FOLEY_SOUND_DETAIL_OPTIONS: ReadonlyArray<{
+  value: FoleySoundDetail;
+  label: string;
+  title: string;
+}> = [
+  { value: 'essential', label: 'Essential', title: 'Broad categories only: all footsteps together, all furniture handling together (up to ~5 sound events)' },
+  { value: 'balanced', label: 'Balanced', title: 'Split when the source or action clearly differs, e.g. chair scrape vs. chair creak (up to ~10 sound events)' },
+  { value: 'detailed', label: 'Detailed', title: 'Split by source, action and material, e.g. footsteps on carpet vs. parquet (up to ~16 sound events)' },
+  { value: 'exhaustive', label: 'Exhaustive', title: 'Every distinct audible interaction gets its own sound; only true repeats are merged (up to ~24 sound events)' },
+];
+export const DEFAULT_FOLEY_SOUND_DETAIL: FoleySoundDetail = 'balanced';
+export const FOLEY_SOUND_DETAIL_HINT =
+  "How finely the scenario's actions are split into sound events. A quiet scenario still gets few. Background and speech are not counted.";
 
 // Position Generation (for sound sphere spacing)
 // These values match the backend's position calculation logic
@@ -491,7 +503,7 @@ export const AUDIO_MODEL_SA3 = "stable-audio-3";
 export const AUDIO_MODEL_TTS = "gemini-tts";
 export const DEFAULT_AUDIO_MODEL = AUDIO_MODEL_SA3;
 
-// Stable Audio 3 (small-sfx) â€” text-to-audio plus the FX restyle/inpaint effect.
+// Stable Audio 3 (small-sfx) — text-to-audio plus the FX restyle/inpaint effect.
 export const STABLE_AUDIO_MODES = {
   RESTYLE: "restyle",
   INPAINT: "inpaint",
@@ -537,7 +549,7 @@ export const PROMPT_INFLUENCE_MIN = 0;
 export const PROMPT_INFLUENCE_MAX = 1;
 export const PROMPT_INFLUENCE_STEP = 0.05;
 
-// LLM Models â€” Gemini: only the latest Flash (3.8) and the current Pro (3.1).
+// LLM Models — Gemini: only the latest Flash (3.8) and the current Pro (3.1).
 // All Gemini 2.5 and older models were removed.
 export const LLM_MODEL_GEMINI_FLASH = "gemini-3.8-flash";
 export const LLM_MODEL_GEMINI_PRO = "gemini-3.1-pro-preview";
@@ -565,13 +577,13 @@ export const AUDIO_MODEL_NAMES: Record<string, string> = {
 };
 
 export const AUDIO_MODEL_DESCRIPTIONS: Record<string, string> = {
-  [AUDIO_MODEL_TANGOFLUX]: "Fast, high-quality text-to-audio generation",
+  [AUDIO_MODEL_TANGOFLUX]: "Slow, high-quality text-to-audio generation",
   [AUDIO_MODEL_AUDIOLDM2]: "Alternative model with different characteristics",
-  [AUDIO_MODEL_ELEVENLABS]: "Cloud-based sound effects via ElevenLabs â€” requires NEXT_PUBLIC_ELEVENLABS_API_KEY",
-  [AUDIO_MODEL_SA3]: "Stable Audio 3 small-sfx (default) â€” also powers the Restyle / Inpaint FX effect",
+  [AUDIO_MODEL_ELEVENLABS]: "Industry standard Cloud-based sound effects via ElevenLabs (not free)",
+  [AUDIO_MODEL_SA3]: "Fast, mid-quality text-to-audio generation. Also powers the Restyle / Inpaint FX effect",
 };
 
-// Gemini TTS models â€” keys must match backend TTS_MODEL_* constants.
+// Gemini TTS models — keys must match backend TTS_MODEL_* constants.
 // Gemini 3.8 TTS only (2.5 and 3.1-preview removed).
 export const TTS_MODEL_GEMINI_FLASH = "gemini-3.8-flash-tts";
 export const TTS_MODEL_GEMINI_FLASH_LITE = "gemini-3.8-flash-lite-tts";
@@ -625,11 +637,11 @@ export const TTS_DEFAULT_LANGUAGE = "English";
 /**
  * TTS language / dialect resolution UI (components/ui/TtsLanguageInput.tsx,
  * hooks/useTtsLanguageResolver.ts). Gemini 3.8 speaks the language of the text;
- * the dialect/accent comes from the voice â€” a regional library voice or a
+ * the dialect/accent comes from the voice — a regional library voice or a
  * user-created custom voice (backend routers/tts_voices.py).
  */
 export const TTS_LANGUAGE = {
-  /** Poll interval while a custom voice is being created (â‰ˆ30 s per voice). */
+  /** Poll interval while a custom voice is being created (≈30 s per voice). */
   CUSTOM_VOICE_POLL_MS: 2000,
   /** Give up polling a custom-voice job after this long. */
   CUSTOM_VOICE_TIMEOUT_MS: 5 * 60 * 1000,
@@ -640,10 +652,10 @@ export const TTS_LANGUAGE = {
 } as const;
 
 /**
- * Bare character name â†’ Gemini TTS voice value. Mirrors the backend
+ * Bare character name → Gemini TTS voice value. Mirrors the backend
  * `TTS_VOICE_CHARACTERS` in backend/config/constants.py (keep the two in sync).
  * The speech agent picks character names EXCLUSIVELY from these keys, so this is
- * the authoritative lookup â€” do NOT match against `TTS_VOICES[].label` (which is
+ * the authoritative lookup — do NOT match against `TTS_VOICES[].label` (which is
  * e.g. "Alex (Friendly)" and never equals the bare character name "Alex").
  */
 export const TTS_CHARACTER_VOICES: Record<string, string> = {
@@ -679,7 +691,7 @@ export const TTS_CHARACTER_VOICES: Record<string, string> = {
   Benjamin: "Zubenelgenubi",
 };
 
-/** Reverse map: Gemini voice value â†’ character display name (e.g. "Achird" â†’ "Alex"). */
+/** Reverse map: Gemini voice value → character display name (e.g. "Achird" → "Alex"). */
 export const TTS_VOICE_TO_CHARACTER: Record<string, string> = Object.fromEntries(
   Object.entries(TTS_CHARACTER_VOICES).map(([character, voice]) => [voice, character]),
 );
@@ -703,7 +715,7 @@ export const LLM_MODEL_NAMES: Record<string, string> = {
   [LLM_MODEL_ANTHROPIC]: "Claude 3.5 Sonnet",
 };
 
-// Provider keys â€” must match backend LLM_PROVIDER_* constants
+// Provider keys — must match backend LLM_PROVIDER_* constants
 export const LLM_PROVIDER_GOOGLE    = "google";
 export const LLM_PROVIDER_OPENAI    = "openai";
 export const LLM_PROVIDER_ANTHROPIC = "anthropic";
@@ -719,7 +731,7 @@ export const LLM_MODEL_TO_PROVIDER: Record<string, string> = {
 /**
  * Coerce a (possibly stale, persisted) LLM model id to a currently supported
  * one. Soundscapes saved before the Gemini 3.8 migration may hold removed ids
- * (e.g. "gemini-2.5-flash") â€” fall back to the default instead of breaking.
+ * (e.g. "gemini-2.5-flash") — fall back to the default instead of breaking.
  */
 export function normalizeLlmModel(model: string | null | undefined): string {
   if (model && model in LLM_MODEL_NAMES) return model;
@@ -737,7 +749,7 @@ export function normalizeTtsModel(model: string | null | undefined): string {
 }
 
 // A transient status miss (e.g. a momentary 404 from the unified job endpoint)
-// must not abort a running LLM job's poll â€” the in-process job keeps running
+// must not abort a running LLM job's poll — the in-process job keeps running
 // server-side. The client tolerates this many consecutive "not found" polls
 // before treating the job as gone. See pollLlmJob in store/analysisStore.ts.
 export const LLM_JOB_STATUS_MISS_TOLERANCE = 5;
@@ -758,7 +770,7 @@ export const AUDIO_PLAYBACK = {
   DEFAULT_INTERVAL_SECONDS: 5,
 
   // Default absolute jitter applied to each iteration's interval (seconds).
-  // Each iteration fires at intervalMs Â± random(0, jitter), clamped to â‰¥ 0.
+  // Each iteration fires at intervalMs ± random(0, jitter), clamped to ≥ 0.
   DEFAULT_INTERVAL_JITTER_SECONDS: 0,
 
   // Fixed timeline length in milliseconds (visual + audio are both bounded to this).
@@ -825,20 +837,20 @@ export const SPECKLE_VIEWER_RETRY = {
 } as const;
 
 // Speckle file ingestion polling configuration.
-// `startFileIngestion` is asynchronous on Speckle's side â€” after upload we poll the
+// `startFileIngestion` is asynchronous on Speckle's side — after upload we poll the
 // ingestion status until the model version is created (or the job fails).
 export const SPECKLE_INGESTION = {
   POLL_INTERVAL_MS: 1000,       // Delay between status polls (1 s keeps the live % smooth)
-  MAX_ATTEMPTS: 300,            // 5 minutes â€” large IFC/RVT conversions can be slow
+  MAX_ATTEMPTS: 300,            // 5 minutes — large IFC/RVT conversions can be slow
 } as const;
 
 // Loading-overlay labels for each client-side model upload stage.
 export const SPECKLE_UPLOAD_STAGE_LABELS = {
-  uploading: 'Uploading file to Speckleâ€¦',
-  queued: 'Queued on Speckleâ€¦',
-  processing: 'Processing on Speckleâ€¦',
-  materializing: 'Preparing model for the viewerâ€¦',
-  loading: 'Loading modelâ€¦',
+  uploading: 'Uploading file to Speckle…',
+  queued: 'Queued on Speckle…',
+  processing: 'Processing on Speckle…',
+  materializing: 'Preparing model for the viewer…',
+  loading: 'Loading model…',
 } as const;
 
 // Labels for Speckle's ModelIngestionProcessingPhase (shown while processing).
@@ -950,7 +962,7 @@ export const SCENARIO_PREVIEW = {
   START_LABEL: 'Start',
   /** Label sprite for the last stop of a parcours */
   END_LABEL: 'End',
-  /** Endpoints closer than this (meters) share one label â€” a single-stop parcours,
+  /** Endpoints closer than this (meters) share one label — a single-stop parcours,
    *  a loop back to the start, or two scenarios meeting at the same object render
    *  a combined "Start / End" sprite instead of two overlapping ones. */
   LABEL_OVERLAP_THRESHOLD: 0.25,
@@ -961,7 +973,7 @@ export const SCENARIO_PREVIEW = {
 
 // IR low-energy detection threshold
 // If the average of all channel peak amplitudes is below this value (pk < 0.01,
-// i.e. ~ -40 dBFS and quieter â€” including near-silent IRs whose pk reads as large
+// i.e. ~ -40 dBFS and quieter — including near-silent IRs whose pk reads as large
 // negative dB such as -89.9 dB), the IR is flagged as low energy.
 export const IR_LOW_ENERGY_THRESHOLD = 0.01;
 
@@ -980,7 +992,7 @@ export const IMPULSE_RESPONSE = {
   MAX_CHANNELS: 16,  // Changed from 2 to 16 to support TOA
 
   // Fixed gain multiplier for ambisonic IRs (used by legacy processImpulseResponse)
-  // AmbisonicIRMode bypasses this â€” passes IR data through unmodified
+  // AmbisonicIRMode bypasses this — passes IR data through unmodified
   AMBISONIC_IR_GAIN_MULTIPLIER: 1,
 
   // Linear IR-gain (peak-offset) control for the import-irs card.
@@ -1027,7 +1039,7 @@ export const AMBISONIC = {
   // ACN channel ordering (JSAmbisonics default)
   ACN_ORDERING: true as const,
 
-  // Normalization: SN3D (AmbiX standard from pyroomacoustics â€” Omnitone uses SN3D natively)
+  // Normalization: SN3D (AmbiX standard from pyroomacoustics — Omnitone uses SN3D natively)
   NORMALIZATION: 'SN3D' as const,
 
   // Front direction for ambisonic decoding (constant -Z axis in Three.js)
@@ -1106,16 +1118,16 @@ export const GLOBAL_SOURCE = {
 // ============================================================================
 export const STEREO_SPEAKER = {
   // Standard stereo speaker positions (ITU-R BS.775 recommendation)
-  // Â±30Â° azimuth from listener front, horizontal plane
-  LEFT_AZIMUTH_RAD: Math.PI / 6,     // 30Â° in radians (left front)
-  RIGHT_AZIMUTH_RAD: -Math.PI / 6,   // -30Â° in radians (right front)
+  // ±30° azimuth from listener front, horizontal plane
+  LEFT_AZIMUTH_RAD: Math.PI / 6,     // 30° in radians (left front)
+  RIGHT_AZIMUTH_RAD: -Math.PI / 6,   // -30° in radians (right front)
   
   // Left/Right speaker positions in degrees
-  LEFT_AZIMUTH_DEG: 30,              // 30Â° left
-  RIGHT_AZIMUTH_DEG: -30,            // 30Â° right
+  LEFT_AZIMUTH_DEG: 30,              // 30° left
+  RIGHT_AZIMUTH_DEG: -30,            // 30° right
   
   // Elevation (horizontal plane)
-  ELEVATION_RAD: 0,                  // 0Â° elevation
+  ELEVATION_RAD: 0,                  // 0° elevation
   
   // Reference distance from listener
   REFERENCE_DISTANCE: 1.5,           // 1.5 meters (typical near-field monitoring)
@@ -1123,12 +1135,12 @@ export const STEREO_SPEAKER = {
   // Gain compensation for L+R summing
   // -3dB per channel to prevent clipping when both channels are combined
   LR_GAIN_COMPENSATION_DB: -3,       // -3dB per channel
-  LR_GAIN_COMPENSATION_LINEAR: Math.pow(10, -3 / 20), // â‰ˆ 0.707 (âˆš2/2)
+  LR_GAIN_COMPENSATION_LINEAR: Math.pow(10, -3 / 20), // ≈ 0.707 (√2/2)
   
   // Interpretation modes
   MODE: {
     BINAURAL: 'binaural' as const,    // Direct stereo playback (pre-spatialized)
-    SPEAKER: 'speaker' as const        // L/R split + ambisonic encoding at Â±30Â°
+    SPEAKER: 'speaker' as const        // L/R split + ambisonic encoding at ±30°
   }
 } as const;
 
@@ -1182,7 +1194,7 @@ export const AUDIO_CONTROL = {
 export const SOUND_FX = {
   BYPASS_RAMP_SEC: 0.025,
   REBUILD_DUCK_SEC: 0.02,
-  /** Fade used when swapping the previewed source (original â†” processed) while playing. */
+  /** Fade used when swapping the previewed source (original ↔ processed) while playing. */
   SWITCH_XFADE_SEC: 0.14,
   /** Web Audio feedback loops have a 128-sample floor. */
   MIN_DELAY_SAMPLES: 128,
@@ -1219,7 +1231,7 @@ export const RESONANCE_AUDIO = {
   // Default ambisonic order for Resonance Audio scene
   DEFAULT_AMBISONIC_ORDER: 1, // 1st order (4 channels)
 
-  // resonance-audio npm package version (see package.json) â€” single source of
+  // resonance-audio npm package version (see package.json) — single source of
   // truth for the Resonance Audio card's "version" line.
   VERSION: '1.0.0',
   
@@ -1410,11 +1422,11 @@ export const SANDBOX_MODEL_ID = 'local';
 
 /** Minimum world extent (m) of a model's ground grid, before the extent fraction. */
 export const GROUND_GRID_MIN_EXTENT = 10;
-/** Model ground grid half-extent = max(modelWidth, modelDepth, MIN_EXTENT) Ã— this. */
+/** Model ground grid half-extent = max(modelWidth, modelDepth, MIN_EXTENT) × this. */
 export const GROUND_GRID_EXTENT_FRACTION = 0.5;
 /** Home stage (no model loaded): a small, empty ground grid to start from. */
 export const HOME_STAGE = {
-  /** The grid is GRID_SIZE_M Ã— GRID_SIZE_M, centred on the origin. */
+  /** The grid is GRID_SIZE_M × GRID_SIZE_M, centred on the origin. */
   GRID_SIZE_M: 6,
   GRID_SPACING_M: 0.5,
   /** Default / reset camera frames the grid scaled by this margin. */
@@ -1425,7 +1437,7 @@ export const HOME_STAGE = {
   REDUCE_ANIMATION_MS: 380,
   /** Slow idle spin of the camera around the grid centre; stops for good on a manual orbit. */
   AUTO_ROTATE: {
-    /** Azimuth speed in rad/s (0.05 â‰ˆ 3Â°/s, one turn every ~2 min). */
+    /** Azimuth speed in rad/s (0.05 ≈ 3°/s, one turn every ~2 min). */
     SPEED_RAD_PER_S: 0.05,
     /** Pointer travel (px) after pointerdown on the canvas that counts as a manual orbit. */
     ORBIT_DRAG_THRESHOLD_PX: 4,
@@ -1483,13 +1495,13 @@ export const CAMERA_CONFIG = {
 
 // First-person focal-length control (mouse wheel over the 3D canvas).
 // Focal length is expressed in millimetres on a 35 mm film gauge (THREE default).
-// Scroll is multiplicative (deltaY Â· SCROLL_SENSITIVITY exponent) so each notch is
+// Scroll is multiplicative (deltaY · SCROLL_SENSITIVITY exponent) so each notch is
 // an even zoom step across the range, independent of frame rate.
 export const FPS_FOCAL = {
   MIN_MM: 12,
   MAX_MM: 200,
   SCROLL_SENSITIVITY: 0.0015,
-  /** Direct localStorage key â€” camera preferences bypass Zustand persist (AGENTS Rule 6). */
+  /** Direct localStorage key — camera preferences bypass Zustand persist (AGENTS Rule 6). */
   STORAGE_KEY: 'compas-fps-focal-mm',
 } as const;
 
@@ -1507,13 +1519,13 @@ export const SOUND_SPHERE = {
   MUTED_OPACITY: 0.25,
   /** Normal (non-muted) sphere opacity in light/default mode. */
   BASE_OPACITY: 0.75,
-  /** Pre-generation placeholder sphere opacity â€” same look as generated, slightly dimmer. */
+  /** Pre-generation placeholder sphere opacity — same look as generated, slightly dimmer. */
   PENDING_OPACITY: 0.40,
   // Rendering order (always on top, same as receivers)
   RENDER_ORDER: 999,
   DEPTH_TEST: false,
   DEPTH_WRITE: false,
-  /** World radius = distance * SCREEN_SPACE_SIZE â€” keeps constant apparent size at all zoom levels */
+  /** World radius = distance * SCREEN_SPACE_SIZE — keeps constant apparent size at all zoom levels */
   SCREEN_SPACE_SIZE: 0.03,
   /** Minimum scale factor (prevents objects from vanishing when very close) */
   MIN_SCALE: 0.8,
@@ -1523,7 +1535,7 @@ export const SOUND_SPHERE = {
 
 // Source Level Metering (realtime audio-reactive visuals)
 export const AUDIO_LEVEL = {
-  /** Analyser window size â€” small is enough for RMS and cheap to read. */
+  /** Analyser window size — small is enough for RMS and cheap to read. */
   FFT_SIZE: 256,
   /** Linear scale applied to RMS before clamping to 0..1. */
   RMS_SCALE: 3.5,
@@ -1561,7 +1573,7 @@ export const LOW_OUTPUT_HINT = {
   FAR_DISTANCE_M: 12,
   /** Camera distance from the sound after the "Move closer" action. */
   FLY_TO_DISTANCE_M: 3,
-  /** Effective IR broadband gain (W-channel L2 Ã— norm Ã— IR gain) below this is "quiet IR". */
+  /** Effective IR broadband gain (W-channel L2 × norm × IR gain) below this is "quiet IR". */
   LOW_IR_GAIN_DB: -30,
 } as const;
 
@@ -1576,7 +1588,7 @@ export const RECEIVER_CONFIG = {
   PREVIEW_OPACITY: 0.5,
   /** Distance in front of the camera to place a new receiver (meters) */
   CAMERA_PLACEMENT_DISTANCE_M: 3,
-  /** World half-size = distance * SCREEN_SPACE_SIZE â€” keeps constant apparent size at all zoom levels */
+  /** World half-size = distance * SCREEN_SPACE_SIZE — keeps constant apparent size at all zoom levels */
   SCREEN_SPACE_SIZE: 0.03,
   /** Minimum scale factor (prevents objects from vanishing when very close) */
   MIN_SCALE: 0.5,
@@ -1592,14 +1604,14 @@ export const OBJECT_LABEL = {
   BORDER_RADIUS: 3,
   RENDER_ORDER: 1001,
   /** Label world height is a fraction of the camera's vertical FOV at the label's
-   *  distance: h = distance * 2Â·tan(fov/2) * VIEWPORT_HEIGHT_RATIO. This keeps the
+   *  distance: h = distance * 2·tan(fov/2) * VIEWPORT_HEIGHT_RATIO. This keeps the
    *  label at the same proportion of the viewport height on any screen / window
    *  size / DPI (rem-like consistent sizing), instead of a fixed pixel count that
    *  shrinks or grows with the canvas. */
   VIEWPORT_HEIGHT_RATIO: 0.013,
   /** Default multiplicative clamp applied to a label's VIEWPORT_HEIGHT_RATIO when
    *  the caller has no object-specific clamp ratio. This is the Resonance bounding-box
-   *  face-label / dimension-readout scale â€” 2.5 (250% of the base ratio) so they
+   *  face-label / dimension-readout scale — 2.5 (250% of the base ratio) so they
    *  match (and stay readable against) the sound-sphere / receiver labels, which
    *  derive their own clamp ratio from their mesh scale clamps. */
   DEFAULT_CLAMP_RATIO: 2.5,
@@ -1871,7 +1883,7 @@ export const AUDIO_TIMELINE = {
 
 // ============================================================================
 // Scenario Sound-Scene Timeline Configuration
-// Per-scenario DAW timeline length (seconds) â€” a scenario card sets its own,
+// Per-scenario DAW timeline length (seconds) — a scenario card sets its own,
 // which bounds that scenario's generated sound scene in the DAW.
 // ============================================================================
 export const SCENARIO_TIMELINE = {
@@ -1891,7 +1903,7 @@ export const WAVESURFER_TIMELINE = {
   TRACK_HEIGHT: 35,                  // Waveform height per track
   ITERATION_HEIGHT: 25,              // Height for each iteration waveform
 
-  // Waveform rendering â€” low-resolution for performance (larger bars = fewer canvas ops)
+  // Waveform rendering — low-resolution for performance (larger bars = fewer canvas ops)
   BAR_WIDTH: 4,
   BAR_GAP: 2,
   BAR_RADIUS: 2,
@@ -1904,7 +1916,7 @@ export const WAVESURFER_TIMELINE = {
   TRACK_SPACING: 5,
 
   // Width calculation
-  PIXELS_PER_SECOND: 10,              // Pixels per second â€” fixed (no zoom)
+  PIXELS_PER_SECOND: 10,              // Pixels per second — fixed (no zoom)
   MIN_WIDTH: 420,                    // Minimum component width (keeps header controls readable)
 } as const;
 
@@ -1915,7 +1927,7 @@ export const DAW = {
   TRACK_HEIGHT: 52,
   MIN_TRACK_HEIGHT: 28,
   MAX_TRACK_HEIGHT: 120,
-  /** Below this track height, the track head's sub-label ("Background Â· 5 clips") is hidden
+  /** Below this track height, the track head's sub-label ("Background · 5 clips") is hidden
    *  so the title and fader rows keep the full track height instead of being clipped. */
   TRACK_HEIGHT_SUBLABEL_MIN: 60,
   HEAD_WIDTH: 168,
@@ -1941,7 +1953,7 @@ export const DAW = {
   MIN_DOCK_HEIGHT: 140,
   /** Auto-fit (first expand / track changes) never grows the dock past this share of the window height. */
   AUTO_FIT_MAX_DOCK_RATIO: 1 / 3,
-  /** Hard cap â€” the user can drag the dock up to this share of the window height. */
+  /** Hard cap — the user can drag the dock up to this share of the window height. */
   MAX_DOCK_RATIO: 2/3,
   MIN_PX_PER_SECOND: 1,
   MAX_PX_PER_SECOND: 200,
@@ -1984,7 +1996,7 @@ export const AUDIO_MODE_DESCRIPTIONS = {
     dof: '6 DOF',
     requiresReceiver: false,
     requiresIR: false,
-    icon: 'ðŸ›ï¸',
+    icon: '🏛️',
   },
   anechoic: {
     name: 'No Acoustics',
@@ -1994,7 +2006,7 @@ export const AUDIO_MODE_DESCRIPTIONS = {
     dof: '6 DOF',
     requiresReceiver: false,
     requiresIR: false,
-    icon: 'ðŸŽµ',
+    icon: '🎵',
   },
   ambisonic_ir: {
     name: 'IR Convolution',
@@ -2004,7 +2016,7 @@ export const AUDIO_MODE_DESCRIPTIONS = {
     dof: '3 DOF',
     requiresReceiver: true,
     requiresIR: true,
-    icon: 'ðŸŒ',
+    icon: '🌐',
   },
 } as const;
 
@@ -2017,21 +2029,21 @@ export const AMBISONIC_ORDER_INFO = {
     fullName: 'First Order Ambisonics',
     channels: 4,
     description: 'Basic spatial resolution, lower CPU usage',
-    icon: 'ðŸ”µ',
+    icon: '🔵',
   },
   2: {
     name: 'SOA',
     fullName: 'Second Order Ambisonics',
     channels: 9,
     description: 'Medium spatial resolution, moderate CPU usage',
-    icon: 'ðŸŸ¢',
+    icon: '🟢',
   },
   3: {
     name: 'TOA',
     fullName: 'Third Order Ambisonics',
     channels: 16,
     description: 'High spatial resolution, higher CPU usage',
-    icon: 'ðŸŸ£',
+    icon: '🟣',
   },
 } as const;
 
@@ -2064,11 +2076,11 @@ export const AUDIO_MODE_UI = {
  * Audio warnings and notices
  */
 export const AUDIO_WARNINGS = {
-  RECEIVER_REQUIRED: 'âš ï¸ IR mode requires a receiver to be placed in the scene',
-  HRTF_UNAVAILABLE: 'âš ï¸ HRTF data unavailable - using basic panning',
-  IR_INVALID_CHANNELS: 'âš ï¸ Unsupported channel count for IR',
-  ORDER_UNSUPPORTED: 'âš ï¸ Ambisonic order not supported by browser',
-  MODE_INIT_FAILED: 'âš ï¸ Audio mode initialization failed',
+  RECEIVER_REQUIRED: '⚠️ IR mode requires a receiver to be placed in the scene',
+  HRTF_UNAVAILABLE: '⚠️ HRTF data unavailable - using basic panning',
+  IR_INVALID_CHANNELS: '⚠️ Unsupported channel count for IR',
+  ORDER_UNSUPPORTED: '⚠️ Ambisonic order not supported by browser',
+  MODE_INIT_FAILED: '⚠️ Audio mode initialization failed',
 } as const;
 
 /** Distance threshold (meters) above which a source/receiver is flagged as not at its simulation position */
@@ -2117,7 +2129,7 @@ export const PYROOMACOUSTICS_RAY_TRACING_N_RAYS_MAX = 50000; // Maximum number o
 // backend/config/constants.py (PYROOMACOUSTICS_RAY_TRACING_RECEIVER_RADIUS / _HIST_BIN_SIZE).
 export const PYROOMACOUSTICS_RAY_TRACING_RECEIVER_RADIUS = 0.5; // Receiver sphere radius (m)
 export const PYROOMACOUSTICS_RAY_TRACING_HIST_BIN_SIZE = 0.004; // Energy histogram bin (s)
-// Target per-histogram-bin level error Î”L for the recommended ray count (VorlÃ¤nder,
+// Target per-histogram-bin level error ΔL for the recommended ray count (Vorländer,
 // Auralization 2008; COMSOL "Chamber Music Hall" uses 1 dB). See lib/acoustics/ray-count-estimate.ts.
 export const PYROOMACOUSTICS_RAY_TRACING_MAX_ERROR_DB = 1;
 export const PYROOMACOUSTICS_DEFAULT_SCATTERING = 0.05; // Default scattering coefficient (0-1)
@@ -2209,7 +2221,7 @@ export const CHORAS_DG_PPW_MAX = 6;
 export const CHORAS_DG_CFL_MIN = 0.1;
 export const CHORAS_DG_CFL_MAX = 2.0;
 
-// Generic speed of sound â€” shared by all simulation engines
+// Generic speed of sound — shared by all simulation engines
 export const DEFAULT_SPEED_OF_SOUND = 343; // m/s
 export const SPEED_OF_SOUND_MIN = 300;
 export const SPEED_OF_SOUND_MAX = 400;
@@ -2289,29 +2301,29 @@ export const SIMPLE_MODE = {
   /** DOM ids of the bubble columns (SectionHighlight targets from SimulationSummaryBar). */
   SOUNDSCAPES_COLUMN_ID: 'simple-soundscapes-column',
   LISTENERS_COLUMN_ID: 'simple-listeners-column',
-  BUBBLE_SIZE: 36,              // px â€” scene / simulation bubble diameter
-  EXIT_BUTTON_SIZE: 26,         // px â€” "Leave FPS view" button beside the active listener
-  FLYOUT_POWER_SIZE: 26,        // px â€” power button inside a bubble's hover flyout
-  POWER_ICON_SIZE: 13,          // px â€” power glyph in the flyout / panel header
-  DELETE_CONFIRM_WIDTH: 168,    // px â€” remove confirmation popover above a card's trash button
-  DELETE_CONFIRM_GAP: 6,        // px â€” between the trash button and its confirmation
-  DELETE_CONFIRM_MARGIN: 8,     // px â€” minimum distance from the viewport edges
+  BUBBLE_SIZE: 36,              // px — scene / simulation bubble diameter
+  EXIT_BUTTON_SIZE: 26,         // px — "Leave FPS view" button beside the active listener
+  FLYOUT_POWER_SIZE: 26,        // px — power button inside a bubble's hover flyout
+  POWER_ICON_SIZE: 13,          // px — power glyph in the flyout / panel header
+  DELETE_CONFIRM_WIDTH: 168,    // px — remove confirmation popover above a card's trash button
+  DELETE_CONFIRM_GAP: 6,        // px — between the trash button and its confirmation
+  DELETE_CONFIRM_MARGIN: 8,     // px — minimum distance from the viewport edges
   DELETE_CONFIRM_Z_INDEX: 220,  // above floating cards / panels (incl. PANEL_RAISED_Z_INDEX), below modals
-  BUBBLE_GAP: 10,               // px â€” vertical gap between bubbles
-  RING_STROKE: 2,               // px â€” progress ring stroke width
-  EDGE_MARGIN: 16,              // px â€” column distance from the screen edge
-  TOP_OFFSET: 16,               // px â€” left column label top
-  RIGHT_TOP_OFFSET: 16,         // px â€” right column label top
-  LISTENERS_BOTTOM_GAP: 12,     // px â€” gap between the bottom bar (or docked DAW) and the listener stack
-  PANEL_GAP: 12,                // px â€” gap between a bubble column and its panel
-  HEADING_HEIGHT: 24,           // px â€” column heading row above / below a bubble column
-  SCROLL_BUTTON_HEIGHT: 18,     // px â€” "more above / below" arrow pill of an overflowing column
+  BUBBLE_GAP: 10,               // px — vertical gap between bubbles
+  RING_STROKE: 2,               // px — progress ring stroke width
+  EDGE_MARGIN: 16,              // px — column distance from the screen edge
+  TOP_OFFSET: 16,               // px — left column label top
+  RIGHT_TOP_OFFSET: 16,         // px — right column label top
+  LISTENERS_BOTTOM_GAP: 12,     // px — gap between the bottom bar (or docked DAW) and the listener stack
+  PANEL_GAP: 12,                // px — gap between a bubble column and its panel
+  HEADING_HEIGHT: 24,           // px — column heading row above / below a bubble column
+  SCROLL_BUTTON_HEIGHT: 18,     // px — "more above / below" arrow pill of an overflowing column
   SCROLL_WHEEL_STEP_PX: 60,     // px of wheel delta per one-bubble scroll step
-  SCROLL_DRAG_THRESHOLD_PX: 6,  // px â€” pointer travel before a press becomes a column drag
-  RIGHT_COLUMNS_GAP: 16,        // px â€” minimum space kept between the Acoustics and Listeners columns
+  SCROLL_DRAG_THRESHOLD_PX: 6,  // px — pointer travel before a press becomes a column drag
+  RIGHT_COLUMNS_GAP: 16,        // px — minimum space kept between the Acoustics and Listeners columns
   PANEL_WIDTH: 'var(--sidebar-default-width)',
   PANEL_MAX_HEIGHT: 'min(720px, calc(var(--ui-dvh) - var(--scene-bottom-bar-height) - 80px))',
-  COMPOSER_WIDTH: 360,          // px â€” prompt composer panel width
+  COMPOSER_WIDTH: 360,          // px — prompt composer panel width
   COMPOSER_MAX_PROMPT: 600,     // chars
   Z_INDEX: 25,                  // above scene overlays, below modals/toasts
   PANEL_RAISED_Z_INDEX: 205,    // scene panel brought in front of the docked DAW (200), below the bottom bar (210)
@@ -2325,7 +2337,7 @@ export const SIMPLE_MODE = {
   },
   /** Label of the generate step while the orchestrate agent schedules the timeline. */
   ORCHESTRATE_LABEL: 'Orchestrate agent',
-  THINKING_BOX_HEIGHT: 120,     // px â€” fixed height of the expanded AI-thinking box
+  THINKING_BOX_HEIGHT: 120,     // px — fixed height of the expanded AI-thinking box
   /** Diffusion steps applied to the scene's own sound cards (always the full count). */
   DIFFUSION_STEPS: DEFAULT_DIFFUSION_STEPS,
   DURATION_OPTIONS_MS: [30_000, 60_000, 120_000],
@@ -2337,7 +2349,8 @@ export const SIMPLE_MODE = {
   /** Text-to-audio models offered in the composer. */
   AUDIO_MODEL_OPTIONS: [AUDIO_MODEL_SA3, AUDIO_MODEL_TANGOFLUX, AUDIO_MODEL_ELEVENLABS],
   /** LLMs offered in the composer. */
-  LLM_MODEL_OPTIONS: [LLM_MODEL_GEMINI_FLASH, LLM_MODEL_GEMINI_PRO, LLM_MODEL_OPENAI, LLM_MODEL_ANTHROPIC],
+  /** OpenAI / Anthropic models are intentionally hidden from the composer menu. */
+  LLM_MODEL_OPTIONS: [LLM_MODEL_GEMINI_FLASH, LLM_MODEL_GEMINI_PRO],
   /** Example shown in the composer's free-text speech-language field. */
   SPEECH_LANGUAGE_PLACEHOLDER: 'Swiss German',
   /** Scenario card defaults / bounds for composer-created scenes. */
@@ -2361,18 +2374,18 @@ export const SIMPLE_MODE = {
 
 // Full-width bottom control bar (components/scene/SceneBottomBar.tsx)
 export const SCENE_BOTTOM_BAR = {
-  HEIGHT: 40,              // px â€” mirrored by --scene-bottom-bar-height in globals.css
+  HEIGHT: 40,              // px — mirrored by --scene-bottom-bar-height in globals.css
   BUTTON_SIZE: 28,         // px
   ICON_SIZE: 14,           // px
-  GROUP_GAP: 4,            // px â€” between buttons of a group
+  GROUP_GAP: 4,            // px — between buttons of a group
   PADDING_X: 10,           // px
   Z_INDEX: 210,            // above the docked DAW (200) so popovers from the bar overlay it
-  POPOVER_OFFSET: 8,       // px â€” gap between the bar and its upward popovers
-  POPOVER_WIDTH: 300,      // px â€” shortcuts popover
+  POPOVER_OFFSET: 8,       // px — gap between the bar and its upward popovers
+  POPOVER_WIDTH: 300,      // px — shortcuts popover
   POPOVER_MAX_HEIGHT: '70dvh', // shortcuts popover scrolls past this
   /** Slot right of "Timeline" that the expanded DAW dock portals its controls into. */
   DAW_CONTROLS_SLOT_ID: 'scene-bottom-bar-daw-controls',
-  /** Object Explorer toggle â€” Simple-mode SectionHighlight target for materials. */
+  /** Object Explorer toggle — Simple-mode SectionHighlight target for materials. */
   OBJECT_EXPLORER_BUTTON_ID: 'scene-bottom-bar-object-explorer',
 } as const;
 
@@ -2435,10 +2448,10 @@ export const CUSTOM_SELECTION_HIGHLIGHT = {
   RENDER_ORDER: 999,
 } as const;
 
-// Keyboard shortcuts â€” single source of truth for the global handler
+// Keyboard shortcuts — single source of truth for the global handler
 // (hooks/useGlobalShortcuts.ts), the hover tooltips (ui/ShortcutTooltip.tsx)
 // and the shortcuts popover (scene/SceneShortcutsButton.tsx).
-// `keys` uses "Ctrl" for the platform modifier (shown as âŒ˜ on macOS) and
+// `keys` uses "Ctrl" for the platform modifier (shown as ⌘ on macOS) and
 // " + " between chips.
 export type ShortcutGroup = 'Playback' | 'Prompts' | 'Cards' | 'Navigation' | 'Edit';
 
@@ -2457,13 +2470,13 @@ export const KEYBOARD_SHORTCUTS = {
   REWIND:         { keys: 'Home', label: 'Go to start', group: 'Playback' },
   MUTE:           { keys: 'M', label: 'Mute / unmute', group: 'Playback' },
   SUBMIT_PROMPT:  { keys: 'Ctrl + Enter', label: 'Generate', hint: 'From any prompt field', group: 'Prompts' },
-  NEXT_CARD:      { keys: 'Alt + â†“', label: 'Next sound card', group: 'Cards' },
-  PREV_CARD:      { keys: 'Alt + â†‘', label: 'Previous sound card', group: 'Cards' },
+  NEXT_CARD:      { keys: 'Alt + ↓', label: 'Next sound card', group: 'Cards' },
+  PREV_CARD:      { keys: 'Alt + ↑', label: 'Previous sound card', group: 'Cards' },
   COLLAPSE:       { keys: 'Esc', label: 'Collapse card / clear selection', group: 'Cards' },
   DELETE_CARD:    { keys: 'Delete', label: 'Remove expanded sound card', group: 'Cards' },
   FRAME:          { keys: 'F', label: 'Frame selection', hint: 'Whole model when nothing is selected', group: 'Navigation' },
   HIDE_SELECTION: { keys: 'Shift + H', label: 'Hide selection', hint: 'Selected model objects', group: 'Navigation' },
-  TOGGLE_SOUNDS_LISTENERS: { keys: 'S', label: 'Show / hide sounds & listeners', hint: 'Same as Settings â†’ Display', group: 'Navigation' },
+  TOGGLE_SOUNDS_LISTENERS: { keys: 'S', label: 'Show / hide sounds & listeners', hint: 'Same as Settings → Display', group: 'Navigation' },
   SHOW_SHORTCUTS: { keys: '?', label: 'Show shortcuts', group: 'Navigation' },
   UNDO:           { keys: 'Ctrl + Z', label: 'Undo', group: 'Edit' },
   REDO:           { keys: 'Ctrl + Y', altKeys: 'Ctrl + Shift + Z', label: 'Redo', group: 'Edit' },
@@ -2473,7 +2486,7 @@ export type ShortcutId = keyof typeof KEYBOARD_SHORTCUTS;
 
 export const SHORTCUT_GROUP_ORDER: readonly ShortcutGroup[] = ['Playback', 'Prompts', 'Cards', 'Navigation', 'Edit'];
 
-/** Mouse part a control uses â€” drives the MouseIcon highlight (ui/MouseIcon.tsx). */
+/** Mouse part a control uses — drives the MouseIcon highlight (ui/MouseIcon.tsx). */
 export type MouseControl = 'left' | 'right' | 'wheel';
 
 export interface FpsControlDef {
@@ -2482,7 +2495,7 @@ export interface FpsControlDef {
   mouse?: MouseControl;
 }
 
-/** First-person (FPS) view controls â€” shortcuts popover + first-time FPS help popup. */
+/** First-person (FPS) view controls — shortcuts popover + first-time FPS help popup. */
 export const FPS_CONTROLS: readonly FpsControlDef[] = [
   { label: 'Look around', keys: 'Left-drag', mouse: 'left' },
   { label: 'Roll', keys: 'Right-drag', mouse: 'right' },
@@ -2491,13 +2504,13 @@ export const FPS_CONTROLS: readonly FpsControlDef[] = [
   { label: 'Exit first-person', keys: 'Esc' },
 ];
 
-/** One-time hints (hooks/useOneTimeHint.ts) â€” localStorage key prefix, per user. */
+/** One-time hints (hooks/useOneTimeHint.ts) — localStorage key prefix, per user. */
 export const ONE_TIME_HINT_STORAGE_PREFIX = 'compas-hint-seen:';
 
 /** First-time FPS help popup (components/scene/FpsHelpPopup.tsx). */
 export const FPS_HELP_POPUP = {
   WIDTH: 260,        // px
-  GAP: 12,           // px â€” distance from the anchor (left of the FPS bubble row)
+  GAP: 12,           // px — distance from the anchor (left of the FPS bubble row)
   MOUSE_ICON_SIZE: '14px',
   Z_INDEX: 60,
 } as const;
@@ -2506,7 +2519,7 @@ export const SHORTCUT_TOOLTIP = {
   SHOW_DELAY_MS: 450,
   OFFSET: 8,        // px between trigger and tooltip
   MAX_WIDTH: 260,   // px
-  VIEWPORT_MARGIN: 8, // px â€” keep the tooltip this far inside the window
+  VIEWPORT_MARGIN: 8, // px — keep the tooltip this far inside the window
 } as const;
 
 /** Separator between key chips in ShortcutDef.keys ("Ctrl + Enter"). */
@@ -2514,10 +2527,10 @@ export const SHORTCUT_KEY_SEPARATOR = ' + ';
 
 // Multi-level dropdown (components/ui/NestedMenu.tsx)
 export const NESTED_MENU = {
-  WIDTH: 200,              // px â€” panel min width (styled in globals.css .nested-menu)
-  VIEWPORT_MARGIN: 8,      // px â€” clamp margin
-  SUBMENU_GAP: 2,          // px â€” gap between a row and its submenu
-  PADDING_Y: 4,            // px â€” panel vertical padding (aligns a submenu's first row)
+  WIDTH: 200,              // px — panel min width (styled in globals.css .nested-menu)
+  VIEWPORT_MARGIN: 8,      // px — clamp margin
+  SUBMENU_GAP: 2,          // px — gap between a row and its submenu
+  PADDING_Y: 4,            // px — panel vertical padding (aligns a submenu's first row)
   Z_INDEX: 10000,
 } as const;
 

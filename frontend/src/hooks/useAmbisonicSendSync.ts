@@ -4,6 +4,7 @@
  * Mirrors the multichannel ambisonic send settings from `audioControlsStore`
  * onto the AudioOrchestrator and writes the orchestrator's status back:
  *
+ * - on mount, picks `ambisonicSendTransport` from the detected OS (Windows → bridge)
  * - `ambisonicSendEnabled` + target (`ambisonicSendTransport` → device id or bridge URL)
  *   + `ambisonicSendOrder` → `setAmbisonicSend()`
  * - `ambisonicSendRotateWithListener` → `setAmbisonicSendRotateWithListener()`
@@ -17,6 +18,7 @@ import { useEffect } from "react";
 import { useAudioControlsStore } from "@/store";
 import type { AudioOrchestrator } from "@/lib/audio/AudioOrchestrator";
 import type { AmbisonicSendStatus, AmbisonicSendTarget } from "@/types/audio";
+import { detectWindows } from "@/utils/platform";
 
 function applyStatus(status: AmbisonicSendStatus | null): void {
   if (!status) return;
@@ -34,6 +36,12 @@ export function useAmbisonicSendSync(orchestrator: AudioOrchestrator | null): vo
   const transport = useAudioControlsStore((s) => s.ambisonicSendTransport);
   const bridgeUrl = useAudioControlsStore((s) => s.ambisonicSendBridgeUrl);
   const rotateWithListener = useAudioControlsStore((s) => s.ambisonicSendRotateWithListener);
+
+  // DVS on Windows (WDM) only exposes stereo pairs to browsers, so the send goes
+  // through the local ASIO bridge there; elsewhere the browser opens the device.
+  useEffect(() => {
+    useAudioControlsStore.getState().setAmbisonicSendTransport(detectWindows() ? "bridge" : "device");
+  }, []);
 
   useEffect(() => {
     if (!orchestrator) return;

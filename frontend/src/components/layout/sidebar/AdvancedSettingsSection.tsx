@@ -56,9 +56,6 @@ import {
   DEFAULT_DBFS,
   DBFS_MIN,
   DBFS_MAX,
-  MAXIMUM_FOLEY_SOUNDS_MIN,
-  MAXIMUM_FOLEY_SOUNDS_MAX,
-  DEFAULT_MAXIMUM_FOLEY_SOUNDS,
   DEFAULT_DIFFUSION_STEPS,
   SANDBOX_MODEL_ID,
 } from "@/utils/constants";
@@ -140,7 +137,7 @@ type SettingKey =
   | 'llm-model' | 'tts-model' | 'tts-language' | 'audio-model'
   | 'diffusion-steps' | 'negative-prompt' | 'noise-reduction' | 'trim-silence'
   | 'listener-orientation' | 'spectrograms'
-  | 'base-spl' | 'max-foley' | 'output-device' | 'ambisonic-send'
+  | 'base-spl' | 'output-device' | 'ambisonic-send'
   | 'collaboration'
   | 'auto-save' | 'delete-history';
 
@@ -183,7 +180,6 @@ const SETTINGS: SettingEntry[] = [
   { section: 'rendering', key: 'ambisonic-send', terms: ['ambisonic send', 'ambisonics', 'ambix', 'multichannel', 'dante', 'holophonix', 'reaper', 'daw', 'b-format', 'stream', 'loudspeaker', 'dome'] },
   { section: 'rendering', key: 'spectrograms', terms: ['spectrograms', 'spectrogram'] },
   { section: 'rendering', key: 'base-spl', terms: ['base level', 'base spl', 'spl', 'volume', 'db', 'decibel'] },
-  { section: 'rendering', key: 'max-foley', terms: ['max sounds', 'max foley', 'foley', 'maximum sounds', 'prompt'] },
 
   { section: 'workspaces', key: 'collaboration', terms: ['workspaces', 'workspace', 'members', 'collaboration', 'collaborators', 'invite', 'sharing', 'owner', 'leave'] },
 
@@ -626,8 +622,6 @@ export function AdvancedSettingsSection({
 
   const globalBaseDbfs = useAudioControlsStore((s) => s.globalBaseDbfs);
   const setGlobalBaseDbfs = useAudioControlsStore((s) => s.setGlobalBaseDbfs);
-  const maximumFoleySounds = useAudioControlsStore((s) => s.maximumFoleySounds);
-  const setMaximumFoleySounds = useAudioControlsStore((s) => s.setMaximumFoleySounds);
 
   const ttsLanguage = useAudioControlsStore((s) => s.ttsLanguage);
   const setTtsLanguage = useAudioControlsStore((s) => s.setTtsLanguage);
@@ -992,7 +986,9 @@ export function AdvancedSettingsSection({
                 <OutputDeviceSelector />
               )}
               {isVisible('ambisonic-send') && (
-                <AmbisonicSendControls />
+                <CollapsibleGroup title="Ambisonic send (AmbiX)" forceExpanded={isSearchActive}>
+                  <AmbisonicSendControls />
+                </CollapsibleGroup>
               )}
               {isVisible('base-spl') && (
                 <RangeSlider
@@ -1012,18 +1008,6 @@ export function AdvancedSettingsSection({
                   checked={showSpectrograms}
                   onChange={setShowSpectrograms}
                   label="Show spectrograms"
-                />
-              )}
-              {isVisible('max-foley') && (
-                <RangeSlider
-                  label="Max sounds"
-                  min={MAXIMUM_FOLEY_SOUNDS_MIN}
-                  max={MAXIMUM_FOLEY_SOUNDS_MAX}
-                  step={1}
-                  value={maximumFoleySounds}
-                  defaultValue={DEFAULT_MAXIMUM_FOLEY_SOUNDS}
-                  onChange={setMaximumFoleySounds}
-                  hoverText="Maximum generated sounds per prompt"
                 />
               )}
             </div>

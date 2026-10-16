@@ -17,7 +17,6 @@ import {
 type StepState = 'done' | 'running' | 'pending' | 'skipped' | 'reused' | 'error';
 
 const PREVIEW_ITEMS = 4;
-const PERCENT = 100;
 
 function StepIcon({ state }: { state: StepState }) {
   if (state === 'running') {
@@ -77,11 +76,6 @@ export function SceneWorkflowDetail({ scene, progress, onShowSounds }: SceneWork
   const generatedSounds = useSoundscapeStore((s) => s.generatedSounds);
   const soundGenCardStatus = useSoundscapeStore((s) => s.soundGenCardStatus);
   const soundGenCardProgress = useSoundscapeStore((s) => s.soundGenCardProgress);
-  const soundGenProgressValue = useSoundscapeStore((s) => s.soundGenProgressValue);
-  const analysisProgress = useAnalysisStore((s) => s.analysisProgress);
-  const analysisThinking = useAnalysisStore((s) => s.analysisThinking);
-  const isOrchestrating = useSoundscapeStore((s) => s.isOrchestrating);
-  const orchestrateThinking = useSoundscapeStore((s) => s.orchestrateThinking);
   const run = useSceneWorkflowStore((s) => s.runs[scene.usageIndex]);
 
   const scenario = analysisConfigs[scene.usageIndex];
@@ -137,7 +131,7 @@ export function SceneWorkflowDetail({ scene, progress, onShowSounds }: SceneWork
       }
       return `${foley.length} sounds${sc.includeSpeech === false ? '' : ` · ${speeches.length} voices`}`;
     }
-    if (step === 'generate' && state === 'running' && isOrchestrating) {
+    if (step === 'generate' && state === 'running' && progress.orchestrating) {
       return 'Scheduling the sounds on the timeline…';
     }
     if (step === 'generate' && scene.soundCount > 0) {
@@ -146,11 +140,10 @@ export function SceneWorkflowDetail({ scene, progress, onShowSounds }: SceneWork
     return null;
   };
 
+  // Scenes run concurrently — step progress / thinking are this scene's own (useSceneProgress).
   const generating = progress.status === 'running' && progress.step === 'generate';
-  const orchestrating = generating && isOrchestrating;
-  const stepPercent = Math.max(0, Math.min(PERCENT, generating ? soundGenProgressValue : analysisProgress));
-  // The orchestrate agent runs inside the generate step; the other agents report through analysisStore.
-  const thinking = generating ? (orchestrating ? orchestrateThinking : '') : analysisThinking;
+  const orchestrating = generating && progress.orchestrating;
+  const { stepPercent, thinking } = progress;
 
   return (
     <div className="flex flex-col gap-2.5">
@@ -228,7 +221,7 @@ export interface SceneWorkflowActionsProps {
 /**
  * SceneWorkflowActions Component
  *
- * Stop / Cancel / Resume / Retry and "Open in detailed mode" — rendered in the
+ * Stop / Resume / Retry and "Open in detailed mode" — rendered in the
  * workflow panel's footer, right of the trash button.
  *
  * Usage:
@@ -237,16 +230,14 @@ export interface SceneWorkflowActionsProps {
  * ```
  */
 export function SceneWorkflowActions({ scene, progress, onOpenExpert }: SceneWorkflowActionsProps) {
-  const isQueuedOrRunning = useSceneWorkflowStore(
-    (s) => s.activeUsageIndex === scene.usageIndex || s.queue.includes(scene.usageIndex),
-  );
+  const isRunning = useSceneWorkflowStore((s) => s.runs[scene.usageIndex]?.status === 'running');
   const stopScene = useSceneWorkflowStore((s) => s.stopScene);
   const resumeScene = useSceneWorkflowStore((s) => s.resumeScene);
   return (
     <>
-      {isQueuedOrRunning ? (
+      {isRunning ? (
         <button type="button" className="bubble-chip" onClick={() => stopScene(scene.usageIndex)}>
-          {progress.status === 'queued' ? 'Cancel' : 'Stop'}
+          Stop
         </button>
       ) : (
         scene.isScenario && progress.status !== 'done' && (

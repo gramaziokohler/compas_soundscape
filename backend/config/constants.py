@@ -102,7 +102,42 @@ DURATION_MAX = 25.0
 DURATION_RANGE = (DURATION_MIN, DURATION_MAX)
 
 # Foley Artist Configuration
-DEFAULT_MAXIMUM_FOLEY_SOUNDS = 20  # Maximum total sound events across all scenarios
+# "Sound detail" level: how finely the foley agent splits scenario actions into
+# distinct sound-event cards. `max_events` is an indicative ceiling for a busy
+# scenario (discrete "sound event" entries only — background beds and speech are
+# not counted); a quiet scenario still yields few events. Mirrors
+# FOLEY_SOUND_DETAIL_OPTIONS in frontend/src/utils/constants.ts.
+FOLEY_SOUND_DETAIL_LEVELS = {
+    "essential": {
+        "max_events": 5,
+        "granularity": (
+            "Merge broadly: one entry per broad sound category (e.g. all footsteps together, "
+            "all furniture handling together, all tableware together)."
+        ),
+    },
+    "balanced": {
+        "max_events": 10,
+        "granularity": (
+            "Split only when the sound source or the action clearly differs "
+            "(e.g. chair scraping vs. chair creaking are two entries; footsteps stay one entry)."
+        ),
+    },
+    "detailed": {
+        "max_events": 16,
+        "granularity": (
+            "Split by sound source, action AND material/surface "
+            "(e.g. footsteps on carpet vs. footsteps on parquet, ceramic cup vs. glass placed on a table)."
+        ),
+    },
+    "exhaustive": {
+        "max_events": 24,
+        "granularity": (
+            "Give every distinct audible interaction its own entry; only merge true repeats of the "
+            "same source, action and material."
+        ),
+    },
+}
+DEFAULT_FOLEY_SOUND_DETAIL = "balanced"
 
 # Virtual room extents used to anchor scenario sound positions when no context
 # model (3D layout analysis) is available. Speckle Z-up: X = width, Y = depth,
@@ -853,6 +888,13 @@ SPECKLE_SUPPORTED_FORMATS = ["3dm", "obj", "ifc"]
 # pool so ingestion status polls return immediately (stage "materializing").
 SPECKLE_MATERIALIZE_WORKERS = 1
 SPECKLE_MATERIALIZING_MESSAGE = "Preparing the model for the viewer..."
+
+# Ingestion converters for formats that carry no units (OBJ). Speckle labels their
+# meshes "mm" even though OBJ exports are almost always in metres.
+SPECKLE_UNITLESS_SOURCE_APPS = ["obj-rhino-converter"]
+# Largest model extent (in the declared units) at which a "mm"-labelled unitless model
+# is treated as metres — no real room is under 0.2 m wide.
+SPECKLE_UNITLESS_METRE_MAX_EXTENT = 200.0
 
 # ============================================================================
 # Soundscape Data Persistence Configuration
