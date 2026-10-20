@@ -340,6 +340,8 @@ export interface CardProps<TConfig extends CardBaseConfig = CardBaseConfig, TRes
   dimmed?: boolean;
   /** Optional element rendered to the left of the card title in the header (e.g., entity link button) */
   headerPrefix?: ReactNode;
+  /** Optional element rendered right of the title while the card is expanded (e.g. an "outdated" badge). */
+  headerBadge?: ReactNode;
   /** Optional element rendered to the left of the bottom-bar action (e.g. simulation count dots). Hidden while generating. */
   footerPrefix?: ReactNode;
   /** Optional element rendered to the right of the bottom-bar action (e.g. a small refresh button). Hidden while generating. */

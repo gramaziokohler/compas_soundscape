@@ -38,13 +38,19 @@ interface SignatureSpec {
   nested?: string[];
   /** Include the TTS speech lines (virtual `speechLines` input). */
   speechLines?: boolean;
+  /**
+   * Inputs shared by every variant of the card (variant count, speech-line
+   * list). Kept as-is when a variant's settings are loaded into the card.
+   */
+  cardLevel?: string[];
 }
 
 const SIGNATURE_SPECS: Partial<Record<CardType, SignatureSpec>> = {
   'text-to-audio': {
     fields: ['prompt', 'duration', 'guidance_scale', 'prompt_influence', 'loop', 'seed_copies', 'steps', 'negative_prompt'],
+    cardLevel: ['seed_copies'],
   },
-  'text-to-speech': { fields: ['prompt', 'voice_name', 'seed_copies'], speechLines: true },
+  'text-to-speech': { fields: ['prompt', 'voice_name', 'seed_copies'], speechLines: true, cardLevel: ['seed_copies'] },
   library: { fields: ['selectedLibrarySound'] },
   catalog: { fields: ['selectedCatalogSound'] },
   pyroomacoustics: { fields: ['settings', 'speckleMaterialAssignments', 'speckleScatteringAssignments'], nested: ['settings'] },
@@ -101,14 +107,18 @@ function getSignatureInputs(config: SignableConfig, spec: SignatureSpec): Signat
   return inputs;
 }
 
-/** Inputs captured at generation time, or null when there is no (valid) snapshot. */
-function getSnapshotInputs(config: SignableConfig): SignatureInputs | null {
-  if (config.generatedSignature === undefined) return null;
+function parseSignature(signature: string | undefined): SignatureInputs | null {
+  if (signature === undefined) return null;
   try {
-    return JSON.parse(config.generatedSignature) as SignatureInputs;
+    return JSON.parse(signature) as SignatureInputs;
   } catch {
     return null;
   }
+}
+
+/** Inputs captured at generation time, or null when there is no (valid) snapshot. */
+function getSnapshotInputs(config: SignableConfig): SignatureInputs | null {
+  return parseSignature(config.generatedSignature);
 }
 
 /** Stable signature of a config's generation inputs, or `null` if the type cannot regenerate. */
@@ -187,5 +197,56 @@ export function getGenerationRevertPatch(config: object): Record<string, unknown
     if (meta?.speechLines) patch.orchestrateMeta = { ...meta, speechLines: lines };
     else if (source) patch.scenarioSource = { ...source, speechLines: lines };
   }
+  return Object.keys(patch).length > 0 ? patch : null;
+}
+
+// ============================================================================
+// Per-variant settings
+// ============================================================================
+
+/** The parts of a generated variant event that identify what it was made from. */
+interface VariantRef {
+  prompt?: string;
+  copy_index?: number;
+}
+
+/**
+ * Signature of the inputs ONE generated variant was made from, stored on the
+ * variant's event (`generated_signature`). TTS variants each speak their own
+ * line (speech line at `copy_index`, else the variant's prompt), which replaces
+ * the card prompt for them; other types share the card's inputs.
+ */
+export function captureVariantSignature(config: object, variant: VariantRef): string | undefined {
+  const c = config as SignableConfig;
+  if (c.type !== 'text-to-speech') return getGenerationSignature(c) ?? undefined;
+  const line = variant.copy_index !== undefined ? getSpeechLines(c)?.[variant.copy_index] : undefined;
+  return getGenerationSignature({ ...c, prompt: line ?? variant.prompt ?? c.prompt }) ?? undefined;
+}
+
+/**
+ * Config patch that loads a variant's generation-time inputs into the card so
+ * the settings editor shows that variant. Only per-variant fields are loaded
+ * (card-level ones such as `seed_copies` stay), and `generatedSignature` is
+ * re-baselined so the loaded variant reads as unmodified. `null` when the
+ * variant has no snapshot or the card already shows it.
+ */
+export function getVariantSettingsPatch(
+  config: object,
+  variantSignature: string | undefined,
+): Record<string, unknown> | null {
+  const c = config as SignableConfig;
+  const spec = getSpec(c);
+  const variant = parseSignature(variantSignature);
+  if (!spec || !variant) return null;
+
+  const baseline = getSnapshotInputs(c) ?? getSignatureInputs(c, spec);
+  const patch: Record<string, unknown> = {};
+  for (const field of spec.fields) {
+    if (spec.cardLevel?.includes(field)) continue;
+    baseline[field] = variant[field];
+    if (!sameValue(c[field], variant[field])) patch[field] = variant[field];
+  }
+  const nextSignature = stableStringify(baseline);
+  if (nextSignature !== c.generatedSignature) patch.generatedSignature = nextSignature;
   return Object.keys(patch).length > 0 ? patch : null;
 }

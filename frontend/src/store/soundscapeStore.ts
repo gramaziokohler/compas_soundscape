@@ -59,10 +59,15 @@ import { mapWithConcurrency } from '@/utils/concurrency';
 import { loadAudioFile, revokeAudioUrl } from '@/lib/audio/utils/audio-upload';
 import { parseTriggerExpression } from '@/lib/audio/utils/trigger-ref';
 import { calculateSoundPosition, type GeometryBounds } from '@/utils/positioning';
-import { createSoundEventFromUpload } from '@/utils/event-factory';
+import { createSoundEventFromUpload, generatedEventFieldsFromConfig } from '@/utils/event-factory';
 import { cardEventId, configIdsByPromptIndex, newConfigId } from '@/utils/config-id';
 import { parseSoundCopyIndex } from '@/lib/audio/utils/variant-sound-id';
-import { captureGenerationSignature, getGenerationRevertPatch } from '@/utils/generationSignature';
+import {
+  captureGenerationSignature,
+  captureVariantSignature,
+  getGenerationRevertPatch,
+  getVariantSettingsPatch,
+} from '@/utils/generationSignature';
 import { generateSoundEffect } from '@/services/elevenlabs';
 import { apiService } from '@/services/api';
 import { notifySectionError } from './errorsStore';
@@ -246,6 +251,66 @@ export function untrackGenerationTargets(targetIndices?: number[]): void {
     targetIndices.forEach((i) => _targetIndices.delete(i));
   }
   syncSoundGenActivity();
+}
+
+/** Current card indices of the given `config_id`s (unknown ids are skipped). */
+function cardIndicesForConfigIds(configIds: string[]): number[] {
+  const wanted = new Set(configIds);
+  const indices: number[] = [];
+  useSoundscapeStore.getState().soundConfigs.forEach((c, i) => {
+    if (c.config_id && wanted.has(c.config_id)) indices.push(i);
+  });
+  return indices;
+}
+
+/**
+ * Show the cards of a recovered job (one this tab did not submit — after a
+ * refresh, or another member's job in a shared workspace) as generating.
+ * Keyed by `config_id` because card indices shift between save and reload.
+ */
+export function markRecoveredGenerationCards(configIds: string[]): void {
+  const indices = cardIndicesForConfigIds(configIds);
+  if (indices.length === 0) return;
+  useSoundscapeStore.setState(
+    (s) => ({
+      activeGenerationCardIndices: [...new Set([...s.activeGenerationCardIndices, ...indices])],
+      soundGenCardProgress: {
+        ...s.soundGenCardProgress,
+        ...Object.fromEntries(indices.map((i) => [i, s.soundGenCardProgress[i] ?? 0])),
+      },
+      soundGenCardStatus: {
+        ...s.soundGenCardStatus,
+        ...Object.fromEntries(indices.map((i) => [i, s.soundGenCardStatus[i] ?? 'Pending…'])),
+      },
+    }),
+    false,
+    'soundscape/markRecoveredCards',
+  );
+}
+
+/** Per-card progress of a recovered job (every card of the job shares the job's progress). */
+export function updateRecoveredGenerationCards(configIds: string[], progress: number, status: string): void {
+  const indices = cardIndicesForConfigIds(configIds);
+  if (indices.length === 0) return;
+  useSoundscapeStore.setState(
+    (s) => ({
+      soundGenCardProgress: { ...s.soundGenCardProgress, ...Object.fromEntries(indices.map((i) => [i, progress])) },
+      soundGenCardStatus: { ...s.soundGenCardStatus, ...Object.fromEntries(indices.map((i) => [i, status])) },
+    }),
+    false,
+    'soundscape/updateRecoveredCards',
+  );
+}
+
+/** Clear the generating state set by `markRecoveredGenerationCards`. */
+export function clearRecoveredGenerationCards(configIds: string[]): void {
+  const indices = cardIndicesForConfigIds(configIds);
+  if (indices.length === 0) return;
+  useSoundscapeStore.setState(
+    (s) => withoutGenerationCards(s, indices),
+    false,
+    'soundscape/clearRecoveredCards',
+  );
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -812,6 +877,12 @@ export interface SoundscapeStoreState {
   /** Restore a generated card's settings to those of its last generation (one undo step). */
   revertGenerationSettings: (index: number) => void;
   /**
+   * Load the generation settings of one variant (by event id) into the card, so
+   * "Change sound settings" shows — and Revert restores — that variant's inputs.
+   * No-op for variants generated before per-variant snapshots existed.
+   */
+  applyVariantGenerationSettings: (index: number, variantId: string) => void;
+  /**
    * Re-parent a sound card to a different usage card (sound section), keeping all
    * generated variants/events (keyed by prompt_index) intact and repointing the
    * cardFlow usage→sound linkage.
@@ -1129,6 +1200,24 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             }),
             false,
             'soundscape/revertGenerationSettings',
+          );
+        },
+
+        applyVariantGenerationSettings: (index, variantId) => {
+          const { soundConfigs, generatedSounds, soundscapeData } = get();
+          const config = soundConfigs[index];
+          const variant = [...(generatedSounds || []), ...(soundscapeData || [])]
+            .find((s) => s.id === variantId);
+          const patch = config ? getVariantSettingsPatch(config, variant?.generated_signature) : null;
+          if (!patch) return;
+          set(
+            (s) => ({
+              soundConfigs: s.soundConfigs.map((c, i) =>
+                i === index ? ({ ...c, ...patch } as SoundGenerationConfig) : c,
+              ),
+            }),
+            false,
+            'soundscape/applyVariantGenerationSettings',
           );
         },
 
@@ -1651,51 +1740,21 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                   // would silently replace it.
                   const copyIdx = parseSoundCopyIndex(sound.id ?? '', sound.copy_index);
                   const remappedId = cardEventId('generated', originalConfig?.config_id, copyIdx);
-                  let entityIndex = sound.entity_index;
-                  if (entityIndex === undefined) {
-                    if (originalConfig?.entities?.[0]?.index !== undefined) {
-                      entityIndex = originalConfig.entities[0].index;
-                    } else if (originalConfig?.entities?.[0]?.nodeId || originalConfig?.entities?.[0]?.id) {
-                      // Entity has a Speckle ID but no numeric index — use actualIndex as a
-                      // sentinel so SoundSphereManager treats this as entity-linked (no sphere).
-                      entityIndex = actualIndex;
-                    }
-                  }
-                  // Card-level link: every variant carries the full entity index list.
-                  const entityIndices = originalConfig?.entities?.length
-                    ? originalConfig.entities
-                        .map((e: any) => e.index)
-                        .filter((i: any) => i !== undefined)
-                    : undefined;
-
-                  let position: number[] = [0, 0, 0];
-                  if (originalConfig?.entities?.[0]?.bounds?.center) {
-                    position = originalConfig.entities[0].bounds.center as number[];
-                  } else if (originalConfig?.entities?.[0]?.position) {
-                    position = originalConfig.entities[0].position as number[];
-                  } else if (originalConfig?.position) {
-                    position = originalConfig.position as number[];
-                  }
-
-                  // Carry foley timestamps from the original config to the SoundEvent —
-                  // except backgrounds, which auto-pack via interval_seconds (0 = back-to-back).
-                  const configTimestamps = originalConfig?.timestamps;
-                  const configCategory = originalConfig?.category;
-                  const normalizedCategory = (configCategory || '').toLowerCase().replace(/[\s-]+/g, '_');
-                  const isBg = normalizedCategory === 'background' || normalizedCategory === 'background_sound';
+                  // Entity link, position, foley timestamps and category from the card.
+                  // The backend position is ignored here (the card's wins, else origin).
+                  const cardFields = generatedEventFieldsFromConfig(
+                    { entity_index: sound.entity_index },
+                    originalConfig,
+                    actualIndex,
+                  );
 
                   const event = {
                     ...sound,
                     id: remappedId,
                     prompt_index: actualIndex,
                     config_id: originalConfig?.config_id,
-                    position,
                     geometry: sound.geometry || { vertices: [], faces: [] },
-                    ...(entityIndex !== undefined && { entity_index: entityIndex }),
-                    ...(entityIndices?.length ? { entity_indices: entityIndices } : {}),
-                    ...(!isBg && configTimestamps?.length ? { timestamps: configTimestamps } : {}),
-                    // Carry foley category for DAW grouping
-                    ...(originalConfig?.category ? { category: originalConfig.category } : {}),
+                    ...cardFields,
                   };
                   return event;
                 };
@@ -2191,14 +2250,24 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               liveForced.some((i) =>
                 cardsWithNewEvents.has(i) && promptMatchesCard(e.prompt_index, i));
             const staleEventIds = existing.filter(isStaleForcedEvent).map((e) => e.id).filter(Boolean);
+            // Each fresh variant remembers the inputs it was made from, so selecting
+            // it later shows those settings in the card's settings editor.
+            const liveConfigs = get().soundConfigs;
+            const withVariantSignature = (e: any) => {
+              const cardIndex = [...cardsWithNewEvents].find((i) => promptMatchesCard(e.prompt_index, i));
+              const cardConfig = cardIndex !== undefined ? liveConfigs[cardIndex] : undefined;
+              const signature = cardConfig ? captureVariantSignature(cardConfig, e) : undefined;
+              return signature ? { ...e, generated_signature: signature } : e;
+            };
             const allEvents = [
               ...existing.filter((e) => !newEventIds.has(e.id) && !isStaleForcedEvent(e)),
               ...newEvents.map((e) => {
-                if (e.prompt_index === undefined) return e;
+                const tagged = withVariantSignature(e);
+                if (tagged.prompt_index === undefined) return tagged;
                 const anchor = existing.find(
-                  (x) => x.prompt_index === e.prompt_index && x.id !== e.id && x.position?.length === 3,
+                  (x) => x.prompt_index === tagged.prompt_index && x.id !== tagged.id && x.position?.length === 3,
                 );
-                return anchor ? { ...e, position: anchor.position } : e;
+                return anchor ? { ...tagged, position: anchor.position } : tagged;
               }),
             ];
 
@@ -2412,6 +2481,12 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           // Auto-switch to the predicted new variant index
           const pendingVariantIdx = (soundscapeData || []).filter((s: any) => s.prompt_index === targetIndex).length;
           useAudioControlsStore.getState().handleVariantChange(targetIndex, pendingVariantIdx);
+          // Once the new variant lands, its settings become the card's baseline
+          // (unless the user switched to another variant meanwhile).
+          const showNewVariantSettings = (variantId: string) => {
+            if (useAudioControlsStore.getState().selectedVariants[targetIndex] !== pendingVariantIdx) return;
+            get().applyVariantGenerationSettings(targetIndex, variantId);
+          };
 
           set(
             {
@@ -2468,6 +2543,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 ...baseEvent,
                 id: cardEventId('elevenlabs', config.config_id, newCopy),
                 copy_index: newCopy,
+                generated_signature: captureVariantSignature(config, {}),
               };
               if (noise_trim) {
                 useAudioControlsStore.getState().setSoundTrim(newEvent.id, { start: noise_trim[0], end: noise_trim[1] });
@@ -2481,6 +2557,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               const merged = [...currentForCopy, alignedEvent];
               set({ generatedSounds: merged, soundscapeData: merged }, false, 'soundscape/regenComplete');
               applyTrimRegions([alignedEvent]);
+              showNewVariantSettings(alignedEvent.id);
               // `finally` below clears the regenerating indicator / progress.
               return;
             }
@@ -2577,6 +2654,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 copy_index: copyIdx,
                 position,
                 geometry: sound.geometry || { vertices: [], faces: [] },
+                generated_signature: captureVariantSignature(config, {}),
                 ...(entityIndex !== undefined && { entity_index: entityIndex }),
                 ...(entityIndices?.length ? { entity_indices: entityIndices } : {}),
               };
@@ -2594,6 +2672,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             const merged = [...currentData, ...alignedEvents];
             set({ generatedSounds: merged, soundscapeData: merged }, false, 'soundscape/regenComplete');
             applyTrimRegions(alignedEvents);
+            if (alignedEvents[0]) showNewVariantSettings(alignedEvents[0].id);
           } catch (err: any) {
             if (err?.message !== 'AbortError') {
               const msg = `Regeneration failed: ${err?.message || err}`;
@@ -2790,7 +2869,12 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             // copy_index, position, geometry fallback and entity indices, so
             // DAW clip keys (soundId-iteration), iterationLinks, sound spheres
             // and linked entities all stay rooted to this variant.
-            const updated = { ...target, ...patch, prompt };
+            const updated = {
+              ...target,
+              ...patch,
+              prompt,
+              generated_signature: captureVariantSignature({ ...config, prompt }, { prompt }),
+            };
             const nextData = (get().soundscapeData || []).map((s: any) =>
               s.id === target.id ? updated : s,
             );
@@ -2800,6 +2884,9 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               'soundscape/regenVariantComplete',
             );
             applyTrimRegions([updated]);
+            if (useAudioControlsStore.getState().selectedVariants[targetIndex] === variantIdx) {
+              get().applyVariantGenerationSettings(targetIndex, target.id);
+            }
           } catch (err: any) {
             if (err?.message !== 'AbortError') {
               const msg = `Regeneration failed: ${err?.message || err}`;
@@ -3577,6 +3664,11 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               get().handleUpdateConfig(promptIndex, 'generatedSignature', captureGenerationSignature(updated).generatedSignature);
             }
           }
+
+          // The selection may have moved to another variant — show its settings.
+          const remaining = variants.filter((v: any) => v !== target);
+          const nowSelected = remaining[useAudioControlsStore.getState().selectedVariants[promptIndex] ?? 0];
+          if (nowSelected?.id) get().applyVariantGenerationSettings(promptIndex, nowSelected.id);
 
           // Re-sync the audio store and re-bake so the deleted variant leaves the
           // timeline and no orphaned per-sound state survives.

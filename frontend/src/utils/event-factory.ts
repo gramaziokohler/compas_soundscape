@@ -133,3 +133,65 @@ function createEmptyGeometry(): CompasGeometry {
 export function removeFileExtension(filename: string): string {
   return filename.replace(/\.[^/.]+$/, "");
 }
+
+/**
+ * Card-derived fields of a backend-generated sound: entity link, position,
+ * foley timestamps and category. Shared by the live generation path and job
+ * recovery (another tab's / member's job), so a recovered sound lands exactly
+ * like one this tab generated.
+ *
+ * @param sound - Raw backend sound (may carry its own `entity_index` / `position`)
+ * @param config - The card the sound belongs to (undefined when unknown)
+ * @param cardIndex - The card's current index (entity-link sentinel)
+ */
+export function generatedEventFieldsFromConfig(
+  sound: { entity_index?: number; position?: number[] },
+  config: SoundGenerationConfig | undefined,
+  cardIndex: number,
+): {
+  position: number[];
+  entity_index?: number;
+  entity_indices?: number[];
+  timestamps?: string[];
+  category?: string;
+} {
+  const firstEntity = config?.entities?.[0];
+  let entityIndex = sound.entity_index;
+  if (entityIndex === undefined) {
+    if (firstEntity?.index !== undefined) {
+      entityIndex = firstEntity.index;
+    } else if (firstEntity?.nodeId || firstEntity?.id) {
+      // Entity has a Speckle ID but no numeric index — use the card index as a
+      // sentinel so SoundSphereManager treats this as entity-linked (no sphere).
+      entityIndex = cardIndex;
+    }
+  }
+  // Card-level link: every variant carries the full entity index list.
+  const entityIndices = config?.entities?.length
+    ? config.entities.map((e) => e.index).filter((i): i is number => i !== undefined)
+    : undefined;
+
+  let position: number[] = sound.position ?? [0, 0, 0];
+  if (firstEntity?.bounds?.center) {
+    position = firstEntity.bounds.center as number[];
+  } else if (firstEntity?.position) {
+    position = firstEntity.position as number[];
+  } else if (config?.position) {
+    position = config.position as number[];
+  }
+
+  // Foley timestamps carry over — except backgrounds, which auto-pack via
+  // interval_seconds (0 = back-to-back).
+  const normalizedCategory = (config?.category || '').toLowerCase().replace(/[\s-]+/g, '_');
+  const isBg = normalizedCategory === 'background' || normalizedCategory === 'background_sound';
+  const timestamps = config?.timestamps;
+
+  return {
+    position,
+    ...(entityIndex !== undefined ? { entity_index: entityIndex } : {}),
+    ...(entityIndices?.length ? { entity_indices: entityIndices } : {}),
+    ...(!isBg && timestamps?.length ? { timestamps } : {}),
+    // Foley category for DAW grouping
+    ...(config?.category ? { category: config.category } : {}),
+  };
+}

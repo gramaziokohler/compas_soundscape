@@ -15,9 +15,11 @@ import { useSoundScenes } from '@/hooks/useSoundScenes';
 import { useSceneProgress } from '@/hooks/useSceneProgress';
 import { useSceneWaveform } from '@/hooks/useSceneWaveform';
 import { useDismissOnSceneClick } from '@/hooks/useDismissOnSceneClick';
+import { useOnFloatingPanelsCollapse } from '@/hooks/useOnFloatingPanelsCollapse';
 import { useBubbleColumnSpace } from '@/hooks/useBubbleColumnSpace';
 import { useSimpleSceneHighlights } from '@/hooks/useSimpleSceneHighlights';
 import { useBubbleFrontLayer } from '@/hooks/useBubbleFrontLayer';
+import { useSoundSphereReveal } from '@/hooks/useSoundSphereReveal';
 import {
   useAnalysisStore,
   useAudioControlsStore,
@@ -41,6 +43,8 @@ const COLUMN_TOP = SIMPLE_MODE.TOP_OFFSET + SIMPLE_MODE.HEADING_HEIGHT;
 const PANEL_LEFT = SIMPLE_MODE.EDGE_MARGIN + SIMPLE_MODE.BUBBLE_SIZE + SIMPLE_MODE.PANEL_GAP;
 
 const REMOVE_SCENE_MESSAGE = 'Remove this scene and its sounds?';
+/** A click on a sound sphere keeps the open scene panel (it targets the scene's sounds). */
+const KEEP_PANEL_ON = ['sound'] as const;
 
 /** Scenes that still need the pipeline open the workflow view instead of the sound cards. */
 function showsWorkflow(scene: SoundScene, progress: SceneProgress): boolean {
@@ -151,7 +155,8 @@ export interface SimpleSoundscapesProps {
  * workflow view while the scene's pipeline runs). The power button — in the
  * bubble's hover flyout and the panel header — shows the scene (DAW + 3D); at
  * most one scene is powered, and none is a valid state (nothing shown). A
- * plain click on the 3D scene reduces the panel.
+ * plain click on the 3D scene reduces the panel; a click on a sound sphere
+ * keeps it and expands that sound's card.
  *
  * Usage:
  * ```tsx
@@ -191,8 +196,11 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
   );
 
   const closePanel = useCallback(() => setPanel(null), []);
+  const openSceneCards = useCallback((usageIndex: number) => setPanel({ kind: 'scene', usageIndex }), []);
+  // Opening a model / reloading the page starts with every scene pop-up reduced.
+  useOnFloatingPanelsCollapse(closePanel);
 
-  useDismissOnSceneClick(closePanel, panel !== null, () => !!sidebarProps.isLinkingEntity);
+  useDismissOnSceneClick(closePanel, panel !== null, () => !!sidebarProps.isLinkingEntity, KEEP_PANEL_ON);
 
   const selectScene = useCallback((scene: SoundScene) => {
     useAudioControlsStore.getState().stopSoundcardPreview();
@@ -263,6 +271,9 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
     selectScene(scene);
     setPanel({ kind: 'scene', usageIndex: scene.usageIndex });
   }, [sidebarProps.selectedCardIndex, sidebarProps.soundConfigs, scenes, selectScene]);
+
+  // A sound sphere clicked in 3D while a scene panel is open expands its card.
+  const revealCardRequest = useSoundSphereReveal(panel, scenes, openSceneCards);
 
   // Drop a panel whose scene disappeared (removed / undone).
   useEffect(() => {
@@ -387,7 +398,10 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
           <div className="mb-2">
             <SceneSettingsSummary usageIndex={panelScene.usageIndex} />
           </div>
-          <SoundGenerationSection {...buildSoundGenerationSectionProps(sidebarProps, panelScene.usageIndex)} />
+          <SoundGenerationSection
+            {...buildSoundGenerationSectionProps(sidebarProps, panelScene.usageIndex)}
+            revealCardRequest={revealCardRequest}
+          />
         </BubblePanel>
       )}
       </div>

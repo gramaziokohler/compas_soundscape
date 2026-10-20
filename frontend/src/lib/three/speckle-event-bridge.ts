@@ -44,6 +44,9 @@ function isObjectVisible(object: THREE.Object3D): boolean {
   return true;
 }
 
+/** Custom (non-Speckle) objects a pointer can land on. */
+export type CustomPickType = 'sound' | 'receiver' | 'grid-receiver';
+
 /** What a right-click landed on — drives the viewer context menu. */
 export type ContextMenuHit =
   | { kind: 'speckle'; objectIds: string[] }
@@ -97,7 +100,7 @@ export class SpeckleEventBridge {
   private pointerDownPos: { x: number; y: number } | null = null;
   private wasOrbiting = false;
 
-  // Mouse-button remap (right=rotate, middle=pan, left-drag=box-select)
+  // Mouse-button remap (right=rotate, middle / shift+right=pan, left-drag=box-select)
   private static readonly DEFAULT_CAMERA_OPTIONS = { enableOrbit: true, enablePan: true };
   private isFirstPersonModeActive = false;
 
@@ -428,6 +431,8 @@ export class SpeckleEventBridge {
    *  - Left (0):   freeze rotate + pan — this press becomes a box-select candidate.
    *  - Middle (1): remap to button 2 (Speckle's hardcoded pan trigger) so it pans.
    *  - Right (2):  disable pan only — Speckle's fallthrough behavior is rotate.
+   *  - Shift+Right: keep pan enabled — Speckle pans on button 2 (or Shift) when
+   *    `enablePan` is set, so this behaves exactly like a middle-button drag.
    */
   private applyCameraRemapForButton(e: PointerEvent): void {
     if (this.isFirstPersonModeActive) return;
@@ -440,6 +445,8 @@ export class SpeckleEventBridge {
       } catch {
         // Some environments may not allow shadowing — pan simply won't engage.
       }
+      this.cameraController.options = { ...SpeckleEventBridge.DEFAULT_CAMERA_OPTIONS };
+    } else if (e.button === 2 && e.shiftKey) {
       this.cameraController.options = { ...SpeckleEventBridge.DEFAULT_CAMERA_OPTIONS };
     } else if (e.button === 2) {
       this.cameraController.options = { enableOrbit: true, enablePan: false };
@@ -952,7 +959,7 @@ export class SpeckleEventBridge {
 
   private raycastCustomObjects(
     visibleOnly: boolean = true
-  ): { type: 'sound' | 'receiver' | 'grid-receiver'; object: THREE.Object3D; instanceId?: number } | null {
+  ): { type: CustomPickType; object: THREE.Object3D; instanceId?: number } | null {
     const camera = this.adapter.getCamera();
     this.raycaster.setFromCamera(this.mouse, camera);
     const customObjects = this.adapter.getCustomObjects();
@@ -1147,14 +1154,7 @@ export class SpeckleEventBridge {
 
   /** Returns true if a custom object (sound/receiver/grid-receiver) is under the given screen position. */
   public hasCustomObjectAt(clientX: number, clientY: number): boolean {
-    const canvas = this.viewer.getRenderer().renderer.domElement;
-    const rect = canvas.getBoundingClientRect();
-    const savedMouse = this.mouse.clone();
-    this.mouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
-    this.mouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
-    const hit = this.raycastCustomObjects(false);
-    this.mouse.copy(savedMouse);
-    return hit !== null;
+    return this.raycastCustomObjectsAt(clientX, clientY, false) !== null;
   }
 
   /**
@@ -1164,14 +1164,24 @@ export class SpeckleEventBridge {
    * camera-look / drag guard.
    */
   public hasVisibleCustomObjectAt(clientX: number, clientY: number): boolean {
+    return this.raycastCustomObjectsAt(clientX, clientY, true) !== null;
+  }
+
+  /** Type of the VISIBLE custom object under the given screen position, or null. */
+  public getVisibleCustomObjectTypeAt(clientX: number, clientY: number): CustomPickType | null {
+    return this.raycastCustomObjectsAt(clientX, clientY, true)?.type ?? null;
+  }
+
+  /** raycastCustomObjects at a screen position, leaving the tracked mouse untouched. */
+  private raycastCustomObjectsAt(clientX: number, clientY: number, visibleOnly: boolean) {
     const canvas = this.viewer.getRenderer().renderer.domElement;
     const rect = canvas.getBoundingClientRect();
     const savedMouse = this.mouse.clone();
     this.mouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
     this.mouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
-    const hit = this.raycastCustomObjects(true);
+    const hit = this.raycastCustomObjects(visibleOnly);
     this.mouse.copy(savedMouse);
-    return hit !== null;
+    return hit;
   }
 
   /**

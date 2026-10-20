@@ -4,8 +4,11 @@ Identity comes from the middleware (Cloudflare Access email or anonymous
 session). All routes operate on the caller's session, which is bound to one
 "active" workspace; `switch`/`join` rebind it.
 
-Roles: owner > editor > viewer. Joining can only *upgrade* a membership — an
-owner opening an invite link to their own workspace always stays owner.
+Roles: owner > viewer. Only the owner's changes are saved — every other member
+is view-only (they can edit locally, but saves are rejected). Any member can
+create a (viewer) invite link; only the owner manages invites, sharing mode and
+members. Joining can only *upgrade* a membership — an owner opening an invite
+link to their own workspace always stays owner.
 """
 
 import logging
@@ -18,7 +21,6 @@ from pydantic import BaseModel
 from services.metadata_store import (
     metadata_store,
     ROLE_OWNER,
-    ROLE_EDITOR,
     ROLE_VIEWER,
 )
 from services.presence import active_count, heartbeat
@@ -43,7 +45,7 @@ class WorkspaceUpdate(BaseModel):
 
 
 class InviteCreate(BaseModel):
-    role: str = ROLE_EDITOR
+    # Invites always grant viewer access (only the owner saves); no role field.
     # None = use default (7 days / unlimited); 0 = never expires / unlimited.
     expires_in_s: Optional[int] = None
     max_uses: Optional[int] = None
@@ -54,10 +56,6 @@ class InviteCreate(BaseModel):
 
 class JoinRequest(BaseModel):
     token: str
-
-
-class MemberRoleUpdate(BaseModel):
-    role: str
 
 
 class TransferRequest(BaseModel):
@@ -82,7 +80,7 @@ def _workspace_or_404(workspace_id: str) -> dict:
 def _require_role(workspace_id: str, user_hash: str, allowed: tuple[str, ...]) -> str:
     role = metadata_store.get_member_role(workspace_id, user_hash)
     if role not in allowed:
-        raise HTTPException(status_code=403, detail="Insufficient permission for this workspace. Data will not save.")
+        raise HTTPException(status_code=403, detail="Only the workspace owner can do this.")
     return role
 
 
@@ -140,12 +138,9 @@ async def join_workspace(payload: JoinRequest, request: Request) -> dict:
         raise HTTPException(status_code=404, detail="Invite not found, expired, or revoked")
     workspace_id = invite["workspace_id"]
     _workspace_or_404(workspace_id)
-    role = invite["role"] if invite["role"] in (ROLE_EDITOR, ROLE_VIEWER) else ROLE_EDITOR
-
-    # Never downgrade: an owner (or existing editor) opening their own or a
-    # lower-privilege invite link keeps their current role.
+    # Never downgrade: an owner opening their own invite link stays owner.
     existing = metadata_store.get_member_role(workspace_id, user_hash)
-    metadata_store.ensure_member(workspace_id, user_hash, role)
+    metadata_store.ensure_member(workspace_id, user_hash, ROLE_VIEWER)
     metadata_store.set_session_workspace(token, workspace_id)
     # Consume one redemption only when this actually added a new member. A
     # membership change is not a content edit, so the content revision is NOT
@@ -204,8 +199,9 @@ async def update_workspace(workspace_id: str, payload: WorkspaceUpdate, request:
 async def create_invite(workspace_id: str, payload: InviteCreate, request: Request) -> dict:
     user_hash, _token = _identity(request)
     _workspace_or_404(workspace_id)
-    _require_role(workspace_id, user_hash, (ROLE_OWNER, ROLE_EDITOR))
-    role = payload.role if payload.role in (ROLE_EDITOR, ROLE_VIEWER) else ROLE_EDITOR
+    # Any member may share the model; recipients always join as viewers.
+    _require_role(workspace_id, user_hash, (ROLE_OWNER, ROLE_VIEWER))
+    role = ROLE_VIEWER
 
     ttl = INVITE_DEFAULT_TTL_S if payload.expires_in_s is None else int(payload.expires_in_s)
     expires_at = (
@@ -242,7 +238,7 @@ async def create_invite(workspace_id: str, payload: InviteCreate, request: Reque
 async def list_invites(workspace_id: str, request: Request) -> dict:
     user_hash, _token = _identity(request)
     _workspace_or_404(workspace_id)
-    _require_role(workspace_id, user_hash, (ROLE_OWNER, ROLE_EDITOR))
+    _require_role(workspace_id, user_hash, (ROLE_OWNER,))
     return {"invites": metadata_store.list_invites(workspace_id)}
 
 
@@ -250,7 +246,7 @@ async def list_invites(workspace_id: str, request: Request) -> dict:
 async def revoke_invite(workspace_id: str, invite_id: str, request: Request) -> dict:
     user_hash, _token = _identity(request)
     _workspace_or_404(workspace_id)
-    _require_role(workspace_id, user_hash, (ROLE_OWNER, ROLE_EDITOR))
+    _require_role(workspace_id, user_hash, (ROLE_OWNER,))
     revoked = metadata_store.revoke_invite_by_id(workspace_id, invite_id)
     if not revoked:
         raise HTTPException(status_code=404, detail="Invite not found")
@@ -275,22 +271,6 @@ async def leave_workspace(workspace_id: str, request: Request) -> dict:
     metadata_store.remove_member(workspace_id, user_hash)
     _rebind_user_sessions_to_default(user_hash)
     return {"success": True, "left": True}
-
-
-@router.patch("/{workspace_id}/members/{user_hash}")
-async def update_member_role(
-    workspace_id: str, user_hash: str, payload: MemberRoleUpdate, request: Request
-) -> dict:
-    actor, _token = _identity(request)
-    _workspace_or_404(workspace_id)
-    _require_role(workspace_id, actor, (ROLE_OWNER,))
-    if payload.role not in (ROLE_EDITOR, ROLE_VIEWER):
-        raise HTTPException(status_code=400, detail="Role must be 'editor' or 'viewer'")
-    if metadata_store.get_member_role(workspace_id, user_hash) is None:
-        raise HTTPException(status_code=404, detail="Member not found")
-    if not metadata_store.set_member_role(workspace_id, user_hash, payload.role):
-        raise HTTPException(status_code=409, detail="Cannot change the owner's role")
-    return _workspace_view(workspace_id, actor)
 
 
 @router.delete("/{workspace_id}/members/{user_hash}")
@@ -329,8 +309,10 @@ async def transfer_ownership(workspace_id: str, payload: TransferRequest, reques
 async def presence_heartbeat(workspace_id: str, request: Request) -> dict:
     user_hash, _token = _identity(request)
     _workspace_or_404(workspace_id)
-    if metadata_store.get_member_role(workspace_id, user_hash) is None:
+    role = metadata_store.get_member_role(workspace_id, user_hash)
+    if role is None:
         raise HTTPException(status_code=403, detail="You are not a member of this workspace")
     count = await heartbeat(job_store.redis, workspace_id, user_hash)
     ws = metadata_store.get_workspace(workspace_id) or {}
-    return {"presence": count, "revision": ws.get("revision", 0)}
+    # The caller's role lets a client notice an ownership transfer without reloading.
+    return {"presence": count, "revision": ws.get("revision", 0), "role": role}

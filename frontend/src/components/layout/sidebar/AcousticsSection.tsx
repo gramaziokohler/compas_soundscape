@@ -33,6 +33,7 @@ import { Bubble, BubbleAddButton, BubbleHeading } from '@/components/ui/Bubble';
 import { SimulationTypeIcon } from '@/components/ui/BubbleIcons';
 import { ContextMenu } from '@/components/ui/ContextMenu';
 import { useDismissOnSceneClick } from '@/hooks/useDismissOnSceneClick';
+import { useOnFloatingPanelsCollapse } from '@/hooks/useOnFloatingPanelsCollapse';
 import { useBubbleColumnSpace } from '@/hooks/useBubbleColumnSpace';
 import { useBubbleFrontLayer } from '@/hooks/useBubbleFrontLayer';
 import { BubbleScrollColumn } from '@/components/ui/BubbleScrollColumn';
@@ -44,6 +45,9 @@ import { useSpeckleStore, useAcousticsSimulationStore, useReceiversStore, useGri
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { useUIStore } from '@/store/uiStore';
 import { useSimulationPreflightStore, type RunPreflightArgs } from '@/store';
+import { useModelVersionStore } from '@/store';
+import { SimulationOutdatedNotice } from '@/components/layout/sidebar/acoustics/SimulationOutdatedNotice';
+import { SimulationVersionBadge } from '@/components/layout/sidebar/acoustics/SimulationVersionBadge';
 import { buildSimulationGeometryRequest, simulationRequestSignature, speckleCardFields, type BuildResult } from '@/utils/simulationRequest';
 import type { SimulationEngine } from '@/types/simulationPreflight';
 
@@ -694,7 +698,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       return;
     }
     const {
-      projectId, modelId, layerName, objectMaterials, geometryObjectIds,
+      projectId, versionId, layerName, objectMaterials, geometryObjectIds,
       sourceReceiverPairs, uniqueSourcePositions, sourceSoundToPosKey,
     } = built.request;
 
@@ -716,7 +720,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       // Start simulation — returns immediately with simulation_id
       const { simulation_id } = await apiService.runChorasSimulationSpeckle(
         projectId,
-        modelId,
+        versionId,
         objectMaterials,
         layerName,
         config.display_name || 'Simulation',
@@ -728,7 +732,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
 
       // Store the running simulation ID so the cancel handler can reach it
       handleUpdateConfig(index, { currentSimulationRunId: simulation_id } as any);
-      recordInflightJob(simulation_id, 'choras', { configId: config.id, instanceId: config.simulationInstanceId });
+      recordInflightJob(simulation_id, 'choras', { configId: config.id, instanceId: config.simulationInstanceId, versionId });
 
       // Poll for progress every second
       const pollInterval = setInterval(async () => {
@@ -775,6 +779,8 @@ export function AcousticsSection(props: AcousticsSectionProps) {
               state: 'completed',
               completedAt: Date.now(),
               ...runSignature,
+              // Geometry this result was simulated on (drives the outdated check).
+              simulatedVersionId: versionId,
               simulationResults: resultsText,
               importedIRIds: irImportResult.importedIRIds,
               sourceReceiverIRMapping: irImportResult.sourceReceiverMapping,
@@ -837,7 +843,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       return;
     }
     const {
-      projectId, modelId, layerName, objectMaterials, geometryObjectIds, objectScattering,
+      projectId, versionId, layerName, objectMaterials, geometryObjectIds, objectScattering,
       sourceReceiverPairs, uniqueSourcePositions, sourceSoundToPosKey,
     } = built.request;
 
@@ -850,7 +856,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       // Start simulation — returns immediately with simulation_id
       const { simulation_id } = await apiService.runPyroomacousticsSimulationSpeckle(
         projectId,
-        modelId,
+        versionId,
         objectMaterials,
         layerName,
         config.display_name || 'Simulation',
@@ -863,7 +869,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
 
       // Store running simulation ID so the cancel handler can reach it
       handleUpdateConfig(index, { currentSimulationRunId: simulation_id } as any);
-      recordInflightJob(simulation_id, 'pyroom', { configId: config.id, instanceId: config.simulationInstanceId });
+      recordInflightJob(simulation_id, 'pyroom', { configId: config.id, instanceId: config.simulationInstanceId, versionId });
 
       // Poll for progress every 1.5 seconds
       const pollInterval = setInterval(async () => {
@@ -914,6 +920,8 @@ export function AcousticsSection(props: AcousticsSectionProps) {
               state: 'completed',
               completedAt: Date.now(),
               ...runSignature,
+              // Geometry this result was simulated on (drives the outdated check).
+              simulatedVersionId: versionId,
               simulationResults: resultsText,
               importedIRIds: irImportResult.importedIRIds,
               sourceReceiverIRMapping: irImportResult.sourceReceiverMapping,
@@ -1004,6 +1012,16 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     }
     await dispatchSimulation(index);
   }, [simulationConfigs, buildPreflightArgs, handleUpdateConfig, dispatchSimulation]);
+
+  // Re-runs requested from the model-version review panel ("Re-run all outdated").
+  const rerunQueue = useModelVersionStore((s) => s.rerunQueue);
+  useEffect(() => {
+    if (rerunQueue.length === 0) return;
+    for (const id of useModelVersionStore.getState().consumeRerunQueue()) {
+      const index = simulationConfigs.findIndex((c) => c.id === id);
+      if (index >= 0) void runSimulation(index);
+    }
+  }, [rerunQueue, simulationConfigs, runSimulation]);
 
   /**
    * Cancel a running simulation.
@@ -1282,6 +1300,8 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   // collapsed — opening a model / refreshing a page never restores an expanded
   // simulation card.
   const [expandedCardIndex, setExpandedCardIndex] = useState<number | null>(null);
+  // Opening a model / reloading the page starts with every simulation pop-up reduced.
+  useOnFloatingPanelsCollapse(() => setExpandedCardIndex(null));
   // Generated (completed) simulation awaiting a remove confirmation — same
   // inline danger dialog as removing a sound scene.
   const [confirmRemoveIndex, setConfirmRemoveIndex] = useState<number | null>(null);
@@ -1377,6 +1397,28 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       }
     }
   }, [onSetActiveSimulation, simulationConfigs, activeSimulationIndex, viewMode, setViewMode]);
+
+  // Model-version review panel: expand a simulation card so its materials become
+  // editable ("Assign") or its outdated results are shown. Without an explicit
+  // card, keep an already expanded geometry card, else the first one.
+  const revealSimulation = useModelVersionStore((s) => s.revealSimulation);
+  const lastRevealSeqRef = useRef(revealSimulation?.seq ?? 0);
+  useEffect(() => {
+    if (!revealSimulation || revealSimulation.seq === lastRevealSeqRef.current) return;
+    lastRevealSeqRef.current = revealSimulation.seq;
+    const isGeometryCard = (c: SimulationConfig | undefined) => c?.type === 'pyroomacoustics' || c?.type === 'choras';
+    let index = revealSimulation.configId
+      ? simulationConfigs.findIndex((c) => c.id === revealSimulation.configId)
+      : -1;
+    if (index < 0 && !revealSimulation.configId) {
+      index = expandedCardIndex !== null && isGeometryCard(simulationConfigs[expandedCardIndex])
+        ? expandedCardIndex
+        : simulationConfigs.findIndex(isGeometryCard);
+    }
+    if (index < 0) return;
+    useRightSidebarStore.getState().requestExpand();
+    if (index !== expandedCardIndex) handleExpandedIndexChange(index);
+  }, [revealSimulation, simulationConfigs, expandedCardIndex, handleExpandedIndexChange]);
 
   // Global power button: toggle audio rendering (only for completed cards)
   const hasAnyCompletedCard = simulationConfigs.some(c => c.state === 'completed');
@@ -2061,6 +2103,10 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             />
           )}
           {soundSectionMismatchWarning}
+          {/* Simulated on another model version: outdated above tolerance (still playable) */}
+          {(config.type === 'pyroomacoustics' || config.type === 'choras') && (
+            <SimulationOutdatedNotice config={config} onRerun={() => void runSimulation(index)} />
+          )}
           {/* FPS mode warning: shown when this card is active, audio is actually playing, and user is not in listener view */}
           {/* {index === activeSimulationIndex && isExpanded && isAudioActuallyPlaying && !isFPSModeActive && (
             <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-error/10 border border-error/40 text-error text-xs">
@@ -2171,6 +2217,9 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             actionButtonColor='primary'
             color="primary"
             version={cardVersion}
+            headerBadge={(config.type === 'pyroomacoustics' || config.type === 'choras') && isCompleted
+              ? <SimulationVersionBadge config={config} />
+              : undefined}
             collapsedInfo={importIrsCollapsedInfo}
         />
     );

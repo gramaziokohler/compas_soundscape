@@ -124,7 +124,7 @@ export const useSimulationPreflightStore = create<SimulationPreflightStoreState>
             const { job_id } = await apiService.runSimulationPreflight({
               engine,
               projectId: request.projectId,
-              modelId: request.modelId,
+              versionId: request.versionId,
               objectMaterials: request.objectMaterials,
               layerName: request.layerName,
               geometryObjectIds: request.geometryObjectIds,

@@ -2,8 +2,9 @@ import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { useUIStore } from '@/store/uiStore';
-import { useSpeckleStore } from '@/store';
+import { useSoundscapeStore, useSpeckleStore } from '@/store';
 import { getCssColorHex } from '@/utils/utils';
+import { isConfigGlobal } from '@/lib/audio/utils/global-source';
 import type { SoundEvent } from '@/types';
 
 interface SoundHighlightProps {
@@ -40,6 +41,13 @@ export function useSpeckleSoundHighlight({
   const objectSoundLinks = useSpeckleStore(s => s.objectSoundLinks);
   // Hidden sounds (spheres and entity markers alike) never carry the drag gizmo.
   const showSoundSpheres = useUIStore(s => s.showSoundSpheres);
+  // A background card playing as a global bed has no place in the scene (its
+  // sphere is hidden): opening that card never selects its sphere / gizmo.
+  const effectiveCardIsGlobal = useSoundscapeStore(s => {
+    const index = expandedSoundCardIndex ?? selectedCardIndex;
+    const config = index !== null ? s.soundConfigs[index] : undefined;
+    return !!config && isConfigGlobal(config);
+  });
 
   // Keep a ref so the zoom effect can read the latest soundscapeData without
   // listing it as a dependency (prevents re-zooming when data populates on nav).
@@ -89,7 +97,7 @@ export function useSpeckleSoundHighlight({
 
     let highlightedSphere: THREE.Mesh | undefined;
     let highlightedMarker: THREE.Object3D | undefined;
-    if (effectiveIndex !== null) {
+    if (effectiveIndex !== null && !effectiveCardIsGlobal) {
       // A sound sphere represents the whole sound CARD: all variants collapse to a
       // single sphere keyed by promptKey. Match by prompt — never by a specific
       // variant's id, which only matches when the first variant is the selected one.
@@ -163,7 +171,7 @@ export function useSpeckleSoundHighlight({
     }
 
     viewer?.requestRender();
-  }, [isViewerReady, selectedCardIndex, expandedSoundCardIndex, soundscapeData, selectedVariants, activeSimulationPositions, hoveredSoundCardIndex, objectSoundLinks, showSoundSpheres]);
+  }, [isViewerReady, selectedCardIndex, expandedSoundCardIndex, soundscapeData, selectedVariants, activeSimulationPositions, hoveredSoundCardIndex, objectSoundLinks, showSoundSpheres, effectiveCardIsGlobal]);
 
   // Zoom to sound sphere when card is double-clicked in sidebar
   useEffect(() => {

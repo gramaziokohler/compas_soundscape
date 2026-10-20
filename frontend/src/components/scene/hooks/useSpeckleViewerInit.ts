@@ -17,10 +17,10 @@ import { SpeckleAudioCoordinator } from '@/lib/three/speckle-audio-coordinator';
 import { BoundingBoxManager } from '@/lib/three/BoundingBoxManager';
 import { AreaDrawingManager } from '@/lib/three/area-drawing-manager';
 import { PlaybackSchedulerService } from '@/lib/audio/playback-scheduler-service';
-import { useSpeckleStore } from '@/store';
+import { useSpeckleStore, useModelVersionStore, findModelVersion } from '@/store';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { apiService } from '@/services/api';
-import { SPECKLE_VIEWER_RETRY } from '@/utils/constants';
+import { SPECKLE_PINNED_VERSION_URL, SPECKLE_VIEWER_RETRY } from '@/utils/constants';
 import { getCssColorHex } from '@/utils/utils';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
 
@@ -325,10 +325,18 @@ export function useSpeckleViewerInit({
           return;
         }
 
-        // Make sure the model's latest version is viewer-safe (bundle uploads are
-        // materialized, pre-fix legacy copies are re-materialized). The model URL
-        // resolves to the latest version, so this must complete before loading.
-        if (speckleData?.model_id) {
+        // A pinned older version (`models/<id>@<versionId>`, chosen in the model
+        // menu) is already a loadable legacy version — `ensure-ready` only heals
+        // the LATEST version, so skip it and record the pinned version as loaded.
+        const pinnedVersionId = modelUrl.match(SPECKLE_PINNED_VERSION_URL)?.[1] ?? null;
+        if (pinnedVersionId) {
+          const pinned = findModelVersion(useModelVersionStore.getState().versions, pinnedVersionId);
+          setLoadedModelVersionId(pinnedVersionId);
+          setLoadedModelVersionCreatedAt(pinned?.created_at ?? null);
+        } else if (speckleData?.model_id) {
+          // Make sure the model's latest version is viewer-safe (bundle uploads are
+          // materialized, pre-fix legacy copies are re-materialized). The model URL
+          // resolves to the latest version, so this must complete before loading.
           try {
             const resolved = await apiService.ensureSpeckleModelReady(speckleData.model_id);
             // Record the version actually loaded so the version watcher can detect

@@ -39,13 +39,17 @@ export function ErrorToast() {
               {error.type === 'error' ? '⚠️' : error.type === 'warning' ? '⚡' : 'ℹ️'}
             </div>
 
-            {/* Message */}
-            <div className="flex-1 text-sm">
+            {/* Message — with an action, the whole message is clickable (the button stays for keyboard users). */}
+            <div
+              className={`flex-1 text-sm${error.action ? ' cursor-pointer' : ''}`}
+              onClick={error.action ? () => { error.action?.onClick(); removeError(error.id); } : undefined}
+            >
               {error.message}
 
               {error.action && (
                 <button
-                  onClick={() => {
+                  onClick={(e) => {
+                    e.stopPropagation();
                     error.action?.onClick();
                     removeError(error.id);
                   }}

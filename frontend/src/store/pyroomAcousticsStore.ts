@@ -28,6 +28,7 @@ import {
 import { groupSoundsByPosition, collapseVariantsToOne } from '@/utils/positionKey';
 import { notifyError } from './errorsStore';
 import { resolveSimulationLayerName, resolveSimulationGeometryObjectIds } from './acousticLayerStore';
+import { resolveSimulationVersionId } from '@/utils/simulationRequest';
 import { useUIStore } from './uiStore';
 import { useAudioControlsStore } from './audioControlsStore';
 import { recordInflightJob, removeInflightJob } from '@/lib/job-tracker';
@@ -378,7 +379,7 @@ export const usePyroomAcousticsStore = create<PyroomAcousticsStoreState>()(
             // 1. Submit → returns simulation_id immediately
             const { simulation_id } = await apiService.runPyroomacousticsSimulationSpeckle(
               projectId,
-              modelId,
+              resolveSimulationVersionId(modelId),
               objectMaterials,
               resolveSimulationLayerName(layerName),
               simulationName,

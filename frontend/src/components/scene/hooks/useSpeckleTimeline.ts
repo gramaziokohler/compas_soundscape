@@ -12,6 +12,7 @@ import {
   type ExportFormat,
 } from '@/lib/audio/SoundscapeExporter';
 import { UI_TIMING } from '@/utils/constants';
+import { useOnFloatingPanelsCollapse } from '@/hooks/useOnFloatingPanelsCollapse';
 import type { SoundEvent } from '@/types';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
 import type { TimelineSound } from '@/types/audio';
@@ -71,6 +72,11 @@ export function useSpeckleTimeline({
   useEffect(() => {
     userClosedTimelineRef.current = true;
   }, []);
+  // Opening another model re-arms the latch: a timeline the user opened on the
+  // previous stage must not auto-reopen when the new model's sounds arrive.
+  useOnFloatingPanelsCollapse(() => {
+    userClosedTimelineRef.current = true;
+  });
 
   const handleCloseTimeline = useCallback(() => {
     userClosedTimelineRef.current = true;

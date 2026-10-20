@@ -936,6 +936,8 @@ TTS_MAX_CONCURRENT = int(os.environ.get("TTS_MAX_CONCURRENT", "2"))
 # Job lifecycle
 JOB_HEARTBEAT_TIMEOUT_S = int(os.environ.get("JOB_HEARTBEAT_TIMEOUT_S", "90"))
 JOB_RESULT_TTL_S = int(os.environ.get("JOB_RESULT_TTL_S", "3600"))
+# Max size of the client card-mapping attached to a job (POST /api/jobs/{id}/meta)
+JOB_CLIENT_META_MAX_BYTES = 16 * 1024
 JOB_REAPER_INTERVAL_S = int(os.environ.get("JOB_REAPER_INTERVAL_S", "30"))
 JOB_MAX_ATTEMPTS = int(os.environ.get("JOB_MAX_ATTEMPTS", "2"))
 WORKER_HEARTBEAT_INTERVAL_S = int(os.environ.get("WORKER_HEARTBEAT_INTERVAL_S", "10"))
@@ -1050,3 +1052,34 @@ BUG_REPORT_MAX_DESCRIPTION_CHARS = 5000
 BUG_REPORT_MAX_SCREENSHOT_BYTES = 8 * 1024 * 1024
 BUG_REPORT_MAX_CONTEXT_BYTES = 256 * 1024
 BUG_REPORT_SCREENSHOT_BASENAME = "screenshot"
+
+# ============================================================================
+# Model versions & update impact (services/speckle_version_service.py,
+# services/model_version_impact_service.py, routers/speckle.py)
+# ============================================================================
+# Raw Speckle versions fetched per listing. Every app upload is TWO raw versions
+# (bundle + legacy copy, see speckle.mdc), so this covers ~50 displayed versions.
+SPECKLE_VERSIONS_FETCH_LIMIT = 100
+# Ingestion records fetched to resolve each uploaded version's original file name.
+SPECKLE_INGESTION_HISTORY_LIMIT = 100
+# Source application stamped on the legacy copies the app materializes.
+SPECKLE_LEGACY_COPY_SOURCE_APP = "compas-soundscape"
+# Per-version object statistics kept in memory (versions are immutable).
+MODEL_VERSION_STATS_CACHE_SIZE = 8
+# Tolerance bounds accepted from the client (defaults live in the frontend constants).
+MODEL_VERSION_TOLERANCE_MAX_DISTANCE_M = 5.0
+MODEL_VERSION_TOLERANCE_MAX_ANGLE_DEG = 45.0
+MODEL_VERSION_TOLERANCE_MAX_AREA_RATIO = 1.0
+# Planar objects only: dominant-normal rotation is reported when the largest
+# eigenvalue of the area-weighted normal tensor holds this share of the total.
+MODEL_VERSION_PLANAR_EIGEN_SHARE = 0.8
+# Listener / free-sound placement checks against the new acoustic region.
+MODEL_VERSION_PLACEMENT_RAYS = 64
+MODEL_VERSION_PLACEMENT_SEED = 7
+# Share of escaping rays above which a point is "outside the room".
+MODEL_VERSION_PLACEMENT_OUTSIDE_FRACTION = 0.5
+# A point enclosed by an object whose smallest extent is at most this is
+# "inside a solid object" (wall, slab, column); larger enclosures are rooms.
+MODEL_VERSION_SOLID_MAX_THICKNESS_M = 1.0
+# Share of parity rays that must agree before a point counts as enclosed.
+MODEL_VERSION_ENCLOSED_RAY_SHARE = 0.75

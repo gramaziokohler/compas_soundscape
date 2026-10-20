@@ -13,6 +13,7 @@ import type { ListenerItemConfig } from './listeners/listenerItems';
 import { useGridListenersStore } from '@/store/gridListenersStore';
 import { useReceiversStore } from '@/store/receiversStore';
 import { usePositionClipboardStore } from '@/store';
+import { useOnFloatingPanelsCollapse } from '@/hooks/useOnFloatingPanelsCollapse';
 
 interface ListenersSectionProps {
   receivers: ReceiverData[];
@@ -81,6 +82,8 @@ export function ListenersSection({
   // Expanded card (single or grid) — UI only. Powering a listener (FPS view /
   // grid points) is separate: the card header's power button.
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
+  // Opening a model / reloading the page starts with every listener pop-up reduced.
+  useOnFloatingPanelsCollapse(() => setExpandedItemId(null));
   const prevGridCountRef = useRef(gridListeners.length);
 
   // Copied position for the right-click "Paste position" menu item (shared across

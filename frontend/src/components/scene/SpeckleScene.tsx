@@ -54,6 +54,9 @@ import { SceneTimeline } from '@/components/scene/SceneTimeline';
 import { ObjectExplorerPanel } from '@/components/scene/ObjectExplorerPanel';
 import { Spinner } from '@/components/ui/Spinner';
 import { ModelUploadProgress } from './ModelUploadProgress';
+import { ModelVersionBanner } from '@/components/scene/model-version/ModelVersionBanner';
+import { ModelVersionReviewPanel } from '@/components/scene/model-version/ModelVersionReviewPanel';
+import { useModelVersionStore } from '@/store';
 import { HOME_STAGE, SCENE_BOTTOM_BAR, UI_RIGHT_SIDEBAR } from '@/utils/constants';
 import type { SoundEvent, ReceiverData } from '@/types';
 import type { AuralizationConfig } from '@/types/audio';
@@ -178,6 +181,9 @@ interface SpeckleSceneProps {
   // Soundscape persistence
   onSaveSoundscape?: () => void;
   isSavingSoundscape?: boolean;
+  /** Shared workspace viewer: reload the owner's last saved soundscape. */
+  onLoadLatestSoundscape?: () => void;
+  isLoadingLatestSoundscape?: boolean;
 
   // FPS mode exit trigger: increment to programmatically exit first-person mode
   exitFPSTrigger?: number;
@@ -199,8 +205,17 @@ interface SpeckleSceneProps {
   /** True when a newer version of the open model exists but is not loaded yet. */
   hasNewModelVersion?: boolean;
 
-  /** Reload the page to load the latest published version of the open model. */
+  /** Load the latest published version of the open model (in place). */
   onSwitchToLatest?: () => void;
+
+  /** Upload a file as a new version of the open model (model pill menu). */
+  onUploadNewVersion?: (file: File) => void;
+
+  /** Start picking a Speckle object for a sound card (review panel "Re-link"). */
+  onStartLinkingEntity?: (configIndex: number) => void;
+
+  /** Activate a sound card's scene and expand the card (review panel rows). */
+  onRevealSoundInScene?: (configIndex: number) => void;
 
   className?: string;
 }
@@ -256,6 +271,8 @@ export function SpeckleScene({
   onSpeckleModelSelect,
   onSaveSoundscape,
   isSavingSoundscape = false,
+  onLoadLatestSoundscape,
+  isLoadingLatestSoundscape = false,
   exitFPSTrigger,
   onReceiverDoubleClicked,
   onListenerClicked,
@@ -264,6 +281,9 @@ export function SpeckleScene({
   isBootstrappingModel = false,
   hasNewModelVersion = false,
   onSwitchToLatest,
+  onUploadNewVersion,
+  onStartLinkingEntity,
+  onRevealSoundInScene,
   className,
 }: SpeckleSceneProps) {
   // Refs
@@ -379,7 +399,13 @@ export function SpeckleScene({
   // the viewer becomes ready, or an error occurs.
   const [isPreparingModel, setIsPreparingModel] = useState(false);
 
-  const modelUrl = viewer_url || speckleData?.url;
+  // An older version chosen in the model menu loads as `models/<id>@<version>`;
+  // otherwise the model URL follows the latest version. A newer latest under the
+  // same URL re-loads through the store's reload nonce.
+  const pinnedVersionId = useModelVersionStore((s) => s.pinnedVersionId);
+  const viewerReloadNonce = useModelVersionStore((s) => s.viewerReloadNonce);
+  const baseModelUrl = viewer_url || speckleData?.url;
+  const modelUrl = baseModelUrl && pinnedVersionId ? `${baseModelUrl}@${pinnedVersionId}` : baseModelUrl;
 
   // ============================================================================
   // Phase 1-4 Hook Invocations
@@ -394,7 +420,7 @@ export function SpeckleScene({
     audioContext,
     scaleForSounds,
     onViewerLoaded,
-    refreshKey,
+    refreshKey: refreshKey + viewerReloadNonce,
     isBootstrappingModel,
     isDarkModeRef,
     isAcousticModeRef,
@@ -1158,7 +1184,7 @@ export function SpeckleScene({
 
       {/* Centered Speckle / upload pop-up with a dimmed backdrop */}
       <SpeckleModelModal
-        open={isSandbox && isViewerReady && showLoadModelPanel && !isModelLoading}
+        open={isViewerReady && showLoadModelPanel && !isModelLoading}
         onClose={() => setShowLoadModelPanel(false)}
         modelFile={modelFile}
         isDragging={isDragging}
@@ -1203,6 +1229,8 @@ export function SpeckleScene({
         enableAutoSave={enableAutoSave}
         isSavingSoundscape={!!isSavingSoundscape}
         onSaveSoundscape={onSaveSoundscape}
+        onLoadLatestSoundscape={onLoadLatestSoundscape}
+        isLoadingLatestSoundscape={isLoadingLatestSoundscape}
         hasTimeline={timelineSounds.length > 0}
         isPlaying={playbackState.isPlaying}
         currentTimeMs={playbackState.currentTime}
@@ -1220,9 +1248,30 @@ export function SpeckleScene({
         onToggleExplorer={handleToggleExplorer}
         showLoadModelPanel={showLoadModelPanel}
         onToggleLoadModel={() => setShowLoadModelPanel((open) => !open)}
+        onUploadNewVersion={onUploadNewVersion}
         showAdvancedSettings={showAdvancedSettings}
         onToggleSettings={() => setShowAdvancedSettings(!showAdvancedSettings)}
       />
+
+      {/* Model version update: non-blocking banner + impact review panel */}
+      {isViewerReady && !isSandbox && (
+        <>
+          <div
+            className="absolute left-0 right-0 flex justify-center pointer-events-none"
+            style={{ top: 12, zIndex: 45, paddingLeft: 16, paddingRight: 16 }}
+          >
+            <div style={{ maxWidth: 760, width: '100%', display: 'flex', justifyContent: 'center' }}>
+              <ModelVersionBanner />
+            </div>
+          </div>
+          <ModelVersionReviewPanel
+            rightOffset={isRightSidebarExpanded ? (rightSidebarWidth ?? UI_RIGHT_SIDEBAR.WIDTH) : 0}
+            onRelinkSound={(configIndex) => onStartLinkingEntity?.(configIndex)}
+            onRevealListener={onListenerClicked}
+            onRevealSound={onRevealSoundInScene}
+          />
+        </>
+      )}
 
       {/* Object Explorer floating panel — always mounted so ObjectExplorer initializes (auto-hides Acoustics layer) on load */}
       <ObjectExplorerPanel

@@ -19,7 +19,7 @@ from services.paths import (
     user_model_dir,
     user_sounds_dir,
 )
-from services.metadata_store import metadata_store, ROLE_OWNER, ROLE_EDITOR
+from services.metadata_store import metadata_store, ROLE_OWNER, ROLE_VIEWER
 from models.schemas import (
     SoundscapeSaveRequest,
     SoundscapeSaveResponse,
@@ -65,7 +65,7 @@ def _require_role(request: Request, workspace_id: str, allowed: tuple[str, ...])
         return None
     role = metadata_store.get_member_role(workspace_id, user_hash)
     if role not in allowed:
-        raise HTTPException(status_code=403, detail="Insufficient permission for this workspace. Data will not save.")
+        raise HTTPException(status_code=403, detail="Only the workspace owner can save changes.")
     return role
 
 
@@ -104,7 +104,7 @@ def _resolve_owning_workspace(
         request.state.session_id = owner_wid
         return owner_wid, False
     if owner_ws and owner_ws.get("sharing_mode") == "link" and user_hash and session_token:
-        metadata_store.ensure_member(owner_wid, user_hash, ROLE_EDITOR)
+        metadata_store.ensure_member(owner_wid, user_hash, ROLE_VIEWER)
         metadata_store.set_session_workspace(session_token, owner_wid)
         request.state.workspace_id = owner_wid
         request.state.session_id = owner_wid
@@ -511,7 +511,7 @@ async def save_soundscape(request: SoundscapeSaveRequest, req: Request):
     4. Write soundscape.json as source of truth
     """
     session_id = _get_session_id(req)
-    _require_role(req, session_id, (ROLE_OWNER, ROLE_EDITOR))
+    _require_role(req, session_id, (ROLE_OWNER,))
     data = request.soundscape_data
     model_id = data.model_id
 
@@ -725,7 +725,7 @@ async def upload_soundscape_audio(
         raise HTTPException(status_code=400, detail="model_id is required")
 
     session_id = _get_session_id(req)
-    _require_role(req, session_id, (ROLE_OWNER, ROLE_EDITOR))
+    _require_role(req, session_id, (ROLE_OWNER,))
     dest_dir = user_audio_dir(session_id, model_id)
     dest_dir.mkdir(parents=True, exist_ok=True)
 
@@ -758,7 +758,7 @@ async def delete_soundscape(model_id: str, req: Request):
     the workspace still needs. The workspace itself is left intact.
     """
     session_id = _get_session_id(req)
-    _require_role(req, session_id, (ROLE_OWNER, ROLE_EDITOR))
+    _require_role(req, session_id, (ROLE_OWNER,))
 
     model_dir = user_model_dir(session_id, model_id)
 

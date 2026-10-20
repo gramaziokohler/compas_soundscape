@@ -44,6 +44,29 @@ export function getSceneSoundIndices(soundConfigs: SoundGenerationConfig[], usag
   return out;
 }
 
+/**
+ * Step a scene is visibly working on when this tab holds no run for it — its
+ * pipeline runs in another tab, before a refresh, or in another member's
+ * browser (shared workspace), and only its cards' job state was reattached.
+ * Returns null when none of the scene's cards is busy.
+ */
+export function deriveObservedSceneStep(args: {
+  scenario: AnalysisConfig | undefined;
+  soundIndices: number[];
+  activeGenerationCardIndices: number[];
+  orchestrating: boolean;
+  scenarioAnalyzing: boolean;
+  contextAnalyzing: boolean;
+}): SceneWorkflowStep | null {
+  const { scenario, soundIndices, activeGenerationCardIndices, orchestrating, scenarioAnalyzing, contextAnalyzing } = args;
+  if (orchestrating || soundIndices.some((i) => activeGenerationCardIndices.includes(i))) return 'generate';
+  if (scenarioAnalyzing) {
+    return scenario?.type === 'scenario' && scenario.scenarioId ? 'foley' : 'scenario';
+  }
+  if (contextAnalyzing) return 'analyze';
+  return null;
+}
+
 /** True when a model-analysis context card holds a finished analysis the scenario agents can reuse. */
 export function hasModelAnalysisResult(config: AnalysisConfig | undefined): boolean {
   return config?.type === 'model-analysis' && !!config.analysisResult?.analysisId;

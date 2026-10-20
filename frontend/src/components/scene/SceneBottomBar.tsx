@@ -10,9 +10,10 @@ import { LowOutputHintPopover } from '@/components/scene/LowOutputHintPopover';
 import { SceneVolumeButton } from '@/components/scene/SceneVolumeButton';
 import { SceneRenderStyleButton } from '@/components/scene/SceneRenderStyleButton';
 import { BugReportButton } from '@/components/scene/BugReportButton';
-import { useSceneWorkflowStore, useUIStore, selectHasSaveTarget } from '@/store';
+import { ModelPill } from '@/components/scene/model-version/ModelPill';
+import { useSceneWorkflowStore, useUIStore, useWorkspaceStore, selectHasSaveTarget, selectIsReadOnlyWorkspace, selectHasNewerSave } from '@/store';
 import { useHomeStageHasWork } from '@/hooks/useHomeStageHasWork';
-import { SCENE_BOTTOM_BAR } from '@/utils/constants';
+import { SCENE_BOTTOM_BAR, WORKSPACE_MESSAGES } from '@/utils/constants';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
 
 function formatTime(ms: number): string {
@@ -33,6 +34,9 @@ export interface SceneBottomBarProps {
   enableAutoSave: boolean;
   isSavingSoundscape: boolean;
   onSaveSoundscape?: () => void;
+  /** Shared workspace viewer: reload the owner's last saved soundscape. */
+  onLoadLatestSoundscape?: () => void;
+  isLoadingLatestSoundscape?: boolean;
 
   // Playback (center)
   hasTimeline: boolean;
@@ -54,6 +58,8 @@ export interface SceneBottomBarProps {
   onToggleExplorer: () => void;
   showLoadModelPanel: boolean;
   onToggleLoadModel: () => void;
+  /** Upload a file as a new version of the open model (model pill menu). */
+  onUploadNewVersion?: (file: File) => void;
 
   // System
   showAdvancedSettings: boolean;
@@ -65,13 +71,15 @@ export interface SceneBottomBarProps {
  *
  * Full-width frosted control strip docked to the bottom edge. Groups every
  * scene-level control by intent:
- *   left   — app: report a bug (Detailed mode), home, undo/redo, save
+ *   left   — app: report a bug (Detailed mode), home, undo/redo, save (shown
+ *            greyed with a "view only" hint in someone else's workspace)
  *   center — playback of the selected scene: play/pause, stop, time, timeline,
  *            plus snap / zoom / export while the DAW is expanded (portaled by DAWDock);
  *            a low-output hint pops above it when playback is too quiet
  *   right  — view: Simple / Detailed interface toggle (Detailed mode only — always
  *            available in Settings → Display), volume, show/hide sounds & listeners,
- *            render style dropdown, reset view, refresh, Object Explorer / load model;
+ *            render style dropdown, reset view, refresh, Object Explorer, then the model
+ *            pill (open model / no-model soundscape → versions, upload, switch) or load model;
  *            then help & system: shortcuts, notifications, settings
  * The docked DAW opens above it; sidebars stop at its top edge. In Simple mode
  * the bug report button floats above the bar's left end instead.
@@ -84,11 +92,11 @@ export interface SceneBottomBarProps {
 export function SceneBottomBar(props: SceneBottomBarProps) {
   const {
     isViewerReady, isSandbox, isFirstPersonMode,
-    enableAutoSave, isSavingSoundscape, onSaveSoundscape,
+    enableAutoSave, isSavingSoundscape, onSaveSoundscape, onLoadLatestSoundscape, isLoadingLatestSoundscape = false,
     hasTimeline, isPlaying, currentTimeMs, durationMs, showTimeline,
     onPlay, onPause, onStop, onToggleTimeline,
     audioOrchestrator, onResetZoom, onRefreshScene, showUpdateBadge,
-    showObjectExplorer, onToggleExplorer, showLoadModelPanel, onToggleLoadModel,
+    showObjectExplorer, onToggleExplorer, showLoadModelPanel, onToggleLoadModel, onUploadNewVersion,
     showAdvancedSettings, onToggleSettings,
   } = props;
   const isExpert = useUIStore((s) => s.uiMode === 'expert');
@@ -97,8 +105,15 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
   const toggleSoundsAndListeners = useUIStore((s) => s.toggleSoundsAndListenersVisible);
   // Bare Home page (no model, no saved project) never autosaves — flag edits.
   const hasSaveTarget = useUIStore(selectHasSaveTarget);
+  // A no-model soundscape (Home project) shows the model pill instead of "Load model".
+  const hasHomeProject = useUIStore((s) => !!s.homeProject);
   const homeStageHasWork = useHomeStageHasWork();
   const showUnsavedHint = !hasSaveTarget && homeStageHasWork;
+  // Someone else's workspace: only the owner saves, so autosave is off and the
+  // Save button is shown disabled (the user's own autosave preference is kept).
+  const isReadOnly = useWorkspaceStore(selectIsReadOnlyWorkspace);
+  // The owner saved since this soundscape was loaded (heartbeat revision moved on).
+  const hasNewerSave = useWorkspaceStore(selectHasNewerSave);
 
   return (
     <div
@@ -127,12 +142,13 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
         </button>
         <div className="scene-bottom-bar__sep" />
         <UndoRedoToolbar />
-        {isViewerReady && onSaveSoundscape && !enableAutoSave && (
+        {isViewerReady && onSaveSoundscape && (!enableAutoSave || isReadOnly) && (
           <BarButton
             onClick={onSaveSoundscape}
-            active={isSavingSoundscape}
-            title={isSavingSoundscape ? 'Saving…' : 'Save progress'}
-            label={isSavingSoundscape ? 'Saving…' : 'Save'}
+            disabled={isReadOnly}
+            active={isSavingSoundscape && !isReadOnly}
+            title={isReadOnly ? WORKSPACE_MESSAGES.VIEW_ONLY_SAVE_TITLE : isSavingSoundscape ? 'Saving…' : 'Save progress'}
+            label={isSavingSoundscape && !isReadOnly ? 'Saving…' : 'Save'}
             icon={
               <svg width={ICON} height={ICON} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
@@ -141,6 +157,26 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
               </svg>
             }
           />
+        )}
+        {isViewerReady && onLoadLatestSoundscape && isReadOnly && (
+          <BarButton
+            onClick={onLoadLatestSoundscape}
+            disabled={isLoadingLatestSoundscape}
+            active={hasNewerSave}
+            dot={hasNewerSave}
+            title={hasNewerSave ? WORKSPACE_MESSAGES.LOAD_LATEST_NEWER_TITLE : WORKSPACE_MESSAGES.LOAD_LATEST_TITLE}
+            label={isLoadingLatestSoundscape ? WORKSPACE_MESSAGES.LOAD_LATEST_LOADING_LABEL : WORKSPACE_MESSAGES.LOAD_LATEST_LABEL}
+            icon={
+              <svg width={ICON} height={ICON} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <polyline points="23 4 23 10 17 10" />
+                <polyline points="1 20 1 14 7 14" />
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+              </svg>
+            }
+          />
+        )}
+        {isViewerReady && onSaveSoundscape && isReadOnly && (
+          <span className="bar-unsaved" role="status">{WORKSPACE_MESSAGES.VIEW_ONLY_HINT}</span>
         )}
         {isViewerReady && showUnsavedHint && (
           <span className="bar-unsaved" role="status">progress not saved</span>
@@ -151,6 +187,17 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
       <div className="scene-bottom-bar__group" style={{ position: 'relative' }}>
         {isViewerReady && hasTimeline && (
           <>
+            {/* The expanded DAW dock portals its snap / zoom / export controls here.
+                Absolutely placed just before the play button and growing leftward,
+                so it never widens the centred playback group (the play button stays
+                put on expand) and never runs into the crowded right-hand group. */}
+            {showTimeline && (
+              <div
+                id={SCENE_BOTTOM_BAR.DAW_CONTROLS_SLOT_ID}
+                className="scene-bottom-bar__group"
+                style={{ position: 'absolute', right: '100%', top: 0, bottom: 0, justifyContent: 'flex-end', paddingRight: SCENE_BOTTOM_BAR.GROUP_GAP }}
+              />
+            )}
             <LowOutputHintPopover
               audioOrchestrator={audioOrchestrator}
               isPlaying={isPlaying}
@@ -201,16 +248,6 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
                 </svg>
               }
             />
-            {/* The expanded DAW dock portals its snap / zoom / export controls here.
-                Absolutely placed just past the group's right edge, so it never widens
-                the centred playback group — the play button stays put on expand. */}
-            {showTimeline && (
-              <div
-                id={SCENE_BOTTOM_BAR.DAW_CONTROLS_SLOT_ID}
-                className="scene-bottom-bar__group"
-                style={{ position: 'absolute', left: '100%', top: 0, bottom: 0, paddingLeft: SCENE_BOTTOM_BAR.GROUP_GAP }}
-              />
-            )}
           </>
         )}
       </div>
@@ -280,7 +317,7 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
               dot={showUpdateBadge}
               icon={<RefreshIcon size="0.8rem" />}
             />
-            {isSandbox ? (
+            {isSandbox && !hasHomeProject ? (
               <BarButton
                 id="load-speckle-model-button"
                 onClick={onToggleLoadModel}
@@ -296,7 +333,7 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
                   </svg>
                 }
               />
-            ) : (
+            ) : isSandbox ? null : (
               <BarButton
                 id={SCENE_BOTTOM_BAR.OBJECT_EXPLORER_BUTTON_ID}
                 onClick={onToggleExplorer}
@@ -310,6 +347,13 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
                     <rect x="13" y="17" width="8" height="4" rx="1" />
                   </svg>
                 }
+              />
+            )}
+            {/* Loaded model / no-model soundscape name → versions, upload, switch model */}
+            {(!isSandbox || hasHomeProject) && (
+              <ModelPill
+                onOpenModelBrowser={() => { if (!showLoadModelPanel) onToggleLoadModel(); }}
+                onUploadNewVersion={(file) => onUploadNewVersion?.(file)}
               />
             )}
             <div className="scene-bottom-bar__sep" />

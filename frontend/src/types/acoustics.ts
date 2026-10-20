@@ -61,6 +61,8 @@ export interface BaseSimulationConfig extends CardBaseConfig {
   simulationInstanceId?: string; // Unique ID to track which hook instance this config is bound to
   /** Acoustic region this card was simulated with (see SimulationAcousticSelection). */
   speckleAcousticSelection?: SimulationAcousticSelection;
+  /** Speckle version the completed result was simulated on (geometry-change / outdated detection). */
+  simulatedVersionId?: string;
 }
 
 /**

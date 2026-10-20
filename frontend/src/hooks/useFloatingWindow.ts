@@ -26,6 +26,8 @@ interface UseFloatingWindowOptions {
   active: boolean;
   /** Smallest size the user can resize to. Defaults to `FLOATING_WINDOW.MIN_SIZE`. */
   minSize?: { w: number; h: number };
+  /** First placement when nothing is persisted (defaults to centered at `defaultSize`). */
+  defaultRect?: () => FloatingRect;
 }
 
 const { VIEWPORT_MARGIN } = FLOATING_WINDOW;
@@ -82,14 +84,19 @@ export function useFloatingWindow({
   defaultSize,
   active,
   minSize = FLOATING_WINDOW.MIN_SIZE,
+  defaultRect,
 }: UseFloatingWindowOptions) {
   const [rect, setRect] = useState<FloatingRect | null>(null);
   const rectRef = useRef<FloatingRect | null>(null);
   rectRef.current = rect;
+  // Read at open time only — callers may pass an inline function.
+  const defaultRectRef = useRef(defaultRect);
+  defaultRectRef.current = defaultRect;
 
   useEffect(() => {
     if (!active) return;
-    setRect(clampRect(loadRect(storageKey) ?? centeredRect(defaultSize), minSize));
+    const initial = loadRect(storageKey) ?? defaultRectRef.current?.() ?? centeredRect(defaultSize);
+    setRect(clampRect(initial, minSize));
   }, [active, storageKey, defaultSize, minSize]);
 
   // Keep the window reachable when the viewport shrinks.

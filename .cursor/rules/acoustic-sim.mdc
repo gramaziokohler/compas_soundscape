@@ -287,6 +287,15 @@ silently mutes every sound placed naturally near a simulated source. **Always re
 recorded coordinate**, never by quantized posKey equality. Constant: `SIMULATION_POSITION_MATCH_THRESHOLD = 0.5`
 in `frontend/src/utils/constants.ts`.
 
+### Results are bound to the model version they ran on
+
+A completed pyroomacoustics / Choras card stores `simulatedVersionId` (live-only run field, listed in
+`SIM_RUN_KEYS`; also tagged on job-recovered results via the in-flight record's `meta.versionId`). When the
+loaded version differs, `SimulationOutdatedNotice` asks `/api/speckle/version-impact` (card region:
+`speckleAcousticSelection` + material-assignment keys) and marks the card **outdated only when the region
+changed above tolerance**. Outdated IRs stay playable, with a warning and Re-run / Show changes / Load vN.
+Never invalidate on a bare version-id change, and never block auralization of an outdated result.
+
 ### Variants = ONE acoustic source
 
 All variants of a sound source (same `prompt_index`, different `copy_index`) are a SINGLE simulated

@@ -87,6 +87,9 @@ class JobView:
     created: float
     position: Optional[int]   # 1-based queue position, None if not queued
     total: Optional[int]      # queue depth for this job's queue
+    # Client-published card mapping (model id, config ids, …) so another
+    # member's browser can reattach the job to the right cards.
+    client_meta: Optional[Any] = None
 
 
 def _parse_json_field(raw: str) -> Optional[Any]:
@@ -185,6 +188,7 @@ class AsyncJobStore:
             created=float(data.get("created") or 0.0),
             position=position,
             total=total,
+            client_meta=_parse_json_field(data.get("client_meta", "")),
         )
 
     async def cancel(self, job_id: str) -> bool:
@@ -219,6 +223,19 @@ class AsyncJobStore:
             return True
 
         return False
+
+    async def set_client_meta(self, job_id: str, session_id: str, meta: dict) -> bool:
+        """Attach the submitting client's card mapping to a job.
+
+        Only the job's own workspace may write it. Returns False when the job
+        does not exist or belongs to another workspace.
+        """
+        key = job_key(job_id)
+        owner = await self.redis.hget(key, "session_id")
+        if owner is None or owner != (session_id or ""):
+            return False
+        await self.redis.hset(key, "client_meta", json.dumps(meta))
+        return True
 
     async def pool_depths(self) -> dict:
         depths = {}
@@ -261,6 +278,7 @@ class AsyncJobStore:
                     created=float(data.get("created") or 0.0),
                     position=None,
                     total=None,
+                    client_meta=_parse_json_field(data.get("client_meta", "")),
                 )
             )
         views.sort(key=lambda v: v.created, reverse=True)

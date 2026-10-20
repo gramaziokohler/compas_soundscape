@@ -4,17 +4,18 @@ import { useEffect, useState } from "react";
 import { Users, Link2, Check, Trash2, Crown, LogOut, X } from "lucide-react";
 import { useWorkspaceStore, useUIStore, notifyError } from "@/store";
 import { apiService, type CurrentUser, type WorkspaceMember } from "@/services/api";
-import { UI_BORDER_RADIUS } from "@/utils/constants";
-import { CardSelect } from "@/components/ui/CardSelect";
+import { UI_BORDER_RADIUS, WORKSPACE_MESSAGES } from "@/utils/constants";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Badge } from "@/components/ui/Badge";
 
 /**
  * Workspace collaboration panel (shared sessions).
  *
- * Shows who else is active on the workspace, lets owners invite people, manage
- * member roles, revoke invites, transfer ownership, and lets non-owners leave.
- * Warns when autosave is paused because multiple people are editing.
+ * Shows who else is active on the workspace. Only the owner's changes are
+ * saved — every other member is a view-only viewer (told so here). Any member
+ * can copy a view-only model invite link; the owner also manages invites, the
+ * link-sharing mode, removes members and can transfer ownership ("Make owner").
+ * Non-owners can leave.
  *
  * Usage:
  *   <CollaborationPanel />
@@ -30,12 +31,10 @@ export function CollaborationPanel() {
   const revokeInvite = useWorkspaceStore((s) => s.revokeInvite);
   const setSharingMode = useWorkspaceStore((s) => s.setSharingMode);
   const leave = useWorkspaceStore((s) => s.leave);
-  const setMemberRole = useWorkspaceStore((s) => s.setMemberRole);
   const removeMember = useWorkspaceStore((s) => s.removeMember);
   const transferOwnership = useWorkspaceStore((s) => s.transferOwnership);
 
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
-  const [inviteRole, setInviteRole] = useState<"editor" | "viewer">("editor");
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
   const [me, setMe] = useState<CurrentUser | null>(null);
@@ -43,7 +42,6 @@ export function CollaborationPanel() {
 
   const workspaceId = workspace?.id ?? null;
   const isOwner = workspace?.role === "owner";
-  const canManage = workspace?.role === "owner" || workspace?.role === "editor";
   const multi = presence > 1;
   const currentModelId = useUIStore((s) => s.globalSpeckleData?.model_id ?? null);
 
@@ -52,8 +50,8 @@ export function CollaborationPanel() {
   }, []);
 
   useEffect(() => {
-    if (workspaceId && canManage) void loadInvites();
-  }, [workspaceId, canManage, loadInvites]);
+    if (workspaceId && isOwner) void loadInvites();
+  }, [workspaceId, isOwner, loadInvites]);
 
   if (!workspace) return null;
 
@@ -62,7 +60,7 @@ export function CollaborationPanel() {
   const handleInvite = async () => {
     setBusy(true);
     try {
-      const url = await createInvite(inviteRole);
+      const url = await createInvite();
       setInviteUrl(url);
       if (url) {
         try {
@@ -112,7 +110,7 @@ export function CollaborationPanel() {
         {" \u00b7 "}
         rev {workspace.revision}
       </div>
-      {multi && (
+      {!isOwner && (
         <div
           className="text-[10px] leading-tight px-1.5 py-1"
           style={{
@@ -121,14 +119,15 @@ export function CollaborationPanel() {
             borderRadius: `${UI_BORDER_RADIUS.SM}px`,
           }}
         >
-          Autosave is paused while others are editing. Save manually.
+          {WORKSPACE_MESSAGES.VIEW_ONLY_PANEL_NOTE}
         </div>
       )}
 
       {/* Workspace switcher — personal workspace vs workspaces you joined.
           Switching reloads the current model under the selected workspace, so
-          the model's own soundscape version is loaded for that workspace. */}
-      {workspaces.length > 1 && (
+          the model's own soundscape version is loaded for that workspace.
+          Hidden on Home: with no model open you are always in your own workspace. */}
+      {workspaces.length > 1 && currentModelId && (
         <div className="flex flex-col gap-1">
           <span className="text-[9px] uppercase tracking-wider text-secondary-hover">Workspaces</span>
           {workspaces.map((w) => {
@@ -170,31 +169,18 @@ export function CollaborationPanel() {
                   {memberLabel(m)}
                   {isMe ? " (you)" : ""}
                 </span>
-                {isOwnerRow ? (
-                  <Badge variant="primary" size="sm">owner</Badge>
-                ) : canManage && isOwner ? (
-                  <CardSelect
-                    compact
-                    value={m.role}
-                    onChange={(v) => void setMemberRole(m.user_hash, v as "editor" | "viewer")}
-                    options={[
-                      { value: "editor", label: "Editor" },
-                      { value: "viewer", label: "Viewer" },
-                    ]}
-                  />
-                ) : (
-                  <Badge variant="neutral" size="sm">{m.role}</Badge>
-                )}
+                <Badge variant={isOwnerRow ? "primary" : "neutral"} size="sm">{m.role}</Badge>
                 {isOwner && !isOwnerRow && (
                   <>
                     <button
                       type="button"
-                      title="Make owner"
+                      title="Give owner rights to this member"
                       aria-label={`Transfer ownership to ${memberLabel(m)}`}
-                      className="shrink-0 text-secondary-hover hover:text-foreground transition-colors"
+                      className="shrink-0 flex items-center gap-0.5 text-secondary-hover hover:text-foreground transition-colors"
                       onClick={() => setConfirm({ kind: "transfer", member: m })}
                     >
-                      <Crown size={12} />
+                      <Crown size={11} />
+                      <span>Make owner</span>
                     </button>
                     <button
                       type="button"
@@ -220,7 +206,7 @@ export function CollaborationPanel() {
             confirm.kind === "leave"
               ? "Leave this workspace? You will lose access to its shared data."
               : confirm.kind === "transfer"
-                ? `Make ${confirm.member ? memberLabel(confirm.member) : "this member"} the owner? You will become an editor.`
+                ? `Make ${confirm.member ? memberLabel(confirm.member) : "this member"} the owner? You will become a viewer and your changes will no longer be saved.`
                 : `Remove ${confirm.member ? memberLabel(confirm.member) : "this member"} from the workspace?`
           }
           confirmLabel={confirm.kind === "leave" ? "Leave" : confirm.kind === "transfer" ? "Transfer" : "Remove"}
@@ -231,43 +217,33 @@ export function CollaborationPanel() {
         />
       )}
 
-      {isOwner && (
-        <div className="flex flex-col gap-1">
-          <div className="flex items-center gap-1.5">
-            <CardSelect
-              compact
-              value={inviteRole}
-              onChange={(v) => setInviteRole(v as "editor" | "viewer")}
-              options={[
-                { value: "editor", label: "Editor" },
-                { value: "viewer", label: "Viewer" },
-              ]}
-            />
-            <button
-              type="button"
-              onClick={() => void handleInvite()}
-              disabled={busy}
-              className="flex flex-1 items-center justify-center gap-1 py-1.5 text-xs font-medium rounded transition-colors disabled:opacity-50"
-              style={{ background: "var(--color-primary)", color: "var(--color-on-blue)", borderRadius: `${UI_BORDER_RADIUS.SM}px` }}
-            >
-              {copied ? <Check size={12} /> : <Link2 size={12} />}
-              {copied ? "Link copied" : busy ? "Creating\u2026" : currentModelId ? "Copy model invite link" : "Copy invite link"}
-            </button>
-          </div>
-          {currentModelId && (
-            <span className="text-[9px] text-secondary-hover">
-              Recipients land on this model after joining.
-            </span>
-          )}
-          {inviteUrl && (
-            <input
-              readOnly
-              value={inviteUrl}
-              onFocus={(e) => e.currentTarget.select()}
-              className="w-full px-2 py-1 text-[10px] rounded bg-secondary-lighter text-foreground border border-secondary-light focus:outline-none"
-              style={{ borderRadius: `${UI_BORDER_RADIUS.SM}px` }}
-            />
-          )}
+      {/* Share — any member can copy a view-only invite link. */}
+      <div className="flex flex-col gap-1">
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => void handleInvite()}
+            disabled={busy}
+            className="flex flex-1 items-center justify-center gap-1 py-1.5 text-xs font-medium rounded transition-colors disabled:opacity-50"
+            style={{ background: "var(--color-primary)", color: "var(--color-on-blue)", borderRadius: `${UI_BORDER_RADIUS.SM}px` }}
+          >
+            {copied ? <Check size={12} /> : <Link2 size={12} />}
+            {copied ? "Link copied" : busy ? "Creating\u2026" : currentModelId ? "Copy model invite link" : "Copy invite link"}
+          </button>
+        </div>
+        <span className="text-[9px] text-secondary-hover">
+          {currentModelId ? "Recipients land on this model after joining, as viewers." : "Recipients join as viewers."}
+        </span>
+        {inviteUrl && (
+          <input
+            readOnly
+            value={inviteUrl}
+            onFocus={(e) => e.currentTarget.select()}
+            className="w-full px-2 py-1 text-[10px] rounded bg-secondary-lighter text-foreground border border-secondary-light focus:outline-none"
+            style={{ borderRadius: `${UI_BORDER_RADIUS.SM}px` }}
+          />
+        )}
+        {isOwner && (
           <label className="flex items-center justify-between gap-2 text-[10px] text-secondary-hover">
             <span>Anyone with the link can join</span>
             <input
@@ -276,11 +252,11 @@ export function CollaborationPanel() {
               onChange={(e) => void setSharingMode(e.target.checked ? "link" : "private")}
             />
           </label>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Active invites */}
-      {canManage && invites.filter((i) => !i.revoked).length > 0 && (
+      {isOwner && invites.filter((i) => !i.revoked).length > 0 && (
         <div className="flex flex-col gap-0.5">
           <span className="text-[9px] uppercase tracking-wider text-secondary-hover">Invites</span>
           {invites

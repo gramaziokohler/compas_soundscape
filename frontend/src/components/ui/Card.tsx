@@ -105,6 +105,7 @@ export function Card<TConfig extends CardBaseConfig>({
   removeConfirmMessage,
   customButtons,
   headerPrefix,
+  headerBadge,
   footerPrefix,
   footerSuffix,
   // Simulation action button props
@@ -423,8 +424,16 @@ export function Card<TConfig extends CardBaseConfig>({
               className={`${titleClassName} min-w-0 overflow-hidden`}
               title={displayName}
             >
-              <div className="truncate">
-                {displayName}
+              <div className="flex items-center gap-1.5 min-w-0">
+                <div className="truncate">
+                  {displayName}
+                </div>
+                {isExpanded && headerBadge && (
+                  // Empty title: keep the title's native tooltip off the badge (it has its own).
+                  <div className="flex-shrink-0" title="" onClick={e => e.stopPropagation()}>
+                    {headerBadge}
+                  </div>
+                )}
               </div>
               {!isExpanded && collapsedInfo && (
                 <div

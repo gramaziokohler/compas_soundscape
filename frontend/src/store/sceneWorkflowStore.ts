@@ -116,7 +116,7 @@ function trackContextAnalysis(contextIndex: number, promise: Promise<void>): voi
  * Keep the expert sidebar in step with the pipeline: persisted indices are read
  * when the Sidebar mounts (mode switch), the nav command drives a mounted one.
  */
-function syncExpertNavigation(step: 0 | 1 | 2, contextIndex: number | null, usageIndex: number | null): void {
+export function syncExpertNavigation(step: 0 | 1 | 2, contextIndex: number | null, usageIndex: number | null): void {
   const ui = useUIStore.getState();
   const flow = useCardFlowStore.getState();
   ui.setSidebarWizardStep(step);

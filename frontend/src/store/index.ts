@@ -107,6 +107,15 @@ export type { CardFlowState } from './cardFlowStore';
 export { useAreaDrawingStore };
 export type { AreaDrawingStoreState } from './areaDrawingStore';
 
+export { useModelVersionStore, impactKey, bannerKey, findModelVersion, versionLabel } from './modelVersionStore';
+export type {
+  ModelVersionStoreState,
+  ModelVersionBanner,
+  ImpactEntry,
+  LinkReconciliationItem,
+  LinkReconciliationReport,
+} from './modelVersionStore';
+
 export { useGridListenersStore };
 export type { GridListenersStoreState } from './gridListenersStore';
 export { computeGridPoints } from './gridListenersStore';
@@ -173,7 +182,7 @@ export type { ModalImpactStoreState } from './modalImpactStore';
 export { useSoundFxStore };
 export type { SoundFxStoreState } from './soundFxStore';
 
-export { useWorkspaceStore } from './workspaceStore';
+export { useWorkspaceStore, selectIsReadOnlyWorkspace, selectHasNewerSave } from './workspaceStore';
 
 export {
   registerTemporalStore,

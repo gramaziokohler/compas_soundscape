@@ -8,12 +8,24 @@ per-domain status route.
 """
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, HTTPException, Request
 
+from config.constants import JOB_CLIENT_META_MAX_BYTES
 from services.job_store import job_store, JobNotFoundError
-from models.schemas import JobStatusResponse, JobCancelResponse, QueueStatusResponse
+from models.schemas import (
+    JobStatusResponse,
+    JobCancelResponse,
+    JobClientMetaRequest,
+    QueueStatusResponse,
+)
 
 router = APIRouter()
+
+
+def _session_id(request: Request) -> str:
+    return getattr(getattr(request, "state", None), "session_id", None) or ""
 
 
 def _to_response(view) -> JobStatusResponse:
@@ -28,6 +40,8 @@ def _to_response(view) -> JobStatusResponse:
         partial=view.partial,
         result=view.result,
         error=view.error,
+        client_meta=view.client_meta if isinstance(view.client_meta, dict) else None,
+        created=view.created or None,
     )
 
 
@@ -36,11 +50,11 @@ async def list_jobs(request: Request):
     """List all jobs for the caller's workspace.
 
     Lets the client reattach to jobs that started before the window was closed
-    (or after local storage was cleared). Scoped by the session cookie — never
-    by a query parameter.
+    (or after local storage was cleared), and lets other members of a shared
+    workspace see the owner's in-flight jobs. Scoped by the session cookie —
+    never by a query parameter.
     """
-    session_id = getattr(getattr(request, "state", None), "session_id", None) or ""
-    views = await job_store.list_session_jobs(session_id)
+    views = await job_store.list_session_jobs(_session_id(request))
     return [_to_response(v) for v in views]
 
 
@@ -50,19 +64,17 @@ async def get_job(job_id: str):
         view = await job_store.get(job_id)
     except JobNotFoundError:
         raise HTTPException(status_code=404, detail="Job not found")
+    return _to_response(view)
 
-    return JobStatusResponse(
-        job_id=view.job_id,
-        type=view.type,
-        status=view.status,
-        progress=view.progress,
-        status_text=view.status_text,
-        queue_position=view.position,
-        queue_total=view.total,
-        partial=view.partial,
-        result=view.result,
-        error=view.error,
-    )
+
+@router.post("/api/jobs/{job_id}/meta")
+async def set_job_client_meta(job_id: str, payload: JobClientMetaRequest, request: Request) -> dict:
+    """Attach the submitting client's card mapping to a job of this workspace."""
+    if len(json.dumps(payload.meta)) > JOB_CLIENT_META_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="Job meta too large")
+    if not await job_store.set_client_meta(job_id, _session_id(request), payload.meta):
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {"ok": True}
 
 
 @router.post("/api/jobs/{job_id}/cancel", response_model=JobCancelResponse)

@@ -490,6 +490,15 @@ Bubble cards vs docked DAW (stacking):
     = 'panel' → z SIMPLE_MODE.PANEL_RAISED_Z_INDEX (205, above DAW 200, below bottom bar 210);
     DAWDock pointerdown (capture) → 'daw' → cards drop back to SIMPLE_MODE.Z_INDEX.
 
+Simple-mode sound sphere click vs the scene panel:
+  useSpeckleCoordinatorCallbacks (simple mode) → uiStore.requestSoundSphereReveal(promptIndex)
+  └── hooks/useSoundSphereReveal — only while a scene panel is open: switch it to the sphere's
+      scene cards → SoundGenerationSection `revealCardRequest` ({index, version}) expands the card
+  hooks/useDismissOnSceneClick(…, keepOnTypes=['sound']) — a press on a visible sound sphere
+    (coordinator.getVisibleCustomObjectTypeAt) never reduces the panel; other 3D clicks do.
+  Global background cards (isConfigGlobal) never select their (hidden) sphere / gizmo
+    (useSpeckleSoundHighlight).
+
 sceneWorkflowStore (scenes run concurrently + independently, no frontend queue; runs keyed by
   scenario card index, each with a stable runId)
   Throttling is backend-side only: LLM steps → io_jobs LLM_SEMAPHORE, generate → worker queues.
@@ -591,6 +600,54 @@ Any new state keyed by an analysis card index must be added to `remapLinkedCardI
 │   └── receiver-manager.ts           → Receiver management  │
 └────────────────────────────────────────────────────────────┘
 ```
+
+### Model Versions & Update Impact
+
+Architects iterate the model in their CAD tool and come back to the web app. The
+viewer always loads the **latest** version; the user may view an older one for
+the session. Results tied to geometry (simulations) remember the version they ran
+on and are flagged only when the acoustic region changed **above tolerance**.
+
+```
+Bottom bar ModelPill (file name + vN tag)        components/scene/model-version/
+  ├─ hover card  → file / Speckle name, version N of M, author, time
+  └─ ModelVersionMenu
+       ├─ versions  GET /api/speckle/models/{id}/versions   (speckle_version_service.py:
+       │            bundle + legacy copy collapsed, file names from ingestion history)
+       │     click → modelVersionStore.switchToVersion → SpeckleScene model URL
+       │             `models/<id>@<version>` (pinned) or latest + reload nonce → in-place reload
+       ├─ Upload new version… → POST /api/upload {file, model_id} → load latest in place
+       └─ Open another model… → SpeckleModelModal (autosave flushed first)
+
+useModelVersionSession (page)  — resets the store per model, reports each loaded
+  version, polls /latest → ModelVersionBanner ("vN was loaded … / vN was published")
+soundscape.json `version_id` = the LOADED version → open-time banner compares with it
+  "vN was loaded" shows only the first time this browser opens vN
+  (localStorage `compas-seen-model-versions`, per model)
+
+Impact  POST /api/speckle/version-impact  (model_version_impact_service.py)
+  per-version object stats cached in process; objects matched by applicationId,
+  identical hash = unchanged, else centroid / extents / area / planar normal vs
+  tolerance (5 cm · 1° · 2 % by default) → changed | below_tolerance | added | removed,
+  region totals, listener / free-sound placement (outside the room, inside a solid)
+  ├─ ModelVersionReviewPanel  — region changes with material dropdowns (grouped by layer,
+  │                              else change type, above 10 rows; "Assign" switches to
+  │                              Acoustics and expands a simulation card when materials are
+  │                              not editable yet), outdated simulations (Re-run), sounds
+  │                              followed / lost (Re-link, Keep free), misplaced listeners
+  │                              (Locate). Impact rows open their card: a sound activates
+  │                              its scene (syncExpertNavigation) then expands the card.
+  └─ SimulationOutdatedNotice — completed card: `simulatedVersionId` → loaded version,
+                                 card region; outdated = still playable, with warning
+```
+
+Undo / redo: version switches and impact reports are navigation / derived state
+(`modelVersionStore` is not undoable). The geometry reconciliation that follows a
+load (linked sounds follow moved objects, drop deleted ones) is replayed onto the
+recorded history per entity (`store/geometryReconciliationUndo.ts`), so Ctrl+Z /
+Ctrl+Y never restore links or positions of the previous geometry while undoing a
+link creation still removes it. `simulatedVersionId` is a run-written (live-only)
+field like the other results.
 
 ### Viewport Render Styles
 
@@ -860,6 +917,31 @@ When that client id is listed in `LOADTEST_SERVICE_TOKEN_IDS` (off by default),
 (user → default workspace → session), so each virtual user exercises the real identity path. The
 mapping requires a verified JWT from an allowlisted token, so it can't be used to forge an identity.
 Setup and usage: `scripts/loadtest/README.md`.
+
+### Shared Workspaces — Owner-Only Saving
+
+Roles are **owner** and **viewer** only. The legacy `editor` role is migrated to viewer in
+`metadata_store._migrate()`. Only the owner's changes are saved: `save`, `upload-audio` and
+`DELETE /{model_id}` in `routers/soundscape.py` require `ROLE_OWNER`. Viewers can still edit
+locally. The frontend gates this with `selectIsReadOnlyWorkspace` (`workspaceStore.ts`):
+
+- The `page.tsx` autosave and manual save both return early for viewers.
+- `SceneBottomBar` shows the Save button disabled, with a "View only" hint.
+- Settings → History disables Autosave and Delete history for viewers.
+
+The owner always autosaves, even while others are present, because viewers never write.
+On Home (no `model_id`), `workspaceStore.init({ preferOwn: true })` moves the session back to the
+user's own workspace, so the owner/viewer split only applies once a shared model is open.
+`workspaces.owner_hash` is the source of truth: `_migrate()` repairs any owner whose membership row
+was demoted.
+Any member can copy a view-only model invite link (`POST /invites` allows owner + viewer, and the
+role is always viewer). Listing and revoking invites, the link-sharing mode, removing members and
+"Make owner" (`/transfer`, where the old owner becomes a viewer) are owner-only. They live in
+Settings → Workspaces (`CollaborationPanel`). The presence heartbeat returns the caller's `role`, so
+a transfer is picked up within one heartbeat. If a model's soundscape belongs to someone else's
+private workspace (`requires_invite`), the user stays on their own version.
+`notifyPrivateWorkspaceModel()` (`utils/workspaceNotifications.ts`) shows a clickable notice that
+opens Settings → Workspaces (`openAdvancedSettingsAt('workspaces')`).
 
 ### Simulation Mesh Preparation & Geometry Preflight
 

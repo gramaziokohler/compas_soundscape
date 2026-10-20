@@ -3,7 +3,7 @@ import type { Viewer, CameraController, SelectionExtension } from '@speckle/view
 import { FilteringExtension } from '@speckle/viewer';
 import { SpeckleSceneAdapter } from './speckle-scene-adapter';
 import { SpeckleCameraController } from './speckle-camera-controller';
-import { SpeckleEventBridge } from './speckle-event-bridge';
+import { SpeckleEventBridge, type CustomPickType } from './speckle-event-bridge';
 import { SpeckleDragHandler } from './speckle-drag-handler';
 import { SoundSphereManager } from './sound-sphere-manager';
 import type { EntitySurfaceInfo } from './sound-sphere-manager';
@@ -692,6 +692,11 @@ export class SpeckleAudioCoordinator {
   /** Returns true if a custom object is under the given screen position. */
   public hasCustomObjectAt(clientX: number, clientY: number): boolean {
     return this.eventBridge?.hasCustomObjectAt(clientX, clientY) ?? false;
+  }
+
+  /** Type of the visible custom object (sound / receiver / grid-receiver) under the screen position, or null. */
+  public getVisibleCustomObjectTypeAt(clientX: number, clientY: number): CustomPickType | null {
+    return this.eventBridge?.getVisibleCustomObjectTypeAt(clientX, clientY) ?? null;
   }
 
   /**

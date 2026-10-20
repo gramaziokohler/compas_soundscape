@@ -29,13 +29,15 @@ logger = logging.getLogger(__name__)
 
 
 ROLE_OWNER = "owner"
-ROLE_EDITOR = "editor"
 ROLE_VIEWER = "viewer"
-VALID_ROLES = (ROLE_OWNER, ROLE_EDITOR, ROLE_VIEWER)
+# Legacy role: older builds let editors save. Only the owner writes now; existing
+# editor rows are migrated to viewer in _migrate(). Kept only for that migration.
+ROLE_EDITOR = "editor"
+VALID_ROLES = (ROLE_OWNER, ROLE_VIEWER)
 
 # Role precedence. Used by ensure_member() so joining through an invite can only
 # upgrade a membership, never silently demote it (an owner stays owner).
-ROLE_RANK = {ROLE_VIEWER: 1, ROLE_EDITOR: 2, ROLE_OWNER: 3}
+ROLE_RANK = {ROLE_VIEWER: 1, ROLE_OWNER: 2}
 
 SHARING_PRIVATE = "private"
 SHARING_LINK = "link"
@@ -229,6 +231,27 @@ class MetadataStore:
             conn.execute("ALTER TABLE invites ADD COLUMN used_count INTEGER NOT NULL DEFAULT 0")
         if "model_id" not in invite_cols:
             conn.execute("ALTER TABLE invites ADD COLUMN model_id TEXT")
+        # Owner-only writes: the editor role is gone, every non-owner is a viewer.
+        conn.execute(
+            "UPDATE workspace_members SET role = ? WHERE role = ?", (ROLE_VIEWER, ROLE_EDITOR)
+        )
+        conn.execute("UPDATE invites SET role = ? WHERE role = ?", (ROLE_VIEWER, ROLE_EDITOR))
+        # workspaces.owner_hash is the source of truth for ownership. Older join
+        # flows could overwrite the owner's membership row (owner → editor →
+        # viewer), leaving a workspace whose owner can't save. Repair on boot.
+        conn.execute(
+            "INSERT INTO workspace_members (workspace_id, user_hash, role, joined_at) "
+            "SELECT w.id, w.owner_hash, ?, w.created_at FROM workspaces w "
+            "WHERE NOT EXISTS (SELECT 1 FROM workspace_members m "
+            "WHERE m.workspace_id = w.id AND m.user_hash = w.owner_hash)",
+            (ROLE_OWNER,),
+        )
+        conn.execute(
+            "UPDATE workspace_members SET role = ? WHERE role != ? AND EXISTS "
+            "(SELECT 1 FROM workspaces w WHERE w.id = workspace_members.workspace_id "
+            "AND w.owner_hash = workspace_members.user_hash)",
+            (ROLE_OWNER, ROLE_OWNER),
+        )
 
     def _query(self, sql: str, params: tuple = ()) -> list[sqlite3.Row]:
         with self._lock:
@@ -447,18 +470,9 @@ class MetadataStore:
         return int(ws["revision"]) if ws else 0
 
     # ── membership ───────────────────────────────────────────────────────
-    def add_member(self, workspace_id: str, user_hash: str, role: str) -> None:
-        if role not in VALID_ROLES:
-            raise ValueError(f"invalid role: {role}")
-        self._execute(
-            "INSERT INTO workspace_members (workspace_id, user_hash, role, joined_at) VALUES (?, ?, ?, ?) "
-            "ON CONFLICT(workspace_id, user_hash) DO UPDATE SET role = excluded.role",
-            (workspace_id, user_hash, role, _now()),
-        )
-
     def ensure_member(self, workspace_id: str, user_hash: str, role: str) -> tuple[bool, str]:
         """Add a membership if absent, or upgrade it when ``role`` outranks the
-        current one. Never downgrades — an owner/editor keeps their role even if
+        current one. Never downgrades — an owner keeps their role even if
         they open a lower-privilege invite link to their own workspace.
 
         Returns ``(changed, effective_role)``.
@@ -510,29 +524,14 @@ class MetadataStore:
             (workspace_id, user_hash),
         )
 
-    def set_member_role(self, workspace_id: str, user_hash: str, role: str) -> bool:
-        """Change a non-owner member's role. The owner's role is immutable here
-        (use transfer_ownership) — returns False if the target is the owner."""
-        if role not in VALID_ROLES:
-            raise ValueError(f"invalid role: {role}")
-        if role == ROLE_OWNER:
-            return False
-        with self._lock:
-            conn = self._connect()
-            cur = conn.execute(
-                "UPDATE workspace_members SET role = ? WHERE workspace_id = ? AND user_hash = ? AND role != ?",
-                (role, workspace_id, user_hash, ROLE_OWNER),
-            )
-            conn.commit()
-            return cur.rowcount > 0
-
     def transfer_ownership(self, workspace_id: str, from_hash: str, to_hash: str) -> bool:
-        """Move ownership to another existing member. Caller becomes editor."""
+        """Move ownership to another existing member. The caller becomes a
+        viewer — only the owner's changes are saved."""
         with self._lock:
             conn = self._connect()
             cur = conn.execute(
                 "UPDATE workspace_members SET role = ? WHERE workspace_id = ? AND user_hash = ? AND role = ?",
-                (ROLE_EDITOR, workspace_id, from_hash, ROLE_OWNER),
+                (ROLE_VIEWER, workspace_id, from_hash, ROLE_OWNER),
             )
             if cur.rowcount == 0:
                 conn.rollback()

@@ -38,12 +38,17 @@ import {
   useErrorsStore,
   useCardFlowStore,
   useWorkspaceStore,
+  selectIsReadOnlyWorkspace,
   useAreaDrawingStore,
   notifyError,
   runWithoutUndo,
   clearUndoHistory,
+  useModelVersionStore,
 } from "@/store";
+import { entityIdentities, rebaseGeometryReconciliation, type EntityReconciliation } from "@/store/geometryReconciliationUndo";
+import type { LinkReconciliationItem } from "@/store";
 import { useSpeckleEngineStore } from "@/store/speckleEngineStore";
+import { syncExpertNavigation } from "@/store/sceneWorkflowStore";
 import * as THREE from "three";
 import { useAudioNormalization } from "@/hooks/useAudioNormalization";
 import { useUserPreferencesSync } from "@/hooks/useUserPreferencesSync";
@@ -56,11 +61,12 @@ import { useViewportScale } from "@/hooks/useViewportScale";
 import { useUndoRedo } from "@/hooks/useUndoRedo";
 import { scheduleUndoSafeDeletion } from "@/lib/undo-safe-deletion";
 import { useGlobalShortcuts } from "@/hooks/useGlobalShortcuts";
-import { useJobRecovery } from "@/hooks/useJobRecovery";
-import { useModelVersionWatcher } from "@/hooks/useModelVersionWatcher";
+import { useJobRecovery, discoverRunningWorkspaceJobs } from "@/hooks/useJobRecovery";
+import { useModelVersionSession } from "@/hooks/useModelVersionSession";
 import { useListenerOrientationAutosave } from "@/hooks/useListenerOrientationAutosave";
 import { apiService } from "@/services/api";
-import { API_BASE_URL, DEFAULT_BACKGROUND_DURATION_SECONDS, DEFAULT_DBFS, DEFAULT_NUM_SOUNDS, RECEIVER_CONFIG, SPIRAL_PLACEMENT, DEFAULT_LISTENER_ORIENTATION, TTS_DEFAULT_LANGUAGE, SANDBOX_MODEL_ID, MODEL_VERSION_WATCH } from "@/utils/constants";
+import { API_BASE_URL, DEFAULT_BACKGROUND_DURATION_SECONDS, DEFAULT_DBFS, DEFAULT_NUM_SOUNDS, RECEIVER_CONFIG, SPIRAL_PLACEMENT, DEFAULT_LISTENER_ORIENTATION, TTS_DEFAULT_LANGUAGE, SANDBOX_MODEL_ID, WORKSPACE_MESSAGES } from "@/utils/constants";
+import { notifyPrivateWorkspaceModel } from "@/utils/workspaceNotifications";
 import { parseAuthoredSeconds } from "@/lib/audio/utils/timeline-utils";
 import { getCameraFrontSpiralPosition } from "@/lib/three/spiral-placement";
 import type { LoadTab, SoundGenerationConfig, SoundEvent } from "@/types";
@@ -76,7 +82,6 @@ import { buildSoundscapeSavePayload, restoreSoundscapeState, getBlobUrlSounds, b
 import { getStoredJobs, recordInflightJob } from "@/lib/job-tracker";
 import { ImportSandboxModal } from "@/components/scene/ImportSandboxModal";
 import { homeStageHasWork } from "@/hooks/useHomeStageHasWork";
-import { NewModelVersionModal } from "@/components/scene/NewModelVersionModal";
 import { HomeProjectModal } from "@/components/scene/HomeProjectModal";
 import { WorkspaceJoinDialog } from "@/components/ui/WorkspaceJoinDialog";
 
@@ -101,13 +106,6 @@ function buildAppIdMap(node: any, map: Map<string, string> = new Map()): Map<str
   return map;
 }
 
-let _viewerLoadComplete = false;
-
-// Set when a model was opened from the Home page (as opposed to a refresh of an
-// existing ?model_id= session). In that case the camera must default to the
-// model's bounding box instead of restoring a previously saved POV.
-let _fitCameraToBoundingBoxOnLoad = false;
-
 /** Saved "Homepage project" (no-model soundscape) id for a user-given name. */
 function homeProjectIdFromName(name: string): string {
   const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'project';
@@ -131,6 +129,8 @@ function collapseFloatingPanels() {
   ui.setShowTimeline(false);
   // Collapse every simulation card in the right sidebar too.
   ui.setExpandedSimulationTabIndex(null);
+  // Panels holding their open state locally (bubble pop-ups, DAW auto-open latch).
+  ui.requestFloatingPanelsCollapse();
 }
 
 /**
@@ -159,6 +159,11 @@ function stableStringify(value: unknown): string {
 function resetUndoAfterLoad() {
   clearUndoHistory();
   setTimeout(clearUndoHistory, 0);
+}
+
+/** Record the workspace revision of the soundscape now shown (drives "Load latest"). */
+function markSoundscapeLoaded(revision: number | undefined) {
+  if (typeof revision === 'number') useWorkspaceStore.getState().setLoadedRevision(revision);
 }
 
 function applyRestoredSoundscapePayload(
@@ -296,11 +301,17 @@ function HomeContent() {
   const router = useRouter();
   const bootstrappedRef = useRef(false);
 
-  // 2. Job recovery — resume in-flight jobs that survived a page refresh / window close
-  const { hasInflightJobs, recoveryResolved, recoveredSomething } = useJobRecovery();
+  // True once the mount bootstrap has restored (or ruled out) the saved soundscape.
+  // Job recovery waits for it: a result merged before the restore would be
+  // overwritten by it, and recovered jobs map onto the restored cards.
+  const [domainRestored, setDomainRestored] = useState(false);
+
+  // 2. Job recovery — resume in-flight jobs that survived a page refresh / window
+  //    close, and reattach jobs another member of a shared workspace is running
+  const { hasInflightJobs, recoveryResolved, recoveredSomething } = useJobRecovery({ domainReady: domainRestored });
 
   // 3. Model version watcher — offer to switch when a newer version is published
-  const modelVersion = useModelVersionWatcher();
+  const modelVersion = useModelVersionSession();
   // Switching does a full page reload; no async work to await here.
   const handleSwitchToLatestVersion = useCallback(() => {
     modelVersion.switchToLatest();
@@ -370,10 +381,11 @@ function HomeContent() {
           console.warn('[page:bootstrap] Failed to load homepage project:', err);
           startEmptyHomeStage();
           setIsBootstrappingModel(false);
-        });
+        }).finally(() => setDomainRestored(true));
         return;
       }
       // Fresh Home stage — empty on every load.
+      setDomainRestored(true);
       startEmptyHomeStage();
       useUIStore.getState().setLeftSidebarExpandCommand(false);
       console.log('[page:bootstrap] Empty Home stage');
@@ -390,7 +402,10 @@ function HomeContent() {
     }
 
     const gsd = useUIStore.getState().globalSpeckleData;
-    if (gsd !== null) return; // model already loaded via normal flow
+    if (gsd !== null) {
+      setDomainRestored(true);
+      return; // model already loaded via normal flow
+    }
     bootstrappedRef.current = true;
     // Opening a model / refreshing a model page always starts reduced.
     collapseFloatingPanels();
@@ -410,11 +425,9 @@ function HomeContent() {
       const activeWorkspaceId = useWorkspaceStore.getState().workspace?.id ?? null;
       console.log('[page:bootstrap] Loading soundscape for model_id from URL:', urlModelId);
       await apiService.loadSoundscapeFromSpeckle(urlModelId, activeWorkspaceId).then(loadResponse => {
+      markSoundscapeLoaded(loadResponse.revision);
       if (loadResponse.requires_invite) {
-        notifyError(
-          'This project belongs to a private workspace. Ask a member for an invite link to collaborate.',
-          'warning',
-        );
+        notifyPrivateWorkspaceModel();
       }
       if (!loadResponse.found || !loadResponse.soundscape_data) {
         console.log('[page:bootstrap] No saved soundscape found for', urlModelId, '- looking up model from Speckle API');
@@ -476,6 +489,7 @@ function HomeContent() {
         }
       }
 
+      if (data.model_id) useModelVersionStore.getState().setSessionBaseVersion(data.model_id, data.version_id || null);
       applyRestoredSoundscapePayload(data, audioBaseUrl, irBaseUrl, suppressOrchestrateBakeRef);
       console.log('[page:bootstrap] Soundscape restored from URL param');
       setIsBootstrappingModel(false);
@@ -483,6 +497,7 @@ function HomeContent() {
       console.error('[page:bootstrap] Failed to load soundscape:', err);
       setIsBootstrappingModel(false);
     });
+    setDomainRestored(true);
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -518,11 +533,10 @@ function HomeContent() {
       // (Save → Homepage project). A model or a saved Homepage project autosaves.
       if (!selectHasSaveTarget(useUIStore.getState())) return;
       if (!autosaveEnabledRef.current) return;
-      // Viewers are read-only: never attempt a save (the backend would reject it).
-      if (useWorkspaceStore.getState().workspace?.role === 'viewer') return;
-      // Shared-session guard: when other members are active on the same
-      // workspace, pause autosave so concurrent writes don't clobber each other.
-      if (useWorkspaceStore.getState().presence > 1) return;
+      // Only the workspace owner's changes are saved: non-owners are view-only
+      // (the backend would reject the save). The owner autosaves even while
+      // others are present — viewers never write, so nothing can collide.
+      if (selectIsReadOnlyWorkspace(useWorkspaceStore.getState())) return;
       if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
       autosaveTimerRef.current = setTimeout(() => {
         // Only save when the persisted content actually changed since the last
@@ -562,11 +576,13 @@ function HomeContent() {
   // Workspace/collaboration state (shared sessions): load the active workspace
   // and start the presence heartbeat. Skipped when an invite token is present —
   // the invite effect below owns init so the join result is not overwritten.
+  // On Home (no model open) the user is always in their own workspace, as owner:
+  // owner/viewer only matters once a shared model is opened.
   useEffect(() => {
-    if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("invite")) {
-      return;
-    }
-    void useWorkspaceStore.getState().init();
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("invite")) return;
+    void useWorkspaceStore.getState().init({ preferOwn: !params.get("model_id") });
   }, []);
 
   // Accept an invite link (?invite=<token>&model_id=<id>): join the shared
@@ -616,7 +632,12 @@ function HomeContent() {
           setWorkspaceJoinChoice({ modelId, ownWorkspaceId, sharedName });
           return;
         }
-        notifyError("Joined the shared workspace.", "info");
+        notifyError(
+          selectIsReadOnlyWorkspace(useWorkspaceStore.getState())
+            ? WORKSPACE_MESSAGES.JOINED_AS_VIEWER
+            : WORKSPACE_MESSAGES.JOINED_AS_OWNER,
+          "info",
+        );
         if (modelId) {
           window.location.replace(`${window.location.pathname}?model_id=${encodeURIComponent(modelId)}`);
         }
@@ -788,6 +809,12 @@ function HomeContent() {
     const mapReady = appIdToTreeIdMap.size > 0;
     let movedCount = 0;
     let detachedCount = 0;
+    // Reported in the model-version review panel, and re-based into undo history.
+    const followedItems: LinkReconciliationItem[] = [];
+    const lostItems: LinkReconciliationItem[] = [];
+    // Per-entity outcome (keyed by every identity of the previous entity), replayed
+    // onto undo history so Ctrl+Z / Ctrl+Y never restore the previous geometry.
+    const reconciliation: EntityReconciliation = new Map();
 
     configs.forEach((config, index) => {
       if (!config.entities?.length) return;
@@ -795,6 +822,9 @@ function HomeContent() {
       // entity.index → new center, only for entities whose object actually moved.
       const movedCenters = new Map<number, [number, number, number]>();
       const survivors: any[] = [];
+      const lostNames: string[] = [];
+      let movedObjectName = '';
+      let movedDistance = 0;
 
       config.entities.forEach((ent: any, entIdx: number) => {
         const resolvedId = resolveEntityObjectId(ent);
@@ -810,6 +840,8 @@ function HomeContent() {
           }
           // Object genuinely gone → drop it (changed so the config is rewritten).
           changed = true;
+          if (ent.name) lostNames.push(ent.name);
+          for (const key of entityIdentities(ent)) reconciliation.set(key, null);
           return;
         }
 
@@ -839,18 +871,36 @@ function HomeContent() {
             ent.index ?? entIdx,
             [newCenter[0], newCenter[1], newCenter[2]] as [number, number, number],
           );
+          const distance = oldCenter
+            ? Math.hypot(...newCenter.map((v, i) => v - (oldCenter[i] ?? 0)))
+            : 0;
+          if (distance >= movedDistance) {
+            movedDistance = distance;
+            movedObjectName = fresh.name || ent.name || '';
+          }
         }
-        survivors.push({
+        const reconciled = {
           ...ent,
           name: fresh.name || ent.name,
           layer: fresh.layer || ent.layer,
           position: newCenter,
           bounds: fresh.bounds || ent.bounds,
           applicationId: fresh.applicationId || ent.applicationId,
-        });
+        };
+        survivors.push(reconciled);
+        for (const key of entityIdentities(ent)) reconciliation.set(key, reconciled);
       });
 
       if (!changed) return;
+      const soundName = config.display_name || config.prompt || `Sound ${index + 1}`;
+      if (survivors.length === 0 || lostNames.length > 0) {
+        if (config.config_id) {
+          lostItems.push({ configId: config.config_id, configIndex: index, soundName, objectName: lostNames[0] ?? '' });
+        }
+      }
+      if (movedCenters.size > 0 && survivors.length > 0 && config.config_id) {
+        followedItems.push({ configId: config.config_id, configIndex: index, soundName, objectName: movedObjectName, movedM: movedDistance });
+      }
 
       const soundsForPrompt = () =>
         useSoundscapeStore
@@ -887,6 +937,16 @@ function HomeContent() {
     // Refresh per-iteration link positions so the DAW per-entity markers and any
     // persisted snapshots follow the moved object.
     useAudioControlsStore.getState().refreshIterationEntityPositions();
+
+    // Undo/redo must never restore links / positions of the previous geometry.
+    rebaseGeometryReconciliation(reconciliation);
+    if (followedItems.length > 0 || lostItems.length > 0) {
+      useModelVersionStore.getState().setLinkReconciliation({
+        versionId: useSpeckleEngineStore.getState().loadedModelVersionId,
+        followed: followedItems,
+        lost: lostItems,
+      });
+    }
 
     if (movedCount > 0 || detachedCount > 0) {
       console.log(
@@ -1054,76 +1114,6 @@ function HomeContent() {
     } | undefined) ?? null;
   }, [acousticsSimulation.activeSimulationIndex, acousticsSimulation.simulationConfigs]);
 
-  // Shared camera save helper — called by both autosave and beforeunload.
-  // Writes directly to localStorage because Zustand's persist middleware
-  // subscriber may not fire in time during page unload (React 18 batching).
-  const CAMERA_STORAGE_KEY = 'compas-camera-state';
-  const saveCameraToStore = useCallback(() => {
-    const engine = useSpeckleEngineStore.getState();
-    const viewer = engine.viewer;
-    if (!viewer) {
-      return;
-    }
-    if (!_viewerLoadComplete) {
-      console.log('[page:camera:save] Skipped — viewer load not complete');
-      return;
-    }
-    try {
-      const cam = viewer.getRenderer().renderingCamera as THREE.PerspectiveCamera;
-      if (!cam || !(cam as any).isPerspectiveCamera) {
-        console.log('[page:camera:save] Skipped — camera not available or not PerspectiveCamera', !!cam, (cam as any)?.isPerspectiveCamera);
-        return;
-      }
-      const pos: [number, number, number] = [cam.position.x, cam.position.y, cam.position.z];
-      const dir = new THREE.Vector3();
-      cam.getWorldDirection(dir);
-      const target: [number, number, number] = [
-        cam.position.x + dir.x * 10,
-        cam.position.y + dir.y * 10,
-        cam.position.z + dir.z * 10,
-      ];
-      const up: [number, number, number] = [cam.up.x, cam.up.y, cam.up.z];
-
-      // Capture orbit target from CameraController so restore preserves orbit center
-      let orbitTarget: [number, number, number] | null = null;
-      const cc = engine.cameraController;
-      if (cc) {
-        const t = (cc as any).controls?.target;
-        if (t) orbitTarget = [t.x, t.y, t.z];
-      }
-
-      // Write to Zustand + directly to localStorage for reliability
-      useUIStore.getState().setCameraState(pos, target);
-      try {
-        localStorage.setItem(CAMERA_STORAGE_KEY, JSON.stringify({ pos, target, up, orbitTarget }));
-      } catch (e) {
-        // localStorage may be full or unavailable
-      }
-    } catch (e) {
-      console.warn('[page:camera:save] Error:', e);
-    }
-  }, []);
-
-  // Periodically save camera state (every 5s) so it's always recent even
-  // if no autosave or beforeunload fires.
-  useEffect(() => {
-    const interval = setInterval(saveCameraToStore, 5000);
-    return () => clearInterval(interval);
-  }, [saveCameraToStore]);
-
-  // Save camera POV on beforeunload so it survives a page refresh
-  useEffect(() => {
-    window.addEventListener('beforeunload', saveCameraToStore);
-    return () => window.removeEventListener('beforeunload', saveCameraToStore);
-  }, [saveCameraToStore]);
-
-  // Reset the viewer-load-complete gate when model is unloaded (e.g. going to homepage)
-  useEffect(() => {
-    if (!globalSpeckleData) {
-      _viewerLoadComplete = false;
-    }
-  }, [globalSpeckleData]);
-
   // Once the model data is available, the viewer loading overlay takes over
   useEffect(() => {
     if (globalSpeckleData) {
@@ -1137,133 +1127,22 @@ function HomeContent() {
     if (globalSpeckleData || homeProject) useUIStore.getState().setEnableAutoSave(true);
   }, [globalSpeckleData, homeProject]);
 
-  // Callback when Speckle viewer is loaded
-    const handleSpeckleViewerLoaded = useCallback((viewer: import('@speckle/viewer').Viewer) => {
-    _viewerLoadComplete = true;
-    console.log('[page:camera:restore] Viewer loaded');
-
+  // Callback when Speckle viewer is loaded — always frame the model exactly like
+  // the "Reset camera view" button (no camera POV is persisted across loads).
+  const handleSpeckleViewerLoaded = useCallback((viewer: import('@speckle/viewer').Viewer) => {
     // Sandbox has no Speckle worldBox — the placeholder hook frames the room.
     if (!useUIStore.getState().globalSpeckleData) {
       return;
     }
-
-    // When a model was opened from the Home page, ignore any camera POV saved
-    // for a previously-loaded model and frame the new model's bounding box.
-    // A refresh of an existing ?model_id= session keeps restoring the saved POV.
-    let fitToBoundingBox = _fitCameraToBoundingBoxOnLoad;
-    _fitCameraToBoundingBoxOnLoad = false;
-    // "Switch to latest version" reloads the page and stashes a one-shot flag so
-    // the new version is framed to its bounding box instead of the old POV.
-    try {
-      if (sessionStorage.getItem(MODEL_VERSION_WATCH.FIT_CAMERA_ON_NEXT_LOAD_KEY) === '1') {
-        sessionStorage.removeItem(MODEL_VERSION_WATCH.FIT_CAMERA_ON_NEXT_LOAD_KEY);
-        fitToBoundingBox = true;
+    setTimeout(() => {
+      const cc = useSpeckleEngineStore.getState().cameraController;
+      if (cc?.setCameraView) {
+        cc.setCameraView([], true);
+        viewer.requestRender(8);
+      } else {
+        console.warn('[page:camera] CameraController not available for initial fit');
       }
-    } catch { /* sessionStorage unavailable */ }
-    if (fitToBoundingBox) {
-      console.log('[page:camera:restore] Model opened from Home — ignoring saved POV, fitting to bounding box');
-      useUIStore.getState().setCameraState(null, null);
-      try {
-        localStorage.removeItem('compas-camera-state');
-      } catch (e) { /* ignore */ }
-    }
-
-    // Try Zustand store first (may have been rehydrated), then fall back to direct localStorage
-    let savedPos = fitToBoundingBox ? null : useUIStore.getState().cameraPosition;
-    let savedTarget = fitToBoundingBox ? null : useUIStore.getState().cameraTarget;
-    let savedUp: [number, number, number] | undefined;
-    let savedOrbitTarget: [number, number, number] | undefined;
-    if ((!savedPos || !savedTarget) && !fitToBoundingBox) {
-      try {
-        const raw = localStorage.getItem('compas-camera-state');
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          savedPos = parsed.pos;
-          savedTarget = parsed.target;
-          savedUp = parsed.up;
-          savedOrbitTarget = parsed.orbitTarget;
-          if (savedPos && savedTarget) {
-            useUIStore.getState().setCameraState(savedPos, savedTarget);
-            console.log('[page:camera:restore] Read camera from direct localStorage');
-          }
-        }
-      } catch (e) { /* ignore */ }
-    }
-    console.log('[page:camera:restore] Final state:', {
-      hasPosition: !!savedPos,
-      position: savedPos,
-      hasTarget: !!savedTarget,
-      target: savedTarget,
-    });
-    if (savedPos && savedTarget) {
-      setTimeout(() => {
-        try {
-          const cam = viewer.getRenderer().renderingCamera;
-          if (!cam) {
-            console.warn('[page:camera:restore] renderingCamera is null');
-            return;
-          }
-          if (!(cam as any).isPerspectiveCamera) {
-            console.warn('[page:camera:restore] Camera is not PerspectiveCamera, type:', (cam as any).type);
-            return;
-          }
-
-          // Use fromPositionAndTarget to sync both the Three.js camera and the
-          // Speckle CameraController's internal orbit controls state. Using
-          // controls.fromPositionAndTarget() instead of manual cam.position.set() +
-          // cam.lookAt() fixes two bugs:
-          //   1. Roll: cam.lookAt() uses camera.up = (0,1,0) (Three.js Y-up default)
-          //      but Speckle models are Z-up (0,0,1). fromPositionAndTarget respects
-          //      the controls' internal up which is Z-up.
-          //   2. Click-reset: manual camera changes don't sync the CameraController's
-          //      internal spherical coordinates. On first click, the controller
-          //      recalculates from stale state and snaps back to the bounding-box fit.
-          const cc = useSpeckleEngineStore.getState().cameraController;
-          const ccControls = (cc as any)?.controls;
-          if (ccControls?.fromPositionAndTarget) {
-            const ot = savedOrbitTarget || savedTarget;
-            ccControls.fromPositionAndTarget(
-              new THREE.Vector3(savedPos[0], savedPos[1], savedPos[2]),
-              new THREE.Vector3(ot[0], ot[1], ot[2])
-            );
-            // Ensure camera.up is restored for edge cases where the controls' up
-            // doesn't match the saved orientation
-            if (savedUp) {
-              cam.up.set(savedUp[0], savedUp[1], savedUp[2]);
-            }
-          } else {
-            // Fallback: direct camera manipulation (backward compat)
-            if (savedUp) {
-              cam.up.set(savedUp[0], savedUp[1], savedUp[2]);
-            }
-            cam.position.set(savedPos[0], savedPos[1], savedPos[2]);
-            const dx = savedTarget[0] - savedPos[0];
-            const dy = savedTarget[1] - savedPos[1];
-            const dz = savedTarget[2] - savedPos[2];
-            if (Math.sqrt(dx * dx + dy * dy + dz * dz) > 0.001) {
-              (cam as any).lookAt(savedTarget[0], savedTarget[1], savedTarget[2]);
-            }
-          }
-
-          viewer.requestRender(8);
-          console.log('[page:camera:restore] Applied camera — pos:', savedPos.map((v: number) => v.toFixed(1)), 'target:', savedTarget.map((v: number) => v.toFixed(1)));
-        } catch (e) {
-          console.warn('[page:camera:restore] Error:', e);
-        }
-      }, 800);
-    } else {
-      console.log('[page:camera:restore] No saved camera state — fitting to model bounding box');
-      setTimeout(() => {
-        const cc = useSpeckleEngineStore.getState().cameraController;
-        if (cc?.setCameraView) {
-          cc.setCameraView([], true);
-          viewer.requestRender(8);
-          console.log('[page:camera:restore] Applied auto-fit to all objects');
-        } else {
-          console.warn('[page:camera:restore] CameraController not available for auto-fit');
-        }
-      }, 800);
-    }
+    }, 800);
   }, []);
    
   // Sync audioRenderingMode with orchestrator only when IR state changes
@@ -2120,6 +1999,42 @@ function HomeContent() {
     resetUndoAfterLoad();
   };
 
+  // Viewer of a shared workspace: pull the owner's last saved soundscape on demand
+  // (never automatically — the viewer may be exploring their own local edits).
+  const [isLoadingLatest, setIsLoadingLatest] = useState(false);
+  const handleLoadLatestSoundscape = useCallback(async () => {
+    const ui = useUIStore.getState();
+    const modelId = ui.globalSpeckleData?.model_id ?? ui.homeProject?.modelId;
+    if (!modelId || isLoadingLatest) return;
+    setIsLoadingLatest(true);
+    try {
+      const loadResponse = await apiService.loadSoundscapeFromSpeckle(
+        modelId,
+        useWorkspaceStore.getState().workspace?.id,
+      );
+      if (loadResponse.found && loadResponse.soundscape_data) {
+        // Same domain swap as opening the model (stops playback); viewer, camera and panels stay.
+        resetDomainForFreshModel();
+        applyRestoredSoundscapePayload(
+          loadResponse.soundscape_data,
+          `${API_BASE_URL}${loadResponse.audio_base_url}`,
+          loadResponse.ir_base_url || undefined,
+          suppressOrchestrateBakeRef,
+        );
+        setStepAdvanceTrigger((t) => t + 1);
+      }
+      markSoundscapeLoaded(loadResponse.revision);
+      // Jobs the owner started since this page loaded show up as generating too.
+      await discoverRunningWorkspaceJobs();
+    } catch (err) {
+      console.error('[page:loadLatest] Failed to load the latest soundscape:', err);
+      notifyError(WORKSPACE_MESSAGES.LOAD_LATEST_FAILED, 'warning');
+    } finally {
+      setIsLoadingLatest(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoadingLatest]);
+
   /**
    * Append the captured Home elements onto whatever the model now holds.
    * Sounds/configs are offset + re-keyed so they never collide with the model's
@@ -2221,11 +2136,13 @@ function HomeContent() {
     // the previous model's configs/events — fresh cards then render as "already
     // generated" because they reuse a stale prompt_index.
     resetDomainForFreshModel();
-    // Opening a model from the Home page frames its bounding box on load -
-    // do NOT restore a camera POV saved for a previously-loaded model.
-    _fitCameraToBoundingBoxOnLoad = true;
     // Opening a model always starts with the floating panels reduced.
     collapseFloatingPanels();
+    // A persisted Acoustic view would auto-open the Object Explorer to define the
+    // acoustic region as soon as the model's tree loads — start in Default view.
+    if (useUIStore.getState().viewMode === 'acoustic') {
+      useUIStore.getState().setViewMode('default');
+    }
     setGlobalSpeckleData(speckleData);
     setSpeckleModelUrl(speckleData.url);
     // New model target — invalidate the autosave fingerprint so its content is
@@ -2253,11 +2170,9 @@ function HomeContent() {
         return;
       }
       const loadResponse = await apiService.loadSoundscapeFromSpeckle(speckleData.model_id, useWorkspaceStore.getState().workspace?.id);
+      markSoundscapeLoaded(loadResponse.revision);
       if (loadResponse.requires_invite) {
-        notifyError(
-          'This project belongs to a private workspace. Ask a member for an invite link to collaborate.',
-          'warning',
-        );
+        notifyPrivateWorkspaceModel();
       }
       if (loadResponse.found && loadResponse.soundscape_data) {
         console.log('[page.tsx] Restoring saved soundscape:', loadResponse.soundscape_data);
@@ -2265,6 +2180,7 @@ function HomeContent() {
         // IR base URL is kept as a relative path (e.g. "/soundscapes/{model_id}/ir_files")
         // because AudioOrchestrator prepends the host when fetching IR files
         const irBaseUrl = loadResponse.ir_base_url || undefined;
+        useModelVersionStore.getState().setSessionBaseVersion(speckleData.model_id, loadResponse.soundscape_data.version_id || null);
         const restored = restoreSoundscapeState(loadResponse.soundscape_data, audioBaseUrl, irBaseUrl);
         if (loadResponse.missing_audio_filenames?.length) {
           notifyError(
@@ -2467,6 +2383,43 @@ function HomeContent() {
     audioOrchestrator.setNoIRPreference,
   ]);
 
+  // Model browser selection. With a model already open ("Open another model…"),
+  // flush its pending autosave first — the switch resets every domain store.
+  const handleOpenSpeckleModel = useCallback(async (speckleData: SpeckleModelSelectPayload) => {
+    if (useUIStore.getState().globalSpeckleData && autosaveEnabledRef.current) {
+      lastSaveSourceRef.current = 'autosave';
+      try {
+        await saveSoundscapeRef.current?.();
+      } catch (err) {
+        console.warn('[page.tsx] Could not save before opening another model:', err);
+      }
+    }
+    await handleSpeckleModelSelect(speckleData);
+  }, [handleSpeckleModelSelect]);
+
+  // Model pill "Upload new version…": add the file to the OPEN model (whatever its
+  // file name), then load the new latest in place — the banner reports its impact.
+  const handleUploadNewVersion = useCallback(async (file: File) => {
+    const modelId = useUIStore.getState().globalSpeckleData?.model_id;
+    const versionsStore = useModelVersionStore.getState();
+    if (!modelId || versionsStore.isUploadingVersion) return;
+    versionsStore.setUploadingVersion(true);
+    const { setGlobalModelUploadProgress } = useUIStore.getState();
+    try {
+      await apiService.uploadFile(file, setGlobalModelUploadProgress, modelId);
+      await useModelVersionStore.getState().fetchVersions();
+      const latest = useModelVersionStore.getState().versions[0];
+      if (latest) {
+        useModelVersionStore.getState().switchToVersion(latest.id, useSpeckleEngineStore.getState().loadedModelVersionId);
+      }
+    } catch (error) {
+      handleApiError(error, 'Failed to upload the new model version');
+    } finally {
+      useModelVersionStore.getState().setUploadingVersion(false);
+      setGlobalModelUploadProgress(null);
+    }
+  }, [handleApiError]);
+
   // Resolve the Home import prompt: import / save as a Homepage project / start fresh / cancel.
   const handleImportDecision = useCallback(async (
     choice: 'import' | 'save' | 'fresh' | 'cancel',
@@ -2603,7 +2556,10 @@ function HomeContent() {
         const urlMatch = speckle.url.match(/\/projects\/([^/]+)\/models\/([^/@]+)(?:@([^/?]+))?/);
         if (urlMatch) {
           payload.soundscape_data.project_id = urlMatch[1] || '';
-          payload.soundscape_data.version_id = speckle.version_id || urlMatch[3] || '';
+          // The version actually loaded (latest or the one chosen in the model menu) —
+          // the next open compares the latest with it (model-version banner).
+          payload.soundscape_data.version_id =
+            useSpeckleEngineStore.getState().loadedModelVersionId || speckle.version_id || urlMatch[3] || '';
         }
       }
       // Persist auth_token for non-public Speckle streams
@@ -2655,10 +2611,10 @@ function HomeContent() {
     const { modelId, modelName, hasTarget } = resolveSaveTarget(overrides);
     // Nothing to save on the fresh Home sandbox (no model, no No-model project).
     if (!hasTarget) return;
+    // View-only member of someone else's workspace: never save (manual or shortcut).
+    if (selectIsReadOnlyWorkspace(useWorkspaceStore.getState())) return;
     const saveSource = lastSaveSourceRef.current;
     lastSaveSourceRef.current = 'manual';
-    // Save camera POV alongside every soundscape save
-    saveCameraToStore();
     if (isSavingSoundscape) {
       // Don't drop a change that arrives mid-save: queue a single follow-up run.
       if (saveSource === 'autosave') pendingAutosaveRef.current = true;
@@ -2720,7 +2676,8 @@ function HomeContent() {
       lastSavePayloadRef.current = { modelId, savedAt: Date.now(), payload };
       const result = await apiService.saveSoundscapeToSpeckle(payload);
       if (typeof result.revision === 'number') {
-        useWorkspaceStore.setState({ revision: result.revision });
+        // Our own save is what is shown now.
+        markSoundscapeLoaded(result.revision);
       }
       // Re-baseline from live stores (after step-2 side effects) so the next
       // autosave does not re-save identical content.
@@ -2869,6 +2826,23 @@ function HomeContent() {
       soundData: { promptIndex },
     });
   }, [soundGen.generatedSounds, setSelectedEntity]);
+
+  // Review panel → a sound: activate the card's sound scene (its usage card),
+  // open that scene in the sidebar, then expand the sound card itself.
+  const handleRevealSoundInScene = useCallback((configIndex: number) => {
+    const config = useSoundscapeStore.getState().soundConfigs[configIndex];
+    if (!config) return;
+    const usageIndex = config.parentUsageOriginalIndex ?? null;
+    const contextIndex = usageIndex !== null
+      ? useAnalysisStore.getState().analysisConfigs[usageIndex]?.parentContextOriginalIndex ?? null
+      : null;
+    useUIStore.getState().setIsLeftSidebarExpanded(true);
+    syncExpertNavigation(2, contextIndex, usageIndex);
+    // Expand the card once the scene's sounds are shown (re-select so the
+    // card expands even when it was the last selected one).
+    setSelectedCardIndex(null);
+    requestAnimationFrame(() => handleSelectSoundCard(configIndex));
+  }, [handleSelectSoundCard]);
 
   // Entity linking handlers
   const handleStartLinkingEntity = useCallback((configIndex: number) => {
@@ -3878,18 +3852,6 @@ function HomeContent() {
         busy={isSavingHomeProject}
       />
 
-      {/* A newer version of the open Speckle model has been published */}
-      <NewModelVersionModal
-        open={modelVersion.pending !== null}
-        modelName={modelVersion.modelName || 'this model'}
-        createdAt={modelVersion.pending?.created_at}
-        authorName={modelVersion.pending?.author_name}
-        message={modelVersion.pending?.message}
-        busy={modelVersion.busy}
-        onSwitch={handleSwitchToLatestVersion}
-        onKeepCurrent={modelVersion.dismiss}
-      />
-
       {/* Joined a model invite while already having a saved soundscape for it */}
       <WorkspaceJoinDialog
         open={workspaceJoinChoice !== null}
@@ -3924,8 +3886,11 @@ function HomeContent() {
             speckleData={globalSpeckleData}
             onViewerLoaded={handleSpeckleViewerLoaded}
             isBootstrappingModel={isBootstrappingModel}
-            hasNewModelVersion={modelVersion.hasUpdate && modelVersion.pending === null}
+            hasNewModelVersion={modelVersion.hasUpdate}
             onSwitchToLatest={handleSwitchToLatestVersion}
+            onUploadNewVersion={handleUploadNewVersion}
+            onStartLinkingEntity={handleStartLinkingEntity}
+            onRevealSoundInScene={handleRevealSoundInScene}
             // Audio system props
             audioOrchestrator={audioOrchestrator.orchestrator}
             audioContext={audioOrchestrator.audioContext}
@@ -3984,7 +3949,7 @@ function HomeContent() {
             onModelFileChange={handleRightSidebarModelUpload}
             isUploadingModel={isUploadingGlobalModel}
             // Load existing Speckle model (for empty state model browser)
-            onSpeckleModelSelect={handleSpeckleModelSelect}
+            onSpeckleModelSelect={handleOpenSpeckleModel}
             // Soundscape persistence
             // Model or an open Homepage project → save in place (resolveSaveTarget);
             // fresh Home stage → name a new Homepage project.
@@ -3994,6 +3959,9 @@ function HomeContent() {
                 : () => setShowHomeProjectModal(true)
             }
             isSavingSoundscape={isSavingSoundscape}
+            // Shared workspace viewer: pull the owner's latest save on demand
+            onLoadLatestSoundscape={() => { void handleLoadLatestSoundscape(); }}
+            isLoadingLatestSoundscape={isLoadingLatest}
             // FPS mode programmatic exit
             exitFPSTrigger={exitFPSTrigger}
             // Receiver mesh double-click → expand listener card + enter FPS mode

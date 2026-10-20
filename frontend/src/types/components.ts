@@ -255,6 +255,8 @@ export interface SoundGenerationSectionProps {
   /** Called when the user collapses the currently expanded sound card in the sidebar.
    *  Lets the caller clear scene-driven selection so the sphere highlight reverts. */
   onSoundCardCollapsed?: () => void;
+  /** Expand this card (Simple mode: its sound sphere was clicked). A new `version` re-expands the same card. */
+  revealCardRequest?: { index: number; version: number } | null;
   // Receiver props
   receivers?: ReceiverData[];
   onAddReceiver?: () => void;

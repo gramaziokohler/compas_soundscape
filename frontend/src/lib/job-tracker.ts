@@ -1,4 +1,6 @@
 import type { JobRecord, JobType } from '@/types';
+import { apiService } from '@/services/api';
+import { useUIStore } from '@/store/uiStore';
 
 /**
  * In-flight job tracker.
@@ -7,6 +9,10 @@ import type { JobRecord, JobType } from '@/types';
  * after the window/tab is closed and reopened. The backend keeps computing in
  * its resident worker processes; on reopen `useJobRecovery` reads these records
  * (plus a backend per-workspace listing) and reattaches to the jobs.
+ *
+ * Every record's meta (stamped with the current model id) is also published to
+ * the backend job hash, so other members of a shared workspace — whose browsers
+ * have no local record — can reattach the job to the same cards.
  */
 const STORAGE_KEY = 'compas-inflight-jobs';
 
@@ -17,11 +23,20 @@ const STORAGE_KEY = 'compas-inflight-jobs';
  */
 const MAX_AGE_MS = 60 * 60 * 1000;
 
+/** Model the current page is bound to (Speckle model or saved Home project). */
+function currentModelId(): string | undefined {
+  const ui = useUIStore.getState();
+  return ui.globalSpeckleData?.model_id ?? ui.homeProject?.modelId ?? undefined;
+}
+
 export function recordInflightJob(
   jobId: string,
   jobType: JobType,
-  meta?: JobRecord['meta'],
+  jobMeta?: JobRecord['meta'],
 ): void {
+  const modelId = currentModelId();
+  const meta = jobMeta || modelId ? { ...jobMeta, ...(modelId ? { modelId } : {}) } : undefined;
+  if (meta) void apiService.setJobClientMeta(jobId, meta);
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     const jobs: JobRecord[] = raw ? JSON.parse(raw) : [];

@@ -160,6 +160,10 @@ export const FLOATING_WINDOW = {
   SETTINGS_PANEL_STORAGE_KEY: 'compas-settings-panel-window',
   SETTINGS_PANEL_DEFAULT_SIZE: { w: 380, h: 560 },
   SETTINGS_PANEL_MIN_SIZE: { w: 300, h: 200 },
+  /** Model-version "Changes" panel (opens docked right, then wherever the user drags it). */
+  VERSION_REVIEW_STORAGE_KEY: 'compas-version-review-panel-window',
+  VERSION_REVIEW_DEFAULT_SIZE: { w: 340, h: 600 },
+  VERSION_REVIEW_MIN_SIZE: { w: 300, h: 240 },
   MIN_SIZE: { w: 420, h: 320 },
   /** Px of the window that must stay inside the viewport when dragged. */
   VIEWPORT_MARGIN: 48,
@@ -321,6 +325,26 @@ export const NOTIFICATIONS = {
   PANEL_WIDTH: 340,                     // notification dropdown width (px)
   PANEL_MAX_HEIGHT: "min(420px, 60dvh)",// clamped-fluid scroll height
   BADGE_MAX: 9,                         // counts above this render as "9+"
+} as const;
+
+// Shared workspaces — only the owner's changes are saved; other members are view-only.
+export const WORKSPACE_MESSAGES = {
+  VIEW_ONLY_HINT: "View only — changes aren't saved",
+  VIEW_ONLY_SAVE_TITLE: 'Only the workspace owner can save',
+  VIEW_ONLY_PANEL_NOTE: "You're a viewer. You can explore and edit, but only the owner's changes are saved.",
+  VIEW_ONLY_AUTOSAVE_LABEL: 'Autosave (view-only workspace)',
+  VIEW_ONLY_DELETE_TITLE: 'Only the workspace owner can delete its history',
+  PRIVATE_MODEL_NOTICE:
+    "This model's soundscape belongs to someone else's private workspace. You're working on your own version in your workspace. Ask the owner for an invite link to see theirs.",
+  PRIVATE_MODEL_ACTION: 'Open Workspaces →',
+  JOINED_AS_VIEWER: "Joined the shared workspace as a viewer. Your changes won't be saved.",
+  JOINED_AS_OWNER: 'Opened your workspace.',
+  LOAD_LATEST_LABEL: 'Load latest',
+  LOAD_LATEST_LOADING_LABEL: 'Loading…',
+  LOAD_LATEST_TITLE: "Reload the owner's last saved version (replaces your unsaved view-only edits)",
+  LOAD_LATEST_NEWER_TITLE:
+    "The owner saved a newer version — load it (replaces your unsaved view-only edits)",
+  LOAD_LATEST_FAILED: "Couldn't load the latest saved version.",
 } as const;
 
 // Helper hint — transient bottom-right viewer hint positioned left of the scene control buttons.
@@ -501,7 +525,7 @@ export const AUDIO_MODEL_AUDIOLDM2 = "audioldm2";
 export const AUDIO_MODEL_ELEVENLABS = "elevenlabs";
 export const AUDIO_MODEL_SA3 = "stable-audio-3";
 export const AUDIO_MODEL_TTS = "gemini-tts";
-export const DEFAULT_AUDIO_MODEL = AUDIO_MODEL_SA3;
+export const DEFAULT_AUDIO_MODEL = AUDIO_MODEL_ELEVENLABS;
 
 // Stable Audio 3 (small-sfx) — text-to-audio plus the FX restyle/inpaint effect.
 export const STABLE_AUDIO_MODES = {
@@ -861,12 +885,40 @@ export const SPECKLE_INGESTION_PHASE_LABELS: Record<string, string> = {
   publishing: 'Publishing',
 };
 
-// Watches the open model for a newer published version and offers to switch.
+// Watches the open model for a newer published version (useModelVersionSession → banner).
 export const MODEL_VERSION_WATCH = {
   POLL_INTERVAL_MS: 60000,      // Check the model's latest version every 60 s
-  // sessionStorage flag set just before the "switch to latest" page reload so the
-  // next bootstrap frames the model bounding box instead of restoring the saved POV.
-  FIT_CAMERA_ON_NEXT_LOAD_KEY: 'compas-fit-camera-on-next-load',
+} as const;
+
+/** Speckle model URL pinned to a version: `.../models/<modelId>@<versionId>` (group 1 = version). */
+export const SPECKLE_PINNED_VERSION_URL = /\/models\/[^/@?#]+@([^/?#]+)/;
+
+// Model pill + version menu (bottom bar), version switching and update impact.
+export const MODEL_VERSION = {
+  /** Hover delay before the model pill shows its info card. */
+  HOVER_CARD_DELAY_MS: 400,
+  /** Max pill width; longer names are truncated with an ellipsis. */
+  PILL_MAX_WIDTH_PX: 190,
+  MENU_WIDTH_PX: 330,
+  HOVER_CARD_WIDTH_PX: 280,
+  /** Versions listed before "Show N older versions". */
+  MENU_VISIBLE_VERSIONS: 3,
+  /** Default change tolerance: changes at or below it never invalidate results. */
+  DEFAULT_TOLERANCE: { distance_m: 0.05, angle_deg: 1, area_ratio: 0.02 },
+  /** Tolerance editor bounds (mirrored by backend MODEL_VERSION_TOLERANCE_MAX_*). */
+  TOLERANCE_LIMITS: { distance_cm: { min: 0, max: 500, step: 1 }, angle_deg: { min: 0, max: 45, step: 0.5 } },
+  /** localStorage key: versions this browser already opened, per model ("vN was loaded" shows once). */
+  SEEN_VERSIONS_STORAGE_KEY: 'compas-seen-model-versions',
+  /** Max version ids remembered per model. */
+  SEEN_VERSIONS_PER_MODEL: 200,
+  /** Acoustic-region rows above this count are grouped (by layer, else by change type). */
+  REGION_GROUP_THRESHOLD: 10,
+  /** Width of the material dropdowns in the review panel. */
+  REVIEW_MATERIAL_SELECT_WIDTH_PX: 132,
+  /** Model upload formats accepted by "Upload new version…". */
+  UPLOAD_ACCEPT: '.3dm,.obj,.ifc,.stl',
+  /** Speckle web app base used by "Open in Speckle". */
+  SPECKLE_APP_URL: 'https://app.speckle.systems',
 } as const;
 
 // ============================================================================

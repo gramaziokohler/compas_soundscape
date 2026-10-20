@@ -22,7 +22,7 @@ import { apiService } from "@/services/api";
 import type { TokenStatus, LLMProviders } from "@/services/api";
 import type { SoundscapeStats } from "@/types/soundscape";
 import { useTextGenerationStore } from "@/store/textGenerationStore";
-import { useSoundscapeStore, useSceneWorkflowStore } from "@/store";
+import { useSoundscapeStore, useSceneWorkflowStore, useWorkspaceStore, selectIsReadOnlyWorkspace } from "@/store";
 import { setElevenLabsApiKey, isElevenLabsKeySet } from "@/services/elevenlabs";
 import { useServiceVersions } from "@/hooks/useServiceVersions";
 import { useAudioControlsStore } from "@/store/audioControlsStore";
@@ -58,6 +58,7 @@ import {
   DBFS_MAX,
   DEFAULT_DIFFUSION_STEPS,
   SANDBOX_MODEL_ID,
+  WORKSPACE_MESSAGES,
 } from "@/utils/constants";
 
 function isProviderInstalled(modelKey: string, llmProviders: LLMProviders | null): boolean {
@@ -181,7 +182,7 @@ const SETTINGS: SettingEntry[] = [
   { section: 'rendering', key: 'spectrograms', terms: ['spectrograms', 'spectrogram'] },
   { section: 'rendering', key: 'base-spl', terms: ['base level', 'base spl', 'spl', 'volume', 'db', 'decibel'] },
 
-  { section: 'workspaces', key: 'collaboration', terms: ['workspaces', 'workspace', 'members', 'collaboration', 'collaborators', 'invite', 'sharing', 'owner', 'leave'] },
+  { section: 'workspaces', key: 'collaboration', terms: ['workspaces', 'workspace', 'members', 'collaboration', 'collaborators', 'invite', 'sharing', 'share', 'link', 'owner', 'transfer', 'viewer', 'view only', 'leave'] },
 
   { section: 'history', key: 'auto-save', terms: ['autosave', 'auto-save', 'soundscape', 'auto save', 'persist'] },
   { section: 'history', key: 'delete-history', terms: ['delete history', 'clear history', 'delete', 'history', 'reset project'] },
@@ -607,7 +608,7 @@ export function AdvancedSettingsSection({
   useEffect(() => {
     if (!advancedSettingsFocus) return;
     setSearchQuery('');
-    setActiveSection('llm');
+    setActiveSection(advancedSettingsFocus.target === 'workspaces' ? 'workspaces' : 'llm');
     setHighlightTarget(advancedSettingsFocus.target);
     const t = setTimeout(() => setHighlightTarget(null), 2500);
     return () => clearTimeout(t);
@@ -638,6 +639,8 @@ export function AdvancedSettingsSection({
   // Autosave only applies to an opened model — the Home page always saves manually.
   const hasSaveTarget = useUIStore(selectHasSaveTarget);
   const setEnableAutoSave = useUIStore((s) => s.setEnableAutoSave);
+  // Someone else's workspace: only the owner saves (autosave + delete are off).
+  const isReadOnlyWorkspace = useWorkspaceStore(selectIsReadOnlyWorkspace);
   const colorTheme = useUIStore((s) => s.colorTheme);
   const setColorTheme = useUIStore((s) => s.setColorTheme);
   const uiMode = useUIStore((s) => s.uiMode);
@@ -1021,10 +1024,14 @@ export function AdvancedSettingsSection({
             <div className="flex flex-col gap-2">
               {isVisible('auto-save') && (
                 <ToggleField
-                  checked={enableAutoSave && hasSaveTarget}
+                  checked={enableAutoSave && hasSaveTarget && !isReadOnlyWorkspace}
                   onChange={setEnableAutoSave}
-                  disabled={!hasSaveTarget}
-                  label={hasSaveTarget ? 'Autosave' : 'Autosave (off on the Home page)'}
+                  disabled={!hasSaveTarget || isReadOnlyWorkspace}
+                  label={
+                    isReadOnlyWorkspace
+                      ? WORKSPACE_MESSAGES.VIEW_ONLY_AUTOSAVE_LABEL
+                      : hasSaveTarget ? 'Autosave' : 'Autosave (off on the Home page)'
+                  }
                 />
               )}
               {isVisible('delete-history') && (
@@ -1113,7 +1120,9 @@ export function AdvancedSettingsSection({
                   ) : (
                     <button
                       onClick={() => setShowDeleteConfirm(true)}
-                      className="py-1.5 text-xs font-medium rounded transition-colors"
+                      disabled={isReadOnlyWorkspace}
+                      title={isReadOnlyWorkspace ? WORKSPACE_MESSAGES.VIEW_ONLY_DELETE_TITLE : undefined}
+                      className="py-1.5 text-xs font-medium rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                       style={{
                         background: 'color-mix(in srgb, var(--color-error) 15%, transparent)',
                         color: 'var(--color-error)',

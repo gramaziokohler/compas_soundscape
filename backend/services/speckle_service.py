@@ -833,7 +833,7 @@ class SpeckleService:
             )
         return legacy
 
-    def upload_model(self, file_path: str, file_type: str, model_name: str = None) -> Optional[Dict]:
+    def upload_model(self, file_path: str, file_type: str, model_name: str = None, model_id: str = None) -> Optional[Dict]:
         """
         Upload 3dm/obj/ifc file to Speckle using the file upload API.
 
@@ -853,6 +853,8 @@ class SpeckleService:
             file_path: Path to the file to upload
             file_type: File extension (3dm, obj, ifc)
             model_name: Optional custom model name (defaults to filename without extension)
+            model_id: Optional existing model to add the upload to as a new version
+                (takes precedence over matching by ``model_name``)
 
         Returns:
             dict: {model_id, version_id, file_id, url} if successful, None otherwise
@@ -921,7 +923,13 @@ class SpeckleService:
             if not model_name:
                 model_name = os.path.splitext(file_name)[0]
 
-            model = self._get_or_create_model(model_name, file_type, file_name)
+            if model_id:
+                model = self.client.model.get(model_id=model_id, project_id=self.project_id)
+                if not model:
+                    logger.error(f"Target model {model_id} not found")
+                    return None
+            else:
+                model = self._get_or_create_model(model_name, file_type, file_name)
 
             # Step 4: Trigger file ingestion
             # NOTE: `startFileImport` was removed from the Speckle Server GraphQL API
@@ -1138,6 +1146,7 @@ class SpeckleService:
         all_faces = []
         object_ids = []
         object_names = []
+        object_application_ids = []  # parallel to object_ids (None when absent)
         object_face_ranges = {}
 
         vertex_offset = 0
@@ -1394,6 +1403,7 @@ class SpeckleService:
             if face_count > start_face:
                 object_ids.append(obj_id)
                 object_names.append(obj_name)
+                object_application_ids.append(obj_app_id)
                 face_range = [start_face, face_count - 1]
                 # Index by the raw id, its canonical (suffix-stripped) form, the
                 # applicationId (Rhino GUID / stable id), and the display meshes'
@@ -1417,6 +1427,7 @@ class SpeckleService:
             "faces": all_faces,
             "object_ids": object_ids,
             "object_names": object_names,
+            "object_application_ids": object_application_ids,
             "object_face_ranges": object_face_ranges,
             "object_layers": object_layers,
             "units": root_units,

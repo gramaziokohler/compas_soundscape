@@ -240,7 +240,9 @@ export function SceneWorkflowActions({ scene, progress, onOpenExpert }: SceneWor
           Stop
         </button>
       ) : (
-        scene.isScenario && progress.status !== 'done' && (
+        // Observed running (its pipeline runs in another tab / member's browser):
+        // nothing to stop here, and resuming would submit the same jobs twice.
+        scene.isScenario && progress.status !== 'done' && progress.status !== 'running' && (
           <button type="button" className="bubble-chip bubble-chip--on" onClick={() => resumeScene(scene.usageIndex)}>
             {progress.status === 'error' ? 'Retry' : 'Resume'}
           </button>

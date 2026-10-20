@@ -11,7 +11,15 @@ from pydantic import BaseModel
 
 from config.constants import SPECKLE_SERVER_URL
 from services.speckle_service import SpeckleService
-from models.schemas import SpeckleIngestionStatusResponse, SpeckleProjectModelsResponse
+from services.speckle_version_service import list_model_versions
+from services.model_version_impact_service import ModelVersionImpactService, Region, Tolerance
+from models.schemas import (
+    ModelVersionImpactRequest,
+    ModelVersionImpactResponse,
+    SpeckleIngestionStatusResponse,
+    SpeckleModelVersionsResponse,
+    SpeckleProjectModelsResponse,
+)
 from utils.file_operations import list_saved_soundscape_models
 
 
@@ -25,6 +33,8 @@ router = APIRouter(prefix="/api/speckle", tags=["speckle"])
 
 # Initialize Speckle service (singleton pattern – same instance as upload.py)
 speckle_service = SpeckleService()
+# Version comparison (caches per-version object statistics in process)
+version_impact_service = ModelVersionImpactService(speckle_service)
 
 
 def _ensure_authenticated() -> None:
@@ -121,6 +131,57 @@ async def get_model_latest_version(model_id: str):
 
     if result is None:
         raise HTTPException(status_code=404, detail="Model version not available")
+
+    return result
+
+
+@router.get("/models/{model_id}/versions", response_model=SpeckleModelVersionsResponse)
+async def get_model_versions(model_id: str):
+    """
+    Read-only: the model's version history, newest first, one entry per
+    user-visible version (an app upload's bundle + legacy copy count once).
+    """
+    _ensure_authenticated()
+
+    result = await run_in_threadpool(list_model_versions, speckle_service, model_id)
+
+    if result is None:
+        raise HTTPException(status_code=404, detail="Model versions not available")
+
+    return result
+
+
+@router.post("/version-impact", response_model=ModelVersionImpactResponse)
+async def get_version_impact(request: ModelVersionImpactRequest):
+    """
+    What changed between two versions of the open model (above tolerance) and
+    what it impacts: acoustic-region objects, region totals, and listeners /
+    free sounds now outside the room or inside a solid. Geometry is fetched in
+    a worker thread and cached per version.
+    """
+    _ensure_authenticated()
+
+    region = request.region
+    result = await run_in_threadpool(
+        version_impact_service.compute_impact,
+        speckle_service.project_id,
+        request.from_version_id,
+        request.to_version_id,
+        Tolerance(
+            distance_m=request.tolerance.distance_m,
+            angle_deg=request.tolerance.angle_deg,
+            area_ratio=request.tolerance.area_ratio,
+        ),
+        Region(
+            whole_model=region is None or region.whole_model,
+            ids=set(region.ids) if region else set(),
+            layers=list(region.layers) if region else [],
+        ),
+        [p.model_dump() for p in request.points],
+    )
+
+    if result is None:
+        raise HTTPException(status_code=502, detail="Could not read the geometry of both versions")
 
     return result
 

@@ -1,5 +1,5 @@
 ---
-description: Refresh-survival architecture — save/load, Zustand persist, URL bootstrap, job recovery, camera POV
+description: Refresh-survival architecture — save/load, Zustand persist, URL bootstrap, job recovery
 globs: frontend/src/utils/soundscape-serializer.ts,frontend/src/app/page.tsx,frontend/src/store/uiStore.ts,frontend/src/store/cardFlowStore.ts,frontend/src/store/audioControlsStore.ts,frontend/src/store/rightSidebarStore.ts,frontend/src/hooks/useJobRecovery.ts,frontend/src/lib/job-tracker.ts,frontend/src/components/layout/Sidebar.tsx,backend/routers/soundscape.py,backend/models/schemas.py
 ---
 
@@ -39,8 +39,9 @@ directly inside a `useEffect` on mount, never `useSearchParams()` for bootstrap.
 ### 2. `beforeunload` + Zustand `persist` write does not survive
 React 18 automatic batch-updates delay the persist subscriber. On `beforeunload`, the store updates
 but the persist write to localStorage may not complete before the page dies.
-**Camera state must write directly to `localStorage.setItem('compas-camera-state', ...)`**
-in addition to the store update, bypassing the persist middleware.
+Anything that must survive an unload must write directly to its own `localStorage` key
+in addition to the store update, bypassing the persist middleware. (The camera POV is
+deliberately NOT persisted — every load frames the model like "Reset camera view".)
 
 ### 3. `useState` initializer runs before `persist.rehydrate()`
 `useState(() => getState().foo)` captures the DEFAULT value because rehydration happens later in
@@ -77,7 +78,7 @@ value before the restore effect can read it. **Use one of**:
 - Skip syncing `null` / default values: `if (value === null) return;`
 - Gate the sync behind a ref that is only enabled AFTER the restore completes:
   `if (!saveEnabledRef.current) return;`
-- Save directly to a separate localStorage key (camera / viewMode pattern) instead of
+- Save directly to a separate localStorage key (viewMode pattern) instead of
   syncing through a Zustand persist store.
 
 ### 9. Components may use LOCAL state, not the store field
@@ -169,7 +170,6 @@ const storage: PersistStorage<State> = {
 
 | Key | Format | Purpose |
 |-----|--------|---------|
-| `compas-camera-state` | `{ pos, target, up, orbitTarget }` | Camera POV survival |
 | `compas-view-mode` | `'default' \| 'acoustic' \| 'dark'` | Speckle viewmode survival (Sounds/Default/Acoustics) |
 | `compas-color-theme` | `'system' \| 'light' \| 'dark'` | UI color theme; blocking script in `layout.tsx` reads this before paint |
 
@@ -180,3 +180,15 @@ const storage: PersistStorage<State> = {
   processes completed results or resumes polling for in-progress jobs
 - Job recording is wired in `soundscapeStore.ts` and `textGenerationStore.ts` where
   module-level `_currentGenerationId` / `_currentTtsGenerationId` are set
+- Records live in `localStorage` (`compas-inflight-jobs`), unioned with `GET /api/jobs` (workspace
+  listing). `recordInflightJob` also publishes the meta + `modelId` to the backend job hash, so a
+  **viewer of a shared workspace** reattaches the owner's jobs: sound/tts cards are marked
+  generating (`markRecoveredGenerationCards`), partial clips stream in, sims show progress, and
+  scene bubbles derive a running step from the card state (`deriveObservedSceneStep`). Jobs whose
+  `meta.modelId` is another model are skipped.
+- Recovery waits for `domainReady` (page `domainRestored`, set when the URL bootstrap finished
+  restoring) — recovering before the restore lets `restoreSoundscape` overwrite the merged result.
+- Viewers never auto-reload domain state. The heartbeat's workspace `revision` vs the store's
+  `loadedRevision` lights the **Load latest** bar button (`selectHasNewerSave`); clicking it
+  re-applies the owner's saved `soundscape.json` and calls `discoverRunningWorkspaceJobs()` for jobs
+  started since the page loaded.

@@ -47,7 +47,7 @@ The scene toolbar (top of the 3D canvas) exposes three radios: **Sounds** (`dark
 localStorage.getItem('compas-view-mode')   // 'default' | 'acoustic' | 'dark'
 ```
 
-Other direct localStorage keys: `compas-camera-state` (camera POV), `compas-ui-state`,
+Other direct localStorage keys: `compas-ui-state`,
 `compas-audio-controls`, `compas-cardflow-state`, `compas-right-sidebar` (Zustand persist stores).
 
 ## Console inspection

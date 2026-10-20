@@ -40,7 +40,7 @@ export interface SidebarNavCommand {
 }
 
 /** Settings the Advanced Settings panel can be opened directly on. */
-export type AdvancedSettingsFocusTarget = 'tts-language' | 'text-to-audio';
+export type AdvancedSettingsFocusTarget = 'tts-language' | 'text-to-audio' | 'workspaces';
 
 export interface UIStoreState {
   // ── Load tab ──────────────────────────────────────────────────────────────
@@ -199,6 +199,9 @@ export interface UIStoreState {
   /** Card whose sound sphere should highlight while hovered (e.g. a DAW track/clip). Not persisted. */
   hoveredSoundCardIndex: number | null;
   setHoveredSoundCardIndex: (index: number | null) => void;
+  /** Simple mode: a sound sphere was clicked — the open scene panel expands its card. Not persisted. */
+  soundSphereRevealRequest: { index: number; version: number } | null;
+  requestSoundSphereReveal: (index: number) => void;
   /** Active parent (usage or context) index filtering the Sounds section. Null = no filter. */
   activeSoundParentIndex: number | null;
   setActiveSoundParentIndex: (index: number | null) => void;
@@ -215,11 +218,6 @@ export interface UIStoreState {
   setSeenHints: (ids: string[]) => void;
   markHintSeen: (id: string) => void;
 
-  // ── Camera POV (survives refresh) ──────────────────────────────────────────
-  cameraPosition: [number, number, number] | null;
-  cameraTarget: [number, number, number] | null;
-  setCameraState: (pos: [number, number, number] | null, target: [number, number, number] | null) => void;
-
   // ── Sidebar wizard step (survives refresh) ─────────────────────────────────
   sidebarWizardStep: 0 | 1 | 2;
   setSidebarWizardStep: (step: 0 | 1 | 2) => void;
@@ -234,6 +232,11 @@ export interface UIStoreState {
   setShowTimeline: (v: boolean) => void;
   showObjectExplorer: boolean;
   setShowObjectExplorer: (v: boolean) => void;
+  /** Transient: bumped by `requestFloatingPanelsCollapse` — tells every floating
+   * pop-up that keeps its open state locally (Simple-mode bubble panels, the DAW
+   * auto-open latch) to reduce itself. NOT persisted. */
+  floatingPanelsCollapseNonce: number;
+  requestFloatingPanelsCollapse: () => void;
 
   // ── View mode (survives refresh) ────────────────────────────────────────────
   viewMode: 'default' | 'acoustic' | 'dark';
@@ -504,6 +507,13 @@ export const useUIStore = create<UIStoreState>()(
         ),
       hoveredSoundCardIndex: null,
       setHoveredSoundCardIndex: (index) => set({ hoveredSoundCardIndex: index }, false, 'ui/setHoveredSoundCardIndex'),
+      soundSphereRevealRequest: null,
+      requestSoundSphereReveal: (index) =>
+        set(
+          (s) => ({ soundSphereRevealRequest: { index, version: (s.soundSphereRevealRequest?.version ?? 0) + 1 } }),
+          false,
+          'ui/requestSoundSphereReveal',
+        ),
       activeSoundParentIndex: null,
       setActiveSoundParentIndex: (index) =>
         set(
@@ -527,11 +537,6 @@ export const useUIStore = create<UIStoreState>()(
         'ui/markHintSeen',
       ),
 
-      // ── Camera POV ─────────────────────────────────────────────────────────
-      cameraPosition: null,
-      cameraTarget: null,
-      setCameraState: (pos, target) => set({ cameraPosition: pos, cameraTarget: target }, false, 'ui/setCameraState'),
-
       // ── Sidebar wizard step ─────────────────────────────────────────────────
       sidebarWizardStep: 0 as 0 | 1 | 2,
       setSidebarWizardStep: (step) => set({ sidebarWizardStep: step }, false, 'ui/setSidebarWizardStep'),
@@ -546,6 +551,13 @@ export const useUIStore = create<UIStoreState>()(
       setShowTimeline: (v) => set({ showTimeline: v }, false, 'ui/setShowTimeline'),
       showObjectExplorer: false,
       setShowObjectExplorer: (v) => set({ showObjectExplorer: v }, false, 'ui/setShowObjectExplorer'),
+      floatingPanelsCollapseNonce: 0,
+      requestFloatingPanelsCollapse: () =>
+        set(
+          (s) => ({ floatingPanelsCollapseNonce: s.floatingPanelsCollapseNonce + 1 }),
+          false,
+          'ui/requestFloatingPanelsCollapse',
+        ),
 
       // ── View mode ──────────────────────────────────────────────────────────
       viewMode: 'default' as 'default' | 'acoustic' | 'dark',
@@ -631,9 +643,9 @@ export const useUIStore = create<UIStoreState>()(
         hoveredIRSourceReceiver, activeGradientMap, selectedIRId, selectedIRMetadata,
         irRefreshTrigger, refreshBoundingBoxTrigger, roomScale, isUploadingGlobalModel,
         globalModelUploadProgress,
-        isSavingSoundscape, zoomToSoundCardTrigger, hoveredSoundCardIndex,
+        isSavingSoundscape, zoomToSoundCardTrigger, hoveredSoundCardIndex, soundSphereRevealRequest,
         activeSoundParentIndex, isInSoundsStep, showBoundingBox,
-        cameraPosition, cameraTarget, acousticLayerSelectionMode, soundsNavTrigger,
+        acousticLayerSelectionMode, soundsNavTrigger,
         leftSidebarExpandCommand, homeProject, sidebarNavCommand, dawDockBottomSpace, bubbleColumnCounts, showLoadModelPanel,
         // Transient: a settings-shortcut request must not replay after a refresh.
         advancedSettingsFocus,
@@ -641,7 +653,9 @@ export const useUIStore = create<UIStoreState>()(
         timelineView,
         // Model-bound: a card index from a previous model must not decide which
         // scene gizmo attaches after a refresh (the sidebar re-expands card 0).
-        expandedSoundCardIndex, soundEditorSoundId, shortcutsOpen, ...persistable } = state;
+        expandedSoundCardIndex, soundEditorSoundId, shortcutsOpen,
+        // Transient: a collapse request must not replay after a refresh.
+        floatingPanelsCollapseNonce, ...persistable } = state;
       return persistable;
     },
   }),

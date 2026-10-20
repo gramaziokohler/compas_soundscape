@@ -81,8 +81,12 @@ export function useSpeckleCoordinatorCallbacks({
         // selection (store + explorer) so only one object type is highlighted.
         skipDeselectionRef.current = true;
         setSelectedSpeckleObjectIds([]);
-        // Simple mode keeps the sphere selected without expanding its card.
-        if (isSimpleMode()) return;
+        // Simple mode keeps the sphere selected; an open scene panel expands its
+        // card (SimpleSoundscapes) — never the expert sidebar / entity panel.
+        if (isSimpleMode()) {
+          useUIStore.getState().requestSoundSphereReveal(promptIndex);
+          return;
+        }
         console.log('[SpeckleScene] Sound sphere clicked, selecting card:', promptIndex);
         setExpandedSoundCardIdx(null);
         onSelectSoundCard(promptIndex);

@@ -140,12 +140,17 @@ export function NotificationCenter() {
                   {TYPE_GLYPH[notification.type]}
                 </span>
 
-                <div className="flex-1 text-sm text-foreground">
+                {/* With an action, the whole message is clickable (the button stays for keyboard users). */}
+                <div
+                  className={`flex-1 text-sm text-foreground${notification.action ? ' cursor-pointer' : ''}`}
+                  onClick={notification.action ? () => { notification.action?.onClick(); removeNotification(notification.id); } : undefined}
+                >
                   {notification.message}
 
                   {notification.action && (
                     <button
-                      onClick={() => {
+                      onClick={(e) => {
+                        e.stopPropagation();
                         notification.action?.onClick();
                         removeNotification(notification.id);
                       }}

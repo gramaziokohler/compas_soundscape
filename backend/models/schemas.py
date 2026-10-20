@@ -13,6 +13,9 @@ from config.constants import DEFAULT_FOLEY_SOUND_DETAIL
 from config.constants import DEFAULT_LLM_MODEL
 from config.constants import DEFAULT_TTS_MODEL
 from config.constants import FOLEY_SOUND_DETAIL_LEVELS
+from config.constants import MODEL_VERSION_TOLERANCE_MAX_ANGLE_DEG
+from config.constants import MODEL_VERSION_TOLERANCE_MAX_AREA_RATIO
+from config.constants import MODEL_VERSION_TOLERANCE_MAX_DISTANCE_M
 from config.constants import DEFAULT_SPEED_OF_SOUND
 from config.constants import PYROOMACOUSTICS_DEFAULT_ABSORPTION
 from config.constants import PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION
@@ -80,6 +83,15 @@ class JobStatusResponse(BaseModel):
     partial: Optional[object] = None
     result: Optional[object] = None
     error: Optional[str] = None
+    # Card mapping published by the submitting client (see JobClientMetaRequest)
+    client_meta: Optional[dict] = None
+    created: Optional[float] = None
+
+
+class JobClientMetaRequest(BaseModel):
+    """Client card mapping (model id, config ids, …) attached to a job so any
+    member of the workspace can reattach it to the right cards."""
+    meta: dict
 
 
 class JobCancelResponse(BaseModel):
@@ -292,6 +304,105 @@ class SpeckleProjectModelsResponse(BaseModel):
     auth_token: Optional[str] = None
 
 
+class SpeckleModelVersion(BaseModel):
+    """One user-visible model version (bundle + legacy copy collapsed; id is loadable)."""
+    id: str
+    number: int
+    created_at: Optional[str] = None
+    author_name: Optional[str] = None
+    source_application: Optional[str] = None
+    message: Optional[str] = None
+    file_name: Optional[str] = None
+    is_latest: bool = False
+
+
+class SpeckleModelVersionsResponse(BaseModel):
+    """GET /api/speckle/models/{model_id}/versions — newest first."""
+    model_id: str
+    model_name: str
+    versions: list[SpeckleModelVersion]
+    total_count: int
+
+
+class ModelVersionTolerance(BaseModel):
+    """Changes at or below these thresholds do not invalidate results."""
+    distance_m: float = Field(..., ge=0, le=MODEL_VERSION_TOLERANCE_MAX_DISTANCE_M)
+    angle_deg: float = Field(..., ge=0, le=MODEL_VERSION_TOLERANCE_MAX_ANGLE_DEG)
+    area_ratio: float = Field(..., ge=0, le=MODEL_VERSION_TOLERANCE_MAX_AREA_RATIO)
+
+
+class ModelVersionRegion(BaseModel):
+    """Acoustic region: whole model, or object ids (any alias) plus layer names."""
+    whole_model: bool = False
+    ids: list[str] = []
+    layers: list[str] = []
+
+
+class ModelVersionPlacementPoint(BaseModel):
+    """A listener or free sound position checked against the new geometry."""
+    id: str
+    position: list[float]
+
+
+class ModelVersionImpactRequest(BaseModel):
+    """POST /api/speckle/version-impact"""
+    from_version_id: str
+    to_version_id: str
+    tolerance: ModelVersionTolerance
+    region: Optional[ModelVersionRegion] = None
+    points: list[ModelVersionPlacementPoint] = []
+
+
+class ModelVersionObjectChange(BaseModel):
+    over_tolerance: bool
+    kind: str  # "moved" | "rotated" | "scaled" | "reshaped"
+    moved_m: float
+    extent_change_m: float
+    area_change_ratio: float
+    scale: Optional[float] = None
+    rotation_deg: float
+
+
+class ModelVersionObjectImpact(BaseModel):
+    key: str
+    name: str
+    layer: Optional[str] = None
+    application_id: Optional[str] = None
+    raw_ids: list[str]
+    status: str  # "changed" | "added" | "removed" | "below_tolerance"
+    in_region: bool
+    change: Optional[ModelVersionObjectChange] = None
+
+
+class ModelVersionRegionTotals(BaseModel):
+    object_count: int
+    area_m2: float
+    bounding_volume_m3: float
+
+
+class ModelVersionRegionImpact(BaseModel):
+    before: ModelVersionRegionTotals
+    after: ModelVersionRegionTotals
+
+
+class ModelVersionPlacement(BaseModel):
+    id: str
+    status: str  # "outside" | "inside_object"
+    object_name: Optional[str] = None
+    object_key: Optional[str] = None
+
+
+class ModelVersionImpactResponse(BaseModel):
+    from_version_id: str
+    to_version_id: str
+    tolerance: ModelVersionTolerance
+    counts: dict[str, int]
+    region_counts: dict[str, int]
+    objects: list[ModelVersionObjectImpact]
+    region: ModelVersionRegionImpact
+    placements: list[ModelVersionPlacement]
+
+
 # ============================================================================
 # Soundscape Data Persistence Schemas
 # ============================================================================
@@ -384,6 +495,9 @@ class SoundscapeSoundEvent(BaseModel):
     fx: Optional[dict] = None
     fx_audio_filename: Optional[str] = None
     fx_enabled: bool = False
+    # Generation inputs of this variant (opaque JSON signature string), loaded
+    # into the card's settings editor when the variant is selected.
+    generated_signature: Optional[str] = None
 
     @field_validator("timestamps", mode="before")
     @classmethod
@@ -498,6 +612,8 @@ class SoundscapeSimulationConfig(BaseModel):
     speckle_scattering_assignments: Optional[dict[str, float]] = None
     # Acoustic region this card was simulated with (detects later re-assignment)
     speckle_acoustic_selection: Optional[SoundscapeAcousticSelection] = None
+    # Speckle version the completed result was simulated on (outdated detection)
+    simulated_version_id: Optional[str] = None
     simulation_results: Optional[str] = None
     current_simulation_id: Optional[str] = None
     current_simulation_run_id: Optional[str] = None

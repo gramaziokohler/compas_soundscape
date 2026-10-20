@@ -14,6 +14,7 @@ import {
   resolveSimulationLayerName,
   toBackendGeometryIds,
 } from '@/store/acousticLayerStore';
+import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { collapseVariantsToOne, groupSoundsByPosition } from '@/utils/positionKey';
 import type { SimulationEngine, SimulationMeshSettings } from '@/types/simulationPreflight';
 
@@ -27,6 +28,8 @@ export interface SourceReceiverPair {
 export interface SimulationGeometryRequest {
   projectId: string;
   modelId: string;
+  /** Speckle version the viewer shows — what the engine must simulate (see resolveSimulationVersionId). */
+  versionId: string;
   layerName: string;
   objectMaterials: Record<string, string>;
   geometryObjectIds?: string[];
@@ -74,6 +77,17 @@ export type BuildResult =
 
 const SPECKLE_MODEL_URL = /\/projects\/([^/]+)\/models\/([^/?#]+)/;
 
+/**
+ * Speckle id the backend resolves the simulated geometry from: the version
+ * loaded in the viewer. Sending the bare model id makes the backend fall back
+ * to the model's LATEST version, which silently diverges from the viewer as
+ * soon as an older version is open. The model id is only a fallback when no
+ * version is known yet (local sandbox).
+ */
+export function resolveSimulationVersionId(modelId: string): string {
+  return useSpeckleEngineStore.getState().loadedModelVersionId || modelId;
+}
+
 /** Build the geometry inputs of a simulation / preflight from a card's state. */
 export function buildSimulationGeometryRequest(args: BuildArgs): BuildResult {
   const { speckleUrl, receivers, sounds, selectedVariants, materialPrefix } = args;
@@ -116,6 +130,7 @@ export function buildSimulationGeometryRequest(args: BuildArgs): BuildResult {
     request: {
       projectId: urlMatch[1],
       modelId: urlMatch[2],
+      versionId: resolveSimulationVersionId(urlMatch[2]),
       layerName: resolveSimulationLayerName(args.layerName),
       objectMaterials,
       geometryObjectIds,
@@ -143,6 +158,7 @@ export function simulationRequestSignature(
     engine,
     request.projectId,
     request.modelId,
+    request.versionId,
     request.layerName,
     sortedEntries(request.objectMaterials),
     [...(request.geometryObjectIds ?? [])].sort(),

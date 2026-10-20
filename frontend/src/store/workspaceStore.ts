@@ -9,10 +9,12 @@ import { useUIStore } from "./uiStore";
  * Active workspace + collaboration state (shared sessions).
  *
  * The backend keeps a durable session→workspace binding; this store mirrors it
- * in the browser and polls presence so the UI can warn when several people are
- * on the same model (and pause autosave). Membership actions (invite, role
- * change, remove, leave, transfer) are all server-authoritative — the returned
- * workspace view replaces local state.
+ * in the browser and polls presence. Only the workspace owner's changes are
+ * saved — every other member is a view-only viewer (see
+ * `selectIsReadOnlyWorkspace`). Membership actions (invite, remove, leave,
+ * transfer) are all server-authoritative — the returned workspace view replaces
+ * local state. The heartbeat also reports the caller's role, so an ownership
+ * transfer made elsewhere is picked up without a reload.
  */
 
 const HEARTBEAT_MS = 25000;
@@ -20,7 +22,13 @@ const HEARTBEAT_MS = 25000;
 interface WorkspaceState {
   workspace: WorkspaceDetail | null;
   presence: number;
+  /** Latest workspace content revision (refreshed by the presence heartbeat). */
   revision: number;
+  /**
+   * Revision of the soundscape currently shown (set on load / "Load latest").
+   * A viewer whose `revision` moves past it can pull the owner's newer save.
+   */
+  loadedRevision: number;
   loading: boolean;
   error: string | null;
   /** Set when a save was rejected because the workspace moved on (409). */
@@ -30,13 +38,18 @@ interface WorkspaceState {
   /** All workspaces this user can switch to (personal + joined). */
   workspaces: WorkspaceSummary[];
 
-  init: () => Promise<void>;
+  /**
+   * Load the active workspace and start the heartbeat. With `preferOwn` (the
+   * Home page — no model open) the session is moved back to the workspace the
+   * user owns, so Home never shows someone else's workspace / a viewer role.
+   */
+  init: (options?: { preferOwn?: boolean }) => Promise<void>;
   refresh: () => Promise<void>;
   switchTo: (workspaceId: string) => Promise<void>;
   create: (name?: string) => Promise<void>;
   join: (token: string) => Promise<void>;
+  /** Create a view-only invite link (any member may share). */
   createInvite: (
-    role?: "editor" | "viewer",
     options?: { expiresInS?: number; maxUses?: number; modelId?: string | null },
   ) => Promise<string | null>;
   loadWorkspaces: () => Promise<void>;
@@ -44,14 +57,26 @@ interface WorkspaceState {
   revokeInvite: (inviteId: string) => Promise<void>;
   setSharingMode: (mode: "private" | "link") => Promise<void>;
   leave: () => Promise<void>;
-  setMemberRole: (userHash: string, role: "editor" | "viewer") => Promise<void>;
   removeMember: (userHash: string) => Promise<void>;
   transferOwnership: (userHash: string) => Promise<void>;
   heartbeat: () => Promise<void>;
   clearConflict: () => void;
+  setLoadedRevision: (revision: number) => void;
 }
 
 let _heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * True when the active workspace belongs to someone else: the user can still
+ * edit locally, but nothing is saved (autosave off, Save button disabled).
+ * No workspace (anonymous dev session) is never read-only.
+ */
+export const selectIsReadOnlyWorkspace = (s: Pick<WorkspaceState, "workspace">): boolean =>
+  !!s.workspace && s.workspace.role !== "owner";
+
+/** True when the workspace was saved (by the owner) after the shown soundscape was loaded. */
+export const selectHasNewerSave = (s: Pick<WorkspaceState, "revision" | "loadedRevision">): boolean =>
+  s.revision > s.loadedRevision;
 
 export const useWorkspaceStore = create<WorkspaceState>()(
   devtools(
@@ -59,6 +84,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
   workspace: null,
   presence: 1,
   revision: 0,
+  loadedRevision: 0,
   loading: false,
   error: null,
   conflictRevision: null,
@@ -66,12 +92,21 @@ export const useWorkspaceStore = create<WorkspaceState>()(
   invites: [],
   workspaces: [],
 
-  init: async () => {
+  init: async (options) => {
     set({ loading: true, error: null }, false, "workspace/init");
     try {
       const me = await apiService.getCurrentUser();
       if (me.workspace_id) {
-        const ws = await apiService.getWorkspace(me.workspace_id);
+        let ws = await apiService.getWorkspace(me.workspace_id);
+        if (options?.preferOwn && ws.role !== "owner") {
+          const workspaces = await apiService.listWorkspaces();
+          const own = workspaces.find((w) => w.role === "owner");
+          if (own) {
+            // Nothing is loaded on Home yet, so a plain rebind is enough (no reload).
+            ws = await apiService.switchWorkspace(own.id);
+            set({ workspaces }, false, "workspace/initPreferOwn");
+          }
+        }
         set(
           { workspace: ws, presence: ws.presence ?? 1, revision: ws.revision, loading: false },
           false,
@@ -127,15 +162,16 @@ export const useWorkspaceStore = create<WorkspaceState>()(
     void get().loadWorkspaces();
   },
 
-  createInvite: async (role = "editor", options) => {
+  createInvite: async (options) => {
     const ws = get().workspace;
     if (!ws) return null;
     const modelId =
       options?.modelId ?? useUIStore.getState().globalSpeckleData?.model_id ?? null;
-    const invite = await apiService.createWorkspaceInvite(ws.id, role, { ...options, modelId });
+    const invite = await apiService.createWorkspaceInvite(ws.id, { ...options, modelId });
     const url = `${window.location.origin}${invite.url}`;
     set({ inviteUrl: url }, false, "workspace/invite");
-    void get().loadInvites();
+    // Only the owner can list/revoke invites.
+    if (ws.role === "owner") void get().loadInvites();
     return url;
   },
 
@@ -185,13 +221,6 @@ export const useWorkspaceStore = create<WorkspaceState>()(
     if (typeof window !== "undefined") window.location.reload();
   },
 
-  setMemberRole: async (userHash, role) => {
-    const ws = get().workspace;
-    if (!ws) return;
-    const updated = await apiService.updateWorkspaceMemberRole(ws.id, userHash, role);
-    set({ workspace: { ...ws, ...updated } }, false, "workspace/setMemberRole");
-  },
-
   removeMember: async (userHash) => {
     const ws = get().workspace;
     if (!ws) return;
@@ -209,11 +238,22 @@ export const useWorkspaceStore = create<WorkspaceState>()(
   heartbeat: async () => {
     const ws = get().workspace;
     if (!ws) return;
-    const { presence, revision } = await apiService.workspaceHeartbeat(ws.id);
+    const { presence, revision, role } = await apiService.workspaceHeartbeat(ws.id);
     set({ presence, revision }, false, "workspace/heartbeat");
+    // Ownership moved (to or away from this user) — reload the full view so
+    // the role, members list and save gating update.
+    if (role && role !== ws.role) void get().refresh();
   },
 
   clearConflict: () => set({ conflictRevision: null }, false, "workspace/clearConflict"),
+
+  setLoadedRevision: (revision) =>
+    set(
+      // The load also reports the newest revision — never let the heartbeat value lag behind it.
+      (s) => ({ loadedRevision: revision, revision: Math.max(s.revision, revision) }),
+      false,
+      "workspace/setLoadedRevision",
+    ),
     }),
     { name: "workspace" },
   ),

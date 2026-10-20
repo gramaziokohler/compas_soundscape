@@ -7,6 +7,9 @@ import {
   useSoundscapeStore,
   beginSoundGeneration,
   endSoundGeneration,
+  markRecoveredGenerationCards,
+  updateRecoveredGenerationCards,
+  clearRecoveredGenerationCards,
   applyRecoveredOrchestrateResult,
   resumeOrchestrateJob,
 } from '@/store/soundscapeStore';
@@ -19,6 +22,7 @@ import { useAudioControlsStore } from '@/store/audioControlsStore';
 import { collapseVariantsToOne, groupSoundsByPosition } from '@/utils/positionKey';
 import { isFreshHomeUrl } from '@/utils/homeStage';
 import { cardEventId } from '@/utils/config-id';
+import { generatedEventFieldsFromConfig } from '@/utils/event-factory';
 import { parseSoundCopyIndex } from '@/lib/audio/utils/variant-sound-id';
 import {
   importPyroomIRFiles,
@@ -27,6 +31,7 @@ import {
   buildChorasSimulationResultsText,
 } from '@/utils/acousticMetrics';
 import type { JobType, JobRecord } from '@/types';
+import type { ActiveJob } from '@/services/api';
 import type { PyroomAcousticsSimulationConfig } from '@/types/acoustics';
 
 const POLL_INTERVAL_MS = 1500;
@@ -124,24 +129,85 @@ function buildRecoveredSimulationPositions(): PyroomAcousticsSimulationConfig['s
   };
 }
 
+/** Model the page was opened on (`?model_id=` or a saved Home project `?home=`). */
+function pageModelId(): string | null {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('model_id') ?? params.get('home');
+}
+
+/** A job submitted for another model belongs to that model's page, not this one. */
+function belongsToPage(record: JobRecord, modelId: string | null): boolean {
+  const jobModel = record.meta?.modelId;
+  return !jobModel || !modelId || jobModel === modelId;
+}
+
+/** A backend-listed job as a recovery record (meta = what the submitting browser published). */
+function toJobRecord(job: ActiveJob): JobRecord {
+  return {
+    jobId: job.jobId,
+    jobType: job.jobType,
+    timestamp: job.createdMs ?? Date.now(),
+    ...(job.meta ? { meta: job.meta } : {}),
+  };
+}
+
+/** Jobs this page already reattached (or is polling) — never recovered twice. */
+const _handledJobIds = new Set<string>();
+
+const RUNNING_JOB_STATUSES = new Set(['queued', 'running']);
+
+/**
+ * Reattach workspace jobs started after this page loaded — e.g. the owner of a
+ * shared workspace started a generation while a viewer was already watching.
+ * Only still-running jobs: finished ones arrive with the owner's saved soundscape.
+ */
+export async function discoverRunningWorkspaceJobs(): Promise<void> {
+  const modelId = pageModelId();
+  // This tab's own submissions are polled by the stores that started them.
+  const ownJobIds = new Set(getStoredJobs().map((j) => j.jobId));
+  const remote = await apiService.getActiveJobs();
+  const records = remote
+    .filter((j) => RUNNING_JOB_STATUSES.has(j.status) && !_handledJobIds.has(j.jobId) && !ownJobIds.has(j.jobId))
+    .map(toJobRecord)
+    .filter((r) => belongsToPage(r, modelId));
+  for (const record of records) {
+    await recoverJob(record);
+  }
+}
+
+/** Card `config_id`s a sound/tts job generates (from its published meta). */
+function jobConfigIds(record: JobRecord): string[] {
+  return [...new Set(Object.values(record.meta?.configIdByPromptIndex ?? {}))];
+}
+
 /**
  * Reads in-flight job records — from `localStorage` (survives a window close)
  * unioned with the backend's per-workspace job listing (survives cleared local
- * storage / another device) — checks their current status, and either processes
- * the result (if completed) or resumes polling (if still running).
+ * storage / another device, and lists jobs another member of a shared workspace
+ * is running, with the card mapping their browser published) — checks their
+ * current status, and either processes the result (if completed) or resumes
+ * polling (if still running).
+ *
+ * Discovery starts once `domainReady` is true (the saved soundscape has been
+ * restored), so results land on the restored cards instead of being overwritten
+ * by the restore.
  *
  * Returns `{ hasInflightJobs, recoveryResolved }`. `recoveryResolved` flips true
  * once the (async) backend listing has been consulted, so callers can defer
  * destructive cleanup until discovery completes.
  */
-export function useJobRecovery(): { hasInflightJobs: boolean; recoveryResolved: boolean; recoveredSomething: boolean } {
+export function useJobRecovery({ domainReady }: { domainReady: boolean }): {
+  hasInflightJobs: boolean;
+  recoveryResolved: boolean;
+  recoveredSomething: boolean;
+} {
   const recoveredRef = useRef(false);
   const [recoveryResolved, setRecoveryResolved] = useState(false);
   const [remoteJobCount, setRemoteJobCount] = useState(0);
   const [recoveredSomething, setRecoveredSomething] = useState(false);
 
   useEffect(() => {
-    if (recoveredRef.current) return;
+    if (!domainReady || recoveredRef.current) return;
     recoveredRef.current = true;
 
     // The fresh Home stage starts empty by design and has no save target, so a
@@ -157,16 +223,18 @@ export function useJobRecovery(): { hasInflightJobs: boolean; recoveryResolved: 
       try {
         const local = getStoredJobs();
 
-        // Backend listing: catches jobs whose local record was cleared or that
-        // were started on another device signed into the same workspace.
+        // Backend listing: catches jobs whose local record was cleared, that were
+        // started on another device, or that another member of this shared
+        // workspace is running. Their meta is the one the submitting browser published.
         const remote = await apiService.getActiveJobs();
         const known = new Set(local.map((j) => j.jobId));
-        const remoteRecords: JobRecord[] = remote
-          .filter((j) => !known.has(j.jobId))
-          .map((j) => ({ jobId: j.jobId, jobType: j.jobType, timestamp: Date.now() }));
+        const remoteRecords = remote.filter((j) => !known.has(j.jobId)).map(toJobRecord);
         setRemoteJobCount(remoteRecords.length);
 
-        const records = [...local, ...remoteRecords].filter(isJobLikelyStillAlive);
+        const modelId = pageModelId();
+        const records = [...local, ...remoteRecords]
+          .filter(isJobLikelyStillAlive)
+          .filter((r) => belongsToPage(r, modelId));
         if (records.length === 0) return;
         setRecoveredSomething(true);
 
@@ -180,7 +248,7 @@ export function useJobRecovery(): { hasInflightJobs: boolean; recoveryResolved: 
         setRecoveryResolved(true);
       }
     })();
-  }, []);
+  }, [domainReady]);
 
   return {
     hasInflightJobs: getStoredJobs().length > 0 || remoteJobCount > 0,
@@ -225,6 +293,8 @@ function recoverLlmJob(record: JobRecord, status: Awaited<ReturnType<typeof apiS
 
 async function recoverJob(record: JobRecord): Promise<void> {
   const { jobId, jobType } = record;
+  if (_handledJobIds.has(jobId)) return;
+  _handledJobIds.add(jobId);
 
   try {
     const status = await apiService.getJobStatus(jobType, jobId);
@@ -260,9 +330,20 @@ async function recoverJob(record: JobRecord): Promise<void> {
 }
 
 function startPolling(jobType: JobType, jobId: string, record: JobRecord): void {
+  const isSoundJob = jobType === 'sound' || jobType === 'tts';
   // Route isSoundGenerating through the shared counter so a recovered job can
   // never clobber a live concurrent generation's flag.
-  if (jobType === 'sound' || jobType === 'tts') beginSoundGeneration();
+  if (isSoundJob) {
+    beginSoundGeneration();
+    markRecoveredGenerationCards(jobConfigIds(record));
+  }
+  const endSoundJob = () => {
+    if (!isSoundJob) return;
+    endSoundGeneration();
+    clearRecoveredGenerationCards(jobConfigIds(record));
+  };
+  // Sounds already streamed in from `partial`, so each poll merges only new ones.
+  let mergedPartials = 0;
   const interval = setInterval(async () => {
     try {
       const status = await apiService.getJobStatus(jobType, jobId);
@@ -270,17 +351,24 @@ function startPolling(jobType: JobType, jobId: string, record: JobRecord): void 
       if (status.cancelled || status.error) {
         clearInterval(interval);
         removeInflightJob(jobId);
-        if (jobType === 'sound' || jobType === 'tts') endSoundGeneration();
+        endSoundJob();
         resetJobState(jobType, record);
         return;
       }
 
       if (status.completed) {
         clearInterval(interval);
-        if (jobType === 'sound' || jobType === 'tts') endSoundGeneration();
+        endSoundJob();
         await processCompletedJob(jobType, jobId, status.result, record);
         removeInflightJob(jobId);
         return;
+      }
+
+      // Stream finished clips in as they land, like the submitting tab does.
+      const partials = status.partial_sounds;
+      if (jobType === 'sound' && Array.isArray(partials) && partials.length > mergedPartials) {
+        mergeRecoveredSounds(partials.slice(mergedPartials), 'generated', record);
+        mergedPartials = partials.length;
       }
 
       // Update progress indicators in relevant stores
@@ -288,7 +376,7 @@ function startPolling(jobType: JobType, jobId: string, record: JobRecord): void 
     } catch {
       clearInterval(interval);
       removeInflightJob(jobId);
-      if (jobType === 'sound' || jobType === 'tts') endSoundGeneration();
+      endSoundJob();
       resetJobState(jobType, record);
     }
   }, POLL_INTERVAL_MS);
@@ -302,6 +390,7 @@ function updateProgress(jobType: JobType, progress: number, statusText: string, 
         soundGenProgressValue: progress,
         soundGenStatusText: statusText,
       });
+      updateRecoveredGenerationCards(jobConfigIds(record), progress, statusText || 'Generating…');
       break;
     case 'tts':
       useSoundscapeStore.setState({
@@ -309,6 +398,7 @@ function updateProgress(jobType: JobType, progress: number, statusText: string, 
         soundGenProgressValue: progress,
         soundGenStatusText: statusText,
       });
+      updateRecoveredGenerationCards(jobConfigIds(record), progress, statusText || 'Generating…');
       break;
     case 'sed':
       useSEDStore.setState({
@@ -395,13 +485,42 @@ function rekeyRecoveredSound(s: any, prefix: 'generated' | 'tts', record: JobRec
   const suffix = prefix === 'tts' ? s.voice_name || 'TTS' : undefined;
   // No mapping: keep the backend id (fresh unique key only if it sent none).
   if (!configId) return s.id ? s : { ...s, id: cardEventId(prefix, undefined, copyIdx, suffix) };
-  const cardIdx = useSoundscapeStore.getState().soundConfigs.findIndex((c) => c.config_id === configId);
+  const soundConfigs = useSoundscapeStore.getState().soundConfigs;
+  const cardIdx = soundConfigs.findIndex((c) => c.config_id === configId);
   return {
     ...s,
     id: cardEventId(prefix, configId, copyIdx, suffix),
     config_id: configId,
     ...(cardIdx >= 0 ? { prompt_index: cardIdx } : {}),
+    // Same entity link / position / timestamps the live generation path derives.
+    ...(prefix === 'generated' && cardIdx >= 0
+      ? generatedEventFieldsFromConfig(s, soundConfigs[cardIdx], cardIdx)
+      : {}),
   };
+}
+
+/**
+ * Merge recovered backend sounds (a finished job's result, or its streamed
+ * partials) into the store, re-keyed onto their cards and deduped by id.
+ */
+function mergeRecoveredSounds(sounds: any[], prefix: 'generated' | 'tts', record: JobRecord): void {
+  const store = useSoundscapeStore.getState();
+  const events = sounds.map((s: any) => ({
+    ...rekeyRecoveredSound(s, prefix, record),
+    geometry: s.geometry || { vertices: [], faces: [] },
+    isUploaded: true,
+    ...(prefix === 'tts' ? { category: 'speech' } : {}),
+  }));
+  const existingIds = new Set(store.generatedSounds.map((e: any) => e.id));
+  const newEvents = events.filter((e: any) => !existingIds.has(e.id));
+  if (newEvents.length === 0) return;
+  const merged = [...store.generatedSounds, ...newEvents];
+  useSoundscapeStore.setState({
+    generatedSounds: merged,
+    // Keep the save/3D source of truth in sync (the live generation path
+    // writes both; recovery must too, or the result never persists).
+    soundscapeData: merged,
+  });
 }
 
 async function processCompletedJob(
@@ -411,62 +530,16 @@ async function processCompletedJob(
   record: JobRecord,
 ): Promise<void> {
   switch (jobType) {
-    case 'sound': {
-      const store = useSoundscapeStore.getState();
-      if (result && Array.isArray(result)) {
-        const events = result.map((s: any) => ({
-          ...rekeyRecoveredSound(s, 'generated', record),
-          geometry: s.geometry || { vertices: [], faces: [] },
-          isUploaded: true,
-        }));
-        const existingIds = new Set(store.generatedSounds.map((e: any) => e.id));
-        const newEvents = events.filter((e: any) => !existingIds.has(e.id));
-        const merged = [...store.generatedSounds, ...newEvents];
-        useSoundscapeStore.setState({
-          generatedSounds: merged,
-          // Keep the save/3D source of truth in sync (the live generation path
-          // writes both; recovery must too, or the result never persists).
-          soundscapeData: merged.length > 0 ? merged : null,
-          soundGenProgress: '',
-          soundGenProgressValue: 0,
-          soundGenStatusText: '',
-        });
-      } else {
-        useSoundscapeStore.setState({
-          soundGenProgress: '',
-          soundGenProgressValue: 0,
-          soundGenStatusText: '',
-        });
-      }
-      break;
-    }
+    case 'sound':
     case 'tts': {
-      const store = useSoundscapeStore.getState();
       if (result && Array.isArray(result)) {
-        const events = result.map((s: any) => ({
-          ...rekeyRecoveredSound(s, 'tts', record),
-          geometry: s.geometry || { vertices: [], faces: [] },
-          isUploaded: true,
-          category: 'speech',
-        }));
-        const existingIds = new Set(store.generatedSounds.map((e: any) => e.id));
-        const newEvents = events.filter((e: any) => !existingIds.has(e.id));
-        const merged = [...store.generatedSounds, ...newEvents];
-        useSoundscapeStore.setState({
-          generatedSounds: merged,
-          // Keep the save/3D source of truth in sync (see the sound case above).
-          soundscapeData: merged.length > 0 ? merged : null,
-          soundGenProgress: '',
-          soundGenProgressValue: 0,
-          soundGenStatusText: '',
-        });
-      } else {
-        useSoundscapeStore.setState({
-          soundGenProgress: '',
-          soundGenProgressValue: 0,
-          soundGenStatusText: '',
-        });
+        mergeRecoveredSounds(result, jobType === 'tts' ? 'tts' : 'generated', record);
       }
+      useSoundscapeStore.setState({
+        soundGenProgress: '',
+        soundGenProgressValue: 0,
+        soundGenStatusText: '',
+      });
       break;
     }
     case 'sed': {
@@ -578,6 +651,7 @@ async function recoverAcousticsJob(
     status: 'Complete!',
     error: null,
     completedAt: Date.now(),
+    ...(record.meta?.versionId ? { simulatedVersionId: record.meta.versionId } : {}),
     simulationResults: resultsText,
     importedIRIds: irImportResult.importedIRIds,
     sourceReceiverIRMapping: irImportResult.sourceReceiverMapping,

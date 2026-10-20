@@ -120,6 +120,12 @@ export interface SoundEvent {
   fx_url?: string;
   /** When true, playback / waveforms / export use `fx_url` instead of `url`. */
   fx_enabled?: boolean;
+  /**
+   * Generation inputs this variant was made from (see
+   * `utils/generationSignature.captureVariantSignature`). Loaded into the card's
+   * settings editor when the variant is selected.
+   */
+  generated_signature?: string;
 }
 
 export interface UIOverlay {
@@ -288,12 +294,17 @@ export interface JobRecord {
     configId?: string;
     /** pyroom/choras: which simulation instance card the job belongs to. */
     instanceId?: string;
+    /** pyroom/choras: Speckle version submitted for simulation (tagged on the recovered result). */
+    versionId?: string;
     /** loop: which sound the loop region applies to. */
     soundId?: string;
     /** sound/tts: the backend-echoed `prompt_index` (batch index for sound, card
      *  index for tts) → owning card's `config_id`, so recovery re-keys results
      *  onto the same config-keyed ids the live path assigns. */
     configIdByPromptIndex?: Record<number, string>;
+    /** Model the job was submitted for — lets other members' browsers (and other
+     *  models of the same workspace) ignore jobs that belong elsewhere. */
+    modelId?: string;
   };
 }
 

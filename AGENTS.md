@@ -114,9 +114,9 @@ frontend/src/
 6. **Refresh survival is three separate problems — never treat them as one.**
    Domain state (configs/events/receivers/simulations) → backend
    `data/soundscapes/<session>/<model_id>/soundscape.json`, loaded via `?model_id=` URL param,
-   autosaved every 3s. UI/session state (camera, panels, wizard step) → `localStorage` via
-   Zustand `persist` (`skipHydration: true` + manual `rehydrate()`); camera bypasses `persist`
-   entirely (direct `localStorage.setItem` before `beforeunload`). In-flight jobs (ML/LLM/sim) →
+   autosaved every 3s. UI/session state (panels, wizard step) → `localStorage` via
+   Zustand `persist` (`skipHydration: true` + manual `rehydrate()`). The camera is never
+   persisted: every model load/refresh frames the model like "Reset camera view". In-flight jobs (ML/LLM/sim) →
    `sessionStorage` key `compas-inflight-jobs`, resumed by `useJobRecovery`. Mechanics, pitfalls,
    and code patterns: `.cursor/rules/persistence.mdc`.
 7. **Debug systematically, not speculatively.** When behavior is unexpected, add `[dbg:*]`-prefixed
@@ -128,6 +128,12 @@ frontend/src/
    backend re-materializes each bundle into a normal legacy version and the client polls for it. Never
    return an ingestion id or a bundle version id as `version_id`, and keep `specklepy[bundle]` +
    `gql>=4` (gql 4 needs `variable_values=`). Full flow and pitfalls: `speckle.mdc` § File Uploads.
+9. **Every UI change must work on both Windows and macOS.** Never rely on platform-specific event
+   order or modifiers: Cmd must work wherever Ctrl does (`hasModKey()`), shortcut labels go through
+   `formatShortcutKeys()`, and right-click/`contextmenu` logic must not assume the Windows
+   order (macOS fires `contextmenu` on press, before the drag). Also cover trackpad gestures
+   (two-finger tap, Ctrl+click, pinch = Ctrl+wheel). Checklist: `ui-conventions.mdc` §
+   Cross-Platform Input.
 
 ## Scoped Rules
 

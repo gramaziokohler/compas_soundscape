@@ -92,6 +92,10 @@
   /* 3D scene overlay UI (glass panel on scene canvas) */
   --color-overlay-bg: rgba(237, 236, 227, 0.92);
   --color-overlay-border: rgba(0, 0, 0, 0.12);
+  /* Readable warning surfaces (model-version banner, outdated results) */
+  --color-warning-tint: rgba(245, 179, 11, 0.16);
+  --color-warning-tint-border: rgba(217, 119, 6, 0.45);
+  --color-warning-text: #8a5300;
 
   /* Sidebar panels — frosted glass over the 3D canvas */
   --sidebar-bg: rgba(237, 236, 227, 0.72);
@@ -220,6 +224,9 @@
     --color-overlay-bg: rgba(0, 0, 0, 0.8);
     --color-overlay-border: rgba(255, 255, 255, 0.2);
     --sidebar-bg: rgba(68, 68, 68, 0.45);
+    --color-warning-tint: rgba(245, 179, 11, 0.12);
+    --color-warning-tint-border: rgba(245, 179, 11, 0.35);
+    --color-warning-text: #fbd36b;
   }
 }
 
@@ -245,6 +252,9 @@ html[data-theme="dark"] {
   --color-overlay-bg: rgba(0, 0, 0, 0.8);
   --color-overlay-border: rgba(255, 255, 255, 0.2);
   --sidebar-bg: rgba(68, 68, 68, 0.45);
+  --color-warning-tint: rgba(245, 179, 11, 0.12);
+  --color-warning-tint-border: rgba(245, 179, 11, 0.35);
+  --color-warning-text: #fbd36b;
 }
 
 body {
@@ -1327,6 +1337,227 @@ canvas {
   border: 1px solid var(--color-border-strong);
   border-radius: 10px;
   box-shadow: var(--shadow-lg);
+  color: var(--foreground);
+}
+/* ── Model pill, version menu, update banner and review panel (components/scene/model-version) ── */
+.mv-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--foreground);
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+.mv-pill:hover,
+.mv-pill[data-open="true"] {
+  background: var(--color-secondary-light);
+}
+.mv-pill__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.mv-pill__icon {
+  flex-shrink: 0;
+  color: var(--color-secondary-hover);
+}
+.mv-tag {
+  flex-shrink: 0;
+  font-size: 10px;
+  line-height: 14px;
+  padding: 0 5px;
+  border-radius: 4px;
+  white-space: nowrap;
+  color: var(--color-blue-text);
+  background: var(--color-blue-tint);
+}
+.mv-tag--warning {
+  color: var(--color-warning-text);
+  background: var(--color-warning-tint);
+}
+.mv-tag--neutral {
+  color: var(--color-secondary-hover);
+  background: var(--color-secondary-lighter);
+}
+.mv-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-warning);
+}
+.mv-popover {
+  z-index: 230;
+  font-size: 12px;
+  overflow: hidden;
+}
+.mv-popover__section {
+  padding: 8px 10px;
+  border-top: 1px solid var(--color-border);
+}
+.mv-muted {
+  color: var(--color-secondary-hover);
+}
+.mv-hint {
+  font-size: 10.5px;
+  color: var(--color-secondary-hover);
+  opacity: 0.85;
+}
+.mv-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 6px;
+  border-radius: 6px;
+  text-align: left;
+  color: var(--foreground);
+}
+button.mv-row:hover:not(:disabled) {
+  background: var(--color-secondary-light);
+}
+.mv-row[data-current="true"] {
+  background: var(--color-blue-tint);
+}
+.mv-row--link {
+  cursor: pointer;
+  padding: 3px 6px;
+}
+.mv-row--link:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+.mv-row:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.mv-btn {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border-strong);
+  color: var(--foreground);
+  background: transparent;
+  white-space: nowrap;
+}
+.mv-btn:hover:not(:disabled) {
+  background: var(--color-secondary-light);
+}
+.mv-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.mv-btn--primary {
+  border-color: transparent;
+  color: var(--color-on-blue);
+  background: var(--color-primary);
+}
+.mv-btn--primary:hover:not(:disabled) {
+  background: var(--color-primary-hover);
+}
+.mv-btn--on-warning {
+  border-color: var(--color-warning-tint-border);
+  color: var(--color-warning-text);
+}
+.mv-btn--on-warning:hover:not(:disabled) {
+  background: var(--color-warning-tint);
+}
+.mv-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px 7px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  border: 1px solid var(--color-warning-tint-border);
+  background: var(--color-surface-2);
+  background-image: linear-gradient(var(--color-warning-tint), var(--color-warning-tint));
+  color: var(--color-warning-text);
+  box-shadow: var(--shadow-lg);
+}
+.mv-banner--info {
+  border-color: var(--color-border-strong);
+  background-image: none;
+  color: var(--foreground);
+}
+/* Solid amber chip: readable on the blue header of an active card and in both themes */
+.mv-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 9.5px;
+  font-weight: 600;
+  line-height: 14px;
+  padding: 0 6px;
+  border-radius: 999px;
+  white-space: nowrap;
+  cursor: help;
+  background: var(--color-warning);
+  color: #2b1d00;
+}
+.mv-badge:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+.mv-warning-box {
+  padding: 7px 9px;
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.45;
+  border: 1px solid var(--color-warning-tint-border);
+  background: var(--color-warning-tint);
+  color: var(--color-warning-text);
+}
+.mv-panel {
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 10px;
+  box-shadow: var(--shadow-lg);
+  color: var(--foreground);
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.mv-panel__body {
+  overflow-y: auto;
+  min-height: 0;
+}
+.mv-stat {
+  border-radius: 6px;
+  padding: 6px 8px;
+  background: var(--color-secondary-lighter);
+}
+.mv-stat__value {
+  display: block;
+  font-size: 17px;
+  font-weight: 500;
+  line-height: 1.3;
+}
+.mv-status-dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+.mv-status-dot--changed { background: var(--color-warning); }
+.mv-status-dot--added { background: var(--color-success); }
+.mv-status-dot--removed { background: var(--color-error); }
+.mv-field {
+  width: 64px;
+  height: 24px;
+  padding: 0 6px;
+  font-size: 11px;
+  border-radius: 5px;
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-secondary-lighter);
   color: var(--foreground);
 }
 .bar-shortcut-row {

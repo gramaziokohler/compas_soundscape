@@ -1,5 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useAreaDrawingStore, useSpeckleStore, useUIStore } from '@/store';
+import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
+import type { CustomPickType } from '@/lib/three/speckle-event-bridge';
 import { SIMPLE_MODE } from '@/utils/constants';
 
 /** Viewer container — only clicks inside it count as "outside the panel". */
@@ -35,6 +37,13 @@ function viewerModeActive(): boolean {
   return useAreaDrawingStore.getState().isDrawing || useUIStore.getState().acousticLayerSelectionMode;
 }
 
+/** True when the press landed on a visible viewer object of one of `types`. */
+function pressedOn(types: readonly CustomPickType[] | undefined, e: PointerEvent): boolean {
+  if (!types?.length) return false;
+  const type = useSpeckleEngineStore.getState().coordinator?.getVisibleCustomObjectTypeAt(e.clientX, e.clientY);
+  return !!type && types.includes(type);
+}
+
 /**
  * Reduce a Simple-mode panel when the user clicks the 3D scene around it.
  *
@@ -43,16 +52,27 @@ function viewerModeActive(): boolean {
  * mode is active, and never when the click selected something (object, entity
  * or sound sphere), since that click was meant for the open card.
  *
+ * `keepOnTypes` lists viewer objects whose click never reduces the panel, even
+ * when it changes no selection (e.g. a sound sphere: in Simple mode its click
+ * only attaches the gizmo, and its card callback is debounced past the check).
+ *
  * Usage:
  * ```tsx
- * useDismissOnSceneClick(() => setPanel(null), panel !== null, () => isLinkingEntity);
+ * useDismissOnSceneClick(() => setPanel(null), panel !== null, () => isLinkingEntity, ['sound']);
  * ```
  */
-export function useDismissOnSceneClick(onDismiss: () => void, enabled: boolean, isBusy?: () => boolean): void {
+export function useDismissOnSceneClick(
+  onDismiss: () => void,
+  enabled: boolean,
+  isBusy?: () => boolean,
+  keepOnTypes?: readonly CustomPickType[],
+): void {
   const onDismissRef = useRef(onDismiss);
   const isBusyRef = useRef(isBusy);
+  const keepOnTypesRef = useRef(keepOnTypes);
   onDismissRef.current = onDismiss;
   isBusyRef.current = isBusy;
+  keepOnTypesRef.current = keepOnTypes;
 
   useEffect(() => {
     if (!enabled) return;
@@ -62,7 +82,7 @@ export function useDismissOnSceneClick(onDismiss: () => void, enabled: boolean, 
     const onDown = (e: PointerEvent) => {
       const target = e.target as Element | null;
       start =
-        e.button === 0 && target?.closest?.(SCENE_CONTAINER_SELECTOR)
+        e.button === 0 && target?.closest?.(SCENE_CONTAINER_SELECTOR) && !pressedOn(keepOnTypesRef.current, e)
           ? { x: e.clientX, y: e.clientY, before: snapshot() }
           : null;
     };

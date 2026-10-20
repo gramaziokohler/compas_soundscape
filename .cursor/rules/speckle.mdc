@@ -229,6 +229,23 @@ Scale to metres: `mm=0.001, cm=0.01, ft=0.3048, in=0.0254`.
 | `get_ingestion_status(ingestion_id)` | Polls the ingestion job; on success **materializes the bundle into a legacy version** and returns its `version_id` / `object_id` |
 | `_materialize_legacy_version(bundle_version_id)` | Bundle → classic object graph → new legacy version (cached in Redis) |
 
+## Model Versions (history, pinning, impact)
+
+- **List versions with `list_model_versions()`** (`services/speckle_version_service.py`), never raw
+  `get_with_versions`: every app upload is a bundle version + a `compas-soundscape` legacy copy (healing can
+  add more copies). The listing collapses them into one entry per user-visible version whose `id` is always
+  the loadable copy, carrying the bundle's author / source and the original **file name** from
+  `project.model.ingestionHistory(input:{limit}).items{versionId sourceData{fileName}}` (null for connector pushes).
+- **The viewer follows the latest version.** An older version is loaded in place through the model URL
+  `.../models/<modelId>@<versionId>` (`SPECKLE_PINNED_VERSION_URL`); `useSpeckleViewerInit` skips
+  `ensure-ready` for it (that only heals the latest). Keep `globalSpeckleData.url` un-pinned — the
+  simulation/save code parses the model id from it.
+- **Simulations and the preflight send the LOADED version id** (`resolveSimulationVersionId()` in
+  `utils/simulationRequest.ts`), never the bare model id (which the backend resolves to the latest).
+- `soundscape.json` `version_id` is the version loaded when saved; the next open compares the latest with it.
+- `POST /api/upload` accepts an optional `model_id` form field: the file becomes a new version of that model
+  whatever its file name (without it, the model is matched by file name).
+
 ## REST Endpoints
 
 - `GET  /api/speckle/models` → project + all models with `latest_version`
@@ -236,6 +253,9 @@ Scale to metres: `mm=0.001, cm=0.01, ft=0.3048, in=0.0254`.
 - `GET  /api/speckle/ingestion/{ingestion_id}` → `SpeckleIngestionStatusResponse` `{status, stage, progress_message, progress, phase, attempt, version_id, object_id, error}`
 - `POST /api/speckle/model-entities` `{project_id, version_id}` → entity list
 - `POST /api/speckle/model-screenshots` `{project_id, version_id}` → 3 base64 PNGs
+- `GET  /api/speckle/models/{model_id}/versions` → `SpeckleModelVersionsResponse` (newest first, collapsed)
+- `POST /api/speckle/version-impact` `{from_version_id, to_version_id, tolerance, region, points}` →
+  `ModelVersionImpactResponse` (objects changed above tolerance / added / removed, region totals, placements)
 
 ## Frontend Viewer — Color Rendering
 

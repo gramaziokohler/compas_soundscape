@@ -113,6 +113,8 @@ export interface SoundscapeSoundEvent {
   fx_audio_filename?: string;
   /** When true, clients should play the bounced FX file. */
   fx_enabled?: boolean;
+  /** Generation inputs of this variant (JSON signature), shown when the variant is selected. */
+  generated_signature?: string;
 }
 
 /** Serializable receiver position */
@@ -198,6 +200,8 @@ export interface SoundscapeSimulationConfig {
   speckle_scattering_assignments?: Record<string, number>;
   /** Acoustic region this card was simulated with (see SoundscapeAcousticSelection). */
   speckle_acoustic_selection?: SoundscapeAcousticSelection;
+  /** Speckle version the completed result was simulated on. */
+  simulated_version_id?: string;
   simulation_results?: string;
   current_simulation_id?: string;
   /** Backend job id of an in-flight simulation, persisted so recovery can reattach after a reload. */

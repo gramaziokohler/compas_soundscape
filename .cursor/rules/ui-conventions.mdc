@@ -395,6 +395,38 @@ categories. `Notice variant="tag"` is the alerting counterpart.
 
 ---
 
+## Cross-Platform Input (Windows + macOS)
+
+Every UI change must behave the same on Windows and macOS. Most users develop on Windows, so
+macOS regressions go unnoticed. Reason through both platforms before you ship input-handling code.
+
+**Keyboard**
+- Accept Cmd wherever Ctrl is used: use `hasModKey(e)` / `isModEnter(e)` from
+  `lib/shortcuts/keyboard-utils.ts`. Never check `e.ctrlKey` alone.
+- Display shortcuts through `formatShortcutKeys()` / `shortcutKeyChips()` (`utils/platform.ts`),
+  never hardcoded "Ctrl". Use `detectMac()` / `detectWindows()` from the same file. Don't parse
+  `navigator` yourself.
+- macOS Option+key produces special characters in `e.key`. Match on `e.code` when Alt is involved.
+
+**Mouse / pointer**
+- **`contextmenu` timing differs.** Windows fires it after `pointerup`. macOS and Linux fire it on
+  press, before any movement. Any "right-click vs right-drag" decision must defer to `pointerup`
+  when `contextmenu` arrives mid-press. Reference: `components/scene/hooks/useSceneContextMenu.ts`.
+- macOS Ctrl+left-click fires `contextmenu` with `button === 0`. Don't gate the menu on
+  `button === 2`.
+- Trackpads: two-finger tap = right-click. Pinch zoom arrives as `wheel` with `ctrlKey: true`.
+  Smooth scrolling sends many small `deltaY` values, so scale by delta and don't treat each
+  event as a fixed step.
+- Listen for `pointerup` / `pointercancel` on `window` (capture) for drag gestures, so a release
+  outside the element (or a lost capture) still ends the gesture.
+
+**Rendering**
+- Scrollbars: macOS overlay scrollbars take no layout width, Windows ones do. Don't size layouts
+  around a scrollbar gutter.
+- Fonts render wider on Windows. Leave slack in fixed-width labels and buttons.
+
+---
+
 ## Component Patterns
 
 ### Slot-Based Card Composition

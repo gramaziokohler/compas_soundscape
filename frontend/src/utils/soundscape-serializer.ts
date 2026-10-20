@@ -273,6 +273,7 @@ export function buildSoundscapeSavePayload(
         fx: event.fx || undefined,
         fx_audio_filename: event.fx_url ? extractFilename(event.fx_url) : undefined,
         fx_enabled: event.fx_enabled || undefined,
+        generated_signature: event.generated_signature || undefined,
       };
     }
   );
@@ -441,6 +442,7 @@ export function buildSoundscapeSavePayload(
       speckle_geometry_object_ids: speckleGeometryObjectIds,
       speckle_scattering_assignments: speckleScatteringAssignments,
       speckle_acoustic_selection: serializeAcousticSelection(speckleAcousticSelection),
+      simulated_version_id: pyConfig.simulatedVersionId,
       simulation_results: pyConfig.simulationResults,
       current_simulation_id: pyConfig.currentSimulationId,
       current_simulation_run_id: pyConfig.currentSimulationRunId,
@@ -676,6 +678,7 @@ export function restoreSoundscapeState(
     (event as any).copy_index = saved.copy_index ?? undefined;
     if (saved.fx) event.fx = saved.fx;
     if (saved.fx_enabled) event.fx_enabled = true;
+    if (saved.generated_signature) event.generated_signature = saved.generated_signature;
     if (saved.fx_audio_filename) {
       event.fx_url = `${baseUrl}/${saved.fx_audio_filename}`;
     }
@@ -924,6 +927,7 @@ export function restoreSoundscapeState(
       speckleGeometryObjectIds: saved.speckle_geometry_object_ids,
       speckleScatteringAssignments: saved.speckle_scattering_assignments,
       speckleAcousticSelection: deserializeAcousticSelection(saved.speckle_acoustic_selection),
+      simulatedVersionId: saved.simulated_version_id,
       // Import-IRs advanced settings
       irGain: saved.ir_gain ?? undefined,
       irNormalizeEnabled: saved.ir_normalize_enabled ?? undefined,

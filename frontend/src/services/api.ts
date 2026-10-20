@@ -1,5 +1,5 @@
 import { API_BASE_URL, SPECKLE_INGESTION } from '@/utils/constants';
-import type { CompasGeometry, SoundEvent, SoundGenerationConfig, FileUploadResponse, JobType, UserPreferences, BugReportPayload, BugReportCreated } from '@/types';
+import type { CompasGeometry, SoundEvent, SoundGenerationConfig, FileUploadResponse, JobType, JobRecord, UserPreferences, BugReportPayload, BugReportCreated } from '@/types';
 import { recordFailedRequest } from '@/lib/diagnostics/diagnosticsBuffer';
 import type { TtsCustomVoice, TtsCustomVoiceCreateRequest, TtsDialectsResponse, TtsLanguageMatch } from '@/types/ttsLanguage';
 import type { ImpulseResponseMetadata } from '@/types/audio';
@@ -7,9 +7,11 @@ import type { ModalAnalysisRequest, ModalAnalysisResult } from '@/types/modal';
 import type {
   SpeckleProjectModelsResponse,
   SpeckleModelLatestVersion,
+  SpeckleModelVersionsResponse,
   SpeckleIngestionStatus,
   SpeckleUploadProgress,
 } from '@/types/speckle-models';
+import type { ModelVersionImpactReport, ModelVersionImpactRequest } from '@/types/modelVersionImpact';
 import type { SoundscapeSavePayload, SoundscapeSaveResponse, SoundscapeLoadResponse, SoundscapeStats } from '@/types/soundscape';
 import type { PreflightJobResult, PreflightPayload, SimulationEngine, SimulationMeshSettings } from '@/types/simulationPreflight';
 
@@ -146,6 +148,21 @@ interface UnifiedJobStatus {
   partial: any;
   result: any;
   error: string | null;
+  /** Card mapping published by the submitting client (`POST /api/jobs/{id}/meta`). */
+  client_meta?: JobRecord['meta'] | null;
+  /** Creation time (epoch seconds). */
+  created?: number | null;
+}
+
+/** A workspace job as listed by `GET /api/jobs`, mapped to the frontend JobType. */
+export interface ActiveJob {
+  jobId: string;
+  jobType: JobType;
+  status: string;
+  result: any;
+  meta?: JobRecord['meta'];
+  /** Creation time in ms, or null when the backend did not report it. */
+  createdMs: number | null;
 }
 
 /** GET /api/jobs/{id} → raw unified status. */
@@ -250,13 +267,16 @@ export interface CurrentUser {
   workspace_id: string | null;
 }
 
+/** Only the owner's changes are saved; every other member is view-only. */
+export type WorkspaceRole = 'owner' | 'viewer';
+
 export interface WorkspaceSummary {
   id: string;
   owner_hash: string;
   name: string;
   sharing_mode: 'private' | 'link';
   revision: number;
-  role: 'owner' | 'editor' | 'viewer';
+  role: WorkspaceRole;
   created_at: string;
   updated_at: string;
 }
@@ -265,7 +285,7 @@ export interface WorkspaceMember {
   user_hash: string;
   email: string | null;
   display_name: string | null;
-  role: 'owner' | 'editor' | 'viewer';
+  role: WorkspaceRole;
   joined_at: string;
 }
 
@@ -279,7 +299,7 @@ export interface WorkspaceDetail extends WorkspaceSummary {
 /** Invite metadata for the management list. `id` is a hash, not the secret token. */
 export interface WorkspaceInvite {
   id: string;
-  role: 'editor' | 'viewer';
+  role: 'viewer';
   created_by: string;
   created_at: string;
   expires_at: string | null;
@@ -496,7 +516,6 @@ export const apiService = {
 
   async createWorkspaceInvite(
     workspaceId: string,
-    role: 'editor' | 'viewer' = 'editor',
     options?: { expiresInS?: number; maxUses?: number; modelId?: string | null },
   ): Promise<{ token: string; role: string; url: string; model_id: string | null; expires_at: string | null; max_uses: number }> {
     const response = await fetchWithErrorHandling(
@@ -505,7 +524,6 @@ export const apiService = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          role,
           expires_in_s: options?.expiresInS,
           max_uses: options?.maxUses,
           model_id: options?.modelId ?? null,
@@ -550,23 +568,6 @@ export const apiService = {
       const err = await response.json().catch(() => ({ detail: 'Failed to leave workspace' }));
       throw new Error(typeof err.detail === 'string' ? err.detail : 'Failed to leave workspace');
     }
-  },
-
-  async updateWorkspaceMemberRole(workspaceId: string, userHash: string, role: 'editor' | 'viewer'): Promise<WorkspaceDetail> {
-    const response = await fetchWithErrorHandling(
-      `${API_BASE_URL}/api/workspaces/${encodeURIComponent(workspaceId)}/members/${encodeURIComponent(userHash)}`,
-      {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role }),
-      },
-      'Update member role'
-    );
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({ detail: 'Failed to update member role' }));
-      throw new Error(typeof err.detail === 'string' ? err.detail : 'Failed to update member role');
-    }
-    return response.json();
   },
 
   async removeWorkspaceMember(workspaceId: string, userHash: string): Promise<WorkspaceDetail> {
@@ -616,7 +617,7 @@ export const apiService = {
     return response.json();
   },
 
-  async workspaceHeartbeat(workspaceId: string): Promise<{ presence: number; revision: number }> {
+  async workspaceHeartbeat(workspaceId: string): Promise<{ presence: number; revision: number; role?: WorkspaceRole }> {
     const response = await fetchWithErrorHandling(
       `${API_BASE_URL}/api/workspaces/${encodeURIComponent(workspaceId)}/presence`,
       { method: 'POST' },
@@ -629,12 +630,15 @@ export const apiService = {
   // File Upload
   async uploadFile(
     file: File,
-    onProgress?: (progress: SpeckleUploadProgress) => void
+    onProgress?: (progress: SpeckleUploadProgress) => void,
+    /** Existing model to add the file to as a new version (else matched by file name). */
+    targetModelId?: string,
   ): Promise<FileUploadResponse | CompasGeometry> {
     try {
       onProgress?.({ stage: 'uploading', message: null, progress: null, phase: null, attempt: null });
       const formData = new FormData();
       formData.append("file", file);
+      if (targetModelId) formData.append('model_id', targetModelId);
 
       const response = await fetchWithErrorHandling(
         `${API_BASE_URL}/api/upload`,
@@ -1457,7 +1461,8 @@ export const apiService = {
   async runSimulationPreflight(params: {
     engine: SimulationEngine;
     projectId: string;
-    modelId: string;
+    /** Loaded Speckle version id (a bare model id resolves to the latest version). */
+    versionId: string;
     objectMaterials: Record<string, string>;
     layerName: string;
     geometryObjectIds?: string[];
@@ -1475,7 +1480,7 @@ export const apiService = {
     const formData = new FormData();
     formData.append('engine', params.engine);
     formData.append('speckle_project_id', params.projectId);
-    formData.append('speckle_version_id', params.modelId);
+    formData.append('speckle_version_id', params.versionId);
     formData.append('object_materials', JSON.stringify(params.objectMaterials));
     formData.append('layer_name', params.layerName);
     if (params.geometryObjectIds?.length) {
@@ -1761,6 +1766,48 @@ export const apiService = {
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: 'Failed to get latest model version' }));
       throw new Error(error.detail || 'Failed to get latest model version');
+    }
+
+    return response.json();
+  },
+
+  /**
+   * Version history of a model, newest first (one entry per user-visible
+   * version; ids are always viewer-loadable). Read-only.
+   */
+  async getModelVersions(modelId: string): Promise<SpeckleModelVersionsResponse> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/speckle/models/${encodeURIComponent(modelId)}/versions`,
+      undefined,
+      'Get model versions'
+    );
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Failed to get model versions' }));
+      throw new Error(error.detail || 'Failed to get model versions');
+    }
+
+    return response.json();
+  },
+
+  /**
+   * What changed between two versions of the open model above tolerance, scoped
+   * to the acoustic region, plus listeners / free sounds now misplaced.
+   */
+  async getModelVersionImpact(request: ModelVersionImpactRequest): Promise<ModelVersionImpactReport> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/speckle/version-impact`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+      },
+      'Compare model versions'
+    );
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Failed to compare model versions' }));
+      throw new Error(error.detail || 'Failed to compare model versions');
     }
 
     return response.json();
@@ -2142,14 +2189,37 @@ export const apiService = {
   },
 
   /**
+   * Publish a job's card mapping (model id, config ids, …) so other members of
+   * the shared workspace can reattach it to the right cards. Best-effort.
+   */
+  async setJobClientMeta(jobId: string, meta: NonNullable<JobRecord['meta']>): Promise<void> {
+    try {
+      await fetchWithErrorHandling(
+        `${API_BASE_URL}/api/jobs/${jobId}/meta`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ meta }),
+        },
+        'Job meta',
+      );
+    } catch {
+      // Non-critical — only other members' recovery depends on it.
+    }
+  },
+
+  /**
    * List every job for the caller's workspace (scoped by session cookie).
    * Used on page load to reattach to work started before the window closed,
    * even when local storage has been cleared or the app is opened elsewhere.
    */
-  async getActiveJobs(): Promise<Array<{ jobId: string; jobType: JobType; status: string; result: any }>> {
-    // Backend job type names differ from the frontend JobType union for pyroom.
+  async getActiveJobs(): Promise<ActiveJob[]> {
+    // Backend job type names differ from the frontend JobType union for pyroom
+    // and the Stable Audio 3 lane (its own queue, but polled as a sound job).
     const mapBackendType = (type: string): JobType | null => {
       switch (type) {
+        case 'sa3':
+          return 'sound';
         case 'sound':
         case 'tts':
         case 'sed':
@@ -2172,11 +2242,18 @@ export const apiService = {
       if (!response.ok) return [];
       const jobs = await response.json();
       if (!Array.isArray(jobs)) return [];
-      const out: Array<{ jobId: string; jobType: JobType; status: string; result: any }> = [];
-      for (const j of jobs) {
+      const out: ActiveJob[] = [];
+      for (const j of jobs as UnifiedJobStatus[]) {
         const jobType = mapBackendType(j.type);
         if (!jobType) continue;
-        out.push({ jobId: j.job_id, jobType, status: j.status, result: j.result ?? null });
+        out.push({
+          jobId: j.job_id,
+          jobType,
+          status: j.status,
+          result: j.result ?? null,
+          meta: j.client_meta ?? undefined,
+          createdMs: j.created ? j.created * 1000 : null,
+        });
       }
       return out;
     } catch {

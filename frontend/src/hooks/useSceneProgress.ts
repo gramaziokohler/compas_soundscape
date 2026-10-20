@@ -4,6 +4,7 @@ import type { SceneProgress, SceneWorkflowStep, SoundScene } from '@/types/scene
 import { SIMPLE_MODE } from '@/utils/constants';
 import {
   SCENE_WORKFLOW_STEPS,
+  deriveObservedSceneStep,
   getSceneSoundIndices,
   hasModelAnalysisResult,
   isSoundConfigGenerated,
@@ -32,6 +33,10 @@ const IDLE_DETAIL = { stepPercent: 0, thinking: '', orchestrating: false } as co
  * Display state of a scene bubble: status, current step, global advancement
  * (0..1) across the four pipeline steps, and a one-line status text.
  *
+ * A scene with no run in this tab (another member's browser in a shared
+ * workspace, or a pipeline started before a refresh) is shown running while its
+ * reattached card jobs are busy (see `deriveObservedSceneStep`).
+ *
  * Scenes run concurrently, so a running scene reads only its own live state:
  * its card's analysis status (the context card during Analyze), its sound
  * cards' generation progress, and its scenario's orchestration. Idle scenes
@@ -45,12 +50,12 @@ const IDLE_DETAIL = { stepPercent: 0, thinking: '', orchestrating: false } as co
 export function useSceneProgress(scene: SoundScene): SceneProgress {
   const run = useSceneWorkflowStore((s) => s.runs[scene.usageIndex]);
   const analysisConfigs = useAnalysisStore((s) => s.analysisConfigs);
-  const running = run?.status === 'running';
-  // The Analyze step reports on the context card; the other LLM steps on the scene card.
-  const cardAnalysis = useCardAnalysisStatus(
-    running ? (run.step === 'analyze' ? run.contextIndex : scene.usageIndex) : null,
-  );
   const soundConfigs = useSoundscapeStore((s) => s.soundConfigs);
+  const activeGenerationCardIndices = useSoundscapeStore((s) => s.activeGenerationCardIndices);
+  const scenarioAnalyzing = useAnalysisStore((s) => s.analyzingConfigIndices.has(scene.usageIndex));
+  const contextAnalyzing = useAnalysisStore(
+    (s) => scene.contextIndex !== null && s.analyzingConfigIndices.has(scene.contextIndex),
+  );
   const generatedSounds = useSoundscapeStore((s) => s.generatedSounds);
   const soundGenCardProgress = useSoundscapeStore((s) => s.soundGenCardProgress);
   const soundGenCardStatus = useSoundscapeStore((s) => s.soundGenCardStatus);
@@ -61,12 +66,29 @@ export function useSceneProgress(scene: SoundScene): SceneProgress {
   );
   const orchestrateThinking = useSoundscapeStore((s) => s.orchestrateThinking);
 
+  const observedStep = run
+    ? null
+    : deriveObservedSceneStep({
+        scenario,
+        soundIndices: getSceneSoundIndices(soundConfigs, scene.usageIndex),
+        activeGenerationCardIndices,
+        orchestrating,
+        scenarioAnalyzing,
+        contextAnalyzing,
+      });
+  const step = run?.status === 'running' ? run.step : observedStep;
+  const running = step !== null;
+  // The Analyze step reports on the context card; the other LLM steps on the scene card.
+  const cardAnalysis = useCardAnalysisStatus(
+    running ? (step === 'analyze' ? (run?.contextIndex ?? scene.contextIndex) : scene.usageIndex) : null,
+  );
+
   return useMemo<SceneProgress>(() => {
-    if (running && run.step) {
+    if (running && step) {
       let stepPercent: number;
       let detail: string;
       let thinking: string;
-      if (run.step === 'generate') {
+      if (step === 'generate') {
         // Average of the scene's sound cards (generated cards count as complete).
         const indices = getSceneSoundIndices(soundConfigs, scene.usageIndex);
         const percents = indices.map((i) =>
@@ -82,13 +104,13 @@ export function useSceneProgress(scene: SoundScene): SceneProgress {
         thinking = cardAnalysis.thinking;
       }
       const fraction = clamp01(
-        weightBefore(run.step) + SIMPLE_MODE.STEP_WEIGHTS[run.step] * clamp01(stepPercent / PERCENT),
+        weightBefore(step) + SIMPLE_MODE.STEP_WEIGHTS[step] * clamp01(stepPercent / PERCENT),
       );
-      const showsOrchestrate = run.step === 'generate' && orchestrating;
-      const label = showsOrchestrate ? SIMPLE_MODE.ORCHESTRATE_LABEL : SIMPLE_MODE.STEP_LABELS[run.step];
+      const showsOrchestrate = step === 'generate' && orchestrating;
+      const label = showsOrchestrate ? SIMPLE_MODE.ORCHESTRATE_LABEL : SIMPLE_MODE.STEP_LABELS[step];
       return {
         status: 'running',
-        step: run.step,
+        step,
         fraction,
         statusText: detail ? `${label} · ${detail}` : `${label}…`,
         stepPercent: Math.max(0, Math.min(PERCENT, stepPercent)),
@@ -131,7 +153,7 @@ export function useSceneProgress(scene: SoundScene): SceneProgress {
       ...IDLE_DETAIL,
     };
   }, [
-    run, running, scene, scenario, analysisConfigs, cardAnalysis, soundConfigs, generatedSounds,
+    run, running, step, scene, scenario, analysisConfigs, cardAnalysis, soundConfigs, generatedSounds,
     soundGenCardProgress, soundGenCardStatus, orchestrating, orchestrateThinking,
   ]);
 }

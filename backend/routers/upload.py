@@ -4,7 +4,9 @@
 import os
 import shutil
 import logging
-from fastapi import APIRouter, File, UploadFile, HTTPException
+from typing import Optional
+
+from fastapi import APIRouter, File, Form, UploadFile, HTTPException
 from fastapi.concurrency import run_in_threadpool
 
 from services.speckle_service import SpeckleService
@@ -19,9 +21,15 @@ speckle_service = SpeckleService()
 
 
 @router.post("/upload")
-async def upload_and_process_file(file: UploadFile = File(...)):
+async def upload_and_process_file(
+    file: UploadFile = File(...),
+    model_id: Optional[str] = Form(None),
+):
     """
     Upload and process 3D model files (.obj, .stl, .ifc, .3dm)
+
+    With ``model_id`` the file becomes a NEW VERSION of that existing model,
+    whatever its file name; without it, the model is matched by file name.
     
     This endpoint now integrates with Speckle for cloud-based geometry storage
     while maintaining backward compatibility by returning both Speckle metadata
@@ -82,6 +90,7 @@ async def upload_and_process_file(file: UploadFile = File(...)):
                     file_path=temp_path,
                     file_type=file_type,
                     model_name=os.path.splitext(file.filename)[0],
+                    model_id=model_id or None,
                 )
                 
                 if speckle_data:

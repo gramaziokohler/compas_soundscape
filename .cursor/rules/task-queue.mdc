@@ -30,7 +30,7 @@ Client polls GET /api/jobs/{id}  (routers/jobs.py reads the Redis hash)
 | Layer | Files |
 | ----- | ----- |
 | Job store (Redis) | `services/job_store.py` — `AsyncJobStore` (API), `WorkerJobStore` (workers), `job_store` singleton |
-| Unified endpoints | `routers/jobs.py` — `GET /api/jobs/{id}`, `POST /api/jobs/{id}/cancel`, `GET /api/queue/status` |
+| Unified endpoints | `routers/jobs.py` — `GET /api/jobs` (workspace listing), `GET /api/jobs/{id}`, `POST /api/jobs/{id}/cancel`, `POST /api/jobs/{id}/meta`, `GET /api/queue/status` |
 | Worker entry | `workers/worker_main.py` — `--role gpu\|cpu\|choras`, `--slots N`, `--worker-id X` |
 | Runners | `workers/gpu_runner.py`, `workers/cpu_runner.py`, `workers/choras_runner.py`, `workers/_subprocess_common.py` |
 | In-process IO jobs | `services/io_jobs.py` (LLM / model-analysis / TTS asyncio tasks) |
@@ -128,8 +128,13 @@ through `job_store.enqueue`.
 
 1. Worker writes progress/result to Redis via the job store (`set_progress`/`complete`).
 2. Client polls `GET /api/jobs/{id}` → `JobStatusResponse`:
-   `{job_id, type, status, progress, status_text, queue_position, queue_total, partial, result, error}`.
-3. There are **no per-domain status/cancel routes anymore** — all job types use the unified
+   `{job_id, type, status, progress, status_text, queue_position, queue_total, partial, result, error, client_meta, created}`.
+3. **Client meta (shared workspaces).** `recordInflightJob` publishes the job's card mapping
+   (`JobRecord.meta` + `modelId`) to `POST /api/jobs/{id}/meta` → `client_meta` field of the
+   `job:{id}` hash (same-workspace only, ≤ `JOB_CLIENT_META_MAX_BYTES`). `GET /api/jobs` returns it,
+   so another member's browser (or the same user after clearing storage) reattaches the job to the
+   right cards. Never put routing/authorization data in it — it is client-supplied.
+4. There are **no per-domain status/cancel routes anymore** — all job types use the unified
    endpoints. Frontend wrappers in `frontend/src/services/api.ts` translate the unified shape back
    into the legacy `{completed, cancelled, partial_sounds, ...}` envelope the stores expect.
 

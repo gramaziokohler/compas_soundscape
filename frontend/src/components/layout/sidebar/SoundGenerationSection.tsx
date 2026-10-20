@@ -129,6 +129,7 @@ export function SoundGenerationSection({
   onSelectSoundCard,
   selectedCardIndex = null,
   onSoundCardCollapsed,
+  revealCardRequest = null,
   onDuplicateConfig,
   onRegenerateSingle,
   onDeleteVariant,
@@ -170,6 +171,7 @@ export function SoundGenerationSection({
   const regenerateVariantInPlace    = useSoundscapeStore((s) => s.regenerateVariantInPlace);
   const handleRegenerateConfig      = useSoundscapeStore((s) => s.handleRegenerateConfig);
   const revertGenerationSettings    = useSoundscapeStore((s) => s.revertGenerationSettings);
+  const applyVariantGenerationSettings = useSoundscapeStore((s) => s.applyVariantGenerationSettings);
   const orchestrateSoundsEnabled    = useSoundscapeStore((s) => s.orchestrateSoundsEnabled);
   const setOrchestrateSoundsEnabled = useSoundscapeStore((s) => s.setOrchestrateSoundsEnabled);
   const reorchestrateTimeline       = useSoundscapeStore((s) => s.reorchestrateTimeline);
@@ -429,15 +431,23 @@ export function SoundGenerationSection({
   // Intentionally only depends on selectedCardIndex; filteredCardItems is accessed
   // via ref so that slider-driven config updates don't re-trigger this effect and
   // override the user's manually expanded card.
+  const expandCardFromScene = useCallback((originalIndex: number) => {
+    const filteredIdx = filteredCardItemsRef.current.findIndex(item => item.originalIndex === originalIndex);
+    if (filteredIdx >= 0) setExpandedIndex(filteredIdx);
+    // Keep the scene gizmo target in lockstep with the scene-driven selection:
+    // otherwise a stale expandedSoundCardIndex would win over selectedCardIndex.
+    setExpandedSoundCardIndex(originalIndex);
+  }, [setExpandedSoundCardIndex]);
+
   useEffect(() => {
-    if (selectedCardIndex !== null && selectedCardIndex >= 0) {
-      const filteredIdx = filteredCardItemsRef.current.findIndex(item => item.originalIndex === selectedCardIndex);
-      if (filteredIdx >= 0) setExpandedIndex(filteredIdx);
-      // Keep the scene gizmo target in lockstep with the scene-driven selection:
-      // otherwise a stale expandedSoundCardIndex would win over selectedCardIndex.
-      setExpandedSoundCardIndex(selectedCardIndex);
-    }
+    if (selectedCardIndex !== null && selectedCardIndex >= 0) expandCardFromScene(selectedCardIndex);
   }, [selectedCardIndex]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Simple mode: a sound sphere click (re-)expands its card — keyed on the
+  // request version so clicking the same sphere again re-expands it.
+  useEffect(() => {
+    if (revealCardRequest) expandCardFromScene(revealCardRequest.index);
+  }, [revealCardRequest?.version]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-name cards when sounds are generated
   const autoNamedIndices = useRef<Set<number>>(new Set());
@@ -1097,7 +1107,15 @@ export function SoundGenerationSection({
       cardVariants = {
         items: variants.map((v, i) => ({ key: v.id, title: String.fromCharCode(65 + i) })),
         selectedIndex: selectedVariantIdx,
-        onSelect: onVariantChange ? (i) => onVariantChange(originalIndex, i) : undefined,
+        // Selecting a variant also loads its generation settings into
+        // "Change sound settings".
+        onSelect: onVariantChange
+          ? (i) => {
+              onVariantChange(originalIndex, i);
+              const variant = variants[i];
+              if (variant) applyVariantGenerationSettings(originalIndex, variant.id);
+            }
+          : undefined,
         onDelete: onDeleteVariant ? (i) => onDeleteVariant(originalIndex, i) : undefined,
         onAdd: (isTextToAudioType && onRegenerateSingle && !cardGenerating)
           ? () => onRegenerateSingle(originalIndex)
@@ -1303,6 +1321,7 @@ export function SoundGenerationSection({
     regenerateVariantInPlace,
     handleRegenerateConfig,
     revertGenerationSettings,
+    applyVariantGenerationSettings,
     onRegenerateSingle,
     onDeleteVariant,
     audioModel,

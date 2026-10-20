@@ -92,6 +92,7 @@ export function EntityInfoPanel({
   const onCatalogSoundSelect = useSoundscapeStore((s) => s.handleCatalogSoundSelect);
   const onRegenerateSingle = useSoundscapeStore((s) => s.handleRegenerateSingle);
   const onDeleteVariant = useSoundscapeStore((s) => s.handleDeleteVariant);
+  const applyVariantGenerationSettings = useSoundscapeStore((s) => s.applyVariantGenerationSettings);
   const onUpdatePosition = useSoundscapeStore((s) => s.updateSoundPosition);
   const onDetachSoundFromEntity = useSoundscapeStore((s) => s.handleDetachSoundFromEntity);
 
@@ -202,7 +203,11 @@ export function EntityInfoPanel({
                 <VariantsBar
                   items={variants.map((v, i) => ({ key: v.id, title: String.fromCharCode(65 + i) }))}
                   selectedIndex={selectedVariantIdx}
-                  onSelect={(i) => onVariantChange(cardIndex, i)}
+                  onSelect={(i) => {
+                    onVariantChange(cardIndex, i);
+                    const variant = variants[i];
+                    if (variant) applyVariantGenerationSettings(cardIndex, variant.id);
+                  }}
                   onDelete={(isTextToAudioType || isTtsType || isSedExtractedCard)
                     ? (i) => onDeleteVariant(cardIndex, i)
                     : undefined}

@@ -52,6 +52,29 @@ export interface SpeckleModelLatestVersion {
   message?: string;
 }
 
+/** One user-visible model version (GET /api/speckle/models/{model_id}/versions). */
+export interface SpeckleModelVersion {
+  /** Viewer-loadable version id (never a bundle). */
+  id: string;
+  /** 1 = oldest. */
+  number: number;
+  created_at?: string | null;
+  author_name?: string | null;
+  source_application?: string | null;
+  message?: string | null;
+  /** Original uploaded file name (null for connector pushes). */
+  file_name?: string | null;
+  is_latest: boolean;
+}
+
+/** Response from GET /api/speckle/models/{model_id}/versions — newest first. */
+export interface SpeckleModelVersionsResponse {
+  model_id: string;
+  model_name: string;
+  versions: SpeckleModelVersion[];
+  total_count: number;
+}
+
 /** Response from GET /api/speckle/ingestion/{ingestion_id} */
 export interface SpeckleIngestionStatus {
   status: string | null;

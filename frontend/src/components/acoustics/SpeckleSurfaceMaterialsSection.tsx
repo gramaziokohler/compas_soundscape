@@ -289,6 +289,31 @@ export function SpeckleSurfaceMaterialsSection({
     useAcousticMaterialStore.temporal.getState().clear();
   }, [isActive, appIdToGeometryIds, geometryIdToAppId, materialAssignments, scatteringAssignments, loadAssignments]);
 
+  // ── Another model version loaded in place ──
+  // The viewer rebuilt its tree: objects that changed have new raw hashes, so the
+  // live store (keyed by raw ids of the previous version) misses them. Re-derive
+  // it from the card's persisted applicationId-keyed assignments. A load, not an
+  // edit — and the material history is dropped like on every load, since its
+  // snapshots are keyed by hashes that no longer exist.
+  const prevAppIdMapRef = useRef(appIdToGeometryIds);
+  useEffect(() => {
+    const prev = prevAppIdMapRef.current;
+    prevAppIdMapRef.current = appIdToGeometryIds;
+    if (!isActive || prev === appIdToGeometryIds || prev.size === 0 || appIdToGeometryIds.size === 0) return;
+    if (!initialAssignments || Object.keys(initialAssignments).length === 0) return;
+
+    const currentRawIds = new Set(geometryIdToAppId.keys());
+    const stale = Array.from(useAcousticMaterialStore.getState().materialAssignments.keys())
+      .some((key) => !currentRawIds.has(key));
+    if (!stale) return;
+
+    const nextMaterial = expandSavedAssignments(initialAssignments, geometryIdToAppId, appIdToGeometryIds);
+    const nextScattering = expandSavedAssignments(initialScatteringAssignments, geometryIdToAppId, appIdToGeometryIds);
+    skipNextNotifyRef.current = true;
+    loadAssignments(nextMaterial, nextScattering);
+    useAcousticMaterialStore.temporal.getState().clear();
+  }, [isActive, appIdToGeometryIds, geometryIdToAppId, initialAssignments, initialScatteringAssignments, loadAssignments]);
+
   // Track previous layer to detect changes
   const previousLayerIdRef = useRef<string | null>(null);
 
