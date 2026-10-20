@@ -1,13 +1,15 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Bug } from 'lucide-react';
+import { Bookmark, Bug } from 'lucide-react';
 import { BarButton } from '@/components/ui/BarButton';
 import { BugReportPanel } from '@/components/ui/BugReportPanel';
+import { FeedbackPanel, type FeedbackTab } from '@/components/ui/FeedbackPanel';
 import { useBugReport } from '@/hooks/useBugReport';
-import { useUIStore } from '@/store';
-import { BUG_REPORT, SCENE_BOTTOM_BAR, SIMPLE_MODE } from '@/utils/constants';
+import { useMomentCapture } from '@/hooks/useMomentCapture';
+import { useStudyStore, useUIStore } from '@/store';
+import { BUG_REPORT, SCENE_BOTTOM_BAR, SIMPLE_MODE, STUDY_LOG } from '@/utils/constants';
 
 export interface BugReportButtonProps {
   /** `bar`: flat button inside the bottom bar (Detailed mode).
@@ -23,6 +25,11 @@ export interface BugReportButtonProps {
  * backdrop-filter would otherwise become its containing block) and rises with
  * the docked DAW.
  *
+ * While the research study is on, the same button becomes the shared feedback
+ * button: a bookmark icon whose popover opens on the "Moment" tab (the moment
+ * is captured on click) with "Report a problem" as the second tab. The study
+ * shortcut (STUDY_LOG.MOMENT_SHORTCUT_KEY) opens it on the Moment tab too.
+ *
  * Usage:
  * ```tsx
  * {isExpert ? <BugReportButton variant="bar" /> : <BugReportButton variant="floating" />}
@@ -32,19 +39,62 @@ export function BugReportButton({ variant }: BugReportButtonProps) {
   const report = useBugReport();
   const { open } = report.state;
   const { setOpen } = report.methods;
+  const studyEnabled = useStudyStore((s) => s.enabled);
+  const pseudonym = useStudyStore((s) => s.pseudonym);
+  const momentNonce = useStudyStore((s) => s.momentRequestNonce);
+  const [tab, setTab] = useState<FeedbackTab>('moment');
+  const closeRef = useRef<() => void>(() => {});
+  const moment = useMomentCapture(() => closeRef.current());
+  const { begin, end } = moment.methods;
   const rootRef = useRef<HTMLDivElement>(null);
   const dockLift = useUIStore((s) => s.dawDockBottomSpace);
   // Portal target only exists after mount (keeps the server render empty).
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
+  /** Open / close; in study mode opening captures a moment right away. */
+  const setPanelOpen = useCallback(
+    (next: boolean, nextTab: FeedbackTab = 'moment') => {
+      if (studyEnabled) {
+        if (next && !open) {
+          setTab(nextTab);
+          if (nextTab === 'moment') begin();
+        } else if (!next && open && tab === 'moment') {
+          end();
+        }
+      }
+      setOpen(next);
+    },
+    [studyEnabled, open, tab, begin, end, setOpen],
+  );
+  closeRef.current = () => setPanelOpen(false);
+
+  const changeTab = useCallback(
+    (next: FeedbackTab) => {
+      if (next === tab) return;
+      if (next === 'moment') begin();
+      else end();
+      setTab(next);
+    },
+    [tab, begin, end],
+  );
+
+  // Moment shortcut → open on the Moment tab (or switch to it).
+  const lastNonceRef = useRef(momentNonce);
+  useEffect(() => {
+    if (momentNonce === lastNonceRef.current) return;
+    lastNonceRef.current = momentNonce;
+    if (!open) setPanelOpen(true, 'moment');
+    else if (tab !== 'moment') changeTab('moment');
+  }, [momentNonce, open, tab, setPanelOpen, changeTab]);
+
   useEffect(() => {
     if (!open) return;
     const onDown = (e: PointerEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+      if (!rootRef.current?.contains(e.target as Node)) setPanelOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
+      if (e.key === 'Escape') setPanelOpen(false);
     };
     window.addEventListener('pointerdown', onDown, true);
     window.addEventListener('keydown', onKey);
@@ -52,19 +102,35 @@ export function BugReportButton({ variant }: BugReportButtonProps) {
       window.removeEventListener('pointerdown', onDown, true);
       window.removeEventListener('keydown', onKey);
     };
-  }, [open, setOpen]);
+  }, [open, setPanelOpen]);
 
-  const title = open ? 'Close bug report' : 'Report a problem';
-  const panel = open && <BugReportPanel {...report} style={{ left: 0 }} />;
+  const idleTitle = studyEnabled
+    ? `Capture a moment (${STUDY_LOG.MOMENT_SHORTCUT_LABEL}) / report a problem`
+    : 'Report a problem';
+  const title = open ? (studyEnabled ? 'Close' : 'Close bug report') : idleTitle;
+  const panel = open && (studyEnabled ? (
+    <FeedbackPanel
+      tab={tab}
+      onTabChange={changeTab}
+      onClose={() => setPanelOpen(false)}
+      moment={moment}
+      report={report}
+      pseudonym={pseudonym}
+      style={{ left: 0 }}
+    />
+  ) : (
+    <BugReportPanel {...report} style={{ left: 0 }} />
+  ));
+  const Icon = studyEnabled ? Bookmark : Bug;
 
   if (variant === 'bar') {
     return (
       <div ref={rootRef} className="relative flex items-center">
         <BarButton
-          onClick={() => setOpen(!open)}
+          onClick={() => setPanelOpen(!open)}
           active={open}
           title={title}
-          icon={<Bug size={SCENE_BOTTOM_BAR.ICON_SIZE} aria-hidden="true" />}
+          icon={<Icon size={SCENE_BOTTOM_BAR.ICON_SIZE} aria-hidden="true" />}
         />
         {panel}
       </div>
@@ -86,13 +152,13 @@ export function BugReportButton({ variant }: BugReportButtonProps) {
         type="button"
         className="bug-report-fab backdrop-blur-lg backdrop-saturate-150"
         data-active={open}
-        onClick={() => setOpen(!open)}
+        onClick={() => setPanelOpen(!open)}
         title={title}
         aria-label={title}
         aria-expanded={open}
         style={{ width: BUG_REPORT.FLOATING_SIZE, height: BUG_REPORT.FLOATING_SIZE }}
       >
-        <Bug size={SCENE_BOTTOM_BAR.ICON_SIZE + 2} aria-hidden="true" />
+        <Icon size={SCENE_BOTTOM_BAR.ICON_SIZE + 2} aria-hidden="true" />
       </button>
       {panel}
     </div>,

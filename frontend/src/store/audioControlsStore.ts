@@ -31,9 +31,11 @@ import { isParamExpression } from '@/lib/audio/utils/trigger-ref';
 import { solveOrchestrateSchedule, scheduleEntryKey } from '@/lib/audio/orchestrate-schedule';
 import { serializeTrackOverlaps } from '@/lib/audio/utils/serialize-track-overlaps';
 import { parseAuthoredSeconds } from '@/lib/audio/utils/timeline-utils';
+import { computeTimelineOverrun } from '@/components/audio/daw/daw-overrun';
 import { pausePreviewInstance, pauseAllPreviewInstances } from '@/lib/audio/previewRegistry';
 import { AMBISONIC_SEND, AUDIO_CONTROL, AUDIO_PLAYBACK, AUDIO_TIMELINE, AUDIO_OUTPUT, DEFAULT_DBFS, TTS_DEFAULT_LANGUAGE } from '@/utils/constants';
 import { apiService } from '@/services/api';
+import { logStudyEvent } from '@/lib/study/studyLogger';
 import { useSoundscapeStore } from './soundscapeStore';
 import { useSpeckleEngineStore } from './speckleEngineStore';
 import { useUIStore } from './uiStore';
@@ -519,6 +521,11 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
           // transfer the preview sound ID if the user was previewing the old variant.
           // individualSoundStates is NOT touched so the timeline keeps playing variant 0.
           const { _generatedSounds, selectedVariants, previewingSoundId } = get();
+          logStudyEvent('gen.variant.select', {
+            prompt_index: promptIdx,
+            variant_index: variantIdx,
+            previous_variant_index: selectedVariants[promptIdx] ?? null,
+          });
 
           const byPrompt: Record<number, any[]> = {};
           _generatedSounds.forEach((s) => {
@@ -1491,7 +1498,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
           // duration is the authoritative DAW timeline bound — never auto-extend
           // past it (content beyond the bound is trimmed, like any fixed timeline).
           const activeScenarioMs = getActiveScenarioTimelineMs();
-          const newDurationMs = activeScenarioMs !== null
+          let newDurationMs = activeScenarioMs !== null
             ? activeScenarioMs
             : Math.min(
                 requiredMs > currentDurationMs ? requiredMs : currentDurationMs,
@@ -1511,6 +1518,27 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             });
             newIterDurations[soundId] = iterDursMs;
           });
+
+          // Authoritative orchestrator bake: if the scheduled scene runs past the
+          // requested timeline (e.g. a scenario's own duration), extend it exactly as
+          // the DAW ruler's "Scene runs to … · Extend" button would. Passive
+          // re-bakes (project restore, buffer loads) never resize the timeline.
+          if (notify) {
+            const overrun = computeTimelineOverrun(
+              Array.from(entryMap.values())
+                .filter((entry) => entry.soundId && !entry.isBackground)
+                .map((entry) => ({
+                  startsSec: newTimestamps[entry.soundId as string],
+                  iterationDurationsMs: newIterDurations[entry.soundId as string],
+                  fallbackDurationMs: iterDurationSec(entry, 0) * 1000,
+                })),
+              newDurationMs,
+            );
+            if (overrun) {
+              newDurationMs = Math.min(overrun.proposedDurationMs, AUDIO_TIMELINE.MAX_DURATION_MS);
+              syncTimelineToActiveScenario(newDurationMs);
+            }
+          }
 
           // Check whether iteration durations changed separately from timestamps
           // (buffers can load AFTER timestamps are already resolved, so timestamps won't

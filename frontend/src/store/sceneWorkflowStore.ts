@@ -24,6 +24,7 @@
  */
 
 import { create } from 'zustand';
+import { logStudyEvent } from '@/lib/study/studyLogger';
 import { devtools } from 'zustand/middleware';
 import type { AnalyzeModelConfig, ScenarioConfig } from '@/types/analysis';
 import type {
@@ -271,7 +272,15 @@ export const useSceneWorkflowStore = create<SceneWorkflowStoreState>()(
 
       const isFocus = (runId: string) => selectFocusRun(get())?.runId === runId;
 
-      const patchRun = (runId: string, patch: Partial<SceneRun>) =>
+      const patchRun = (runId: string, patch: Partial<SceneRun>) => {
+        if (patch.status !== undefined || patch.step !== undefined) {
+          logStudyEvent('scene_workflow.step', {
+            run_id: runId,
+            step: patch.step ?? null,
+            status: patch.status ?? null,
+            error: patch.error ?? null,
+          });
+        }
         set(
           (s) => {
             const run = Object.values(s.runs).find((r) => r.runId === runId);
@@ -281,6 +290,7 @@ export const useSceneWorkflowStore = create<SceneWorkflowStoreState>()(
           false,
           'sceneWorkflow/patchRun',
         );
+      };
 
       /** Navigate the expert sidebar to this run's step — only for the focus scene. */
       const navigateIfFocus = (run: SceneRun, step: 0 | 1 | 2) => {
@@ -463,6 +473,7 @@ export const useSceneWorkflowStore = create<SceneWorkflowStoreState>()(
         runs: {},
 
         startScene: (prompt, options) => {
+          logStudyEvent('scene_workflow.start', { prompt, options: options as unknown as Record<string, unknown> });
           const contextIndex = ensureSceneContext(options.reanalyze ? { prompt, options } : undefined);
           // The speech language is the app-wide TTS setting (also used when the
           // speech lines are voiced) — the composer is a shortcut to it.
@@ -510,6 +521,7 @@ export const useSceneWorkflowStore = create<SceneWorkflowStoreState>()(
         stopScene: (usageIndex) => {
           const run = get().runs[usageIndex];
           if (!run || run.status !== 'running') return;
+          logStudyEvent('scene_workflow.stop', { run_id: run.runId, usage_index: usageIndex, step: run.step });
           _stopRequested.add(run.runId);
           patchRun(run.runId, { status: 'stopped' });
           const analysis = useAnalysisStore.getState();

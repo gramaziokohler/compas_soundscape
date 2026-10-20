@@ -38,6 +38,8 @@ from config.constants import (
 )
 from services.access_service import cf_configured, extract_email, extract_loadtest_email
 from services.metadata_store import metadata_store
+from services.study_config import study_feature
+from utils.request_context import set_request_identity
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +159,13 @@ class SessionMiddleware(BaseHTTPMiddleware):
         request.state.user_email = user_email
         request.state.user_hash = user_hash
         request.state.session_token = token
+        # Identity for code that never sees the Request (study job events).
+        # Only bound while that logging is on; a failure must never break the request.
+        try:
+            if study_feature("server_job_events"):
+                set_request_identity(user_hash, workspace_id or token)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Study request identity not set: %s", exc)
 
         response = await call_next(request)
         if cookie_token != token:

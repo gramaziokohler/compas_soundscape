@@ -47,10 +47,11 @@ from services.tts_service import TTSService
 from services.job_store import job_store
 from services.io_jobs import sweep_orphaned_io_jobs
 from services.metadata_store import metadata_store
+from services.study_log_store import study_log_store
 # from services.modal_analysis_service import ModalAnalysisService
 
 # Import routers
-from routers import upload, generation, sounds, stable_audio, sed_analysis, sed_extract, library_search, reprocess, impulse_responses, modal_analysis, choras, pyroomacoustics, simulation_preflight, speckle, soundscape, tokens, tts, tts_voices, loop_analysis, jobs, auth, workspaces, preferences, bug_reports
+from routers import upload, generation, sounds, stable_audio, sed_analysis, sed_extract, library_search, reprocess, impulse_responses, modal_analysis, choras, pyroomacoustics, simulation_preflight, speckle, soundscape, tokens, tts, tts_voices, loop_analysis, jobs, auth, workspaces, preferences, bug_reports, study
 
 # Import constants
 from config.constants import (
@@ -226,6 +227,12 @@ async def lifespan(app: FastAPI):
     # Metadata store (users/sessions/workspaces). Durable, so initialize before
     # the middleware starts resolving identities.
     metadata_store.init_db()
+    # Research-study log: separate SQLite file, created only when
+    # STUDY_LOGGING_ENABLED is on (no-op otherwise). Never blocks startup.
+    try:
+        study_log_store.init_db()
+    except Exception as exc:
+        print(f"[study] study log DB init failed (logging will retry lazily): {exc}")
 
     job_store_task = asyncio.create_task(_job_store_loop())
     janitor_task = asyncio.create_task(_temp_janitor_loop())
@@ -302,6 +309,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(preferences.router)
 app.include_router(bug_reports.router)
+app.include_router(study.router)
 app.include_router(workspaces.router)
 app.include_router(upload.router)
 # app.include_router(analysis.router)

@@ -7,6 +7,9 @@ from typing import Optional
 
 from config.constants import AUDIO_SAMPLE_RATE
 from config.constants import BUG_REPORT_MAX_DESCRIPTION_CHARS
+from config.constants import STUDY_MAX_ID_CHARS
+from config.constants import STUDY_MAX_NOTE_CHARS
+from config.constants import STUDY_MAX_TAGS
 from config.constants import DEFAULT_AUDIO_MODEL
 from config.constants import DEFAULT_DBFS
 from config.constants import DEFAULT_FOLEY_SOUND_DETAIL
@@ -1151,3 +1154,82 @@ class PreflightSummary(BaseModel):
     n_warnings: int
     n_infos: int
     payload_file: str
+
+
+# ─── Research-study interaction logging (routers/study.py) ───────────────────
+# Identity (user_hash / workspace_id) is never part of a request body: the
+# router stamps it from request.state.
+
+class StudyEvent(BaseModel):
+    """One client-side interaction event (frontend/src/lib/study/studyLogger.ts)."""
+    id: str = Field(..., min_length=1, max_length=STUDY_MAX_ID_CHARS)
+    type: str = Field(..., min_length=1, max_length=STUDY_MAX_ID_CHARS)
+    ts_client: int
+    seq: int = 0
+    tab_session_id: str = Field("", max_length=STUDY_MAX_ID_CHARS)
+    model_id: Optional[str] = Field(None, max_length=STUDY_MAX_ID_CHARS)
+    version_id: Optional[str] = Field(None, max_length=STUDY_MAX_ID_CHARS)
+    ui_mode: Optional[str] = Field(None, max_length=STUDY_MAX_ID_CHARS)
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class StudyEventBatch(BaseModel):
+    """``POST /api/study/events`` (JSON or a ``sendBeacon`` text/plain body)."""
+    events: list[dict[str, Any]]
+
+
+class StudyEventsAccepted(BaseModel):
+    accepted: int
+
+
+class StudyFeatures(BaseModel):
+    snapshots: bool
+    state_diff: bool
+    pose_sampling: bool
+    audio_archive: bool
+    moment_screenshot: bool
+
+
+class StudyConfig(BaseModel):
+    """``GET /api/study/config`` — also registers the caller as a participant."""
+    enabled: bool
+    pseudonym: Optional[str]
+    flush_interval_ms: int
+    max_batch_events: int
+    features: StudyFeatures
+
+
+class StudySnapshotIn(BaseModel):
+    """Hashed design-state copy; ``hash`` is the client's cyrb53 hex digest."""
+    hash: str = Field(..., pattern=r"^[A-Za-z0-9_-]{1,128}$")
+    json_text: str = Field(..., alias="json")
+
+
+class StudySnapshotOut(BaseModel):
+    hash: str
+    stored: bool
+
+
+class StudyKnownSnapshots(BaseModel):
+    known: list[str]
+
+
+class StudyMomentIn(BaseModel):
+    """Self-flagged "creative moment" captured when the student clicks."""
+    event_id: str = Field(..., min_length=1, max_length=STUDY_MAX_ID_CHARS)
+    screenshot: Optional[str] = None
+    snapshot_hash: Optional[str] = Field(None, pattern=r"^[A-Za-z0-9_-]{1,128}$")
+    ts_client: int
+
+
+class StudyMomentOut(BaseModel):
+    id: str
+
+
+class StudyMomentNote(BaseModel):
+    note: str = Field("", max_length=STUDY_MAX_NOTE_CHARS)
+    tags: list[str] = Field(default_factory=list, max_length=STUDY_MAX_TAGS)
+
+
+class StudyOk(BaseModel):
+    ok: bool = True

@@ -14,6 +14,7 @@ import type {
 import type { ModelVersionImpactReport, ModelVersionImpactRequest } from '@/types/modelVersionImpact';
 import type { SoundscapeSavePayload, SoundscapeSaveResponse, SoundscapeLoadResponse, SoundscapeStats } from '@/types/soundscape';
 import type { PreflightJobResult, PreflightPayload, SimulationEngine, SimulationMeshSettings } from '@/types/simulationPreflight';
+import type { StudyConfig, StudyEventBatch, StudySnapshotUpload, StudyMomentCreate, StudyMomentNote } from '@/types/study';
 
 /**
  * Enhanced error handling for API calls
@@ -460,6 +461,60 @@ export const apiService = {
       throw new Error(`Could not send the report: ${detail}`);
     }
     return response.json();
+  },
+
+  // ─── Research-study logging (routers/study.py; 404 when disabled) ───────
+  /** Study config for this participant, or null when study logging is off. */
+  async getStudyConfig(): Promise<StudyConfig | null> {
+    const response = await fetchWithErrorHandling(`${API_BASE_URL}/api/study/config`, undefined, 'Study config');
+    if (!response.ok) return null;
+    return response.json();
+  },
+
+  /** Post a batch of study events. Throws on failure so the logger can retry. */
+  async postStudyEvents(batch: StudyEventBatch): Promise<void> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/study/events`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(batch) },
+      'Study events'
+    );
+    if (!response.ok) throw new Error(`Study events rejected (${response.status})`);
+  },
+
+  /** Fire-and-forget delivery on page unload (sendBeacon, text/plain body). */
+  beaconStudyEvents(body: string): boolean {
+    if (typeof navigator === 'undefined' || !navigator.sendBeacon) return false;
+    return navigator.sendBeacon(`${API_BASE_URL}/api/study/events`, body);
+  },
+
+  async postStudySnapshot(snapshot: StudySnapshotUpload): Promise<void> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/study/snapshots`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(snapshot) },
+      'Study snapshot'
+    );
+    if (!response.ok) throw new Error(`Study snapshot rejected (${response.status})`);
+  },
+
+  /** Create a moment (screenshot captured at click time); returns its id. */
+  async createStudyMoment(moment: StudyMomentCreate): Promise<string> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/study/moments`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(moment) },
+      'Study moment'
+    );
+    if (!response.ok) throw new Error(`Could not save the moment (${response.status})`);
+    const data = await response.json();
+    return String(data.id);
+  },
+
+  async noteStudyMoment(momentId: string, note: StudyMomentNote): Promise<void> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/study/moments/${encodeURIComponent(momentId)}/note`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(note) },
+      'Study moment note'
+    );
+    if (!response.ok) throw new Error(`Could not save the note (${response.status})`);
   },
 
   // ─── Workspaces / collaboration ─────────────────────────────────────────

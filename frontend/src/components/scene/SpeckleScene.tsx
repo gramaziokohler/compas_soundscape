@@ -54,6 +54,7 @@ import { SceneTimeline } from '@/components/scene/SceneTimeline';
 import { ObjectExplorerPanel } from '@/components/scene/ObjectExplorerPanel';
 import { Spinner } from '@/components/ui/Spinner';
 import { ModelUploadProgress } from './ModelUploadProgress';
+import { DesignIntentPrompt } from './DesignIntentPrompt';
 import { ModelVersionBanner } from '@/components/scene/model-version/ModelVersionBanner';
 import { ModelVersionReviewPanel } from '@/components/scene/model-version/ModelVersionReviewPanel';
 import { useModelVersionStore } from '@/store';
@@ -404,6 +405,7 @@ export function SpeckleScene({
   // same URL re-loads through the store's reload nonce.
   const pinnedVersionId = useModelVersionStore((s) => s.pinnedVersionId);
   const viewerReloadNonce = useModelVersionStore((s) => s.viewerReloadNonce);
+  const isUploadingVersion = useModelVersionStore((s) => s.isUploadingVersion);
   const baseModelUrl = viewer_url || speckleData?.url;
   const modelUrl = baseModelUrl && pinnedVersionId ? `${baseModelUrl}@${pinnedVersionId}` : baseModelUrl;
 
@@ -1131,7 +1133,8 @@ export function SpeckleScene({
   // Combined loading state: viewer init, parent upload/conversion, the instant
   // post-selection feedback, or a ?model_id= URL bootstrap in progress. Keeps the
   // spinner up for the whole select→upload→load chain.
-  const isModelLoading = isLoading || isUploadingModel || isPreparingModel || isBootstrappingModel;
+  // A new version uploading to the open model shows the same overlay as an import.
+  const isModelLoading = isLoading || isUploadingModel || isUploadingVersion || isPreparingModel || isBootstrappingModel;
 
   // How much vertical space the docked DAW actually occupies at the bottom of the
   // scene. It lifts the floating scene controls only when the DAW panel is really
@@ -1167,7 +1170,15 @@ export function SpeckleScene({
             {isLoading || isBootstrappingModel
               ? <p className="text-xs text-primary">Loading model...</p>
               : <ModelUploadProgress />}
+            {/* Research study: design-intent question while the model loads */}
+            <DesignIntentPrompt />
           </div>
+        </div>
+      )}
+      {/* Loading finished before the student answered — keep the question up, no dim backdrop */}
+      {!isModelLoading && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-30">
+          <DesignIntentPrompt />
         </div>
       )}
 

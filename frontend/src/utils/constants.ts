@@ -495,7 +495,7 @@ export const FOLEY_SOUND_DETAIL_OPTIONS: ReadonlyArray<{
   { value: 'detailed', label: 'Detailed', title: 'Split by source, action and material, e.g. footsteps on carpet vs. parquet (up to ~16 sound events)' },
   { value: 'exhaustive', label: 'Exhaustive', title: 'Every distinct audible interaction gets its own sound; only true repeats are merged (up to ~24 sound events)' },
 ];
-export const DEFAULT_FOLEY_SOUND_DETAIL: FoleySoundDetail = 'balanced';
+export const DEFAULT_FOLEY_SOUND_DETAIL: FoleySoundDetail = 'detailed';
 export const FOLEY_SOUND_DETAIL_HINT =
   "How finely the scenario's actions are split into sound events. A quiet scenario still gets few. Background and speech are not counted.";
 
@@ -2490,6 +2490,73 @@ export const BUG_REPORT = {
   /** Elements carrying this attribute are left out of the screenshot. */
   IGNORE_ATTR: 'data-bug-report-ignore',
   Z_INDEX: 215,                     // above the bottom bar (210) and raised panels, below modals
+} as const;
+
+// ============================================================================
+// Research-study interaction logging (lib/study/*). Inert unless the backend
+// reports STUDY_LOGGING_ENABLED via GET /api/study/config.
+// ============================================================================
+
+export const STUDY_LOG = {
+  // ── Pipeline ──
+  DEFAULT_FLUSH_INTERVAL_MS: 5000,
+  DEFAULT_MAX_BATCH_EVENTS: 200,
+  MAX_QUEUE_EVENTS: 5000,             // oldest dropped beyond this (counted in a log.dropped event)
+  RETRY_BASE_MS: 2000,
+  RETRY_MAX_MS: 60000,
+  BEACON_MAX_BYTES: 60000,            // sendBeacon payload limit is 64 KB
+  QUEUE_STORAGE_KEY: 'compas-study-queue',
+  TAB_SESSION_STORAGE_KEY: 'compas-study-tab-session',
+  CONSENT_STORAGE_KEY: 'compas-study-consent-ack',
+  // ── Sanitiser (payloads are cloned to plain JSON at enqueue time) ──
+  MAX_DEPTH: 8,
+  MAX_ARRAY_ITEMS: 200,
+  MAX_OBJECT_KEYS: 200,
+  MAX_STRING_CHARS: 8000,
+  // ── Snapshots (risk gate R2) ──
+  SNAPSHOT_MIN_INTERVAL_MS: 2000,
+  SNAPSHOT_IDLE_TIMEOUT_MS: 1500,
+  SNAPSHOT_MAX_BYTES: 5_000_000,
+  // ── State diff (risk gate R3) ──
+  DIFF_MAX_NODES: 20000,
+  DIFF_MAX_CHANGES: 60,
+  DIFF_VALUE_MAX_CHARS: 300,
+  DIFF_IDLE_TIMEOUT_MS: 2000,
+  // ── Listening (pose sampling = risk gate R4) ──
+  POSE_SAMPLE_INTERVAL_MS: 1000,
+  POSE_MIN_DELTA_M: 0.25,
+  POSE_MIN_DELTA_DEG: 10,
+  SEEK_SETTLE_MS: 400,                // one listen.seek per playhead scrub
+  // ── Self-monitoring ──
+  LONG_TASK_MIN_MS: 200,
+  // ── Design-intent question (shown in the model loading overlay) ──
+  ASK_INTENT_ON_IMPORT: true,
+  INTENT_DRAFT_STORAGE_KEY: 'compas-study-intent-draft',
+  INTENT_MAX_CHARS: 3000,
+  INTENT_CARD_WIDTH: 380,             // px
+  INTENT_TEXTAREA_ROWS: 4,
+  INTENT_TAGS: [
+    'Geometry / form',
+    'Materials',
+    'Openings',
+    'Layout / program',
+    'Sound sources',
+    'Response to listening',
+  ],
+  // ── Moments (shares the bug-report button) ──
+  MOMENT_MAX_CHARS: 3000,
+  MOMENT_TEXTAREA_ROWS: 4,
+  MOMENT_TAGS: [
+    'Surprising sound',
+    'Design idea',
+    'Changed my mind',
+    'Comparing options',
+    'Sound problem',
+  ],
+  MOMENT_SUCCESS_AUTOCLOSE_MS: 1800,
+  /** Unbound letter key that opens the Moment capture (only while the study is on). */
+  MOMENT_SHORTCUT_KEY: 'b',
+  MOMENT_SHORTCUT_LABEL: 'B',
 } as const;
 
 // Outline drawn around each sound sphere / listener in a multi-selection

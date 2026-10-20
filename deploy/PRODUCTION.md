@@ -66,3 +66,15 @@ Nothing is deployed by hand. Every `DeployPollSeconds`, the supervisor:
 - **An excluded package was replaced:** `supervisor.log` warns `is no longer an editable install`.
   Reinstall it with `pip install -e <path>` in the `compas-soundscape` env.
 - Everything else (tunnel, Access, nginx, SA3): see `C:\compas\README.md` § Troubleshooting.
+
+## Research study logging
+
+Study interaction logging is off by default. While it is off, every `/api/study/*` route returns 404 and no server hooks run.
+
+1. Before day 1, check free disk on the host. The audio archive stops copying below `STUDY_ARCHIVE_MIN_FREE_GB` (5 GB).
+2. Set `STUDY_LOGGING_ENABLED=1` in the backend `.env`. Optional kill switches (they default to on while the master switch is on): `STUDY_FEATURE_SNAPSHOTS`, `STUDY_FEATURE_STATE_DIFF`, `STUDY_FEATURE_POSE_SAMPLING`, `STUDY_FEATURE_AUDIO_ARCHIVE`, `STUDY_FEATURE_SERVER_JOB_EVENTS`, `STUDY_FEATURE_MOMENT_SCREENSHOT` (`=0` disables one).
+3. Run `compas restart backend`. The frontend reads `/api/study/config`, so it does not need a redeploy.
+4. During the study, from `backend/`, run `python scripts/export_study_logs.py --summary`. It shows event counts per group and participant (last hour and total), archive size and free disk.
+5. After the study, run `python scripts/export_study_logs.py --out <dir> --groups groups.csv` (columns `workspace_id,group_label` or `owner_email,group_label`). Keep `participants_key.csv` (pseudonym → email) apart from the pseudonymised group folders.
+
+The data lives in `backend/data/study/`: `study_log.db`, `audio/` and `moments/`.

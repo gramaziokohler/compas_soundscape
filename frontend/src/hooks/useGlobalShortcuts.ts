@@ -9,7 +9,8 @@ import {
   isModalOpen,
   isTypingTarget,
 } from '@/lib/shortcuts/keyboard-utils';
-import { useAudioControlsStore, useSpeckleStore, useUIStore } from '@/store';
+import { useAudioControlsStore, useSpeckleStore, useStudyStore, useUIStore } from '@/store';
+import { STUDY_LOG } from '@/utils/constants';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { hideSelection } from '@/lib/three/speckle-selection-actions';
 
@@ -97,6 +98,11 @@ function route(e: KeyboardEvent): boolean {
     }
     if (key === 'h' && e.shiftKey && !isFirstPerson) {
       return hideSelection();
+    }
+    // Research study: bookmark a moment (also while listening in first person).
+    if (key === STUDY_LOG.MOMENT_SHORTCUT_KEY && !e.shiftKey && useStudyStore.getState().enabled) {
+      useStudyStore.getState().requestMoment();
+      return true;
     }
     if (key === 's' && !e.shiftKey) {
       useUIStore.getState().toggleSoundsAndListenersVisible();

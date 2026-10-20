@@ -381,3 +381,21 @@ export type {
   BugReportPayload,
   BugReportCreated,
 } from './bugReport';
+
+// Research-study interaction logging
+export type {
+  StudyJson,
+  StudyPayload,
+  StudyFeatures,
+  StudyConfig,
+  StudyEvent,
+  StudyEventBatch,
+  StudySnapshotUpload,
+  StudyMomentCreate,
+  StudyMomentNote,
+  StudyListenerKind,
+  StudyListenerState,
+  StudyIntentKind,
+  StudyIntentPrompt,
+  StudyPromptedByListening,
+} from './study';

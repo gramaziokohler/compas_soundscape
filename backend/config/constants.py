@@ -399,11 +399,14 @@ TTS_CUSTOM_VOICE_DESCRIPTION_TEMPLATE = (
 )  # gender is passed separately (voices.create ``gender``)
 # Gemini 3.8 inline vocal tags (speech-generation docs). Transcripts are read
 # verbatim, so any other bracketed text — e.g. "[excitedly]" — is spoken aloud.
-# Keep tags in English even for non-English transcripts.
+# Keep tags in English even for non-English transcripts. Only point-in-time
+# vocal bursts and pauses belong inline: sustained delivery (whispering, emotion,
+# pacing) is a turn-level `speech_metadata.style` per the docs, and an inline
+# "<whispering>" gets read aloud by gemini-3.8-flash-tts.
 TTS_INLINE_VOCAL_TAGS = (
     "<laugh>", "<chuckle>", "<giggle>", "<sigh>", "<cough>", "<throat-clearing>",
     "<gasp>", "<breath>", "<exhales>", "<yawn>", "<sneeze>", "<sob>", "<groan>",
-    "<whispering>", "<shout>", "<short pause>", "<long pause>",
+    "<shout>", "<short pause>", "<long pause>",
 )
 # Language-resolution outcomes (LanguageMatch.kind). Mirrored in
 # frontend/src/types/ttsLanguage.ts.
@@ -1083,3 +1086,64 @@ MODEL_VERSION_PLACEMENT_OUTSIDE_FRACTION = 0.5
 MODEL_VERSION_SOLID_MAX_THICKNESS_M = 1.0
 # Share of parity rays that must agree before a point counts as enclosed.
 MODEL_VERSION_ENCLOSED_RAY_SHARE = 0.75
+
+# ============================================================================
+# Research-study interaction logging (routers/study.py, services/study_*.py,
+# scripts/export_study_logs.py). Inert unless STUDY_LOGGING_ENABLED is set:
+# every /api/study route 404s and no server hook runs. Sub-flags are kill
+# switches for the risk-gated features and only apply while the master is on
+# (read at call time through services/study_config.py).
+# ============================================================================
+def _study_flag(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip().lower() in ("true", "1", "yes", "on")
+
+
+STUDY_LOGGING_ENABLED = _study_flag("STUDY_LOGGING_ENABLED", False)
+STUDY_FEATURE_SNAPSHOTS = _study_flag("STUDY_FEATURE_SNAPSHOTS", True)
+STUDY_FEATURE_STATE_DIFF = _study_flag("STUDY_FEATURE_STATE_DIFF", True)
+STUDY_FEATURE_POSE_SAMPLING = _study_flag("STUDY_FEATURE_POSE_SAMPLING", True)
+STUDY_FEATURE_AUDIO_ARCHIVE = _study_flag("STUDY_FEATURE_AUDIO_ARCHIVE", True)
+STUDY_FEATURE_SERVER_JOB_EVENTS = _study_flag("STUDY_FEATURE_SERVER_JOB_EVENTS", True)
+STUDY_FEATURE_MOMENT_SCREENSHOT = _study_flag("STUDY_FEATURE_MOMENT_SCREENSHOT", True)
+
+# Own SQLite file + media, durable (never temp/). STUDY_DIR is overridable for tests.
+STUDY_DIR = Path(os.environ.get("STUDY_DIR") or (BACKEND_DIR / "data" / "study"))
+STUDY_DB_PATH = str(STUDY_DIR / "study_log.db")
+STUDY_AUDIO_DIR = STUDY_DIR / "audio"        # + /<workspace_id>/<mount>/<relative path>
+STUDY_MOMENTS_DIR = STUDY_DIR / "moments"    # + /<workspace_id>/<moment_id>.jpg
+
+# Client batching (sent to the frontend by GET /api/study/config).
+STUDY_FLUSH_INTERVAL_MS = 5000
+STUDY_MAX_BATCH_EVENTS = 200
+STUDY_MAX_BATCH_BYTES = 1_000_000
+STUDY_MAX_SNAPSHOT_BYTES = 5_000_000
+# The snapshot JSON travels as an escaped string inside the request body.
+STUDY_MAX_SNAPSHOT_BODY_BYTES = STUDY_MAX_SNAPSHOT_BYTES * 2
+STUDY_MAX_SCREENSHOT_BYTES = 4 * 1024 * 1024
+# Moment body = screenshot data URL (base64 inflates by 4/3) + small fields.
+STUDY_MAX_MOMENT_BODY_BYTES = STUDY_MAX_SCREENSHOT_BYTES * 4 // 3 + 64 * 1024
+STUDY_MAX_NOTE_CHARS = 10_000
+STUDY_MAX_TAGS = 20
+STUDY_MAX_ID_CHARS = 128
+STUDY_MAX_KNOWN_HASHES = 500
+STUDY_PSEUDONYM_PREFIX = "P"
+
+# Payload sanitizer (server events and client payloads): data: URLs and strings
+# longer than STUDY_MAX_FIELD_CHARS become "<omitted, N chars>"; deeper levels
+# and longer lists are truncated so a job payload is logged as a summary.
+STUDY_MAX_FIELD_CHARS = 20_000
+STUDY_MAX_PAYLOAD_DEPTH = 8
+STUDY_MAX_LIST_ITEMS = 200
+
+# Audio archive (services/study_audio_archive.py): URL prefix -> served root.
+# Mirrors the static mounts in main.py ("/static" wins over its sub-mounts).
+STUDY_ARCHIVE_URL_ROOTS = {
+    "/static": BACKEND_DIR / "temp" / "static",
+    "/soundscapes": BACKEND_DIR / "data" / "soundscapes",
+}
+STUDY_ARCHIVE_EXTENSIONS = (".wav", ".mp3", ".flac", ".ogg", ".opus", ".m4a", ".aac", ".webm")
+STUDY_ARCHIVE_MIN_FREE_GB = 5
+STUDY_EXPORT_SUMMARY_WINDOW_S = 3600

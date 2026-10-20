@@ -842,6 +842,60 @@ Files:
 - Backend: `routers/bug_reports.py`, `services/bug_report_service.py`.
 - Constants: `BUG_REPORT` (frontend) and `BUG_REPORT_*` (backend).
 
+### Research-Study Interaction Logging
+
+Off by default. With env `STUDY_LOGGING_ENABLED=1`, the app records a per-participant,
+append-only interaction log for design-studio research: what students listened to and from
+where, what they edited before and after listening, how they used the AI features, their
+design-intent answers per model version and the "moments" they bookmark. With the switch
+off, every `/api/study` route returns 404, the frontend registers no listener or
+subscription, and the UI is unchanged. Per-feature env switches (`STUDY_FEATURE_*`:
+snapshots, state_diff, pose_sampling, audio_archive, server_job_events, moment_screenshot)
+are kill switches that need only a backend restart.
+
+```
+GET /api/study/config ──► studyLogger.init (enabled? pseudonym, features)
+                              │
+useStudyLogging (page.tsx) ───┤ field-level store subscriptions:
+                              │   audioControls play state / previewingSoundId ─► listeningTracker
+                              │   render mode, IR, active simulation, UI mode, model / version
+                              │ undo registry addUndoStepListener ─► editTracker ─► stateDiff (idle)
+                              │ PerformanceObserver longtask ─► perf.longtask
+explicit logStudyEvent calls ─┤ analysisStore (LLM jobs, prompts, accept/reject), soundscapeStore
+                              │ (gen.request/result, variants, library), AcousticsSection (sim.*),
+                              │ sceneWorkflowStore (Simple mode), page.tsx (model import / version upload)
+                              ▼
+queue (sanitised plain JSON) ─► POST /api/study/events every 5 s (sendBeacon on pagehide)
+snapshot.ts (fingerprint → idle build) ─► POST /api/study/snapshots (deduplicated by hash)
+Moment tab (bug button, key B) ─► POST /api/study/moments (+ /note)
+                              ▼
+routers/study.py → study_service → study_log_store (data/study/study_log.db, WAL, own lock)
+                 └─ audio_refs → study_audio_archive → data/study/audio/<ws>/...
+job_store.enqueue / io_jobs → study_server_events (job.*, identity via request ContextVar)
+scripts/export_study_logs.py → per-group events.jsonl/csv, listening_sessions.csv,
+                               intent_notes.csv, moments, snapshots, audio (pseudonymised)
+```
+
+Key rules:
+- `lib/study/studyLogger.ts` never imports `@/store`: stores import the logger, and the
+  barrel registers temporal stores at module init. Store reads live in
+  `lib/study/storeReaders.ts`, which only hooks and components import.
+- `logStudyEvent` never throws and clones payloads to plain JSON at enqueue time, so it
+  keeps no references to buffers or store objects. Call sites pass primitives.
+- Listening sessions: `listen.start` is logged once the design snapshot hash resolves (on
+  idle). The real click time is `payload.started_at`, and the export uses it.
+- The undo registry is only observed: listeners queue references, and diffs run on idle.
+- A version upload shows the shared model-loading overlay. `DesignIntentPrompt` (study
+  store `pendingIntentPrompt`) stays up after loading until the student submits or skips.
+
+Files:
+- Frontend: `lib/study/*`, `hooks/useStudyLogging.ts`, `hooks/useMomentCapture.ts`,
+  `store/studyStore.ts`, `components/scene/DesignIntentPrompt.tsx`,
+  `components/ui/{FeedbackPanel,MomentPanel,ChipToggleGroup}.tsx`, `types/study.ts`.
+- Backend: `routers/study.py`, `services/study_*.py`, `utils/{study_sanitize,request_context}.py`,
+  `scripts/export_study_logs.py`, `scripts/smoke_study_log.py`.
+- Constants: `STUDY_LOG` (frontend) and `STUDY_*` (backend). Operations: `deploy/PRODUCTION.md`.
+
 ### Viewer Right-Click Menu
 
 Right-click selects what is under the cursor (like a left click) and opens a command menu on it.

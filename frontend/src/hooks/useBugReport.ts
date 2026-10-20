@@ -1,8 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { toJpeg } from 'html-to-image';
 import { apiService } from '@/services/api';
+import { captureAppScreenshot } from '@/lib/diagnostics/captureScreenshot';
 import { installDiagnosticsCapture } from '@/lib/diagnostics/diagnosticsBuffer';
 import { collectBugReportContext } from '@/lib/diagnostics/collectBugReportContext';
 import { BUG_REPORT } from '@/utils/constants';
@@ -31,16 +31,6 @@ function saveDraft(draft: BugReportDraft | null): void {
   } catch {
     // Storage unavailable (private window / blocked) — the draft just isn't kept.
   }
-}
-
-/** JPEG data URL of the whole app, minus elements marked with `BUG_REPORT.IGNORE_ATTR`. */
-async function captureScreenshot(): Promise<string> {
-  return toJpeg(document.body, {
-    pixelRatio: BUG_REPORT.SCREENSHOT_PIXEL_RATIO,
-    quality: BUG_REPORT.SCREENSHOT_JPEG_QUALITY,
-    backgroundColor: getComputedStyle(document.body).backgroundColor,
-    filter: (node) => !(node instanceof Element && node.hasAttribute(BUG_REPORT.IGNORE_ATTR)),
-  });
 }
 
 export interface UseBugReportResult {
@@ -139,7 +129,7 @@ export function useBugReport(): UseBugReportResult {
     let screenshot: string | undefined;
     if (includeScreenshot) {
       try {
-        screenshot = await captureScreenshot();
+        screenshot = await captureAppScreenshot();
       } catch (err) {
         context.screenshot_error = err instanceof Error ? err.message : String(err);
       }

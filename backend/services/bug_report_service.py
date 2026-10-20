@@ -5,8 +5,6 @@ the optional screenshot is written under ``data/bug_reports/<id>/`` so both
 survive restarts, deploys, and the temp janitor.
 """
 
-import base64
-import binascii
 import json
 import logging
 import subprocess
@@ -23,14 +21,9 @@ from config.constants import (
 )
 from models.schemas import BugReportCreate
 from services.metadata_store import metadata_store
+from utils.image_data_url import decode_image_data_url
 
 logger = logging.getLogger(__name__)
-
-# Magic-byte prefix → file extension of the accepted screenshot formats.
-_IMAGE_SIGNATURES: dict[bytes, str] = {
-    b"\x89PNG\r\n\x1a\n": "png",
-    b"\xff\xd8\xff": "jpg",
-}
 
 # Context keys lifted into their own columns (easier to filter / read in SQL).
 _CONTEXT_COLUMNS = ("page_url", "model_id", "user_agent", "app_version")
@@ -59,20 +52,7 @@ def _decode_screenshot(data_url: str) -> tuple[bytes, str]:
 
     Raises ``ValueError`` for malformed data, unsupported formats, or oversize images.
     """
-    _, _, encoded = data_url.partition(",")
-    if not encoded:
-        raise ValueError("Screenshot must be a base64 data URL")
-    # Base64 inflates by 4/3 — reject obviously oversize payloads before decoding.
-    if len(encoded) * 3 // 4 > BUG_REPORT_MAX_SCREENSHOT_BYTES:
-        raise ValueError("Screenshot is too large")
-    try:
-        raw = base64.b64decode(encoded, validate=True)
-    except (binascii.Error, ValueError) as exc:
-        raise ValueError("Screenshot is not valid base64") from exc
-    for signature, ext in _IMAGE_SIGNATURES.items():
-        if raw.startswith(signature):
-            return raw, ext
-    raise ValueError("Screenshot must be a PNG or JPEG image")
+    return decode_image_data_url(data_url, BUG_REPORT_MAX_SCREENSHOT_BYTES)
 
 
 class BugReportService:

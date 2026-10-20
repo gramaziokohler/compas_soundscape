@@ -108,6 +108,7 @@ import {
 } from '@/utils/constants';
 import { groupSoundsByPosition, collapseVariantsToOne } from '@/utils/positionKey';
 import { useServiceVersions } from '@/hooks/useServiceVersions';
+import { logSimulationLaunch, logSimulationResult } from '@/lib/study/simulationEvents';
 import { recordInflightJob, removeInflightJob } from '@/lib/job-tracker';
 import { captureGenerationSignature, getGenerationRevertPatch, getModifiedGenerationFields, isGenerationDirty } from '@/utils/generationSignature';
 
@@ -767,6 +768,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
 
           // ── Import IRs + build results text (same as before) ─────────────
           const irImportResult = await importChorasIRFiles(result.simulation_id, result.ir_files);
+          logSimulationResult(index, 'choras', result.simulation_id, irImportResult);
 
           if (irImportResult.importedCount > 0) {
             const resultsText = await buildChorasSimulationResultsText(result.simulation_id, irImportResult);
@@ -908,6 +910,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
 
           // ── Import IRs + build results text ──────────────────────────────
           const irImportResult = await importPyroomIRFiles(result.simulation_id, result.ir_files);
+          logSimulationResult(index, 'pyroomacoustics', result.simulation_id, irImportResult);
 
           if (irImportResult.importedCount > 0) {
             const resultsText = await buildSimulationResultsText(result.simulation_id);
@@ -970,6 +973,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     const config = simulationConfigs[index];
     if (!config) return;
 
+    if (config.type === 'choras' || config.type === 'pyroomacoustics') logSimulationLaunch(index, config);
     if (config.type === 'choras') {
       await runChorasSimulation(index);
     } else if (config.type === 'pyroomacoustics') {

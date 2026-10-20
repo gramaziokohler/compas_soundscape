@@ -43,6 +43,7 @@ from config.constants import (
     JOB_MAX_ATTEMPTS,
     GPU_QUEUE_PER_SESSION_MAX,
 )
+from services.study_server_events import log_job_enqueued
 
 
 class JobNotFoundError(Exception):
@@ -155,6 +156,8 @@ class AsyncJobStore:
         if job_type in GPU_LIKE_JOB_TYPES and session_id:
             pipe.sadd(pending_gpu_key(session_id), job_id)
         await pipe.execute()
+        # Research-study log (no-op unless enabled; total — never raises).
+        log_job_enqueued(job_id, job_type, session_id, payload)
         return job_id
 
     async def get(self, job_id: str) -> JobView:
@@ -359,6 +362,7 @@ class AsyncJobStore:
             "cancel_requested": "0",
         }
         await self.redis.hset(job_key(job_id), mapping=mapping)
+        log_job_enqueued(job_id, job_type, session_id)
         return job_id
 
     async def set_progress(self, job_id: str, value: int, text: str, partial: Optional[Any] = None) -> None:

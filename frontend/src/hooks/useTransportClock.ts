@@ -3,6 +3,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import type { TimelinePlaybackState } from '@/types/audio';
 import type { PlaybackSchedulerService } from '@/lib/audio/playback-scheduler-service';
+import { noteStudySeek } from '@/lib/study/listeningTracker';
 
 interface UseTransportClockProps {
   /** Ref to the current PlaybackSchedulerService — may be null before the viewer/audio init completes. */
@@ -63,7 +64,9 @@ export function useTransportClock({ scheduler }: UseTransportClockProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const seekTo = useCallback((ms: number) => {
-    scheduler.current?.seek(ms);
+    const s = scheduler.current;
+    noteStudySeek(s ? Math.round(s.getPositionMs()) : null, ms);
+    s?.seek(ms);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

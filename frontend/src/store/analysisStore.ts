@@ -44,6 +44,7 @@ import {
 } from '@/utils/constants';
 import { loadAudioFileWithBuffer } from '@/lib/audio/utils/audio-info';
 import { apiService } from '@/services/api';
+import { logStudyEvent } from '@/lib/study/studyLogger';
 import { startPolling } from '@/lib/poll-until-done';
 import { createLiveIndexRegistry, type LiveIndexRef } from '@/utils/liveIndexRegistry';
 import { recordInflightJob, removeInflightJob } from '@/lib/job-tracker';
@@ -322,6 +323,8 @@ async function pollLlmJob(
     throw abortError();
   }
   recordInflightJob(job_id, 'llm', { configIndex: ref.current, kind });
+  // Research study: every LLM agent request / result passes through here.
+  logStudyEvent('ai.llm.request', { kind, path, job_id, body: body as Record<string, unknown> });
   // A momentary status miss (getJobStatus resolves with the
   // "Job not found or expired" sentinel on ANY fetch error) must not abort the
   // poll — the in-process job is still running server-side. Tolerate a run of
@@ -357,7 +360,11 @@ async function pollLlmJob(
     const result = await controller.done;
     // The card was removed while the job ran — its result has nowhere to go.
     if (ref.current === null) throw abortError();
+    logStudyEvent('ai.llm.result', { kind, job_id, result });
     return result;
+  } catch (err) {
+    logStudyEvent('ai.llm.failed', { kind, job_id, error: err instanceof Error ? err.message : String(err) });
+    throw err;
   } finally {
     _cardJobs.delete(job);
     removeInflightJob(job_id);
@@ -1352,6 +1359,13 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
               };
               if (useAnalysis) requestBody.analysis_id = analysisId;
 
+              logStudyEvent('ai.prompts.request', {
+                config_index: index,
+                context: textConfig.textInput,
+                num_sounds: config.numSounds,
+                llm_model: requestBody.llm_model,
+                analysis_id: useAnalysis ? analysisId : null,
+              });
               let soundIdx = 0;
               let appliedTitle = '';
               for await (const event of streamPrompts(
@@ -1396,6 +1410,11 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                   'analysis/soundStreamed',
                 );
               }
+              logStudyEvent('ai.prompts.result', {
+                config_index: index,
+                title: appliedTitle,
+                prompts: prompts.map((p) => ({ id: p.id, text: p.text, entities: p.entities ?? null, metadata: p.metadata ?? null })),
+              });
 
               // Placement precedence for prompts that are NOT linked to an analysis
               // group: drawn area → model bounding box → (left unset, camera-front fallback).
@@ -1487,7 +1506,9 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           );
         },
 
-        handleTogglePromptSelection: (configIndex, promptId) =>
+        handleTogglePromptSelection: (configIndex, promptId) => {
+          const prompt = get().analysisResults.find((r) => r.configIndex === configIndex)?.prompts.find((p) => p.id === promptId);
+          logStudyEvent('ai.suggestion.toggle', { config_index: configIndex, prompt_id: promptId, text: prompt?.text ?? null, selected: prompt ? !prompt.selected : null });
           set(
             (s) => ({
               analysisResults: s.analysisResults.map((result) => {
@@ -1502,9 +1523,11 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             }),
             false,
             'analysis/togglePrompt',
-          ),
+          );
+        },
 
-        handleSetAllPromptsSelected: (configIndex, selected) =>
+        handleSetAllPromptsSelected: (configIndex, selected) => {
+          logStudyEvent('ai.suggestion.toggle_all', { config_index: configIndex, selected });
           set(
             (s) => ({
               analysisResults: s.analysisResults.map((result) =>
@@ -1518,7 +1541,8 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             }),
             false,
             'analysis/setAllPrompts',
-          ),
+          );
+        },
 
         handleSendToSoundGeneration: (onSuccess, onlyConfigIndex) => {
           const { analysisResults, analysisConfigs } = get();
@@ -1784,6 +1808,15 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           });
 
           const combined = [...allSelected, ...foleyPrompts];
+          // Research study: which AI suggestions were kept vs dropped.
+          const rejected = analysisResults
+            .filter((r) => onlyConfigIndex === undefined || r.configIndex === onlyConfigIndex)
+            .flatMap((result) => result.prompts.filter((p) => !p.selected));
+          logStudyEvent('ai.suggestions.accept', {
+            only_config_index: onlyConfigIndex ?? null,
+            accepted: combined.map((p) => ({ id: p.id, text: p.text })),
+            rejected: rejected.map((p) => ({ id: p.id, text: p.text })),
+          });
           console.log('[handleSendToSoundGeneration] pushing', combined.length, 'prompts',
             onlyConfigIndex !== undefined ? `from config ${onlyConfigIndex}` : 'from all configs');
           if (onSuccess) onSuccess(combined);
@@ -2131,6 +2164,12 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           const { analysisConfigs, handleUpdateConfig } = get();
           const config = analysisConfigs[configIndex] as AnalyzeModelConfig;
           if (config?.type !== 'model-analysis' || !config.analysisResult) return;
+          logStudyEvent('ai.analysis.edit', {
+            config_index: configIndex,
+            object_index: objectIndex,
+            before: config.analysisResult.architecturalObjects[objectIndex] ?? null,
+            updates,
+          });
 
           // Optimistic update
           const updatedObjects = config.analysisResult.architecturalObjects.map((obj, i) =>
@@ -2270,6 +2309,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           const next = current.includes(key)
             ? current.filter((k) => k !== key)
             : [...current, key];
+          logStudyEvent('ai.suggestion.toggle', { config_index: index, foley_key: key, selected: !current.includes(key) });
           get().handleUpdateConfig(index, { selectedFoleyKeys: next } as Partial<ScenarioConfig>);
         },
 

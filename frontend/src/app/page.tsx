@@ -44,6 +44,7 @@ import {
   runWithoutUndo,
   clearUndoHistory,
   useModelVersionStore,
+  useStudyStore,
 } from "@/store";
 import { entityIdentities, rebaseGeometryReconciliation, type EntityReconciliation } from "@/store/geometryReconciliationUndo";
 import type { LinkReconciliationItem } from "@/store";
@@ -64,8 +65,10 @@ import { useGlobalShortcuts } from "@/hooks/useGlobalShortcuts";
 import { useJobRecovery, discoverRunningWorkspaceJobs } from "@/hooks/useJobRecovery";
 import { useModelVersionSession } from "@/hooks/useModelVersionSession";
 import { useListenerOrientationAutosave } from "@/hooks/useListenerOrientationAutosave";
+import { useStudyLogging } from "@/hooks/useStudyLogging";
+import { logStudyEvent } from "@/lib/study/studyLogger";
 import { apiService } from "@/services/api";
-import { API_BASE_URL, DEFAULT_BACKGROUND_DURATION_SECONDS, DEFAULT_DBFS, DEFAULT_NUM_SOUNDS, RECEIVER_CONFIG, SPIRAL_PLACEMENT, DEFAULT_LISTENER_ORIENTATION, TTS_DEFAULT_LANGUAGE, SANDBOX_MODEL_ID, WORKSPACE_MESSAGES } from "@/utils/constants";
+import { API_BASE_URL, DEFAULT_BACKGROUND_DURATION_SECONDS, DEFAULT_DBFS, DEFAULT_NUM_SOUNDS, RECEIVER_CONFIG, SPIRAL_PLACEMENT, DEFAULT_LISTENER_ORIENTATION, TTS_DEFAULT_LANGUAGE, SANDBOX_MODEL_ID, WORKSPACE_MESSAGES, STUDY_LOG } from "@/utils/constants";
 import { notifyPrivateWorkspaceModel } from "@/utils/workspaceNotifications";
 import { parseAuthoredSeconds } from "@/lib/audio/utils/timeline-utils";
 import { getCameraFrontSpiralPosition } from "@/lib/three/spiral-placement";
@@ -2086,6 +2089,13 @@ function HomeContent() {
 
     setIsUploadingGlobalModel(true);
     const { setGlobalModelUploadProgress } = useUIStore.getState();
+    // Study: baseline acoustic intent for a newly imported design.
+    if (STUDY_LOG.ASK_INTENT_ON_IMPORT) {
+      useStudyStore.getState().requestIntentPrompt({
+        kind: 'initial', fromVersionId: null, toVersionId: null, modelId: null, startedAt: Date.now(),
+      });
+    }
+    logStudyEvent('model.import.start', { file_name: file.name });
 
     try {
       // Upload directly to backend for Speckle conversion; ingestion polls stream
@@ -2114,6 +2124,8 @@ function HomeContent() {
       }
     } catch (error) {
       console.error('[page.tsx] Failed to upload model:', error);
+      logStudyEvent('model.import.failed', { file_name: file.name, error: error instanceof Error ? error.message : String(error) });
+      useStudyStore.getState().clearIntentPrompt(); // the typed draft stays in localStorage
       handleApiError(error, 'Failed to upload model');
       setGlobalModelFile(null);
     } finally {
@@ -2403,6 +2415,12 @@ function HomeContent() {
     const modelId = useUIStore.getState().globalSpeckleData?.model_id;
     const versionsStore = useModelVersionStore.getState();
     if (!modelId || versionsStore.isUploadingVersion) return;
+    const fromVersionId = useSpeckleEngineStore.getState().loadedModelVersionId;
+    // Study: ask what changed in this version while the shared loading overlay is up.
+    useStudyStore.getState().requestIntentPrompt({
+      kind: 'version', fromVersionId, toVersionId: null, modelId, startedAt: Date.now(),
+    });
+    logStudyEvent('model.version_upload.start', { model_id: modelId, from_version_id: fromVersionId, file_name: file.name });
     versionsStore.setUploadingVersion(true);
     const { setGlobalModelUploadProgress } = useUIStore.getState();
     try {
@@ -2410,9 +2428,13 @@ function HomeContent() {
       await useModelVersionStore.getState().fetchVersions();
       const latest = useModelVersionStore.getState().versions[0];
       if (latest) {
+        useStudyStore.getState().setIntentTargetVersion(latest.id);
+        logStudyEvent('model.version_upload.done', { model_id: modelId, from_version_id: fromVersionId, to_version_id: latest.id });
         useModelVersionStore.getState().switchToVersion(latest.id, useSpeckleEngineStore.getState().loadedModelVersionId);
       }
     } catch (error) {
+      logStudyEvent('model.version_upload.failed', { model_id: modelId, error: error instanceof Error ? error.message : String(error) });
+      useStudyStore.getState().clearIntentPrompt(); // the typed draft stays in localStorage
       handleApiError(error, 'Failed to upload the new model version');
     } finally {
       useModelVersionStore.getState().setUploadingVersion(false);
@@ -2737,6 +2759,23 @@ function HomeContent() {
   // Keep the autosave refs in sync with the latest builders/handlers
   saveSoundscapeRef.current = handleSaveSoundscape;
   computeSaveSignatureRef.current = computeSaveSignature;
+
+  // Research-study interaction logging — inert unless the backend enables it.
+  // Snapshots reuse exactly what autosave persists (credentials are dropped).
+  useStudyLogging({
+    orchestrator: audioOrchestrator.orchestrator,
+    buildSnapshot: () => {
+      const { modelId, modelName } = resolveSaveTarget();
+      const payload = buildSavePayload(modelId, modelName, {});
+      return {
+        data: payload.soundscape_data,
+        analysis_ids: payload.analysis_ids ?? null,
+        scenario_ids: payload.scenario_ids ?? null,
+      };
+    },
+    listener: { fpsActive: isFPSModeActive, activeListenerId: activeIRGroupId },
+    activeGridListenerId,
+  });
 
   // Save the Home sandbox as a named local "Homepage project" (home-<slug>).
   const handleSaveHomeProject = useCallback(async (name: string) => {

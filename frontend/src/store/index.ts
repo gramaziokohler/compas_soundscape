@@ -206,5 +206,10 @@ export {
   getUndoRedoSnapshot,
   setUndoRedoOverride,
   notifyUndoRedoChanged,
+  addUndoStepListener,
+  peekUndoableSnapshots,
 } from './undoRedoRegistry';
-export type { UndoRedoOverride, RegisterTemporalStoreOptions } from './undoRedoRegistry';
+export type { UndoRedoOverride, RegisterTemporalStoreOptions, UndoStepNotice } from './undoRedoRegistry';
+
+export { useStudyStore } from './studyStore';
+export type { StudyStoreState } from './studyStore';

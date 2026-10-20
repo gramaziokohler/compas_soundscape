@@ -170,6 +170,54 @@ function closeOpenStep(): void {
   _openStep = null;
 }
 
+// ─── Step observers (read-only; research-study edit log) ─────────────────────
+
+/**
+ * One recorded history change, as seen by an observer. `before` / `after` are
+ * the store's partialized snapshots (shared references — observers must not
+ * mutate them). `source`: 'user' = an interaction / gesture commit, 'system' =
+ * a background write (job results, streamed output), 'undo' / 'redo' = replay.
+ */
+export interface UndoStepNotice {
+  storeId: string;
+  source: 'user' | 'system' | 'undo' | 'redo';
+  before: unknown;
+  after: unknown;
+}
+
+const _stepListeners = new Set<(notice: UndoStepNotice) => void>();
+
+/**
+ * Observe every recorded step. Listeners run synchronously inside the
+ * registry, so they must only queue work (never diff / serialize here); a
+ * throwing listener is isolated and can never break undo / redo. With no
+ * listener registered this costs nothing. Returns an unsubscribe fn.
+ */
+export function addUndoStepListener(listener: (notice: UndoStepNotice) => void): () => void {
+  _stepListeners.add(listener);
+  return () => _stepListeners.delete(listener);
+}
+
+function emitStep(notice: UndoStepNotice): void {
+  for (const listener of _stepListeners) {
+    try {
+      listener(notice);
+    } catch {
+      // observer failures must never affect history
+    }
+  }
+}
+
+/**
+ * Current partialized snapshot of every registered store (read-only; shared
+ * references). Lets observers detect content changes by reference.
+ */
+export function peekUndoableSnapshots(): Array<[string, unknown]> {
+  const out: Array<[string, unknown]> = [];
+  for (const entry of _stores.values()) out.push([entry.id, entry.snapshot()]);
+  return out;
+}
+
 function logPush(id: string): void {
   if (!_openStep) {
     _openStep = [];
@@ -277,12 +325,18 @@ function handleBackgroundPush(entry: Entry, prevTop: unknown, pastStates: unknow
       _redoStack.length = 0;
       _notifyUndoRedo();
     }
+    if (_stepListeners.size > 0) {
+      emitStep({ storeId: entry.id, source: 'system', before: prevTop, after: entry.snapshot() });
+    }
     return;
   }
 
   logPush(entry.id);
   entry.backgroundTop = pastStates[pastStates.length - 1];
   entry.backgroundStep = _openStep;
+  if (_stepListeners.size > 0) {
+    emitStep({ storeId: entry.id, source: 'system', before: entry.backgroundTop, after: entry.snapshot() });
+  }
 }
 
 // ─── Snapshot stepping ──────────────────────────────────────────────────────
@@ -313,6 +367,7 @@ function stepStore(entry: Entry, direction: 'undo' | 'redo'): boolean {
     );
     _busy = false;
   }
+  if (_stepListeners.size > 0) emitStep({ storeId: entry.id, source: direction, before: current, after: target });
   return true;
 }
 
@@ -604,7 +659,8 @@ export function commitStore(storeId: string): void {
   const { snapshot, wasTracking } = entry.gesture;
   entry.gesture = null;
 
-  if (!entry.equal(snapshot, entry.snapshot())) {
+  const current = entry.snapshot();
+  if (!entry.equal(snapshot, current)) {
     _busy = true;
     try {
       entry.temporal.setState((ts) => {
@@ -618,6 +674,7 @@ export function commitStore(storeId: string): void {
     logPush(storeId);
     entry.backgroundTop = null;
     entry.backgroundStep = null;
+    if (_stepListeners.size > 0) emitStep({ storeId, source: 'user', before: snapshot, after: current });
   }
   if (wasTracking) entry.temporal.getState().resume();
 }

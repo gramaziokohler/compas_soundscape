@@ -70,6 +70,7 @@ import {
 } from '@/utils/generationSignature';
 import { generateSoundEffect } from '@/services/elevenlabs';
 import { apiService } from '@/services/api';
+import { logStudyEvent } from '@/lib/study/studyLogger';
 import { notifySectionError } from './errorsStore';
 import { useFileUploadStore } from './fileUploadStore';
 import { useAudioControlsStore } from './audioControlsStore';
@@ -1443,6 +1444,28 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             'alreadyGenerated:', [...alreadyGenerated],
             'soundscapeData exists:', !!soundscapeData);
 
+          // Research study: what the student asked the generators for.
+          logStudyEvent('gen.request', {
+            audio_model: audioModel,
+            force: !!options?.force,
+            apply_denoising: applyDenoising,
+            trim_silence: trimSilence,
+            global_negative_prompt: globalNegativePrompt,
+            cards: withIndices
+              .filter(({ originalIndex }) => !alreadyGenerated.has(originalIndex))
+              .map(({ config, originalIndex }) => ({
+                index: originalIndex,
+                config_id: config.config_id ?? null,
+                type: config.type ?? 'text-to-audio',
+                prompt: config.prompt,
+                duration: config.duration,
+                guidance_scale: config.guidance_scale ?? null,
+                steps: config.steps,
+                variants: config.seed_copies,
+                library_sound: config.selectedLibrarySound?.location ?? null,
+              })),
+          });
+
           const total =
             generationConfigs.length +
             uploadedConfigs.length +
@@ -2292,6 +2315,17 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               false,
               'soundscape/generateDone',
             );
+            logStudyEvent('gen.result', {
+              audio_model: audioModel,
+              sounds: newEvents.map((e: any) => ({
+                id: e.id,
+                prompt_index: e.prompt_index ?? null,
+                config_id: e.config_id ?? null,
+                prompt: e.prompt ?? null,
+                url: e.url ?? null,
+              })),
+              audio_refs: newEvents.map((e: any) => e.url).filter((u: unknown) => typeof u === 'string'),
+            });
             applyTrimRegions(allEvents);
             if (staleEventIds.length > 0) {
               useAudioControlsStore.getState().pruneSounds(staleEventIds);
@@ -2464,6 +2498,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           const state = get();
           const config = state.soundConfigs[targetIndex];
           if (!config) return;
+          logStudyEvent('gen.regenerate', { index: targetIndex, mode: 'new_variant', prompt: config.prompt, type: config.type ?? null });
 
           const {
             soundscapeData,
@@ -2698,6 +2733,13 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
         regenerateVariantInPlace: async (targetIndex, variantIdx, newPrompt) => {
           const state = get();
           const config = state.soundConfigs[targetIndex];
+          logStudyEvent('gen.regenerate', {
+            index: targetIndex,
+            mode: 'in_place',
+            variant_index: variantIdx,
+            prompt: config?.prompt ?? null,
+            new_prompt: newPrompt ?? null,
+          });
           if (!config) return;
           if (state.regeneratingVariantIndices.includes(targetIndex)) return;
 
@@ -3398,6 +3440,15 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             });
             if (!response.ok) throw new Error('Search failed');
             const data = await response.json();
+            logStudyEvent('library.search', {
+              index,
+              query: prompt,
+              results: (data.results || []).map((r: LibrarySearchResult) => ({
+                location: r.location,
+                description: r.description,
+                category: r.category,
+              })),
+            });
             set(
               (s) => ({
                 soundConfigs: s.soundConfigs.map((c, i) =>
@@ -3440,7 +3491,14 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           }
         },
 
-        handleLibrarySoundSelect: (index, sound) =>
+        handleLibrarySoundSelect: (index, sound) => {
+          logStudyEvent('library.select', {
+            index,
+            source: 'bbc',
+            query: get().soundConfigs[index]?.prompt ?? null,
+            location: sound.location,
+            description: sound.description,
+          });
           set(
             (s) => ({
               soundConfigs: s.soundConfigs.map((c, i) =>
@@ -3458,9 +3516,11 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             }),
             false,
             'soundscape/librarySelect',
-          ),
+          );
+        },
 
-        handleCatalogSoundSelect: (index, sound) =>
+        handleCatalogSoundSelect: (index, sound) => {
+          logStudyEvent('library.select', { index, source: 'catalog', sound: sound as unknown as Record<string, unknown> });
           set(
             (s) => ({
               soundConfigs: s.soundConfigs.map((c, i) =>
@@ -3471,7 +3531,8 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             }),
             false,
             'soundscape/catalogSelect',
-          ),
+          );
+        },
 
         clearOrchestrateTrigger: (configIndex, iterationIndex) => {
           const { soundConfigs } = get();
@@ -3606,6 +3667,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
         handleDeleteVariant: async (promptIndex, variantIdx) => {
           const { soundscapeData } = get();
           if (!soundscapeData) return;
+          logStudyEvent('gen.variant.delete', { prompt_index: promptIndex, variant_index: variantIdx });
 
           // Order variants by their variant index. Regular generated/TTS events
           // carry `copy_index`; injected SED-extracted segments instead store

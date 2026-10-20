@@ -2419,9 +2419,12 @@ For the duration estimation (in seconds with 0.1 precision):
             "You also have access to the architectural space information to estimate where "
             "each character is speaking from within the room. "
             "The scripts are read aloud VERBATIM by a text-to-speech model, so anything you write is "
-            "spoken. Only when relevant, add English inline vocal tags in angle brackets for human "
-            f"vocalizations, chosen exclusively from: {', '.join(TTS_INLINE_VOCAL_TAGS)}. "
-            "Never use square-bracket tags, stage directions or emotion words like (excitedly)."
+            "spoken. Only when relevant, add English inline vocal tags in angle brackets for brief, "
+            "momentary human vocal sounds or pauses, chosen exclusively from: "
+            f"{', '.join(TTS_INLINE_VOCAL_TAGS)}. Any other tag is read aloud. Never invent tags for "
+            "a sustained delivery style or emotion (e.g. <whispering>, <whispers>, <angry>, <softly>), "
+            "never place two tags next to each other (separate them with words or punctuation), and "
+            "never use square-bracket tags, stage directions or emotion words like (excitedly)."
         )
         # Gemini 3.8 TTS speaks the language/dialect of the TEXT (speech_config.language only
         # biases accent), so a dialect must be written as spoken, not in its standard form.

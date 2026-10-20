@@ -15,6 +15,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Optional, Tuple
 from starlette.concurrency import run_in_threadpool
 
 from services.job_store import job_store
+from services.study_server_events import log_io_job_outcome
 from config.constants import (
     LLM_MAX_CONCURRENT,
     TTS_MAX_CONCURRENT,
@@ -53,15 +54,20 @@ async def start_io_job(
     sem = _SEMAPHORES.get(job_type, LLM_SEMAPHORE)
 
     async def _run() -> None:
+        error: Optional[str] = None
         async with sem:
             try:
                 await coro_factory(job_id)
             except Exception as exc:
                 if await job_store.is_cancel_requested(job_id):
                     await job_store.mark_cancelled(job_id)
-                    return
-                traceback.print_exc()
-                await job_store.fail(job_id, llm_error_message(exc))
+                else:
+                    traceback.print_exc()
+                    error = llm_error_message(exc)
+                    await job_store.fail(job_id, error)
+        # Research-study log, after the pool slot is released (no-op unless
+        # enabled; total — never raises).
+        await log_io_job_outcome(job_id, job_type, session_id, coro_factory, error)
 
     asyncio.create_task(_run())
     return job_id
