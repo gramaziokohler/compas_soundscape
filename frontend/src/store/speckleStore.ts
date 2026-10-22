@@ -15,7 +15,7 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { temporal } from 'zundo';
-import { UNDO_HISTORY_LIMIT, undoEquality, type RegisterTemporalStoreOptions } from './undoRedoRegistry';
+import { UNDO_HISTORY_LIMIT, undoEquality, runWithoutUndo, type RegisterTemporalStoreOptions } from './undoRedoRegistry';
 import { FilteringExtension, CameraController, SelectionExtension, type Viewer } from '@speckle/viewer';
 import type React from 'react';
 import type { ArchitecturalObject } from '@/types/analysis';
@@ -89,6 +89,14 @@ let _appliedViewMode: ViewMode | null = null;
 // target IDs are stored here ("exclude from acoustic layer"). The acoustic
 // layer isolation excludes these IDs so the user's action takes effect.
 let _acousticExplorerHiddenIds = new Set<string>();
+/** Ids WE added to _acousticExplorerHiddenIds via syncAutoHiddenIds (unassigned
+  * objects of the expanded generated simulation card). Ids the user hid by hand
+  * are never in here, so the automatic restore never un-hides them. */
+let _autoHiddenIds = new Set<string>();
+/** Owner of _autoHiddenIds (simulation card id), or null when the rule is inactive. */
+let _autoHideKey: string | null = null;
+/** Unassigned ids passed to the last sync for _autoHideKey — the diff baseline. */
+let _autoTargetIds = new Set<string>();
 let _acousticLayerAllIds: string[] = [];
 /** All geometry leaf ids in the loaded model — needed to hide "non-acoustic"
   * objects in acoustic mode (hide-based isolation). */
@@ -125,6 +133,13 @@ export function getAcousticExplorerHiddenIds(): Set<string> {
 
 export function clearAcousticExplorerHiddenIds(): void {
   _acousticExplorerHiddenIds = new Set<string>();
+  resetAutoHidden();
+}
+
+function resetAutoHidden(): void {
+  _autoHiddenIds = new Set<string>();
+  _autoHideKey = null;
+  _autoTargetIds = new Set<string>();
 }
 
 function arraysEqualSorted(a: string[], b: string[]): boolean {
@@ -287,6 +302,13 @@ export interface SpeckleStoreState {
   addAcousticExplorerHiddenId: (id: string) => void;
   removeAcousticExplorerHiddenId: (id: string) => void;
   clearAcousticExplorerHiddenIds: () => void;
+  /**
+   * Automatic explorer hide of a simulation card's unassigned objects. `key` names
+   * the owning card (null = inactive). A key change restores the previous owner's
+   * auto-hides and hides `ids`; the same key only applies the diff, so an object
+   * the user re-showed with the eye stays visible until the key changes. Not undoable.
+   */
+  syncAutoHiddenIds: (key: string | null, ids: string[]) => void;
 
   // Scenario hover/zoom helpers
   highlightObjectForHover: (objectId: string | string[]) => void;
@@ -323,6 +345,8 @@ export const speckleUndo: RegisterTemporalStoreOptions<SpeckleStoreState, Speckl
     _userHiddenIds = new Set(snapshot.userHiddenIds);
     _userIsolatedIds = new Set(snapshot.userIsolatedIds);
     _acousticExplorerHiddenIds = new Set(snapshot.acousticExplorerHiddenIds);
+    // Keep only the auto-hides that survive in the restored set.
+    _autoHiddenIds = new Set([..._autoHiddenIds].filter((id) => _acousticExplorerHiddenIds.has(id)));
     useSpeckleStore.setState(snapshot);
     useSpeckleStore.getState().applyVisibility();
   },
@@ -349,6 +373,7 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
           _userHiddenIds = new Set();
           _userIsolatedIds = new Set();
           _acousticExplorerHiddenIds = new Set();
+          resetAutoHidden();
           _acousticLayerAllIds = [];
           _allModelGeometryIds = [];
           _selectionPreviewIds = null;
@@ -809,6 +834,7 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
         _userHiddenIds = new Set();
         _userIsolatedIds = new Set();
         _acousticExplorerHiddenIds = new Set();
+        resetAutoHidden();
         set(
           {
             userHiddenIds: [],
@@ -918,13 +944,47 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
       removeAcousticExplorerHiddenId: (id) => {
         if (!_acousticExplorerHiddenIds.has(id)) return;
         _acousticExplorerHiddenIds.delete(id);
+        // The user re-showed it — no longer ours to restore.
+        _autoHiddenIds.delete(id);
         set({ acousticExplorerHiddenIds: [..._acousticExplorerHiddenIds] }, false, 'speckle/removeAcousticExplorerHiddenId');
         get().applyVisibility();
       },
 
       clearAcousticExplorerHiddenIds: () => {
         _acousticExplorerHiddenIds = new Set<string>();
+        resetAutoHidden();
         set({ acousticExplorerHiddenIds: [] }, false, 'speckle/clearAcousticExplorerHiddenIds');
+        get().applyVisibility();
+      },
+
+      syncAutoHiddenIds: (key, ids) => {
+        const target = key === null ? new Set<string>() : new Set(ids);
+        const keyChanged = key !== _autoHideKey;
+        let changed = false;
+
+        // Restore auto-hides that no longer apply: all of them on an owner change,
+        // otherwise only ids that stopped being unassigned (e.g. got a material).
+        for (const id of [..._autoHiddenIds]) {
+          if (!keyChanged && target.has(id)) continue;
+          _autoHiddenIds.delete(id);
+          if (_acousticExplorerHiddenIds.delete(id)) changed = true;
+        }
+        // Hide new targets. Same key: only ids newly unassigned since the last
+        // sync, so an id the user re-showed with the eye stays visible.
+        const previousTargets = keyChanged ? new Set<string>() : _autoTargetIds;
+        for (const id of target) {
+          if (previousTargets.has(id) || _acousticExplorerHiddenIds.has(id)) continue;
+          _acousticExplorerHiddenIds.add(id);
+          _autoHiddenIds.add(id);
+          changed = true;
+        }
+        _autoHideKey = key;
+        _autoTargetIds = target;
+
+        if (!changed) return;
+        runWithoutUndo(() => {
+          set({ acousticExplorerHiddenIds: [..._acousticExplorerHiddenIds] }, false, 'speckle/syncAutoHiddenIds');
+        });
         get().applyVisibility();
       },
 

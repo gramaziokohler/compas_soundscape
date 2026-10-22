@@ -34,6 +34,8 @@ export interface BubbleProps {
   onTogglePower?: () => void;
   /** Power button tooltip / accessible name. */
   powerTitle?: string;
+  /** Right-click (also macOS Ctrl+click / two-finger tap) — the native menu is suppressed. */
+  onContextMenu?: (e: MouseEvent<HTMLButtonElement>) => void;
 }
 
 /**
@@ -72,6 +74,7 @@ export function Bubble({
   onClick,
   onTogglePower,
   powerTitle,
+  onContextMenu,
 }: BubbleProps) {
   const ringSize = size + SIMPLE_MODE.RING_STROKE * 4;
   const radius = ringSize / 2 - SIMPLE_MODE.RING_STROKE;
@@ -95,6 +98,7 @@ export function Bubble({
         className={classes}
         style={{ width: size, height: size }}
         onClick={onClick}
+        onContextMenu={onContextMenu ? (e) => { e.preventDefault(); e.stopPropagation(); onContextMenu(e); } : undefined}
         aria-label={label}
         aria-pressed={selected}
       >

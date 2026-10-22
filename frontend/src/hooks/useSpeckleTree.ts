@@ -25,6 +25,14 @@ export interface ExplorerNode {
     [key: string]: any;
   };
   children?: ExplorerNode[];
+  /**
+   * Geometry host (object with `displayValue`) this row belongs to. Set on rows of
+   * a host's display meshes (promoted by the single-child merge, or expanded
+   * children). The backend treats the host as one indivisible unit — display-mesh
+   * ids are only aliases of its whole face range — so such a row resolves its
+   * geometry ids from the host instead of the lone mesh.
+   */
+  geometryRoot?: ExplorerNode;
 }
 
 /**
@@ -171,6 +179,8 @@ function collectGeometryFromNode(node: any): { ids: string[]; faceCounts: Map<st
   const faceCounts = new Map<string, number>();
   const seenNodes = new WeakSet<object>();
   const seenRaw = new WeakSet<object>();
+  // A display-mesh row stands for its whole host unit (see ExplorerNode.geometryRoot).
+  const root = node?.geometryRoot ?? node;
 
   const addGeometry = (id: string, raw: any) => {
     if (!ids.has(id)) faceCounts.set(id, countMeshFaces(raw));
@@ -192,7 +202,7 @@ function collectGeometryFromNode(node: any): { ids: string[]; faceCounts: Map<st
     const children = n.model?.children || n.children;
     if (Array.isArray(children)) children.forEach(walkNode);
   };
-  walkNode(node);
+  walkNode(root);
 
   // Pass 2 — fallback for geometry that has no tree node of its own.
   const coveredBase = new Set<string>();
@@ -217,7 +227,7 @@ function collectGeometryFromNode(node: any): { ids: string[]; faceCounts: Map<st
       }
     }
   };
-  const rootRaw = node?.model?.raw || node?.raw;
+  const rootRaw = root?.model?.raw || root?.raw;
   if (rootRaw && !seenRaw.has(rootRaw)) collectRaw(rootRaw);
 
   return { ids: Array.from(ids), faceCounts };
@@ -328,14 +338,36 @@ export function containsAll(items: string[], container: string[]): boolean {
   return items.every(item => container.includes(item));
 }
 
+/** Raw ids listed in a host object's `displayValue` (resolved objects or detached references). */
+function displayValueIds(raw: any): Set<string> {
+  const ids = new Set<string>();
+  const dv = raw?.displayValue;
+  if (!dv || typeof dv !== 'object') return ids;
+  for (const m of Array.isArray(dv) ? dv : [dv]) {
+    const id = m?.id || m?.referencedId;
+    if (typeof id === 'string') ids.add(id);
+  }
+  return ids;
+}
+
+/** Whether `node` is one of `host`'s display meshes (not a separate hosted object). */
+function isDisplayMeshOf(host: ExplorerNode, node: ExplorerNode): boolean {
+  const rawId = (node.model?.raw || node.raw)?.id;
+  return typeof rawId === 'string' && displayValueIds(host.model?.raw || host.raw).has(rawId);
+}
+
 /**
  * Flatten model tree for virtual scrolling (filtered to show only Geometry objects)
+ *
+ * `geometryHost` is the parent object (with `displayValue`) of `rootNodes`, if any.
+ * Rows of its display meshes get `data.geometryRoot = geometryHost`.
  */
 export function flattenModelTree(
   rootNodes: ExplorerNode[],
   expandedNodes: Set<string>,
   selectedObjectIds: string[],
-  indent: number = 0
+  indent: number = 0,
+  geometryHost?: ExplorerNode,
 ): VirtualTreeItem[] {
   const items: VirtualTreeItem[] = [];
 
@@ -343,6 +375,13 @@ export function flattenModelTree(
   const filteredNodes = filterGeometryNodes(rootNodes);
 
   for (const node of filteredNodes) {
+    // A display mesh is not its own geometry unit — its row resolves to the host.
+    const rowData: ExplorerNode = geometryHost && isDisplayMeshOf(geometryHost, node)
+      ? { ...node, geometryRoot: geometryHost }
+      : node;
+    // This node hosts its children's display meshes when it carries a displayValue.
+    const childHost = (node.model?.raw || node.raw)?.displayValue != null ? node : undefined;
+
     // Get the unique viewer node id (duplicate nodes carry a `#N` suffix) so
     // duplicate rows get distinct keys/expansion state. Fall back to raw/id.
     const nodeId = getExplorerNodeId(node) || String(Math.random());
@@ -369,7 +408,8 @@ export function flattenModelTree(
         children as ExplorerNode[],
         expandedNodes,
         selectedObjectIds,
-        indent
+        indent,
+        childHost,
       );
       const parentName = node.raw?.name || node.model?.name;
       if (parentName) {
@@ -396,7 +436,7 @@ export function flattenModelTree(
       indent,
       hasChildren,
       isExpanded,
-      data: node,
+      data: rowData,
       isSelected,
       isDescendantOfSelected
     });
@@ -407,7 +447,8 @@ export function flattenModelTree(
         children as ExplorerNode[],
         expandedNodes,
         selectedObjectIds,
-        indent + 1
+        indent + 1,
+        childHost,
       ));
     }
   }

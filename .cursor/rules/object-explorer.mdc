@@ -18,6 +18,18 @@ useAcousticLayerIsolation   ← auto-detects the acoustic layer, publishes its g
 speckleStore.applyVisibility ← THE single place that applies hide/isolate to the viewer
 ```
 
+## Row Geometry Units
+
+A row's geometry ids come from `getGeometryLeafIdsFromNode(item.data)` (`useSpeckleTree.ts`).
+A **display mesh is never its own unit**. The backend maps display-mesh ids onto the host's
+whole face range (host = object with `displayValue`, e.g. `Objects.Data.DataObject`), and Speckle
+colors a host together with all its descendant render views. `flattenModelTree` therefore sets
+`data.geometryRoot = host` on display-mesh rows, both the single-child merge (the promoted
+Mesh is shown under the host's name) and expanded children. `collectGeometryFromNode` walks from
+`geometryRoot`. Without this, unassigning such a row cleared only the mesh id. The still-assigned
+host kept it colored and in the simulation. Hosted objects (e.g. a wall's `elements`) are not in
+`displayValue`, so they stay separate units.
+
 ## Unified Visibility Model (speckleStore)
 
 FilteringExtension keeps ONE global `hiddenObjects` array and ONE global
@@ -34,6 +46,18 @@ The app no longer fights this with two stateKeys + a rAF re-apply loop. Instead:
 - Idempotent — compares against `_appliedHiddenIds`/`_appliedIsolatedIds`.
 - `useSpeckleFiltering` is now just a thin wrapper that mutates intent and calls
   `applyVisibility()`; its `hiddenObjects`/`isolatedObjects` read the applied sets.
+- **Auto-hide of unassigned objects** (`useAutoHideUnassignedObjects`, driven by
+  `AcousticsSection`). It applies in Acoustics view to a generated, not-running, not-in-edit-mode
+  pyroomacoustics/Choras card: the **powered-on** card first, else the **expanded** card.
+  `syncAutoHiddenIds(cardId, ids)` writes the region's unassigned ids into
+  `acousticExplorerHiddenIds`, so each one is re-showable with its eye.
+  - Assignments come from the live material store when the card is the expanded one. Otherwise they
+    come from its persisted `speckleMaterialAssignments`, expanded via `utils/speckle-assignment-ids.ts`.
+  - Only ids it added are owned (`_autoHiddenIds`); manual hides are never restored by it.
+  - A key change (other card / inactive) restores the owned ids. The same key applies only a diff,
+    so a user re-show sticks until the card changes.
+  - It runs inside `runWithoutUndo` (not undoable).
+  - Edit mode comes from `Card`'s `onSettingsExpandedChange`.
 
 ## View Modes
 

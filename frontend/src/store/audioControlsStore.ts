@@ -369,6 +369,13 @@ export interface AudioControlsStoreState {
    * baked back into the timeline, then re-bakes the parametric schedule.
    */
   pruneSounds: (soundIds: string[]) => void;
+  /**
+   * Copy per-sound DAW state (timestamps / iteration durations / volumes / trims
+   * / loop flags / iterationLinks / iterationTrims / mute / orchestrator result)
+   * from each source id to its copy (`idMap`: source → copy). Used by a sound
+   * scene duplicate so the copy plays the same edited timeline.
+   */
+  copySoundState: (idMap: Record<string, string>) => void;
 }
 
 // ─── Partialize (exported for snapshot registry) ───────────────────────────
@@ -1803,6 +1810,54 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             false,
             'audio/restoreMuteSolo',
           ),
+
+        copySoundState: (idMap) => {
+          if (Object.keys(idMap).length === 0) return;
+          // Iteration keys are `${soundId}-${iterIdx}`; ids may contain '-'.
+          const copyKeyed = <T,>(obj: Record<string, T>): Record<string, T> => {
+            const next = { ...obj };
+            for (const [k, v] of Object.entries(obj)) {
+              const to = idMap[k];
+              if (to) next[to] = structuredClone(v);
+            }
+            return next;
+          };
+          const copyIterationKeyed = <T,>(obj: Record<string, T>): Record<string, T> => {
+            const next = { ...obj };
+            for (const [k, v] of Object.entries(obj)) {
+              const dash = k.lastIndexOf('-');
+              const to = dash > 0 ? idMap[k.substring(0, dash)] : undefined;
+              if (to) next[`${to}${k.substring(dash)}`] = structuredClone(v);
+            }
+            return next;
+          };
+          set(
+            (state) => {
+              const mutedSounds = new Set(state.mutedSounds);
+              Object.entries(idMap).forEach(([from, to]) => {
+                if (state.mutedSounds.has(from)) mutedSounds.add(to);
+              });
+              return {
+                soundTimestamps: copyKeyed(state.soundTimestamps),
+                soundIterationDurations: copyKeyed(state.soundIterationDurations),
+                soundVolumes: copyKeyed(state.soundVolumes),
+                soundTrims: copyKeyed(state.soundTrims),
+                soundLoopable: copyKeyed(state.soundLoopable),
+                iterationLinks: copyIterationKeyed(state.iterationLinks),
+                iterationTrims: copyIterationKeyed(state.iterationTrims),
+                mutedSounds,
+                orchestrateResult: state.orchestrateResult
+                  ? {
+                      timestamps: copyKeyed(state.orchestrateResult.timestamps),
+                      iterationLinks: copyIterationKeyed(state.orchestrateResult.iterationLinks),
+                    }
+                  : state.orchestrateResult,
+              };
+            },
+            false,
+            'audio/copySoundState',
+          );
+        },
 
         pruneSounds: (soundIds) => {
           if (soundIds.length === 0) return;

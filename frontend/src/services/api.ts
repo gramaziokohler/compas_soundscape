@@ -1157,6 +1157,23 @@ export const apiService = {
     }
   },
 
+  /**
+   * Clone a scenario file under a new id, for a duplicated sound scene — so
+   * re-running foley / orchestration on the copy never touches the original.
+   */
+  async duplicateScenario(scenarioId: string): Promise<{ scenario_id: string }> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/scenarios/${encodeURIComponent(scenarioId)}/duplicate`,
+      { method: 'POST' },
+      'Duplicate scenario'
+    );
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: 'Failed to duplicate scenario' }));
+      throw new Error(err.detail || 'Failed to duplicate scenario');
+    }
+    return response.json();
+  },
+
   // Impulse Response Management
 
   /**

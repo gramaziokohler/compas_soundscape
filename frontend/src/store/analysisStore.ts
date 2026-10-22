@@ -53,13 +53,14 @@ import { getAnalysisGroupColor } from '@/utils/utils';
 import { entityIdCandidates, filterVisibleAnalysisEntities } from '@/utils/analysisEntities';
 import { notifySectionError } from './errorsStore';
 import { useAreaDrawingStore } from './areaDrawingStore';
-import { useSoundscapeStore } from './soundscapeStore';
+import { promptMatchesCard, useSoundscapeStore } from './soundscapeStore';
 import { useAudioControlsStore } from './audioControlsStore';
 import { useSpeckleStore } from './speckleStore';
 import { useUIStore } from './uiStore';
 import { useFileUploadStore } from './fileUploadStore';
 import { remapLinkedCardIndices } from './cardIndexLinks';
 import { captureGenerationSignature } from '@/utils/generationSignature';
+import { collectUnsharedSceneAudioUrls } from '@/utils/sceneAudioUrls';
 import {
   UNDO_HISTORY_LIMIT,
   undoEquality,
@@ -685,8 +686,16 @@ export interface AnalysisStoreState {
   handleStopCardAnalysis: (index: number) => void;
 
   handleReorderConfigs: (from: number, to: number) => void;
-  /** Ctrl+drag duplicate — deep-clones the config at `from` (and its result) and inserts at `toInsertion`. */
-  duplicateConfigAt: (from: number, toInsertion: number) => void;
+  /**
+   * Ctrl+drag duplicate — deep-clones the config at `from` (and its result) and inserts at `toInsertion`.
+   * `keepResults` keeps a scenario's pipeline results (a full scene copy, see
+   * utils/duplicateSoundScene.ts); `overrides` is merged onto the clone last.
+   */
+  duplicateConfigAt: (
+    from: number,
+    toInsertion: number,
+    options?: { keepResults?: boolean; overrides?: Partial<AnalysisConfig> },
+  ) => void;
 
   handleTogglePromptSelection: (configIndex: number, promptId: string) => void;
   handleSetAllPromptsSelected: (configIndex: number, selected: boolean) => void;
@@ -945,12 +954,12 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           );
         },
 
-        duplicateConfigAt: (from, toInsertion) => {
+        duplicateConfigAt: (from, toInsertion, options) => {
           const { analysisConfigs, analysisResults, activeAnalysisTab } = get();
           const config = analysisConfigs[from];
           if (!config) return;
 
-          const cloned: AnalysisConfig = structuredClone(config);
+          let cloned: AnalysisConfig = structuredClone(config);
           cloned.display_name = cloned.display_name
             ? `${cloned.display_name} (copy)`
             : undefined;
@@ -958,7 +967,8 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           // A duplicated scenario card must NOT share its pipeline results/IDs with the
           // source — regenerating it must produce a fresh scenario, foley, speech and
           // orchestrate run (and a new sound section), not re-link to the source card's.
-          if (cloned.type === 'scenario') {
+          // A full scene copy keeps them (its caller supplies fresh ids via overrides).
+          if (cloned.type === 'scenario' && !options?.keepResults) {
             cloned.scenarioRawText = '';
             cloned.scenarioResult = null;
             cloned.scenarioId = null;
@@ -969,6 +979,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             cloned.orchestrateResult = null;
             cloned.orchestrateId = null;
           }
+          if (options?.overrides) cloned = { ...cloned, ...options.overrides } as AnalysisConfig;
 
           // Insert the clone — toInsertion is the gap index (0 = before first, n = after last).
           // If the clone lands at or after the source, shift by -1 since the clone is inserted
@@ -2198,18 +2209,11 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             .map((sc, i) => ({ sc, i }))
             .filter(({ sc }) => (sc as any).parentUsageOriginalIndex === index)
             .map(({ i }) => i);
-          const linkedSet = new Set(linkedSoundIndices);
-          const audioUrls = [
-            ...new Set(
-              [...(soundStore.soundscapeData ?? []), ...soundStore.generatedSounds]
-                .filter((s: any) => linkedSet.has(s.prompt_index))
-                .map((s: any) => s.url)
-                .filter(
-                  (u: any): u is string =>
-                    typeof u === 'string' && u.length > 0 && !u.startsWith('blob:'),
-                ),
-            ),
-          ];
+          // Files a duplicated scene still plays are kept.
+          const audioUrls = collectUnsharedSceneAudioUrls(
+            [...(soundStore.soundscapeData ?? []), ...soundStore.generatedSounds],
+            (pi) => linkedSoundIndices.some((i) => promptMatchesCard(pi, i)),
+          );
           if (linkedSoundIndices.length > 0) {
             soundStore.handleRemoveConfigs(linkedSoundIndices);
           }
@@ -2245,18 +2249,11 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             .map((sc, i) => ({ sc, i }))
             .filter(({ sc }) => (sc as any).parentUsageOriginalIndex === index)
             .map(({ i }) => i);
-          const linkedSet = new Set(linkedSoundIndices);
-          const audioUrls = [
-            ...new Set(
-              [...(soundStore.soundscapeData ?? []), ...soundStore.generatedSounds]
-                .filter((s: any) => linkedSet.has(s.prompt_index))
-                .map((s: any) => s.url)
-                .filter(
-                  (u: any): u is string =>
-                    typeof u === 'string' && u.length > 0 && !u.startsWith('blob:'),
-                ),
-            ),
-          ];
+          // Files a duplicated scene still plays are kept.
+          const audioUrls = collectUnsharedSceneAudioUrls(
+            [...(soundStore.soundscapeData ?? []), ...soundStore.generatedSounds],
+            (pi) => linkedSoundIndices.some((i) => promptMatchesCard(pi, i)),
+          );
           if (linkedSoundIndices.length > 0) {
             soundStore.handleRemoveConfigs(linkedSoundIndices);
           }

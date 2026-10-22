@@ -10,8 +10,7 @@
 import { useMemo } from 'react';
 import { useAcousticMaterialStore } from '@/store';
 import { MaterialSelect, type MaterialOption } from '@/components/ui/MaterialSelect';
-import { NumberField } from '@/components/ui/NumberField';
-import { OBJECT_EXPLORER_SCATTERING_FIELD_CH } from '@/components/scene/objectExplorerAcousticLayout';
+import { NumberField } from '@/components/ui/NumberField';import { OBJECT_EXPLORER_SCATTERING_FIELD_CH } from '@/components/scene/objectExplorerAcousticLayout';
 import {
   MATERIAL_SELECT,
   PYROOMACOUSTICS_DEFAULT_SCATTERING,

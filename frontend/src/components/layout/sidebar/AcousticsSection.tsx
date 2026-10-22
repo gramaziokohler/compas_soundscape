@@ -63,6 +63,7 @@ import { SpeckleSurfaceMaterialsSection } from '@/components/acoustics/SpeckleSu
 
 // Hooks
 import { useAcousticsMaterials } from '@/hooks/useAcousticsMaterials';
+import { useAutoHideUnassignedObjects } from '@/hooks/useAutoHideUnassignedObjects';
 // Utils
 import {
   importPyroomIRFiles,
@@ -191,6 +192,9 @@ interface AcousticsSectionProps {
 
 /** Column label row height above the first simulation bubble (px). */
 const BUBBLE_LABEL_HEIGHT = SIMPLE_MODE.HEADING_HEIGHT;
+
+/** Stable empty assignments (a fresh `{}` per render would re-run the auto-hide sync). */
+const NO_SAVED_ASSIGNMENTS: Record<string, string> = {};
 
 /**
  * Snapshot the active (non-hidden) grid listener configs exactly as they are at
@@ -1306,6 +1310,44 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   const [expandedCardIndex, setExpandedCardIndex] = useState<number | null>(null);
   // Opening a model / reloading the page starts with every simulation pop-up reduced.
   useOnFloatingPanelsCollapse(() => setExpandedCardIndex(null));
+
+  // Generated cards whose settings section is open ("edit mode"), by config id.
+  const [editingCardIds, setEditingCardIds] = useState<ReadonlySet<string>>(() => new Set());
+  const handleCardSettingsExpandedChange = useCallback((configId: string, open: boolean) => {
+    setEditingCardIds((prev) => {
+      if (prev.has(configId) === open) return prev;
+      const next = new Set(prev);
+      if (open) next.add(configId); else next.delete(configId);
+      return next;
+    });
+  }, []);
+
+  // Acoustics view: hide the unassigned objects of a generated (not pending /
+  // running), not-in-edit-mode simulation card via the Object Explorer eye state.
+  // The powered-on card takes priority over the expanded one.
+  const isAutoHideCandidate = (config: SimulationConfig | undefined): config is SimulationConfig =>
+    !!config
+    && (config.type === 'pyroomacoustics' || config.type === 'choras')
+    && config.state === 'completed'
+    && !(config as { isRunning?: boolean }).isRunning
+    && !editingCardIds.has(config.id);
+  const poweredConfig = activeSimulationIndex !== null ? simulationConfigs[activeSimulationIndex] : undefined;
+  const expandedConfig = expandedCardIndex !== null ? simulationConfigs[expandedCardIndex] : undefined;
+  const autoHideConfig = viewMode !== 'acoustic'
+    ? undefined
+    : isAutoHideCandidate(poweredConfig)
+      ? poweredConfig
+      : isAutoHideCandidate(expandedConfig) ? expandedConfig : undefined;
+  useAutoHideUnassignedObjects({
+    cardKey: autoHideConfig?.id ?? null,
+    // The expanded card owns the live material store (unsaved explorer edits);
+    // any other card is read from its persisted assignments.
+    savedAssignments: autoHideConfig && autoHideConfig !== expandedConfig
+      ? ((autoHideConfig as { speckleMaterialAssignments?: Record<string, string> }).speckleMaterialAssignments
+        ?? NO_SAVED_ASSIGNMENTS)
+      : null,
+    worldTree: localWorldTree,
+  });
   // Generated (completed) simulation awaiting a remove confirmation — same
   // inline danger dialog as removing a sound scene.
   const [confirmRemoveIndex, setConfirmRemoveIndex] = useState<number | null>(null);
@@ -2202,6 +2244,9 @@ export function AcousticsSection(props: AcousticsSectionProps) {
               if (patch) handleUpdateConfig(index, patch as Partial<SimulationConfig>);
             } : undefined}
             modifiedSettings={isSimulationType && isCompleted ? getModifiedGenerationFields(config) : undefined}
+            onSettingsExpandedChange={isSimulationType
+              ? (open) => handleCardSettingsExpandedChange(config.id, open)
+              : undefined}
             onReduce={floating?.onReduce}
             // Power: ready cards (completed / resonance) switch their auralization on/off
             onTogglePower={(isCompleted || config.type === 'resonance') && onSetActiveSimulation

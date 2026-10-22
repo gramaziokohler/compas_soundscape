@@ -1,8 +1,9 @@
 "use client";
 
-import type { CSSProperties, MouseEvent, ReactNode } from "react";
+import { useEffect, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import { Power } from "lucide-react";
 import { DeleteConfirmButton } from "@/components/ui/DeleteConfirmButton";
+import { useNameEditing } from "@/utils/useNameEditing";
 import { SIMPLE_MODE } from "@/utils/constants";
 
 export interface BubblePanelProps {
@@ -10,6 +11,12 @@ export interface BubblePanelProps {
   title?: ReactNode;
   /** Full title shown as a native tooltip when the header title is trimmed or overflows. */
   titleTooltip?: string;
+  /** Makes a string `title` editable inline (double-click it; Enter saves, Esc cancels). */
+  onRename?: (name: string) => void;
+  /** Start editing the title from outside (e.g. a context-menu "Rename"); also on mount. */
+  renameRequested?: boolean;
+  /** Called once a `renameRequested` edit has started — the owner clears its request. */
+  onRenameRequestHandled?: () => void;
   /** Muted line under the title. */
   subtitle?: ReactNode;
   /** Extra header buttons, rendered before reduce / remove. */
@@ -42,7 +49,8 @@ export interface BubblePanelProps {
  * Floating frosted panel that a Simple-mode bubble expands into. Compact header
  * (power, title, optional actions, reduce) over a scrollable, clamped-fluid
  * body, and a bottom-right trash button that confirms before removing
- * (optional `footerActions` sit right of it).
+ * (optional `footerActions` sit right of it). With `onRename`, a string title
+ * is edited inline (double-click it, or set `renameRequested`).
  *
  * Usage:
  * ```tsx
@@ -61,6 +69,9 @@ export interface BubblePanelProps {
 export function BubblePanel({
   title,
   titleTooltip,
+  onRename,
+  renameRequested = false,
+  onRenameRequestHandled,
   subtitle,
   actions,
   onReduce,
@@ -78,6 +89,16 @@ export function BubblePanel({
   children,
 }: BubblePanelProps) {
   const hasHeader = title !== undefined || actions || onReduce || onTogglePower;
+  const canRename = !!onRename && typeof title === "string";
+  const { isEditing, startEdit, inputProps } = useNameEditing({
+    initialValue: typeof title === "string" ? title : "",
+    onSave: (name) => onRename?.(name),
+  });
+  useEffect(() => {
+    if (!renameRequested) return;
+    if (canRename) startEdit();
+    onRenameRequestHandled?.();
+  }, [renameRequested, canRename, startEdit, onRenameRequestHandled]);
   // Tooltip only when something is hidden: a shortened title or a CSS ellipsis.
   const showFullTitle = (e: MouseEvent<HTMLDivElement>) => {
     const el = e.currentTarget;
@@ -107,7 +128,24 @@ export function BubblePanel({
             </button>
           )}
           <div className="min-w-0 flex-1">
-            {title !== undefined && <div className="bubble-panel__title truncate" onMouseEnter={showFullTitle}>{title}</div>}
+            {canRename && isEditing ? (
+              <input
+                {...inputProps}
+                className="bubble-panel__title bubble-panel__title-input"
+                aria-label="Scene name"
+                onFocus={(e) => e.currentTarget.select()}
+              />
+            ) : (
+              title !== undefined && (
+                <div
+                  className="bubble-panel__title truncate"
+                  onMouseEnter={showFullTitle}
+                  onDoubleClick={canRename ? startEdit : undefined}
+                >
+                  {title}
+                </div>
+              )
+            )}
             {subtitle && <div className="bubble-panel__subtitle truncate">{subtitle}</div>}
           </div>
           {actions}

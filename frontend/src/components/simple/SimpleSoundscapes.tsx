@@ -1,10 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react';
 import { Bubble, BubbleAddButton, BubbleHeading } from '@/components/ui/Bubble';
 import { WaveformRing } from '@/components/ui/BubbleIcons';
 import { BubblePanel } from '@/components/ui/BubblePanel';
 import { BubbleScrollColumn } from '@/components/ui/BubbleScrollColumn';
+import { ContextMenu } from '@/components/ui/ContextMenu';
 import { SoundGenerationSection } from '@/components/layout/sidebar/SoundGenerationSection';
 import { buildSoundGenerationSectionProps } from '@/components/layout/sidebar/soundSectionProps';
 import { ScenePromptComposer } from './ScenePromptComposer';
@@ -20,6 +21,7 @@ import { useBubbleColumnSpace } from '@/hooks/useBubbleColumnSpace';
 import { useSimpleSceneHighlights } from '@/hooks/useSimpleSceneHighlights';
 import { useBubbleFrontLayer } from '@/hooks/useBubbleFrontLayer';
 import { useSoundSphereReveal } from '@/hooks/useSoundSphereReveal';
+import { useSceneBubbleMenu, type SceneRenameProps } from '@/hooks/useSceneBubbleMenu';
 import {
   useAnalysisStore,
   useAudioControlsStore,
@@ -47,8 +49,8 @@ const REMOVE_SCENE_MESSAGE = 'Remove this scene and its sounds?';
 const KEEP_PANEL_ON = ['sound'] as const;
 
 /** Scenes that still need the pipeline open the workflow view instead of the sound cards. */
-function showsWorkflow(scene: SoundScene, progress: SceneProgress): boolean {
-  return scene.isScenario && progress.status !== 'done';
+function panelKind(scene: SoundScene, progress: SceneProgress): 'scene' | 'workflow' {
+  return scene.isScenario && progress.status !== 'done' ? 'workflow' : 'scene';
 }
 
 /** A scene can be powered (shown in 3D + DAW) once it has at least one generated sound. */
@@ -70,9 +72,11 @@ interface SceneBubbleProps {
   open: boolean;
   onClick: (scene: SoundScene, progress: SceneProgress) => void;
   onTogglePower: (scene: SoundScene) => void;
+  /** Right-click → Rename / Duplicate menu. */
+  onContextMenu: (scene: SoundScene, progress: SceneProgress, e: MouseEvent<HTMLElement>) => void;
 }
 
-function SceneBubble({ scene, selected, open, onClick, onTogglePower }: SceneBubbleProps) {
+function SceneBubble({ scene, selected, open, onClick, onTogglePower, onContextMenu }: SceneBubbleProps) {
   const progress = useSceneProgress(scene);
   const envelope = useSceneWaveform(scene);
   const status =
@@ -93,19 +97,21 @@ function SceneBubble({ scene, selected, open, onClick, onTogglePower }: SceneBub
       onClick={() => onClick(scene, progress)}
       onTogglePower={isPlayable(scene) ? () => onTogglePower(scene) : undefined}
       powerTitle={powerTitle(selected)}
+      onContextMenu={(e) => onContextMenu(scene, progress, e)}
     />
   );
 }
 
 // ─── Panels ──────────────────────────────────────────────────────────────────
 
-function WorkflowPanel({ scene, powered, onTogglePower, onReduce, onShowSounds, onRemove }: {
+function WorkflowPanel({ scene, powered, onTogglePower, onReduce, onShowSounds, onRemove, renameProps }: {
   scene: SoundScene;
   powered: boolean;
   onTogglePower: () => void;
   onReduce: () => void;
   onShowSounds: () => void;
   onRemove: () => void;
+  renameProps: SceneRenameProps;
 }) {
   const progress = useSceneProgress(scene);
   const switchUIMode = useSceneWorkflowStore((s) => s.switchUIMode);
@@ -114,6 +120,7 @@ function WorkflowPanel({ scene, powered, onTogglePower, onReduce, onShowSounds, 
       ariaLabel={`${scene.title} progress`}
       title={scene.title}
       titleTooltip={scene.fullTitle}
+      {...renameProps}
       subtitle={progress.statusText}
       onReduce={onReduce}
       onRemove={onRemove}
@@ -156,7 +163,8 @@ export interface SimpleSoundscapesProps {
  * bubble's hover flyout and the panel header — shows the scene (DAW + 3D); at
  * most one scene is powered, and none is a valid state (nothing shown). A
  * plain click on the 3D scene reduces the panel; a click on a sound sphere
- * keeps it and expands that sound's card.
+ * keeps it and expands that sound's card. A right-click on a bubble opens a
+ * Rename / Duplicate menu (rename edits the panel title inline).
  *
  * Usage:
  * ```tsx
@@ -284,7 +292,7 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
 
   // Expand / reduce only — powering a scene is the flyout / header button's job.
   const handleSceneClick = useCallback((scene: SoundScene, progress: SceneProgress) => {
-    const kind = showsWorkflow(scene, progress) ? 'workflow' : 'scene';
+    const kind = panelKind(scene, progress);
     setPanel((p) =>
       p && p.kind !== 'composer' && p.usageIndex === scene.usageIndex ? null : { kind, usageIndex: scene.usageIndex },
     );
@@ -305,6 +313,10 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
     useAnalysisStore.getState().handleRemoveConfig(usageIndex);
     closePanel();
   }, [closePanel]);
+
+  // Right-click menu (Rename / Duplicate).
+  const openPanel = useCallback((kind: 'scene' | 'workflow', usageIndex: number) => setPanel({ kind, usageIndex }), []);
+  const sceneMenu = useSceneBubbleMenu({ openPanel, panelKindFor: panelKind });
 
   const panelScene =
     panel && panel.kind !== 'composer' ? scenes.find((s) => s.usageIndex === panel.usageIndex) : undefined;
@@ -332,6 +344,7 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
             open={panel !== null && panel.kind !== 'composer' && panel.usageIndex === scene.usageIndex}
             onClick={handleSceneClick}
             onTogglePower={toggleScenePower}
+            onContextMenu={sceneMenu.openMenu}
           />
         ))}
         addButton={
@@ -348,6 +361,16 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
           />
         }
       />
+
+      {sceneMenu.menu && (
+        <ContextMenu
+          x={sceneMenu.menu.x}
+          y={sceneMenu.menu.y}
+          title={SIMPLE_MODE.SCENE_MENU_TITLE}
+          items={sceneMenu.items}
+          onClose={sceneMenu.closeMenu}
+        />
+      )}
 
       {/* Zero-size stacking context for the panels (fixed children keep their
           viewport coordinates). The capture handler also sees clicks from the
@@ -378,6 +401,7 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
           onReduce={closePanel}
           onShowSounds={() => setPanel({ kind: 'scene', usageIndex: panelScene.usageIndex })}
           onRemove={() => removeScene(panelScene.usageIndex)}
+          renameProps={sceneMenu.renamePropsFor(panelScene.usageIndex)}
         />
       )}
 
@@ -386,6 +410,7 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
           ariaLabel={`${panelScene.title} sounds`}
           title={panelScene.title}
           titleTooltip={panelScene.fullTitle}
+          {...sceneMenu.renamePropsFor(panelScene.usageIndex)}
           onReduce={closePanel}
           onRemove={() => removeScene(panelScene.usageIndex)}
           removeTitle="Remove scene"

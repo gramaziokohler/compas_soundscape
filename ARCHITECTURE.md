@@ -529,6 +529,21 @@ Simple-mode 3D highlights (hooks/useSimpleSceneHighlights, mounted by SimpleSoun
                      only while the Scenario step streams, or sceneHighlightStore.scenarioUsageIndex.
   Unmount (switch to Detailed) clears both; the expert card syncs take over.
 
+Sound Scene Duplicate (scene bubble right-click → Duplicate; utils/duplicateSoundScene.ts)
+  1. scenario scene → POST /api/scenarios/{id}/duplicate clones temp/analysis/scenarios_<id>.json
+     under a new scenarioId (foley / orchestrate load it by id; a shared id would let
+     re-orchestration group and overwrite BOTH scenes' sounds).
+  2. One undo step (begin/endUndoInteraction):
+     analysisStore.duplicateConfigAt(from, from + 2, { keepResults, overrides })
+       → usage card copy right after its source, results kept, new scenarioId / orchestrateId
+     soundscapeStore.duplicateSceneSounds(from, from + 1, ids)
+       → sound cards appended (new config_id, remapped scenarioSource / orchestrateMeta ids),
+         events cloned with the same audio files + positions (ids via remapEventIdToConfig)
+     audioControlsStore.copySoundState(idMap) → per-sound DAW edits, then re-sync + re-bake.
+  Shared audio files: handleRefreshScenario / handleRegenerateText delete only files no other
+  scene still plays (utils/sceneAudioUrls.collectUnsharedSceneAudioUrls).
+  Rename (same menu) edits the panel title inline → usage card display_name.
+
 SpeckleScene
   └── SceneBottomBar (full width, both modes): home · undo/redo · save
         | transport (play/stop/time/timeline) | volume · view · explorer · shortcuts · notifications · settings
@@ -667,8 +682,7 @@ SceneBottomBar → SceneRenderStyleButton (dropdown: Rendered · Ghosted · Arct
   `FilterMaterialStyler` (`speckle-filter-material-styler.ts`). It patches them in
   `onBeforePipelineRender` (translucent / wireframe, keeping their color) and restores them in
   `onAfterPipelineRender`. Selection/hover (stencil) and hidden/ghost materials are untouched,
-  so no enforcement loop is needed. Arctic keeps filter colors solid.
-- The Sounds view (dark mode) always runs on the stock pipeline, because it hooks the current pipeline's
+  so no enforcement loop is needed. Arctic keeps filter colors solid.- The Sounds view (dark mode) always runs on the stock pipeline, because it hooks the current pipeline's
   GEOMETRY passes when it enables. That is why the render-style hook must run first.
 - We set `renderer.pipeline` directly instead of using Speckle's `ViewModes` extension. That
   extension caches its mode and would ignore "back to DEFAULT" after one of our custom pipelines.

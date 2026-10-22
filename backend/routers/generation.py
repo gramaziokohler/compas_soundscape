@@ -25,6 +25,7 @@ from models.schemas import (
     ScenaristStreamRequest,
     FoleyArtistRequest,
     JobEnqueueResponse,
+    ScenarioDuplicateResponse,
 )
 from config.constants import (
     TEMP_ANALYSIS_DIR,
@@ -216,6 +217,24 @@ def _load_json_id_file(prefix: str, file_id: str, label: str) -> dict:
             return json.load(f)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load {label}: {e}")
+
+
+@router.post("/api/scenarios/{scenario_id}/duplicate", response_model=ScenarioDuplicateResponse)
+def duplicate_scenario(scenario_id: str):
+    """Clone a scenario file under a new id (a duplicated sound scene).
+
+    The copy gets its own id so re-running foley / orchestration on one scene
+    never groups with — or overwrites — the other scene's sounds.
+    """
+    scenario_data = _load_json_id_file("scenarios", scenario_id, "scenario_id")
+    new_id = str(uuid.uuid4())
+    out_file = Path(TEMP_ANALYSIS_DIR) / f"scenarios_{new_id}.json"
+    try:
+        with open(out_file, "w", encoding="utf-8") as f:
+            json.dump({**scenario_data, "scenario_id": new_id}, f, indent=2)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to duplicate scenario: {e}")
+    return ScenarioDuplicateResponse(scenario_id=new_id)
 
 
 def _total_bounds_from_entities(entities: list[dict]) -> dict | None:

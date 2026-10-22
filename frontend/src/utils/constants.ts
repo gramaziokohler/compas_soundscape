@@ -2464,6 +2464,15 @@ export const SIMPLE_MODE = {
   MAX_ANALYSIS_SCREENSHOTS: 3,
   IMAGE_ACCEPT: 'image/png,image/jpeg,image/webp',
   TITLE_MAX_CHARS: 32,
+  /** Scene bubble right-click menu. */
+  SCENE_MENU_TITLE: 'Sound scene',
+  SCENE_MENU_RENAME: 'Rename',
+  SCENE_MENU_DUPLICATE: 'Duplicate',
+  /** Appended to a duplicated scene's title. */
+  DUPLICATE_SCENE_SUFFIX: ' (copy)',
+  DUPLICATE_SCENE_ERROR: 'Could not duplicate the scene',
+  /** Title used when a scene has no name of its own. */
+  SCENE_FALLBACK_TITLE: 'Scene',
   /** Waveform-ring bubble icon (scene loudness over its timeline). */
   WAVEFORM_BINS: 40,
   WAVEFORM_INNER_RATIO: 0.36,   // inner radius as a fraction of the bubble radius

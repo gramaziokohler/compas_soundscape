@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cardEventId, configIdsByPromptIndex } from './config-id';
+import { cardEventId, configIdsByPromptIndex, remapEventIdToConfig } from './config-id';
 import { parseSoundCopyIndex, resolveVariantSoundId } from '@/lib/audio/utils/variant-sound-id';
 
 describe('cardEventId', () => {
@@ -29,5 +29,26 @@ describe('cardEventId', () => {
 describe('configIdsByPromptIndex', () => {
   it('skips cards without a config_id', () => {
     expect(configIdsByPromptIndex([[0, 'a'], [1, undefined], [5, 'b']])).toEqual({ 0: 'a', 5: 'b' });
+  });
+});
+
+describe('remapEventIdToConfig', () => {
+  it('swaps the card key and keeps prefix, copy and TTS voice', () => {
+    const gen = remapEventIdToConfig(cardEventId('generated', 'old', 2), 'old', 'new', 2);
+    const tts = remapEventIdToConfig(cardEventId('tts', 'old', 1, 'Kore'), 'old', 'new', 1);
+    expect(gen).toBe(cardEventId('generated', 'new', 2));
+    expect(tts).toBe(cardEventId('tts', 'new', 1, 'Kore'));
+    expect(parseSoundCopyIndex(gen)).toBe(2);
+    expect(parseSoundCopyIndex(tts)).toBe(1);
+  });
+
+  it('keeps sed- / duplicate- shapes', () => {
+    expect(remapEventIdToConfig('sed-old-3', 'old', 'new', 3)).toBe('sed-new-3');
+    expect(remapEventIdToConfig('duplicate-old-0', 'old', 'new', 0)).toBe('duplicate-new-0');
+  });
+
+  it('re-keys legacy card-index ids and falls back to a fresh generated id', () => {
+    expect(remapEventIdToConfig('generated_4_1', 'old', 'new', 1)).toBe('generated_new_1');
+    expect(remapEventIdToConfig('weird', 'old', 'new', 2)).toBe(cardEventId('generated', 'new', 2));
   });
 });

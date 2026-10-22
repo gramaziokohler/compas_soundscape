@@ -60,7 +60,7 @@ import { loadAudioFile, revokeAudioUrl } from '@/lib/audio/utils/audio-upload';
 import { parseTriggerExpression } from '@/lib/audio/utils/trigger-ref';
 import { calculateSoundPosition, type GeometryBounds } from '@/utils/positioning';
 import { createSoundEventFromUpload, generatedEventFieldsFromConfig } from '@/utils/event-factory';
-import { cardEventId, configIdsByPromptIndex, newConfigId } from '@/utils/config-id';
+import { cardEventId, configIdsByPromptIndex, newConfigId, remapEventIdToConfig } from '@/utils/config-id';
 import { parseSoundCopyIndex } from '@/lib/audio/utils/variant-sound-id';
 import { soundMatchesCard } from '@/utils/sound-card-match';
 import {
@@ -971,6 +971,18 @@ export interface SoundscapeStoreState {
   reorchestrateTimeline: (scenarioId?: string) => Promise<void>;
   /** Ctrl+drag duplicate — deep-clones the config at `from` (and soundscape data) and inserts at `toInsertion`. */
   duplicateConfigAt: (from: number, toInsertion: number) => void;
+  /**
+   * Full sound-scene copy: appends a clone of every sound card of usage card
+   * `sourceUsage` (and its generated events, same audio files and positions)
+   * parented to `targetUsage`. `ids` re-keys the copy's scenario / orchestrate
+   * ids so the two scenes never share an orchestration. Returns source → copy
+   * sound-event ids (for `audioControlsStore.copySoundState`).
+   */
+  duplicateSceneSounds: (
+    sourceUsage: number,
+    targetUsage: number,
+    ids: { scenarioId?: string; orchestrateId?: string },
+  ) => Record<string, string>;
   handleDetachSoundFromEntity: (index: number) => void;
   handleAttachSoundToEntity: (index: number, entity: any, append?: boolean) => void;
   updateSoundPosition: (soundId: string, position: [number, number, number]) => void;
@@ -3870,6 +3882,68 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             false,
             'soundscape/duplicateConfigAt',
           );
+        },
+
+        duplicateSceneSounds: (sourceUsage, targetUsage, ids) => {
+          const { soundConfigs, soundscapeData, generatedSounds } = get();
+          const events: any[] = soundscapeData ?? generatedSounds;
+          const idMap: Record<string, string> = {};
+          const newConfigs = [...soundConfigs];
+          const newEvents: any[] = [];
+          const variantCopies: Array<[from: number, to: number]> = [];
+
+          // Appended at the end: no existing card index (or prompt_index) shifts.
+          soundConfigs.forEach((config, from) => {
+            if (config.parentUsageOriginalIndex !== sourceUsage) return;
+            const to = newConfigs.length;
+            const configId = newConfigId();
+            newConfigs.push({
+              ...config,
+              config_id: configId,
+              parentUsageOriginalIndex: targetUsage,
+              entities: config.entities ? [...config.entities] : undefined,
+              ...(config.scenarioSource && ids.scenarioId
+                ? { scenarioSource: { ...config.scenarioSource, scenarioId: ids.scenarioId } }
+                : {}),
+              ...(config.orchestrateMeta && ids.orchestrateId
+                ? { orchestrateMeta: { ...config.orchestrateMeta, orchestrateId: ids.orchestrateId } }
+                : {}),
+            });
+            variantCopies.push([from, to]);
+
+            // Same audio files and positions — only identity and card index change.
+            events.forEach((event: any) => {
+              if (!promptMatchesCard(event.prompt_index, from)) return;
+              const pi: number = event.prompt_index;
+              const copyIdx = parseSoundCopyIndex(String(event.id ?? ''), event.copy_index);
+              const id = remapEventIdToConfig(String(event.id ?? ''), config.config_id, configId, copyIdx);
+              idMap[event.id] = id;
+              newEvents.push({
+                ...event,
+                id,
+                config_id: configId,
+                prompt_index: pi >= 10000 ? to * 10000 + (pi % 10000) : to,
+              });
+            });
+          });
+          if (variantCopies.length === 0) return idMap;
+
+          const nextEvents = [...events, ...newEvents];
+          set(
+            { soundConfigs: newConfigs, soundscapeData: nextEvents, generatedSounds: nextEvents },
+            false,
+            'soundscape/duplicateSceneSounds',
+          );
+
+          // The copy starts on the same variant as its source.
+          useAudioControlsStore.setState((s) => {
+            const selectedVariants = { ...s.selectedVariants };
+            variantCopies.forEach(([from, to]) => {
+              if (s.selectedVariants[from] !== undefined) selectedVariants[to] = s.selectedVariants[from];
+            });
+            return { selectedVariants };
+          });
+          return idMap;
         },
 
         handleDetachSoundFromEntity: (index) => {

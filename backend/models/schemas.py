@@ -1016,6 +1016,11 @@ class FoleyArtistRequest(BaseModel):
         return v
 
 
+class ScenarioDuplicateResponse(BaseModel):
+    """Id of the scenario file cloned for a duplicated sound scene."""
+    scenario_id: str
+
+
 # ============================================================================
 # Text-to-Speech (TTS) Schemas
 # ============================================================================

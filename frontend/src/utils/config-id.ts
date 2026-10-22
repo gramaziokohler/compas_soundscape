@@ -39,6 +39,32 @@ export function cardEventId(
 }
 
 /**
+ * Re-key a sound-event id onto a copied card's `config_id`, keeping the id's
+ * shape (prefix, copy segment, TTS voice suffix, `sed-` / `duplicate-` forms)
+ * so every id parser reads the copy exactly like the source.
+ *
+ * - The source card key appears in the id → swapped for the new key.
+ * - Legacy `{prefix}_{cardIndex}_{copy}…` ids → the card segment is replaced.
+ * - Anything else → a fresh `generated_{newKey}_{copy}` id.
+ */
+export function remapEventIdToConfig(
+  id: string,
+  oldConfigId: string | undefined,
+  newConfigId: string,
+  copyIndex: number,
+): string {
+  const newKey = newConfigId.replace(/_/g, '-');
+  const oldKey = oldConfigId?.replace(/_/g, '-');
+  if (oldKey && id.includes(oldKey)) return id.replace(oldKey, newKey);
+  const parts = id.split('_');
+  if (parts.length >= 3) {
+    parts[1] = newKey;
+    return parts.join('_');
+  }
+  return cardEventId('generated', newConfigId, copyIndex);
+}
+
+/**
  * `prompt_index → config_id` map stored on an in-flight job record, so job
  * recovery can re-key backend results with `cardEventId`. Entries without a
  * `config_id` are skipped.

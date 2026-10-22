@@ -141,6 +141,7 @@ export function Card<TConfig extends CardBaseConfig>({
   onRegenerate,
   onRevertSettings,
   modifiedSettings,
+  onSettingsExpandedChange,
   beforeSettingsSummary,
   description,
 }: CardProps<TConfig>) {
@@ -302,6 +303,17 @@ export function Card<TConfig extends CardBaseConfig>({
   // Settings section open state — owned here so Regenerate can fold it away.
   const [settingsExpanded, setSettingsExpanded] = useState(false);
   const regenerateBarRef = useRef<HTMLDivElement>(null);
+
+  // Report edit mode (settings open on a generated card) to the parent. Ref so an
+  // inline callback prop doesn't re-fire the effect on every render.
+  const onSettingsExpandedChangeRef = useRef(onSettingsExpandedChange);
+  useEffect(() => { onSettingsExpandedChangeRef.current = onSettingsExpandedChange; }, [onSettingsExpandedChange]);
+  // Only a visible settings section counts — a collapsed card is never editing.
+  const settingsOpen = isExpanded && hasResult && settingsExpanded;
+  useEffect(() => {
+    onSettingsExpandedChangeRef.current?.(settingsOpen);
+  }, [settingsOpen]);
+  useEffect(() => () => onSettingsExpandedChangeRef.current?.(false), []);
 
   // When an edit first surfaces Regenerate, bring it into view if the card
   // overflows its scroll container ('nearest' = no scroll when already visible).

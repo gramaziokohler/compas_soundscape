@@ -382,6 +382,11 @@ export interface CardProps<TConfig extends CardBaseConfig = CardBaseConfig, TRes
   onRevertSettings?: () => void;
   /** Settings field keys edited since generation — their labels get a "*" (see ModifiedMark). */
   modifiedSettings?: ReadonlySet<string>;
+  /**
+   * Fires when the settings section of a generated, expanded card opens/closes
+   * ("edit mode"), and with `false` on collapse and unmount.
+   */
+  onSettingsExpandedChange?: (expanded: boolean) => void;
   /** Optional content pinned above the settings summary (e.g. scenario parcours toggle). */
   beforeSettingsSummary?: ReactNode;
 }

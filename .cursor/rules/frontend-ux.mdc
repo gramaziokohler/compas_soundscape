@@ -66,6 +66,11 @@ Rules:
     clipping (`overflow`/`clip-path` would cut hover labels and the bubbles' backdrop blur).
 12. Mode switch → Expert expands the left sidebar on the selected scene's Sounds step; → Simple
     reopens the panel of the scene the expert sidebar showed (`pendingSimpleFocus`).
+13. **Scene bubble right-click** (`useSceneBubbleMenu`, native `contextmenu` — also macOS
+    Ctrl+click / two-finger tap): *Rename* opens the scene's panel with its title editable
+    (`BubblePanel` `onRename` / `renameRequested`; double-click the title works too); *Duplicate*
+    (hidden while the scene runs) is a full copy via `utils/duplicateSoundScene.ts` — never share
+    `scenarioId` / `orchestrateId` between scenes (see ARCHITECTURE.md § Sound Scene Duplicate).
 
 ## Scene Bottom Bar
 
