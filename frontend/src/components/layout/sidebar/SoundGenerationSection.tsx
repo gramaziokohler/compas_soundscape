@@ -449,27 +449,31 @@ export function SoundGenerationSection({
     if (revealCardRequest) expandCardFromScene(revealCardRequest.index);
   }, [revealCardRequest?.version]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-name cards when sounds are generated
-  const autoNamedIndices = useRef<Set<number>>(new Set());
+  // Auto-name cards when sounds are generated. Tracked by card identity
+  // (config_id) so reordering cards never re-triggers naming at a stale index.
+  const autoNamedCards = useRef<Set<string>>(new Set());
   useEffect(() => {
     soundConfigs.forEach((config, index) => {
+      const cardKey = config.config_id ?? `index:${index}`;
       if (
         isSoundGenerated(index) &&
-        !autoNamedIndices.current.has(index)
+        !autoNamedCards.current.has(cardKey)
         // !config.display_name // Only auto-name if user hasn't set a custom name
       ) {
         // Keep an inherited custom name on TTS cards instead of overwriting it
         // with the spoken text when the sound is generated.
         if (config.type === 'text-to-speech' && config.display_name) {
-          autoNamedIndices.current.add(index);
+          autoNamedCards.current.add(cardKey);
           return;
         }
         const generatedSound = getGeneratedSound(index);
         const sourceName = getSoundSourceName(generatedSound, config);
         if (sourceName) {
+          // Remounts re-run this effect — only write when the name actually differs.
+          if (sourceName !== config.display_name) {
             onUpdateConfig(index, 'display_name', sourceName);
-            autoNamedIndices.current.add(index);
-
+          }
+          autoNamedCards.current.add(cardKey);
         }
       }
     });
@@ -1486,7 +1490,14 @@ export function SoundGenerationSection({
       expandedIndex={expandedIndex}
       onExpandedIndexChange={handleExpandedIndexChange}
       color="primary"
-      onReorder={handleReorderSoundConfigs}
+      onReorder={(from, to) => {
+        // CardSection reports positions in the (possibly filtered) list; the
+        // store reorders by position in the full soundConfigs array.
+        const fromOriginal = filteredCardItems[from]?.originalIndex;
+        const toOriginal = filteredCardItems[to]?.originalIndex;
+        if (fromOriginal === undefined || toOriginal === undefined) return;
+        handleReorderSoundConfigs(fromOriginal, toOriginal);
+      }}
       onDuplicate={(from, toInsertion) => {
         const fromOriginal = filteredCardItems[from]?.originalIndex;
         if (fromOriginal === undefined) return;

@@ -640,6 +640,17 @@ export function restoreSoundscapeState(
     return configIdByIndex.get(cardIdx) || undefined;
   };
 
+  // config_id → card position. config_id is the authoritative link from a sound
+  // to its card; prompt_index (card position) could go stale in saves written
+  // before card reordering remapped it, so it is re-derived here.
+  const cardIndexByConfigId = new Map<string, number>();
+  soundConfigs.forEach((c, i) => {
+    if (c.config_id) cardIndexByConfigId.set(c.config_id, i);
+  });
+  const cardIndexForEvent = (configId: string | undefined): number | undefined =>
+    configId ? cardIndexByConfigId.get(configId) : undefined;
+  let healedEventCount = 0;
+
   // Rebuild SoundEvent[] with resolved audio URLs
   // Include events with empty audio_filename (uploaded/sample sounds) —
   // they keep the card in "generated" state even though audio needs re-upload
@@ -656,6 +667,23 @@ export function restoreSoundscapeState(
       soundTimestamps[saved.id] = restoredTs;
     }
 
+    // Heal a stale prompt_index from config_id (speech lines keep their
+    // `cardIdx * 10000 + line` offset). A healed event also takes its card's
+    // name: the card is the source of truth, and the stale event name belonged
+    // to another card (auto-naming would otherwise copy it onto this card).
+    const configId = saved.config_id || configIdForEventIndex(saved.prompt_index);
+    const cardIdx = cardIndexForEvent(configId);
+    let promptIndex = saved.prompt_index;
+    let displayName = saved.display_name;
+    if (cardIdx !== undefined && promptIndex != null) {
+      const healed = promptIndex >= 10000 ? cardIdx * 10000 + (promptIndex % 10000) : cardIdx;
+      if (healed !== promptIndex) {
+        promptIndex = healed;
+        displayName = soundConfigs[cardIdx].display_name || displayName;
+        healedEventCount++;
+      }
+    }
+
     // Build the event — only include entity_index when it's a real number.
     // In JS, null !== undefined and the sphere manager checks
     // `entity_index === undefined` to decide whether to render a sphere.
@@ -664,10 +692,10 @@ export function restoreSoundscapeState(
       url,
       position: saved.position as [number, number, number],
       geometry: { vertices: [], faces: [] },
-      display_name: saved.display_name,
+      display_name: displayName,
       prompt: saved.prompt,
-      prompt_index: saved.prompt_index,
-      config_id: saved.config_id || configIdForEventIndex(saved.prompt_index),
+      prompt_index: promptIndex,
+      config_id: configId,
       volume_dbfs: saved.volume_dbfs,
       current_volume_dbfs: saved.current_volume_dbfs ?? undefined,
       interval_seconds: saved.interval_seconds,
@@ -697,6 +725,9 @@ export function restoreSoundscapeState(
 
     return event;
   });
+  if (healedEventCount > 0) {
+    console.warn(`[soundscape-load] re-linked ${healedEventCount} sound event(s) with a stale prompt_index to their card`);
+  }
 
   // ── Re-attach source clips for generated upload cards ─────────────────────
   // Blob URLs (the uploaded clip shown in the config UI) do not survive a page
@@ -712,7 +743,7 @@ export function restoreSoundscapeState(
     const clipEvent = (loadedData.sound_events || [])
       .filter(
         (se) =>
-          se.prompt_index === savedConfig.index &&
+          (se.config_id || configIdForEventIndex(se.prompt_index)) === runtimeConfig.config_id &&
           !!se.audio_filename &&
           !String(se.id ?? '').startsWith('sed-'),
       )

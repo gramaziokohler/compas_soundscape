@@ -62,6 +62,7 @@ import { calculateSoundPosition, type GeometryBounds } from '@/utils/positioning
 import { createSoundEventFromUpload, generatedEventFieldsFromConfig } from '@/utils/event-factory';
 import { cardEventId, configIdsByPromptIndex, newConfigId } from '@/utils/config-id';
 import { parseSoundCopyIndex } from '@/lib/audio/utils/variant-sound-id';
+import { soundMatchesCard } from '@/utils/sound-card-match';
 import {
   captureGenerationSignature,
   captureVariantSignature,
@@ -336,6 +337,25 @@ function reindexSoundsMulti(sounds: any[], removedIndices: number[]): any[] {
       const shift = removedIndices.filter((r) => r < s.prompt_index).length;
       return shift > 0 ? { ...s, prompt_index: s.prompt_index - shift } : s;
     });
+}
+
+/**
+ * Pass every sound's `prompt_index` through a card IndexMapper so it keeps
+ * following its card (speech lines keep their `cardIndex * 10000 + line` offset).
+ */
+export function remapSoundPromptIndices<T extends { prompt_index?: number | null }>(
+  sounds: T[],
+  mapIndex: IndexMapper,
+): T[] {
+  return sounds.map((s) => {
+    const pi = s.prompt_index;
+    if (pi == null) return s;
+    const isSpeechLine = pi >= 10000;
+    const mapped = mapIndex(isSpeechLine ? Math.floor(pi / 10000) : pi);
+    if (mapped === null) return s;
+    const next = isSpeechLine ? mapped * 10000 + (pi % 10000) : mapped;
+    return next === pi ? s : { ...s, prompt_index: next };
+  });
 }
 
 /**
@@ -1148,20 +1168,37 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
         },
 
         handleReorderSoundConfigs: (from, to) => {
-          const { soundConfigs, activeSoundConfigTab } = get();
+          if (from === to) return;
+          const { soundConfigs, activeSoundConfigTab, soundscapeData, generatedSounds } = get();
           const newConfigs = [...soundConfigs];
           const [removed] = newConfigs.splice(from, 1);
           newConfigs.splice(to, 0, removed);
-          let newTab = activeSoundConfigTab;
-          if (newTab === from) newTab = to;
-          else if (from < to && newTab > from && newTab <= to) newTab--;
-          else if (from > to && newTab >= to && newTab < from) newTab++;
-          remapGenerationIndices(createMoveIndexMapper(from, to));
+          const mapIndex = createMoveIndexMapper(from, to);
+          const newTab = mapIndex(activeSoundConfigTab) ?? activeSoundConfigTab;
+          remapGenerationIndices(mapIndex);
+          // Sounds are addressed by card index (prompt_index) all over the app —
+          // they must move with their card, or renames/variants hit the wrong card.
+          const newSoundscape = soundscapeData ? remapSoundPromptIndices(soundscapeData, mapIndex) : null;
+          const newGenerated = remapSoundPromptIndices(generatedSounds, mapIndex);
           set(
-            { soundConfigs: newConfigs, activeSoundConfigTab: newTab },
+            {
+              soundConfigs: newConfigs,
+              activeSoundConfigTab: newTab,
+              soundscapeData: newSoundscape,
+              generatedSounds: newGenerated,
+            },
             false,
             'soundscape/reorderConfigs',
           );
+
+          const audioStore = useAudioControlsStore.getState();
+          useAudioControlsStore.setState(
+            { selectedVariants: remapIndexKeyedRecord(audioStore.selectedVariants, mapIndex) },
+            false,
+            'audio/remapSelectedVariants',
+          );
+          audioStore.syncSoundConfigs(newConfigs);
+          audioStore.syncGeneratedSounds(newGenerated);
         },
 
         handleUpdateConfig: (index, field, value) => {
@@ -1169,11 +1206,12 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           const updated = soundConfigs.map((c, i) =>
             i === index ? { ...c, [field]: value } : c,
           );
-          // Sync display_name changes into soundscapeData / generatedSounds
+          // Sync display_name changes into soundscapeData / generatedSounds.
+          // Match by card identity (config_id), never by a possibly stale prompt_index.
           if (field === 'display_name') {
             const syncDisplayName = (sounds: any[]) =>
               sounds.map((s) =>
-                s.prompt_index === index && value ? { ...s, display_name: value } : s,
+                value && soundMatchesCard(s, soundConfigs, index) ? { ...s, display_name: value } : s,
               );
             set(
               {
