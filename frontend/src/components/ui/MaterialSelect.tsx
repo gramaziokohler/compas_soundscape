@@ -35,6 +35,8 @@ interface MaterialSelectProps {
   materials: MaterialOption[];
   materialColors: Map<string, string>;
   placeholder?: string;
+  /** Label of the clear row in the menu. Defaults to `placeholder`. */
+  clearLabel?: string;
   isMixed?: boolean;
   showSearch?: boolean;
   /** Layout preset — sets max widths and right-alignment defaults. */
@@ -89,7 +91,8 @@ export function MaterialSelect({
   onChange,
   materials,
   materialColors,
-  placeholder = 'Select...',
+  placeholder = MATERIAL_SELECT.PLACEHOLDER_LABEL,
+  clearLabel,
   isMixed = false,
   showSearch = false,
   variant = 'explorer',
@@ -153,21 +156,22 @@ export function MaterialSelect({
       badgeColor: materialColors.get(mat.id) ?? 'var(--color-secondary-hover)',
     }));
 
+    const clearOption: CardSelectOption = {
+      value: '',
+      label: clearLabel ?? placeholder,
+      style: { color: 'var(--color-primary)' },
+    };
+
     if (showSearch && searchQuery.trim() && materialOpts.length === 0) {
       const empty: CardSelectOption[] = [{ value: '__empty__', label: 'No materials found', disabled: true }];
-      if (allowClear) {
-        return [{ value: '', label: placeholder, style: { color: 'var(--color-primary)' } }, ...empty];
-      }
+      if (allowClear) return [clearOption, ...empty];
       return empty;
     }
 
     if (!allowClear) return materialOpts;
 
-    return [
-      { value: '', label: placeholder, style: { color: 'var(--color-primary)' } },
-      ...materialOpts,
-    ];
-  }, [filteredMaterials, materialColors, placeholder, allowClear, showSearch, searchQuery]);
+    return [clearOption, ...materialOpts];
+  }, [filteredMaterials, materialColors, placeholder, clearLabel, allowClear, showSearch, searchQuery]);
 
   const triggerStyle = useMemo((): CSSProperties => {
     if (!value) {

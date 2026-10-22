@@ -672,6 +672,19 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
           }))
           .filter((g) => g.objectIds.length > 0);
 
+        // SelectionExtension caches each selected render view's material and writes
+        // it back on every selectObjects() (applySelection → removeSelection). If the
+        // selection survived into the re-assert below, a selected surface would get
+        // its PRE-change material restored (e.g. stays coloured after its material is
+        // unassigned). Drop the selection — and its cache — before recolouring so the
+        // re-assert caches the fresh material.
+        const reassertSelIds = _viewModeRef === 'acoustic' ? get().selectedObjectIds : [];
+        if (reassertSelIds.length > 0) {
+          try {
+            _viewerRef.getExtension(SelectionExtension)?.clearSelection();
+          } catch { /* non-critical */ }
+        }
+
         if (sanitised.length > 0) {
           try {
             filteringExt.setUserObjectColors(sanitised);
@@ -687,13 +700,10 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
         // Acoustic mode: applying user colours resets the batch material for every
         // render view, which drops the SelectionExtension highlight. Re-assert the
         // current selection so a clicked surface stays highlighted in the viewport.
-        if (_viewModeRef === 'acoustic') {
-          const selIds = get().selectedObjectIds;
-          if (selIds.length > 0) {
-            try {
-              _viewerRef.getExtension(SelectionExtension)?.selectObjects(selIds);
-            } catch { /* non-critical */ }
-          }
+        if (reassertSelIds.length > 0) {
+          try {
+            _viewerRef.getExtension(SelectionExtension)?.selectObjects(reassertSelIds);
+          } catch { /* non-critical */ }
         }
       },
 

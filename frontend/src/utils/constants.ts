@@ -263,6 +263,10 @@ export const MATERIAL_SELECT = {
   OBJECT_EXPLORER_MENU_MAX_PX: 220,
   RESONANCE_TRIGGER_MAX_PX: 128,
   RESONANCE_MENU_MAX_PX: 220,
+  /** Trigger placeholder and clear-row label when no material is assigned. */
+  PLACEHOLDER_LABEL: 'Select...',
+  /** Clear-row label when the target surfaces already carry a material. */
+  UNASSIGN_LABEL: 'Unassign (remove from simulation)',
 } as const;
 
 // Overlays (3D Scene UI)
@@ -2207,7 +2211,7 @@ export const PYROOMACOUSTICS_SIMULATION_MODE_DESCRIPTIONS = {
 } as const;
 
 // Default Simulation Settings
-export const PYROOMACOUSTICS_DEFAULT_MAX_ORDER = 3; // PYROOMACOUSTICS_RAY_TRACING_RECOMMENDED_MAX_ORDER (hybrid ISM/ray tracing)
+export const PYROOMACOUSTICS_DEFAULT_MAX_ORDER = 2; // Default image-source (ISM) reflection order
 export const PYROOMACOUSTICS_DEFAULT_RAY_TRACING = true; // Default ray tracing state
 export const PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION = true; // Default air absorption state
 export const PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE = PYROOMACOUSTICS_SIMULATION_MODE_MONO; // Default simulation mode

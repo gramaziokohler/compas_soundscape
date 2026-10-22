@@ -25,7 +25,7 @@ import type { SimulationAcousticSelection } from '@/types/acoustics';
 import type { GridListenerData } from '@/types/receiver';
 import type { ImpulseResponseMetadata, SourceReceiverIRMapping, ResonanceAudioConfig } from '@/types/audio';
 import type { AnalysisConfig, AnalysisResult, TextPromptResult } from '@/types/analysis';
-import { API_BASE_URL, AUDIO_PLAYBACK } from '@/utils/constants';
+import { API_BASE_URL, AUDIO_PLAYBACK, PYROOMACOUSTICS_DEFAULT_MAX_ORDER } from '@/utils/constants';
 import { newConfigId } from '@/utils/config-id';
 import { parseAuthoredSeconds } from '@/lib/audio/utils/timeline-utils';
 import { captureGenerationSignature } from '@/utils/generationSignature';
@@ -900,7 +900,7 @@ export function restoreSoundscapeState(
         simulation_mode: settings.simulation_mode,
         enable_grid: settings.enable_grid,
       } : {
-        max_order: 3,
+        max_order: PYROOMACOUSTICS_DEFAULT_MAX_ORDER,
         ray_tracing: false,
         air_absorption: true,
         n_rays: 10000,

@@ -13,6 +13,7 @@ import { MaterialSelect, type MaterialOption } from '@/components/ui/MaterialSel
 import { NumberField } from '@/components/ui/NumberField';
 import { OBJECT_EXPLORER_SCATTERING_FIELD_CH } from '@/components/scene/objectExplorerAcousticLayout';
 import {
+  MATERIAL_SELECT,
   PYROOMACOUSTICS_DEFAULT_SCATTERING,
   PYROOMACOUSTICS_SCATTERING_MIN,
   PYROOMACOUSTICS_SCATTERING_MAX,
@@ -102,7 +103,10 @@ export function TreeItemAcousticControls({
           onChange={(matId) => assignMaterialToObjects(targetIds, matId)}
           materials={sortedMaterials}
           materialColors={materialColors}
-          placeholder={isMixed ? '(mixed)' : 'Select...'}
+          placeholder={isMixed ? '(mixed)' : MATERIAL_SELECT.PLACEHOLDER_LABEL}
+          clearLabel={commonMaterialId || isMixed
+            ? MATERIAL_SELECT.UNASSIGN_LABEL
+            : MATERIAL_SELECT.PLACEHOLDER_LABEL}
           isMixed={isMixed}
           showSearch
           variant="explorer"
