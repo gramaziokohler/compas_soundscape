@@ -192,3 +192,20 @@ const storage: PersistStorage<State> = {
   `loadedRevision` lights the **Load latest** bar button (`selectHasNewerSave`); clicking it
   re-applies the owner's saved `soundscape.json` and calls `discoverRunningWorkspaceJobs()` for jobs
   started since the page loaded.
+
+## Send Scenes to Another Model (writes a model that is not open)
+
+Model pill menu → "Send scenes to another model…" (`SendScenesModal`, `useSendScenesToModel`) copies
+scenes of the open model into another model / Homepage project of the **same workspace**:
+`POST /api/speckle/soundscape/{source}/send-scenes` → `services/scene_transfer_service.py`
+(merge engine `services/scene_transfer_core.py`, shared with the admin CLI `scripts/transfer_scenes.py`).
+
+- The backend reads the source from **disk**, so the client first runs `flushSoundscapeSave()` (page.tsx):
+  wait for an in-flight save, save if the content differs from `lastSavedSignatureRef`.
+- Copies get fresh card/event ids, lose object links, and are reset to `[0,0,0]` (placed in front of the
+  camera) unless "Keep sound positions". Simulations, receivers, IRs stay in the source.
+- A target with no `soundscape.json` yet is seeded from the request (`model_name` = model id for Speckle,
+  matching the save convention) and linked to the workspace.
+- It bumps the **workspace** revision and takes `base_revision` (409 like `/save`). The sender then calls
+  `setLoadedRevision(result.revision)` — the open model did not change, so its next autosave must not 409
+  and "Load latest" must not light up. A tab that has the *target* open gets the normal 409 conflict.

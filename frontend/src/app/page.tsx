@@ -68,7 +68,7 @@ import { useListenerOrientationAutosave } from "@/hooks/useListenerOrientationAu
 import { useStudyLogging } from "@/hooks/useStudyLogging";
 import { logStudyEvent } from "@/lib/study/studyLogger";
 import { apiService } from "@/services/api";
-import { API_BASE_URL, DEFAULT_BACKGROUND_DURATION_SECONDS, DEFAULT_DBFS, DEFAULT_NUM_SOUNDS, RECEIVER_CONFIG, SPIRAL_PLACEMENT, DEFAULT_LISTENER_ORIENTATION, TTS_DEFAULT_LANGUAGE, SANDBOX_MODEL_ID, WORKSPACE_MESSAGES, STUDY_LOG } from "@/utils/constants";
+import { API_BASE_URL, DEFAULT_BACKGROUND_DURATION_SECONDS, DEFAULT_DBFS, DEFAULT_NUM_SOUNDS, RECEIVER_CONFIG, SPIRAL_PLACEMENT, DEFAULT_LISTENER_ORIENTATION, TTS_DEFAULT_LANGUAGE, SANDBOX_MODEL_ID, WORKSPACE_MESSAGES, STUDY_LOG, SCENE_TRANSFER } from "@/utils/constants";
 import { notifyPrivateWorkspaceModel } from "@/utils/workspaceNotifications";
 import { parseAuthoredSeconds } from "@/lib/audio/utils/timeline-utils";
 import { getCameraFrontSpiralPosition } from "@/lib/three/spiral-placement";
@@ -76,6 +76,7 @@ import type { LoadTab, SoundGenerationConfig, SoundEvent } from "@/types";
 import type { SoundscapeData } from "@/types/soundscape";
 import type { ListenerExpandRequest } from "@/types/receiver";
 import { parseGridPointId } from "@/utils/gridListenerPoints";
+import { captureHomeElements, mergeHomeElements, type HomeElementsSnapshot } from "@/utils/home-elements-import";
 import type { AcousticSimulationMode } from "@/types/audio";
 import type { AudioAnalysisConfig, AnalysisConfig } from "@/types/analysis";
 import { CARD_TYPE_LABELS } from "@/types/card";
@@ -84,6 +85,7 @@ import type { AudioRenderingMode } from "@/components/audio/AudioRenderingModeSe
 import { buildSoundscapeSavePayload, restoreSoundscapeState, getBlobUrlSounds, buildAnalysisStateSave, restoreAnalysisState } from "@/utils/soundscape-serializer";
 import { getStoredJobs, recordInflightJob } from "@/lib/job-tracker";
 import { ImportSandboxModal } from "@/components/scene/ImportSandboxModal";
+import { SendScenesModal } from "@/components/scene/SendScenesModal";
 import { homeStageHasWork } from "@/hooks/useHomeStageHasWork";
 import { HomeProjectModal } from "@/components/scene/HomeProjectModal";
 import { WorkspaceJoinDialog } from "@/components/ui/WorkspaceJoinDialog";
@@ -1068,6 +1070,8 @@ function HomeContent() {
   // Homepage project save/reload modal.
   const [showHomeProjectModal, setShowHomeProjectModal] = useState(false);
   const [isSavingHomeProject, setIsSavingHomeProject] = useState(false);
+  // Model pill "Send scenes to another model…" dialog.
+  const [showSendScenesModal, setShowSendScenesModal] = useState(false);
 
   // Sync model bounding box → Resonance Audio room bounds
   useEffect(() => {
@@ -1947,13 +1951,6 @@ function HomeContent() {
     display_name?: string;
   };
 
-  interface HomeElementsSnapshot {
-    configs: SoundGenerationConfig[];
-    events: SoundEvent[];
-    receivers: ReturnType<typeof useReceiversStore.getState>['receivers'];
-    gridListeners: ReturnType<typeof useGridListenersStore.getState>['gridListeners'];
-  }
-
   // Pending model switch awaiting the user's import / start-fresh choice.
   const [pendingModelSwitch, setPendingModelSwitch] = useState<{
     speckleData: SpeckleModelSelectPayload;
@@ -1961,17 +1958,6 @@ function HomeContent() {
     isUpload: boolean;
   } | null>(null);
   const [isApplyingModelSwitch, setIsApplyingModelSwitch] = useState(false);
-
-  /** Snapshot the importable Home elements. */
-  const captureHomeElements = (): HomeElementsSnapshot => {
-    const sc = useSoundscapeStore.getState();
-    return {
-      configs: [...sc.soundConfigs],
-      events: [...(sc.generatedSounds ?? [])] as SoundEvent[],
-      receivers: [...useReceiversStore.getState().receivers],
-      gridListeners: [...useGridListenersStore.getState().gridListeners],
-    };
-  };
 
   /** True when the Home stage holds any work (it starts empty on every load). */
   const homeHasImportableWork = homeStageHasWork;
@@ -2038,46 +2024,6 @@ function HomeContent() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoadingLatest]);
 
-  /**
-   * Append the captured Home elements onto whatever the model now holds.
-   * Sounds/configs are offset + re-keyed so they never collide with the model's
-   * saved entries. Simulations/analysis are intentionally not imported.
-   */
-  const mergeHomeElements = (home: HomeElementsSnapshot) => {
-    const sc = useSoundscapeStore.getState();
-    const offset = sc.soundConfigs.length;
-    const baseEvents = (sc.soundscapeData ?? []) as SoundEvent[];
-
-    const remappedConfigs = home.configs.map((c) => ({
-      ...c,
-      // Home nesting (context/usage parents) does not exist in this model.
-      parentUsageOriginalIndex: undefined,
-    }));
-    const remappedEvents = home.events.map((e) => ({
-      ...e,
-      id: `imported_${e.id}`,
-      prompt_index: (e.prompt_index ?? 0) + offset,
-    }));
-    const mergedEvents = [...baseEvents, ...remappedEvents];
-    useSoundscapeStore.setState({
-      soundConfigs: [...sc.soundConfigs, ...remappedConfigs],
-      generatedSounds: mergedEvents,
-      soundscapeData: mergedEvents.length > 0 ? mergedEvents : null,
-    });
-
-    if (home.receivers.length > 0) {
-      const rc = useReceiversStore.getState();
-      rc.restoreReceivers([...rc.receivers, ...home.receivers], rc.selectedReceiverId);
-    }
-    if (home.gridListeners.length > 0) {
-      const gl = useGridListenersStore.getState();
-      gl.restoreGridListeners([...gl.gridListeners, ...home.gridListeners]);
-    }
-    // Show every imported sound (ungrouped) rather than filtering to the model's
-    // first usage chain, which would hide them.
-    useUIStore.getState().setActiveSoundParentIndex(null);
-  };
-
   // Handler: Upload model file from right sidebar (direct Speckle upload, bypasses useAnalysis)
   const handleRightSidebarModelUpload = useCallback(async (file: File) => {
     console.log('[page.tsx] Model file dropped in right sidebar:', file.name);
@@ -2135,19 +2081,11 @@ function HomeContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isUploadingGlobalModel, handleApiError]);
 
-  // Load an existing Speckle model directly (no upload needed)
-  const handleSpeckleModelSelect = useCallback(async (speckleData: SpeckleModelSelectPayload, isUpload = false) => {
-    console.log('[page.tsx] Speckle model selected:', speckleData.url);
-    // Home stage: if there is work worth keeping, ask the user before switching.
-    if (homeHasImportableWork()) {
-      setPendingModelSwitch({ speckleData, home: captureHomeElements(), isUpload });
-      return;
-    }
-    // Always start from a clean domain before opening a model. Without this, a
-    // model whose saved soundscape is missing (or has fewer entries) inherits
-    // the previous model's configs/events — fresh cards then render as "already
-    // generated" because they reuse a stale prompt_index.
-    resetDomainForFreshModel();
+  /**
+   * Make `speckleData` the active project: viewer target, save target and URL.
+   * Leaves the domain stores untouched — callers decide whether to reset them.
+   */
+  const switchToModelTarget = (speckleData: SpeckleModelSelectPayload) => {
     // Opening a model always starts with the floating panels reduced.
     collapseFloatingPanels();
     // A persisted Acoustic view would auto-open the Object Explorer to define the
@@ -2165,22 +2103,43 @@ function HomeContent() {
     if (speckleData.display_name) {
       setModelFileName(speckleData.display_name);
     }
-
     // Persist model_id in URL so a page refresh can restore this session
     router.replace(`/?model_id=${encodeURIComponent(speckleData.model_id)}`, { scroll: false });
+  };
 
-    // Home work already short-circuited above via `homeHasImportableWork()` (the
-    // import prompt), so this is normally false here.
-    const sandboxHasWork = homeHasImportableWork();
-
-    // Auto-load saved soundscape for this model unless the sandbox already has work
-    try {
-      if (sandboxHasWork) {
-        console.log('[page.tsx] Keeping in-memory sandbox work after Speckle model load');
-        lastSaveSourceRef.current = 'autosave';
-        void saveSoundscapeRef.current?.();
-        return;
+  // Load an existing Speckle model directly (no upload needed)
+  const handleSpeckleModelSelect = useCallback(async (speckleData: SpeckleModelSelectPayload, isUpload = false) => {
+    console.log('[page.tsx] Speckle model selected:', speckleData.url);
+    if (homeHasImportableWork()) {
+      // Attaching a model to a saved No-model project whose model has no soundscape
+      // yet: move the whole soundscape onto the model as-is (scenes, cards, events,
+      // DAW state, listeners). No reset, no merge — ids and parent links stay intact.
+      if (useUIStore.getState().homeProject) {
+        const { found } = await apiService.soundscapeExists(
+          speckleData.model_id,
+          useWorkspaceStore.getState().workspace?.id,
+        );
+        if (!found) {
+          console.log('[page.tsx] Attaching model to the No-model project in place:', speckleData.model_id);
+          switchToModelTarget(speckleData);
+          lastSaveSourceRef.current = 'autosave';
+          await saveSoundscapeRef.current?.();
+          return;
+        }
       }
+      // Home stage (or a model with its own soundscape): ask before switching.
+      setPendingModelSwitch({ speckleData, home: captureHomeElements(), isUpload });
+      return;
+    }
+    // Always start from a clean domain before opening a model. Without this, a
+    // model whose saved soundscape is missing (or has fewer entries) inherits
+    // the previous model's configs/events — fresh cards then render as "already
+    // generated" because they reuse a stale prompt_index.
+    resetDomainForFreshModel();
+    switchToModelTarget(speckleData);
+
+    // Auto-load the saved soundscape for this model
+    try {
       const loadResponse = await apiService.loadSoundscapeFromSpeckle(speckleData.model_id, useWorkspaceStore.getState().workspace?.id);
       markSoundscapeLoaded(loadResponse.revision);
       if (loadResponse.requires_invite) {
@@ -2464,7 +2423,9 @@ function HomeContent() {
         const home = pending.home;
         resetDomainForFreshModel();
         await handleSpeckleModelSelect(pending.speckleData, pending.isUpload);
-        mergeHomeElements(home);
+        mergeHomeElements(home, suppressOrchestrateBakeRef);
+        // Sync the mounted Sidebar to the imported scene.
+        setStepAdvanceTrigger((t) => t + 1);
         // The imported Home elements are part of opening the model.
         resetUndoAfterLoad();
         lastSaveSourceRef.current = 'autosave';
@@ -2519,17 +2480,26 @@ function HomeContent() {
     };
   }, []);
 
+  // Mirrored so the save builder reads the latest value without a render closure.
+  const resonanceAudioConfigRef = useRef(resonanceAudioConfig);
+  resonanceAudioConfigRef.current = resonanceAudioConfig;
+
   // Build the full save payload. Shared by the real save and by the change
-  // detector so the fingerprint covers exactly what gets persisted.
+  // detector so the fingerprint covers exactly what gets persisted. Reads LIVE
+  // store state (never render snapshots): saves run right after imperative store
+  // writes (model attach, Home import), before React has re-rendered.
   const buildSavePayload = useCallback(
     (modelId: string, modelName: string, uploadedFilenames: Record<string, string>) => {
       const cardFlowState = useCardFlowStore.getState();
       const liveAnalysis = useAnalysisStore.getState();
+      const liveSound = useSoundscapeStore.getState();
+      const liveReceivers = useReceiversStore.getState();
+      const liveSims = useAcousticsSimulationStore.getState();
       const analysisStateData = buildAnalysisStateSave(
         liveAnalysis.analysisConfigs,
         liveAnalysis.analysisResults,
         liveAnalysis.activeAnalysisTab,
-        soundGen.soundConfigs.map(c => ({ parentUsageOriginalIndex: (c as any).parentUsageOriginalIndex })),
+        liveSound.soundConfigs.map(c => ({ parentUsageOriginalIndex: (c as any).parentUsageOriginalIndex })),
         {
           contextAdvanced: [...cardFlowState.contextAdvanced],
           usageAdvanced: [...cardFlowState.usageAdvanced],
@@ -2541,24 +2511,24 @@ function HomeContent() {
       const payload = buildSoundscapeSavePayload(
         modelId,
         modelName,
-        soundGen.soundConfigs,
-        soundGen.soundscapeData ?? [],
+        liveSound.soundConfigs,
+        liveSound.soundscapeData ?? [],
         {
-          duration: soundGen.globalDuration,
-          steps: soundGen.globalSteps,
-          negativePrompt: soundGen.globalNegativePrompt,
-          audioModel: soundGen.audioModel,
-          ttsModel: soundGen.ttsModel,
-          orchestrateSoundsEnabled: soundGen.orchestrateSoundsEnabled,
+          duration: liveSound.globalDuration,
+          steps: liveSound.globalSteps,
+          negativePrompt: liveSound.globalNegativePrompt,
+          audioModel: liveSound.audioModel,
+          ttsModel: liveSound.ttsModel,
+          orchestrateSoundsEnabled: liveSound.orchestrateSoundsEnabled,
         },
         useAudioControlsStore.getState().soundVolumes,
         uploadedFilenames,
-        receivers.receivers,
-        gridListeners.gridListeners,
-        receivers.selectedReceiverId,
-        acousticsSimulation.simulationConfigs,
-        acousticsSimulation.activeSimulationIndex,
-        resonanceAudioConfig,
+        liveReceivers.receivers,
+        useGridListenersStore.getState().gridListeners,
+        liveReceivers.selectedReceiverId,
+        liveSims.simulationConfigs,
+        liveSims.activeSimulationIndex,
+        resonanceAudioConfigRef.current,
         useAudioControlsStore.getState().soundTimestamps,
         useAudioControlsStore.getState().iterationLinks,
         [...useAudioControlsStore.getState().mutedSounds],
@@ -2595,22 +2565,7 @@ function HomeContent() {
 
       return payload;
     },
-    [
-      soundGen.soundConfigs,
-      soundGen.soundscapeData,
-      soundGen.globalDuration,
-      soundGen.globalSteps,
-      soundGen.globalNegativePrompt,
-      soundGen.audioModel,
-      soundGen.ttsModel,
-      soundGen.orchestrateSoundsEnabled,
-      receivers.receivers,
-      receivers.selectedReceiverId,
-      gridListeners.gridListeners,
-      acousticsSimulation.simulationConfigs,
-      acousticsSimulation.activeSimulationIndex,
-      resonanceAudioConfig,
-    ],
+    [],
   );
 
   // Fingerprint of everything that gets persisted. Excludes volatile fields
@@ -2637,7 +2592,7 @@ function HomeContent() {
     if (selectIsReadOnlyWorkspace(useWorkspaceStore.getState())) return;
     const saveSource = lastSaveSourceRef.current;
     lastSaveSourceRef.current = 'manual';
-    if (isSavingSoundscape) {
+    if (useUIStore.getState().isSavingSoundscape) {
       // Don't drop a change that arrives mid-save: queue a single follow-up run.
       if (saveSource === 'autosave') pendingAutosaveRef.current = true;
       return;
@@ -2645,7 +2600,7 @@ function HomeContent() {
     setIsSavingSoundscape(true);
     try {
       // 1. Upload blob-URL audio files (library/uploaded sounds) to the server
-      const blobSounds = getBlobUrlSounds(soundGen.soundscapeData ?? []);
+      const blobSounds = getBlobUrlSounds(useSoundscapeStore.getState().soundscapeData ?? []);
       const uploadedFilenames: Record<string, string> = {};
 
       if (blobSounds.length > 0) {
@@ -2750,9 +2705,7 @@ function HomeContent() {
     }
   }, [
     resolveSaveTarget,
-    soundGen.soundscapeData,
     buildSavePayload,
-    isSavingSoundscape,
     handleApiError,
   ]);
 
@@ -2800,6 +2753,29 @@ function HomeContent() {
   const handleOpenHomeProject = useCallback((modelId: string) => {
     setShowHomeProjectModal(false);
     window.location.href = homeProjectUrl(modelId);
+  }, []);
+
+  // Make the saved soundscape.json match what is on screen (Send scenes reads the
+  // source from disk). Waits for an in-flight save, then saves only when the
+  // content differs from the last save. Resolves false when the save failed —
+  // a successful save re-baselines `lastSavedSignatureRef` to the live content.
+  const flushSoundscapeSave = useCallback(async (): Promise<boolean> => {
+    const isSaved = () => {
+      const signature = computeSaveSignatureRef.current?.() ?? null;
+      return signature !== null && signature === lastSavedSignatureRef.current;
+    };
+    for (let attempt = 0; attempt < SCENE_TRANSFER.SAVE_MAX_ATTEMPTS; attempt++) {
+      const waitStart = Date.now();
+      while (useUIStore.getState().isSavingSoundscape) {
+        if (Date.now() - waitStart > SCENE_TRANSFER.SAVE_WAIT_TIMEOUT_MS) return false;
+        await new Promise((resolve) => setTimeout(resolve, SCENE_TRANSFER.SAVE_POLL_MS));
+      }
+      if (isSaved()) return true;
+      lastSaveSourceRef.current = 'manual';
+      await saveSoundscapeRef.current?.();
+      if (isSaved()) return true;
+    }
+    return false;
   }, []);
 
   // Wrapped file change handler to clear SED results and load audio info
@@ -3891,6 +3867,17 @@ function HomeContent() {
         busy={isSavingHomeProject}
       />
 
+      {/* Model pill → copy sound scenes into another model of this workspace */}
+      <SendScenesModal
+        open={showSendScenesModal}
+        sourceModelId={globalSpeckleData?.model_id ?? homeProject?.modelId ?? null}
+        sourceIsHome={!globalSpeckleData && !!homeProject}
+        flushSave={flushSoundscapeSave}
+        onClose={() => setShowSendScenesModal(false)}
+        onOpenSpeckleModel={(speckleData) => { void handleOpenSpeckleModel(speckleData); }}
+        onOpenHomeProject={handleOpenHomeProject}
+      />
+
       {/* Joined a model invite while already having a saved soundscape for it */}
       <WorkspaceJoinDialog
         open={workspaceJoinChoice !== null}
@@ -3928,6 +3915,7 @@ function HomeContent() {
             hasNewModelVersion={modelVersion.hasUpdate}
             onSwitchToLatest={handleSwitchToLatestVersion}
             onUploadNewVersion={handleUploadNewVersion}
+            onSendScenes={() => setShowSendScenesModal(true)}
             onStartLinkingEntity={handleStartLinkingEntity}
             onRevealSoundInScene={handleRevealSoundInScene}
             // Audio system props

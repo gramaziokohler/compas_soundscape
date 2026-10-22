@@ -18,16 +18,17 @@ Not transferred (geometry-bound): simulations, IRs, receivers, grid listeners,
 acoustic region. Sounds moved to a different model lose their object links and
 are re-placed in front of the camera. The target is zipped to
 data/transfer_backups/ before anything is written.
+
+The in-app "Send scenes to another model" action (same workspace) shares the
+merge engine (services/scene_transfer_core.py) and the media helpers
+(services/scene_transfer_service.py) with this script.
 """
 
 import argparse
-import hashlib
 import json
-import os
 import shutil
 import sys
 import time
-import uuid
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,14 +36,14 @@ from typing import Optional
 
 # Allow `python scripts/transfer_scenes.py` from backend/ (imports config/, services/).
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from config.constants import BACKEND_DIR, REDIS_URL  # noqa: E402
+from config.constants import BACKEND_DIR, REDIS_URL, SANDBOX_MODEL_ID, SOUNDSCAPE_JSON_FILENAME  # noqa: E402
 from models.schemas import SoundscapeData  # noqa: E402
 from services.metadata_store import ROLE_OWNER, metadata_store, user_hash_for_email  # noqa: E402
-from services.paths import find_session_audio, user_audio_dir, user_data_dir, user_model_dir  # noqa: E402
+from services.paths import user_audio_dir, user_data_dir, user_model_dir  # noqa: E402
+from services.scene_transfer_service import plan_audio, write_json_atomic  # noqa: E402
 from utils.file_operations import HOME_PROJECT_PREFIX  # noqa: E402
-from scene_transfer_core import (  # noqa: E402
+from services.scene_transfer_core import (  # noqa: E402
     apply_audio_renames,
     extract_package,
     list_scenes,
@@ -51,15 +52,11 @@ from scene_transfer_core import (  # noqa: E402
     package_audio_files,
 )
 
-SOUNDSCAPE_JSON = "soundscape.json"
-# Older saves kept audio per workspace (data/soundscapes/<ws>/audio/), not per model.
-LEGACY_AUDIO_DIR = "audio"
+SOUNDSCAPE_JSON = SOUNDSCAPE_JSON_FILENAME
 BACKUP_DIR = BACKEND_DIR / "data" / "transfer_backups"
 PRESENCE_WINDOW_S = 60  # services/presence.py PRESENCE_TTL_S
 PRESENCE_KEY = "ws:{}:presence"  # services/presence.py _key()
 REDIS_TIMEOUT_S = 2
-RENAME_HEX_LEN = 6
-SANDBOX_MODEL_ID = "local"  # frontend utils/constants.ts SANDBOX_MODEL_ID
 
 
 class TransferError(Exception):
@@ -205,51 +202,6 @@ def backup_target(workspace_id: str, model_id: str) -> Path:
             if f.is_file():
                 zf.write(f, f.relative_to(model_dir))
     return zip_path
-
-
-# ── media ────────────────────────────────────────────────────────────────────
-
-
-def _sha256(path: Path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as fh:
-        for chunk in iter(lambda: fh.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def plan_audio(src_ws: str, src_model: str, dst_dir: Path, names: list[str]) -> tuple[dict, dict, set]:
-    """``(copies {dest_name: source_path}, renames {old: new}, missing)``."""
-    copies: dict[str, Path] = {}
-    renames: dict[str, str] = {}
-    missing: set[str] = set()
-    for name in names:
-        source = user_audio_dir(src_ws, src_model) / name
-        if not source.is_file():
-            source = user_data_dir(src_ws) / LEGACY_AUDIO_DIR / name
-        if not source.is_file():
-            source = find_session_audio(src_ws, name)
-        if source is None:
-            missing.add(name)
-            continue
-        dest_name = name
-        dest = dst_dir / dest_name
-        if dest.is_file() and _sha256(dest) == _sha256(source):
-            continue  # identical file already there — reuse it
-        stem, ext = os.path.splitext(name)
-        while (dst_dir / dest_name).exists() or dest_name in copies:
-            dest_name = f"{stem}_{uuid.uuid4().hex[:RENAME_HEX_LEN]}{ext}"
-        copies[dest_name] = source
-        if dest_name != name:
-            renames[name] = dest_name
-    return copies, renames, missing
-
-
-def write_json_atomic(path: Path, data: dict) -> None:
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(data, fh, indent=2, ensure_ascii=False)
-    os.replace(tmp, path)
 
 
 # ── main ─────────────────────────────────────────────────────────────────────

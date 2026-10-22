@@ -60,6 +60,8 @@ export interface SceneBottomBarProps {
   onToggleLoadModel: () => void;
   /** Upload a file as a new version of the open model (model pill menu). */
   onUploadNewVersion?: (file: File) => void;
+  /** Open the "Send scenes to another model" dialog (model pill menu). */
+  onSendScenes?: () => void;
 
   // System
   showAdvancedSettings: boolean;
@@ -96,7 +98,7 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
     hasTimeline, isPlaying, currentTimeMs, durationMs, showTimeline,
     onPlay, onPause, onStop, onToggleTimeline,
     audioOrchestrator, onResetZoom, onRefreshScene, showUpdateBadge,
-    showObjectExplorer, onToggleExplorer, showLoadModelPanel, onToggleLoadModel, onUploadNewVersion,
+    showObjectExplorer, onToggleExplorer, showLoadModelPanel, onToggleLoadModel, onUploadNewVersion, onSendScenes,
     showAdvancedSettings, onToggleSettings,
   } = props;
   const isExpert = useUIStore((s) => s.uiMode === 'expert');
@@ -354,6 +356,7 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
               <ModelPill
                 onOpenModelBrowser={() => { if (!showLoadModelPanel) onToggleLoadModel(); }}
                 onUploadNewVersion={(file) => onUploadNewVersion?.(file)}
+                onSendScenes={() => onSendScenes?.()}
               />
             )}
             <div className="scene-bottom-bar__sep" />

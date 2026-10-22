@@ -21,7 +21,7 @@ import {
   PYROOMACOUSTICS_SIMULATION_MODE_FOA,
   PYROOMACOUSTICS_SIMULATION_MODE_NAMES
 } from '@/utils/constants';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useFileUploadStore, useAcousticLayerStore } from '@/store';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { estimateRayCount } from '@/lib/acoustics/ray-count-estimate';
@@ -71,6 +71,20 @@ export function PyroomAcousticsSimulationSettings({
   const rayTooltip = rayEstimate
     ? `Recommended ≈ ${rayEstimate.recommended.toLocaleString()} (${Math.round(rayEstimate.volume).toLocaleString()} m³ ${acousticBounds ? 'acoustic layer' : 'model'} bbox)`
     : undefined;
+
+  // Slider max for Rays — editable by double-clicking the max label. Seeded from the saved
+  // n_rays so a value above the default max (from an earlier edit) isn't clipped on reload.
+  const [raysMax, setRaysMax] = useState(() =>
+    Math.max(PYROOMACOUSTICS_RAY_TRACING_N_RAYS_MAX, config.settings.n_rays)
+  );
+  const handleRaysMaxChange = (requested: number) => {
+    const nextMax = Math.max(
+      PYROOMACOUSTICS_RAY_TRACING_N_RAYS_MIN + RAYS_STEP,
+      Math.round(requested / RAYS_STEP) * RAYS_STEP
+    );
+    setRaysMax(nextMax);
+    if (config.settings.n_rays > nextMax) handleSettingChange('n_rays', nextMax);
+  };
 
   const isModified = useIsFieldModified();
   const isSettingModified = (field: keyof PyroomAcousticsSimulationConfig['settings']) =>
@@ -148,12 +162,13 @@ export function PyroomAcousticsSimulationSettings({
             modified={isSettingModified('n_rays')}
             value={config.settings.n_rays}
             min={PYROOMACOUSTICS_RAY_TRACING_N_RAYS_MIN}
-            max={PYROOMACOUSTICS_RAY_TRACING_N_RAYS_MAX}
+            max={raysMax}
+            onMaxChange={handleRaysMaxChange}
             step={RAYS_STEP}
             onChange={(value) => handleSettingChange('n_rays', value)}
             disabled={config.isRunning}
             defaultValue={PYROOMACOUSTICS_RAY_TRACING_N_RAYS}
-            showLabels={false}
+            showLabels
             markers={rayMarkers}
             sliderTitle={rayTooltip}
           />

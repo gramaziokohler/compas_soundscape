@@ -1,6 +1,7 @@
 # backend/routers/soundscape.py
 # Soundscape Data Persistence Endpoints (Local-First Save/Load)
 
+import asyncio
 import json
 import os
 import shutil
@@ -20,12 +21,15 @@ from services.paths import (
     user_sounds_dir,
 )
 from services.metadata_store import metadata_store, ROLE_OWNER, ROLE_VIEWER
+from services.scene_transfer_service import SceneTransferConflict, scene_transfer_service
 from models.schemas import (
     SoundscapeSaveRequest,
     SoundscapeSaveResponse,
     SoundscapeLoadResponse,
     SoundscapeExistsResponse,
     SoundscapeData,
+    SendScenesRequest,
+    SendScenesResponse,
 )
 from config.constants import (
     SOUNDSCAPE_DATA_DIR,
@@ -38,14 +42,13 @@ from config.constants import (
     TEMP_STATIC_DIR,
     STATIC_MOUNT_PATH,
     BACKEND_DIR,
+    SANDBOX_MODEL_ID,
+    SOUNDSCAPE_JSON_FILENAME,
 )
 
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/speckle/soundscape", tags=["soundscape"])
-
-SOUNDSCAPE_JSON_FILENAME = "soundscape.json"
-
 
 def _get_session_id(request: Request) -> str:
     sid = getattr(getattr(request, "state", None), "session_id", None)
@@ -746,6 +749,54 @@ async def upload_soundscape_audio(
         raise HTTPException(status_code=500, detail=f"Failed to save audio: {e}")
 
     return {"filename": filename, "sound_id": sound_id}
+
+
+@router.post("/{model_id}/send-scenes", response_model=SendScenesResponse)
+async def send_scenes_to_model(model_id: str, request: SendScenesRequest, req: Request):
+    """
+    Copy sound scenes from this model's saved soundscape into another model of
+    the same workspace (owner-only).
+
+    The client saves the source first; the scenes are read from its
+    soundscape.json. The target keeps its own scenes; the copies get fresh ids,
+    lose their object links and (unless ``keep_positions``) are re-placed in front
+    of the camera. Bumps the workspace revision like a save.
+    """
+    session_id = _get_session_id(req)
+    _require_role(req, session_id, (ROLE_OWNER,))
+    target_id = request.target_model_id.strip()
+    if not target_id or target_id == SANDBOX_MODEL_ID:
+        raise HTTPException(status_code=400, detail="Pick a saved model or Home project as the target.")
+    if target_id == model_id:
+        raise HTTPException(status_code=400, detail="The target must be a different model.")
+
+    target_meta = {
+        "project_id": request.target_project_id,
+        "version_id": request.target_version_id,
+        "model_name": request.target_model_name,
+    }
+    try:
+        result = await asyncio.to_thread(
+            scene_transfer_service.send_scenes,
+            session_id,
+            model_id,
+            target_id,
+            request.usage_indices,
+            request.keep_positions,
+            target_meta,
+            request.base_revision,
+        )
+    except SceneTransferConflict as e:
+        raise HTTPException(status_code=409, detail={"message": str(e), "revision": e.revision})
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Save this model before sending its scenes.")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to send scenes {model_id} -> {target_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to send scenes: {e}")
+
+    return SendScenesResponse(success=True, **result)
 
 
 @router.delete("/{model_id}")

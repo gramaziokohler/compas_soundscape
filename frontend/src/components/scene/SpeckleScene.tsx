@@ -211,6 +211,8 @@ interface SpeckleSceneProps {
 
   /** Upload a file as a new version of the open model (model pill menu). */
   onUploadNewVersion?: (file: File) => void;
+  /** Open the "Send scenes to another model" dialog (model pill menu). */
+  onSendScenes?: () => void;
 
   /** Start picking a Speckle object for a sound card (review panel "Re-link"). */
   onStartLinkingEntity?: (configIndex: number) => void;
@@ -283,6 +285,7 @@ export function SpeckleScene({
   hasNewModelVersion = false,
   onSwitchToLatest,
   onUploadNewVersion,
+  onSendScenes,
   onStartLinkingEntity,
   onRevealSoundInScene,
   className,
@@ -1260,6 +1263,7 @@ export function SpeckleScene({
         showLoadModelPanel={showLoadModelPanel}
         onToggleLoadModel={() => setShowLoadModelPanel((open) => !open)}
         onUploadNewVersion={onUploadNewVersion}
+        onSendScenes={onSendScenes}
         showAdvancedSettings={showAdvancedSettings}
         onToggleSettings={() => setShowAdvancedSettings(!showAdvancedSettings)}
       />

@@ -1,6 +1,7 @@
 """
-Unit tests for scripts/scene_transfer_core.py (admin scene transfer merge logic)
-and the audio planning of scripts/transfer_scenes.py. No DB / Redis needed.
+Unit tests for services/scene_transfer_core.py (scene transfer merge logic),
+services/scene_transfer_service.py (in-app send + audio planning) and the admin
+CLI scripts/transfer_scenes.py. No DB / Redis needed.
 
 Run: pytest backend/tests/test_transfer_scenes.py
 """
@@ -11,10 +12,10 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # backend/
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))  # transfer_scenes CLI
 
 from models.schemas import SoundscapeData  # noqa: E402
-from scene_transfer_core import (  # noqa: E402
+from services.scene_transfer_core import (  # noqa: E402
     PROMPT_INDEX_BASE,
     apply_audio_renames,
     extract_package,
@@ -254,10 +255,13 @@ def test_run_end_to_end_writes_merge_backup_and_revision(tmp_path, monkeypatch):
             calls.append(("bump", ws))
             return 42
 
-    monkeypatch.setattr(transfer_scenes, "user_data_dir", data_dir)
+    import services.scene_transfer_service as service
+
+    for module in (transfer_scenes, service):
+        monkeypatch.setattr(module, "user_data_dir", data_dir)
+        monkeypatch.setattr(module, "user_audio_dir", audio_dir)
     monkeypatch.setattr(transfer_scenes, "user_model_dir", model_dir)
-    monkeypatch.setattr(transfer_scenes, "user_audio_dir", audio_dir)
-    monkeypatch.setattr(transfer_scenes, "find_session_audio", lambda ws, name: None)
+    monkeypatch.setattr(service, "find_session_audio", lambda ws, name: None)
     monkeypatch.setattr(transfer_scenes, "metadata_store", FakeStore())
     monkeypatch.setattr(transfer_scenes, "BACKUP_DIR", tmp_path / "backups")
     monkeypatch.setattr(transfer_scenes, "target_is_active", lambda ws: False)
@@ -286,7 +290,7 @@ def test_run_end_to_end_writes_merge_backup_and_revision(tmp_path, monkeypatch):
 
 
 def test_plan_audio_reuses_identical_and_renames_clash(tmp_path, monkeypatch):
-    import transfer_scenes
+    import services.scene_transfer_service as service
 
     src_dir = tmp_path / "src"
     dst_dir = tmp_path / "dst"
@@ -297,13 +301,129 @@ def test_plan_audio_reuses_identical_and_renames_clash(tmp_path, monkeypatch):
     (src_dir / "clash.wav").write_bytes(b"from-a")
     (dst_dir / "clash.wav").write_bytes(b"from-b")
     (src_dir / "new.wav").write_bytes(b"new")
-    monkeypatch.setattr(transfer_scenes, "user_audio_dir", lambda ws, model: src_dir)
-    monkeypatch.setattr(transfer_scenes, "find_session_audio", lambda ws, name: None)
+    monkeypatch.setattr(service, "user_audio_dir", lambda ws, model: src_dir)
+    monkeypatch.setattr(service, "find_session_audio", lambda ws, name: None)
 
-    copies, renames, missing = transfer_scenes.plan_audio(
+    copies, renames, missing = service.plan_audio(
         "ws", "m", dst_dir, ["same.wav", "clash.wav", "new.wav", "gone.wav"]
     )
     assert missing == {"gone.wav"}
     assert "same.wav" not in renames and "same.wav" not in copies
     assert renames["clash.wav"].startswith("clash_") and renames["clash.wav"] in copies
     assert copies["new.wav"] == src_dir / "new.wav"
+
+
+# ── in-app send (services/scene_transfer_service.py) ─────────────────────────
+
+
+class _FakeStore:
+    def __init__(self, revision=5):
+        self.revision = revision
+        self.calls = []
+
+    def get_workspace(self, ws):
+        return {"id": ws, "revision": self.revision}
+
+    def link_model(self, model_id, ws):
+        self.calls.append(("link", model_id, ws))
+
+    def bump_revision(self, ws):
+        self.revision += 1
+        self.calls.append(("bump", ws))
+        return self.revision
+
+
+def _service_env(tmp_path, monkeypatch, with_target=True):
+    import json
+
+    import services.scene_transfer_service as service
+
+    root = tmp_path / "soundscapes"
+    monkeypatch.setattr(service, "user_data_dir", lambda ws: root / ws)
+    monkeypatch.setattr(service, "user_model_dir", lambda ws, m: root / ws / m)
+    monkeypatch.setattr(service, "user_audio_dir", lambda ws, m: root / ws / m / "audio")
+    monkeypatch.setattr(service, "find_session_audio", lambda ws, name: None)
+    store = _FakeStore()
+    monkeypatch.setattr(service, "metadata_store", store)
+
+    src = source_data()
+    src_audio = root / "ws" / "model-a" / "audio"
+    src_audio.mkdir(parents=True)
+    (root / "ws" / "model-a" / "soundscape.json").write_text(json.dumps(src), encoding="utf-8")
+    for e in src["sound_events"]:
+        (src_audio / e["audio_filename"]).write_bytes(e["audio_filename"].encode())
+    if with_target:
+        dst_audio = root / "ws" / "model-b" / "audio"
+        dst_audio.mkdir(parents=True)
+        (root / "ws" / "model-b" / "soundscape.json").write_text(json.dumps(target_data()), encoding="utf-8")
+        (dst_audio / "a0.wav").write_bytes(b"B's own different a0")
+    return service, store, root
+
+
+def _read(path):
+    import json
+
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def test_send_scenes_by_usage_index_appends_and_renames(tmp_path, monkeypatch):
+    service, store, root = _service_env(tmp_path, monkeypatch)
+    result = service.SceneTransferService().send_scenes("ws", "model-a", "model-b", [1], base_revision=5)
+
+    merged = _read(root / "ws" / "model-b" / "soundscape.json")
+    SoundscapeData(**merged)
+    assert result["scenes_sent"] == 1 and result["sounds_sent"] == 2 and result["events_sent"] == 3
+    assert result["revision"] == 6 and store.calls == [("link", "model-b", "ws"), ("bump", "ws")]
+    assert merged["auth_token"] == "SECRET-B"
+    # B's scene untouched; Morning (+ its context card) appended after it.
+    configs = merged["analysis_state"]["configs"]
+    assert configs[0]["textInput"] == "Hum" and configs[2]["display_name"] == "Morning"
+    assert configs[2]["parentContextOriginalIndex"] == 1
+    new_sounds = merged["sound_configs"][1:]
+    assert all(sc["parent_usage_original_index"] == 2 for sc in new_sounds)
+    assert all(sc["entity_node_ids"] is None for sc in new_sounds)
+    new_events = merged["sound_events"][1:]
+    assert all(e["position"] == [0.0, 0.0, 0.0] for e in new_events)
+    renamed = next(e["audio_filename"] for e in new_events if e["audio_filename"].startswith("a0_"))
+    assert (root / "ws" / "model-b" / "audio" / renamed).read_bytes() == b"a0.wav"
+    assert (root / "ws" / "model-b" / "audio" / "a0.wav").read_bytes() == b"B's own different a0"
+    # Source is a copy, not a move.
+    assert len(_read(root / "ws" / "model-a" / "soundscape.json")["sound_events"]) == 6
+
+
+def test_send_scenes_keep_positions(tmp_path, monkeypatch):
+    service, _, root = _service_env(tmp_path, monkeypatch)
+    service.SceneTransferService().send_scenes("ws", "model-a", "model-b", [3], keep_positions=True)
+    event = _read(root / "ws" / "model-b" / "soundscape.json")["sound_events"][-1]
+    assert event["position"] == [5.0, 6.0, 7.0] and event["entity_indices"] is None
+
+
+def test_send_scenes_creates_fresh_target(tmp_path, monkeypatch):
+    service, _, root = _service_env(tmp_path, monkeypatch, with_target=False)
+    service.SceneTransferService().send_scenes(
+        "ws", "model-a", "model-new", [2, 3],
+        target_meta={"project_id": "proj", "version_id": "v9"},
+    )
+    merged = _read(root / "ws" / "model-new" / "soundscape.json")
+    assert merged["model_id"] == "model-new" and merged["model_name"] == "model-new"
+    assert merged["project_id"] == "proj" and merged["version_id"] == "v9" and merged["auth_token"] == ""
+    assert len(merged["sound_configs"]) == 2
+    assert (root / "ws" / "model-new" / "audio" / "rain.wav").is_file()
+
+
+def test_send_scenes_rejects_stale_revision_and_bad_selection(tmp_path, monkeypatch):
+    import pytest
+
+    service, store, root = _service_env(tmp_path, monkeypatch)
+    svc = service.SceneTransferService()
+    with pytest.raises(service.SceneTransferConflict) as exc:
+        svc.send_scenes("ws", "model-a", "model-b", [1], base_revision=4)
+    assert exc.value.revision == 5
+    with pytest.raises(ValueError):
+        svc.send_scenes("ws", "model-a", "model-b", [0])  # context card, not a scene
+    with pytest.raises(ValueError):
+        svc.send_scenes("ws", "model-a", "model-a", [1])
+    with pytest.raises(FileNotFoundError):
+        svc.send_scenes("ws", "model-missing", "model-b", [1])
+    assert store.calls == []
+    assert len(_read(root / "ws" / "model-b" / "soundscape.json")["sound_events"]) == 1

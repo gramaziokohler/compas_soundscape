@@ -8,6 +8,8 @@
  * following the same card.
  */
 
+import type { AnalysisBaseConfig, AnalysisConfig } from '@/types/analysis';
+
 /** Maps an old card index to its new index, or `null` when that card was removed. */
 export type IndexMapper = (index: number) => number | null;
 
@@ -99,4 +101,23 @@ export function remapIndexKeyedRecord<V>(
     if (mapped !== null) next[mapped] = mapValue(value, mapped);
   });
   return next;
+}
+
+/** Remap the index links carried by the cards themselves (usage → context, drawn area slot). */
+export function remapCardLinks(configs: AnalysisConfig[], mapIndex: IndexMapper): AnalysisConfig[] {
+  return configs.map((config) => {
+    let next = config;
+    const parent = (config as AnalysisBaseConfig).parentContextOriginalIndex;
+    const nextParent = remapOptionalIndex(parent, mapIndex);
+    if (nextParent !== parent) {
+      next = { ...next, parentContextOriginalIndex: nextParent } as AnalysisConfig;
+    }
+    if (next.type === 'text' && next.drawnArea) {
+      const cardIndex = mapIndex(next.drawnArea.cardIndex);
+      if (cardIndex !== null && cardIndex !== next.drawnArea.cardIndex) {
+        next = { ...next, drawnArea: { ...next.drawnArea, cardIndex } };
+      }
+    }
+    return next;
+  });
 }

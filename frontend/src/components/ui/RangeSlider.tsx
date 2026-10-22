@@ -1,5 +1,6 @@
 "use client";
 
+import { useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { NumberField } from "./NumberField";
 import { ModifiedMark } from "./ModifiedMark";
@@ -43,6 +44,11 @@ interface RangeSliderProps {
   sliderTitle?: string;
   /** Flags the label with a "*" — value changed since the card was generated. */
   modified?: boolean;
+  /**
+   * Makes the max label (shown with `showLabels`) double-clickable to type a new maximum.
+   * Receives the committed number; the caller owns the max and any rounding/clamping.
+   */
+  onMaxChange?: (max: number) => void;
 }
 
 /** Floor width for the slider track itself — below this it wraps to its own line instead of shrinking further. */
@@ -100,6 +106,7 @@ export function RangeSlider({
   markers,
   modified = false,
   sliderTitle,
+  onMaxChange,
 }: RangeSliderProps) {
   const resolvedPrecision = precision ?? decimalsFromStep(step);
   const resolvedFormatValue =
@@ -263,9 +270,70 @@ export function RangeSlider({
           style={onBlueBackground ? { color: 'var(--color-on-blue-muted)' } : { color: 'var(--color-secondary-hover)' }}
         >
           <span>{displayMin}</span>
-          <span>{displayMax}</span>
+          {onMaxChange && !disabled ? (
+            <EditableMaxLabel
+              label={displayMax}
+              max={max}
+              precision={resolvedPrecision}
+              onCommit={onMaxChange}
+              onBlueBackground={onBlueBackground}
+            />
+          ) : (
+            <span>{displayMax}</span>
+          )}
         </div>
       )}
     </div>
+  );
+}
+
+interface EditableMaxLabelProps {
+  label: string;
+  max: number;
+  precision: number;
+  onCommit: (max: number) => void;
+  onBlueBackground: boolean;
+}
+
+/** Max label that turns into a NumberField on double-click; Enter/blur commits, Escape cancels. */
+function EditableMaxLabel({ label, max, precision, onCommit, onBlueBackground }: EditableMaxLabelProps) {
+  const [isEditing, setIsEditing] = useState(false);
+  const cancelledRef = useRef(false);
+
+  if (!isEditing) {
+    return (
+      <span
+        className="cursor-text"
+        title="Double-click to edit maximum"
+        onDoubleClick={() => {
+          cancelledRef.current = false;
+          setIsEditing(true);
+        }}
+      >
+        {label}
+      </span>
+    );
+  }
+
+  return (
+    <NumberField
+      value={max}
+      precision={precision}
+      autoFocus
+      onBlueBackground={onBlueBackground}
+      containerStyle={{ width: `${estimateFieldWidthCh(0, max * 10, precision)}ch` }}
+      className="!text-xs !py-0"
+      onKeyDown={(e) => {
+        if (e.key === "Escape") {
+          cancelledRef.current = true;
+          (e.target as HTMLInputElement).blur();
+        }
+      }}
+      onCommit={(v) => {
+        setIsEditing(false);
+        if (cancelledRef.current || v === null || !Number.isFinite(v)) return;
+        onCommit(v);
+      }}
+    />
   );
 }

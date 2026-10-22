@@ -683,6 +683,33 @@ class SoundscapeSaveRequest(BaseModel):
     base_revision: Optional[int] = None
 
 
+class SendScenesRequest(BaseModel):
+    """Copy sound scenes from the URL's model into another model of the same workspace."""
+    target_model_id: str
+    # analysis_state.configs indices of the usage cards to copy (frontend useSoundScenes usageIndex)
+    usage_indices: list[int]
+    # False: sounds are re-placed in front of the camera (positions belong to the source geometry)
+    keep_positions: bool = False
+    # Seed a fresh soundscape.json when the target has none yet
+    target_project_id: Optional[str] = None
+    target_version_id: Optional[str] = None
+    target_model_name: Optional[str] = None
+    # Optimistic-concurrency token, same semantics as SoundscapeSaveRequest.base_revision
+    base_revision: Optional[int] = None
+
+
+class SendScenesResponse(BaseModel):
+    """Result of a scene send"""
+    success: bool
+    target_model_id: str
+    scenes_sent: int
+    sounds_sent: int
+    events_sent: int
+    audio_files_copied: int
+    missing_audio_filenames: list[str] = []
+    revision: int
+
+
 # ============================================================================
 # Choras (DE/DG Wave Simulation) Schemas
 # ============================================================================

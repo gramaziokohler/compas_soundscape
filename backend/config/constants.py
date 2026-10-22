@@ -907,6 +907,15 @@ SPECKLE_UNITLESS_METRE_MAX_EXTENT = 200.0
 # Lives outside temp/ so it is NOT touched by the age-based temp janitor
 SOUNDSCAPE_DATA_DIR = str(BACKEND_DIR / "data" / "soundscapes")
 SOUNDSCAPE_DATA_URL_PREFIX = "/soundscapes"
+SOUNDSCAPE_JSON_FILENAME = "soundscape.json"
+# Reserved model id of the unsaved Home sandbox (frontend utils/constants.ts SANDBOX_MODEL_ID)
+SANDBOX_MODEL_ID = "local"
+
+# Scene transfer (in-app "Send scenes to another model" + scripts/transfer_scenes.py)
+# Older saves kept audio per workspace (data/soundscapes/<ws>/audio/), not per model.
+SCENE_TRANSFER_LEGACY_AUDIO_DIR = "audio"
+# Hex chars appended to a copied audio filename that clashes with a different target file.
+SCENE_TRANSFER_RENAME_HEX_LEN = 6
 
 # Speckle Soundscape Object Constants
 # Pink color for entity-linked sound sources (ARGB signed 32-bit int: 0xFFF500B8)

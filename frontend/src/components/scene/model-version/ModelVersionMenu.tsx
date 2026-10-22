@@ -1,11 +1,12 @@
 'use client';
 
 import { useEffect, useRef, useState, type RefObject } from 'react';
-import { useModelVersionStore, useAcousticsSimulationStore } from '@/store';
+import { useModelVersionStore, useAcousticsSimulationStore, useWorkspaceStore, selectIsReadOnlyWorkspace } from '@/store';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { formatRelativeTime } from '@/components/scene/modelBrowserShared';
 import { Spinner } from '@/components/ui/Spinner';
-import { MODEL_VERSION } from '@/utils/constants';
+import { MODEL_VERSION, SCENE_TRANSFER } from '@/utils/constants';
+import { useSoundScenes } from '@/hooks/useSoundScenes';
 import type { SpeckleModelVersion } from '@/types/speckle-models';
 import { useModelPillInfo } from './useModelPillInfo';
 
@@ -19,6 +20,8 @@ export interface ModelVersionMenuProps {
   onClose: () => void;
   onOpenModelBrowser: () => void;
   onUploadNewVersion: (file: File) => void;
+  /** Open the "Send scenes to another model" dialog. */
+  onSendScenes: () => void;
 }
 
 const ROW_ICON = 14;
@@ -33,9 +36,10 @@ function versionSubtitle(v: SpeckleModelVersion): string {
  * ModelVersionMenu
  *
  * Upward popover of the model pill: version history (the loaded one checked;
- * "latest" and simulation-count tags), "Upload new version…", "Open another
- * model…" and "Open in Speckle". For a no-model soundscape it only offers to
- * attach a model. Closes on outside click or Escape.
+ * "latest" and simulation-count tags), "Upload new version…", "Send scenes to
+ * another model…", "Open another model…" and "Open in Speckle". For a no-model
+ * soundscape it offers to attach a model (and to send its scenes). Closes on
+ * outside click or Escape.
  */
 export function ModelVersionMenu({
   kind,
@@ -45,6 +49,7 @@ export function ModelVersionMenu({
   onClose,
   onOpenModelBrowser,
   onUploadNewVersion,
+  onSendScenes,
 }: ModelVersionMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -55,6 +60,8 @@ export function ModelVersionMenu({
   const loadedVersionId = useSpeckleEngineStore((s) => s.loadedModelVersionId);
   const simulationConfigs = useAcousticsSimulationStore((s) => s.simulationConfigs);
   const info = useModelPillInfo();
+  const isReadOnly = useWorkspaceStore(selectIsReadOnlyWorkspace);
+  const sceneCount = useSoundScenes().length;
 
   useEffect(() => {
     const onPointerDown = (e: PointerEvent) => {
@@ -89,6 +96,23 @@ export function ModelVersionMenu({
   const speckleUrl = info.projectId && useModelVersionStore.getState().modelId
     ? `${MODEL_VERSION.SPECKLE_APP_URL}/projects/${info.projectId}/models/${useModelVersionStore.getState().modelId}${loadedVersionId ? `@${loadedVersionId}` : ''}`
     : null;
+
+  // Owner-only (it writes another model's soundscape); hidden for viewers.
+  const sendScenesRow = !isReadOnly && (
+    <button
+      type="button"
+      role="menuitem"
+      className="mv-row"
+      disabled={sceneCount === 0}
+      onClick={() => { onSendScenes(); onClose(); }}
+    >
+      <MenuIcon d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z" />
+      <span className="min-w-0 flex-1">
+        <span className="block">{SCENE_TRANSFER.MENU_LABEL}</span>
+        <span className="mv-hint block">{sceneCount === 0 ? 'No sound scenes in this model yet' : SCENE_TRANSFER.MENU_HINT}</span>
+      </span>
+    </button>
+  );
 
   const selectVersion = (v: SpeckleModelVersion) => {
     if (v.id !== loadedVersionId) useModelVersionStore.getState().switchToVersion(v.id, loadedVersionId);
@@ -201,6 +225,7 @@ export function ModelVersionMenu({
                 <span className="mv-hint block">.3dm, .obj, .ifc · adds v{(versions[0]?.number ?? 0) + 1} to this model</span>
               </span>
             </button>
+            {sendScenesRow}
             <button type="button" role="menuitem" className="mv-row" onClick={() => { onOpenModelBrowser(); onClose(); }}>
               <MenuIcon d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5" />
               <span className="min-w-0 flex-1">
@@ -216,6 +241,7 @@ export function ModelVersionMenu({
             )}
           </>
         ) : (
+          <>
           <button type="button" role="menuitem" className="mv-row" onClick={() => { onOpenModelBrowser(); onClose(); }}>
             <MenuIcon d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" />
             <span className="min-w-0 flex-1">
@@ -223,6 +249,8 @@ export function ModelVersionMenu({
               <span className="mv-hint block">Choose a Speckle model or upload a file</span>
             </span>
           </button>
+          {sendScenesRow}
+          </>
         )}
       </div>
     </div>

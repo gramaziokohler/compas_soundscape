@@ -1,54 +1,39 @@
 'use client';
 
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
-import { apiService } from '@/services/api';
+import React, { useState, useCallback } from 'react';
 import { isAuthError } from '@/utils/authErrors';
 import { useTextGenerationStore } from '@/store/textGenerationStore';
 import { Spinner } from '@/components/ui/Spinner';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Notice } from '@/components/ui/Notice';
 import { Badge } from '@/components/ui/Badge';
-import { HomeProjectCard, type HomeProjectSummary } from '@/components/scene/HomeProjectCard';
+import { HomeProjectCard } from '@/components/scene/HomeProjectCard';
 import { ExternalLinkIcon, ModelCardMenu, ModelCardMenuItem, ModelCardMenuTrigger } from '@/components/scene/ModelCardMenu';
-import { MODEL_BROWSER_STYLES, MODEL_CARD_CLASS, formatRelativeTime } from '@/components/scene/modelBrowserShared';
-import type { SpeckleModelDetail, SpeckleProjectModelsResponse } from '@/types/speckle-models';
+import {
+  MODEL_BROWSER_STYLES,
+  MODEL_CARD_CLASS,
+  SPECKLE_SERVER_HOST,
+  buildSpeckleSelectPayload,
+  formatRelativeTime,
+  type SpeckleSelectData,
+} from '@/components/scene/modelBrowserShared';
+import { useWorkspaceModelEntries, type WorkspaceModelEntry } from '@/hooks/useWorkspaceModelEntries';
+import type { SpeckleModelDetail } from '@/types/speckle-models';
 import { getScale } from '@/utils/scale';
-
-// ============================================================================
-// Constants
-// ============================================================================
-
-const SPECKLE_SERVER_HOST = 'app.speckle.systems';
 
 // ============================================================================
 // Types
 // ============================================================================
 
-/** SpeckleData shape expected by SpeckleScene / page.tsx */
-interface SpeckleData {
-  model_id: string;
-  version_id: string;
-  file_id: string;
-  url: string;
-  object_id: string;
-  auth_token?: string;
-  display_name?: string;
-}
-
 interface SpeckleModelBrowserProps {
   /** Called when a model card is clicked; passes a SpeckleData payload */
-  onModelSelect: (speckleData: SpeckleData) => void;
+  onModelSelect: (speckleData: SpeckleSelectData) => void;
   /**
    * When provided, saved local "No-model" projects are listed alongside the
    * Speckle models (one list, newest first). Selecting one loads it.
    */
   onLoadHomeProject?: (modelId: string) => void;
 }
-
-/** One row of the merged list, keyed by its modified date for sorting. */
-type BrowserEntry =
-  | { kind: 'home'; key: string; time: number; project: HomeProjectSummary }
-  | { kind: 'speckle'; key: string; time: number; model: SpeckleModelDetail };
 
 // ============================================================================
 // Helpers
@@ -57,11 +42,6 @@ type BrowserEntry =
 /** Truncate text to a max length with ellipsis */
 function truncate(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max)}...` : text;
-}
-
-/** Modified date of a Speckle model: this workspace's last save, else Speckle's update. */
-function speckleModifiedTime(model: SpeckleModelDetail): number {
-  return new Date(model.last_saved_at ?? model.updated_at ?? 0).getTime();
 }
 
 // ============================================================================
@@ -201,95 +181,25 @@ function ModelCard({
  * `onLoadHomeProject`.
  */
 export function SpeckleModelBrowser({ onModelSelect, onLoadHomeProject }: SpeckleModelBrowserProps) {
-  const [models, setModels] = useState<SpeckleModelDetail[]>([]);
-  const [projectId, setProjectId] = useState<string>('');
-  const [authToken, setAuthToken] = useState<string | undefined>(undefined);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [homeProjects, setHomeProjects] = useState<HomeProjectSummary[]>([]);
-
-  const fetchHomeProjects = useCallback(async () => {
-    try {
-      const data = await apiService.listHomeProjects();
-      setHomeProjects(data.projects ?? []);
-    } catch {
-      setHomeProjects([]);
-    }
-  }, []);
-
-  useEffect(() => {
-    void fetchHomeProjects();
-  }, [fetchHomeProjects]);
-
-  const fetchModels = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const data: SpeckleProjectModelsResponse = await apiService.getSpeckleModels();
-      setModels(data.models);
-      setProjectId(data.project_id);
-      setAuthToken(data.auth_token ?? undefined);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to load models';
-      setError(message);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchModels();
-  }, [fetchModels]);
+  const { entries, models, projectId, authToken, isLoading, error, refetchModels, removeHomeProject } =
+    useWorkspaceModelEntries(!!onLoadHomeProject);
 
   /** Build SpeckleData from a model and call the parent handler */
   const handleSelect = useCallback(
     (model: SpeckleModelDetail) => {
-      const latestVersion = model.latest_version;
-      if (!latestVersion) return;
-
-      const speckleData: SpeckleData = {
-        model_id: model.id,
-        version_id: latestVersion.id,
-        file_id: '',
-        url: `https://${SPECKLE_SERVER_HOST}/projects/${projectId}/models/${model.id}`,
-        object_id: latestVersion.referenced_object ?? latestVersion.id,
-        auth_token: authToken,
-        display_name: model.display_name,
-      };
-
-      onModelSelect(speckleData);
+      const speckleData = buildSpeckleSelectPayload(model, projectId, authToken);
+      if (speckleData) onModelSelect(speckleData);
     },
     [projectId, authToken, onModelSelect],
   );
 
-  const handleHomeProjectDeleted = useCallback((modelId: string) => {
-    setHomeProjects((prev) => prev.filter((p) => p.model_id !== modelId));
-  }, []);
-
-  // Merge No-model projects and loadable Speckle models into one list,
-  // ordered by modified date (newest first).
-  const entries = useMemo<BrowserEntry[]>(() => {
-    const home: BrowserEntry[] = onLoadHomeProject
-      ? homeProjects.map((p) => ({
-          kind: 'home',
-          key: `home:${p.model_id}`,
-          time: new Date(p.saved_at).getTime(),
-          project: p,
-        }))
-      : [];
-    const speckle: BrowserEntry[] = models
-      .filter((m) => m.latest_version)
-      .map((m) => ({ kind: 'speckle', key: `speckle:${m.id}`, time: speckleModifiedTime(m), model: m }));
-    return [...home, ...speckle].sort((a, b) => b.time - a.time);
-  }, [homeProjects, models, onLoadHomeProject]);
-
-  const renderEntry = (entry: BrowserEntry) =>
+  const renderEntry = (entry: WorkspaceModelEntry) =>
     entry.kind === 'home' ? (
       <HomeProjectCard
         key={entry.key}
         project={entry.project}
         onSelect={() => onLoadHomeProject?.(entry.project.model_id)}
-        onDeleted={handleHomeProjectDeleted}
+        onDeleted={removeHomeProject}
       />
     ) : (
       <ModelCard
@@ -330,7 +240,7 @@ export function SpeckleModelBrowser({ onModelSelect, onLoadHomeProject }: Speckl
           ) : null}
           <button
             type="button"
-            onClick={fetchModels}
+            onClick={() => void refetchModels()}
             className="self-start text-xs px-3 py-1 rounded transition-colors"
             style={{
               border: `1px solid var(--color-secondary-light)`,

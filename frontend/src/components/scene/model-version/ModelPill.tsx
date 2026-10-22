@@ -16,6 +16,8 @@ export interface ModelPillProps {
   onOpenModelBrowser: () => void;
   /** Upload a file as a new version of the open model. */
   onUploadNewVersion: (file: File) => void;
+  /** Open the "Send scenes to another model" dialog. */
+  onSendScenes: () => void;
 }
 
 /** Box (model) or note (no-model soundscape) glyph. */
@@ -45,10 +47,10 @@ function PillIcon({ kind }: { kind: 'model' | 'project' }) {
  *
  * Usage:
  * ```tsx
- * <ModelPill onOpenModelBrowser={openBrowser} onUploadNewVersion={uploadVersion} />
+ * <ModelPill onOpenModelBrowser={openBrowser} onUploadNewVersion={uploadVersion} onSendScenes={openSend} />
  * ```
  */
-export function ModelPill({ onOpenModelBrowser, onUploadNewVersion }: ModelPillProps) {
+export function ModelPill({ onOpenModelBrowser, onUploadNewVersion, onSendScenes }: ModelPillProps) {
   const globalSpeckleData = useUIStore((s) => s.globalSpeckleData);
   const homeProject = useUIStore((s) => s.homeProject);
   const versions = useModelVersionStore((s) => s.versions);
@@ -169,6 +171,7 @@ export function ModelPill({ onOpenModelBrowser, onUploadNewVersion }: ModelPillP
           onClose={() => setMenuAnchorRight(null)}
           onOpenModelBrowser={onOpenModelBrowser}
           onUploadNewVersion={onUploadNewVersion}
+          onSendScenes={onSendScenes}
         />
       )}
     </>

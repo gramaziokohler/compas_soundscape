@@ -13,6 +13,7 @@ import type {
 } from '@/types/speckle-models';
 import type { ModelVersionImpactReport, ModelVersionImpactRequest } from '@/types/modelVersionImpact';
 import type { SoundscapeSavePayload, SoundscapeSaveResponse, SoundscapeLoadResponse, SoundscapeStats } from '@/types/soundscape';
+import type { SendScenesRequest, SendScenesResponse } from '@/types/sceneTransfer';
 import type { PreflightJobResult, PreflightPayload, SimulationEngine, SimulationMeshSettings } from '@/types/simulationPreflight';
 import type { StudyConfig, StudyEventBatch, StudySnapshotUpload, StudyMomentCreate, StudyMomentNote } from '@/types/study';
 
@@ -1956,6 +1957,36 @@ export const apiService = {
     } catch (error) {
       handleApiError(error, 'Save soundscape to Speckle');
     }
+  },
+
+  /**
+   * Copy sound scenes from a saved model into another model of the active
+   * workspace (owner-only). The source must be saved first — the backend reads
+   * its soundscape.json. Throws an Error with `.conflictRevision` on 409.
+   */
+  async sendScenesToModel(sourceModelId: string, request: SendScenesRequest): Promise<SendScenesResponse> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/speckle/soundscape/${encodeURIComponent(sourceModelId)}/send-scenes`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+      },
+      'Send scenes to model'
+    );
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Failed to send scenes' }));
+      const detail = error.detail;
+      if (response.status === 409 && detail && typeof detail === 'object') {
+        const conflict = new Error(detail.message || 'This workspace changed since you last loaded it.');
+        (conflict as Error & { conflictRevision?: number }).conflictRevision = detail.revision;
+        throw conflict;
+      }
+      throw new Error(typeof detail === 'string' ? detail : 'Failed to send scenes');
+    }
+
+    return response.json();
   },
 
   /**

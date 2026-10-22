@@ -1471,6 +1471,38 @@ export const SCENE_GRID = {
 // ============================================================================
 /** Reserved soundscape id for homepage work that has no Speckle model. Not a URL param. */
 export const SANDBOX_MODEL_ID = 'local';
+/** Model-id prefix of a saved Homepage (no-model) project (backend utils/file_operations.py). */
+export const HOME_PROJECT_PREFIX = 'home-';
+
+// ============================================================================
+// Send scenes to another model (model pill menu → SendScenesModal)
+// ============================================================================
+export const SCENE_TRANSFER = {
+  MENU_LABEL: 'Send scenes to another model…',
+  MENU_HINT: 'Copy sound scenes into a model in this workspace',
+  TITLE: 'Send scenes to another model',
+  SCENES_LABEL: 'Scenes',
+  TARGET_LABEL: 'Target model',
+  KEEP_POSITIONS_LABEL: 'Keep sound positions',
+  KEEP_POSITIONS_HINT: 'Off: sounds are placed in front of the camera in the target model.',
+  FOOTNOTE: 'Saves this model first · object links are not kept · simulations, receivers and IRs stay here.',
+  STILL_GENERATING: 'Still generating',
+  NO_SOUNDSCAPE_YET: 'no soundscape yet',
+  NO_TARGETS: 'No other model in this workspace.',
+  SEND: 'Send',
+  SENDING: 'Sending…',
+  CANCEL: 'Cancel',
+  OPEN_MODEL: 'Open model',
+  SAVE_FAILED: 'Could not save this model, so its scenes were not sent.',
+  CONFLICT: 'This shared workspace changed since you loaded it. Reload, then send the scenes again.',
+  /** Max height (px) of each scrollable list in the dialog. */
+  LIST_MAX_HEIGHT_PX: 180,
+  /** Poll interval / max wait (ms) for an in-flight save before the send saves the model. */
+  SAVE_POLL_MS: 100,
+  SAVE_WAIT_TIMEOUT_MS: 30000,
+  /** Save attempts when the content keeps changing while the model is being saved. */
+  SAVE_MAX_ATTEMPTS: 2,
+} as const;
 
 /** Minimum world extent (m) of a model's ground grid, before the extent fraction. */
 export const GROUND_GRID_MIN_EXTENT = 10;
@@ -1930,6 +1962,18 @@ export const AUDIO_TIMELINE = {
   // iterations — far beyond any real timeline, never a real clip position.
   UNRESOLVED_TIMESTAMP_SEC: 999_999,
 
+} as const;
+
+// Importing Home-stage work into a model (utils/home-elements-import.ts)
+export const HOME_IMPORT = {
+  /** Speech-line TTS events encode `prompt_index = cardIndex * this + lineIndex`. */
+  SPEECH_LINE_PROMPT_INDEX_FACTOR: 10_000,
+  /** Assumed clip length (s) after each imported timestamp when sizing the timeline. */
+  DEFAULT_CLIP_SECONDS: 10,
+  /** Tail (s) added after the last imported clip end. */
+  TIMELINE_TAIL_SECONDS: 10,
+  /** The extended timeline length is rounded up to a multiple of this (s). */
+  TIMELINE_STEP_SECONDS: 30,
 } as const;
 
 

@@ -74,8 +74,8 @@ import {
   createRemovalIndexMapper,
   remapIndexKeyedRecord,
   remapIndexSet,
+  remapCardLinks,
   remapNullableIndex,
-  remapOptionalIndex,
 } from '@/utils/cardIndexRemap';
 
 // ─── Module-level refs ────────────────────────────────────────────────────────
@@ -613,25 +613,6 @@ function getScenarioBounds():
   const { globalSpeckleData, speckleBounds } = useUIStore.getState();
   if (globalSpeckleData && speckleBounds) return speckleBounds;
   return useFileUploadStore.getState().geometryBounds ?? undefined;
-}
-
-/** Remap the index links carried by the cards themselves (usage → context, drawn area slot). */
-function remapCardLinks(configs: AnalysisConfig[], mapIndex: IndexMapper): AnalysisConfig[] {
-  return configs.map((config) => {
-    let next = config;
-    const parent = (config as AnalysisBaseConfig).parentContextOriginalIndex;
-    const nextParent = remapOptionalIndex(parent, mapIndex);
-    if (nextParent !== parent) {
-      next = { ...next, parentContextOriginalIndex: nextParent } as AnalysisConfig;
-    }
-    if (next.type === 'text' && next.drawnArea) {
-      const cardIndex = mapIndex(next.drawnArea.cardIndex);
-      if (cardIndex !== null && cardIndex !== next.drawnArea.cardIndex) {
-        next = { ...next, drawnArea: { ...next.drawnArea, cardIndex } };
-      }
-    }
-    return next;
-  });
 }
 
 /** Remap the per-card-index bookkeeping held in this store. */

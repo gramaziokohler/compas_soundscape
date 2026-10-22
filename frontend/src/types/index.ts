@@ -399,3 +399,6 @@ export type {
   StudyIntentPrompt,
   StudyPromptedByListening,
 } from './study';
+
+// Send sound scenes to another model
+export type { SendScenesRequest, SendScenesResponse, SendTargetEntry } from './sceneTransfer';
