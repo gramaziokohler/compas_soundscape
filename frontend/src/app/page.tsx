@@ -2569,13 +2569,16 @@ function HomeContent() {
   );
 
   // Fingerprint of everything that gets persisted. Excludes volatile fields
-  // (`base_revision`, derived audio/ir URL lists). Blob audio URLs are stable
-  // within a session, so uploaded sounds do not cause save churn.
+  // (`base_revision`, derived audio/ir URL lists, and `created_at`, which the
+  // serializer stamps with the current time on every build — keeping it would
+  // make two fingerprints never match). Blob audio URLs are stable within a
+  // session, so uploaded sounds do not cause save churn.
   const computeSaveSignature = useCallback((): string => {
     const { modelId, modelName } = resolveSaveTarget();
     const payload = buildSavePayload(modelId, modelName, {});
+    const { created_at: _createdAt, ...stableData } = payload.soundscape_data;
     return stableStringify({
-      data: payload.soundscape_data,
+      data: stableData,
       analysis_ids: payload.analysis_ids ?? null,
       scenario_ids: payload.scenario_ids ?? null,
     });
