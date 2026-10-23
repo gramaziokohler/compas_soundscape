@@ -104,6 +104,7 @@ import {
   MAX_FACES_FOR_LAYER_AUTO_EXCLUDE,
   IMPULSE_RESPONSE,
   SIMULATION_POSITION_MATCH_THRESHOLD,
+  SIMULATION_STATUS_MISS_TOLERANCE,
   RESONANCE_AUDIO,
   SIMPLE_MODE,
 } from '@/utils/constants';
@@ -740,9 +741,17 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       recordInflightJob(simulation_id, 'choras', { configId: config.id, instanceId: config.simulationInstanceId, versionId });
 
       // Poll for progress every second
+      let statusMisses = 0;
       const pollInterval = setInterval(async () => {
         try {
-          const statusData = await apiService.getChorasSimulationStatus(simulation_id);
+          let statusData;
+          try {
+            statusData = await apiService.getChorasSimulationStatus(simulation_id);
+            statusMisses = 0;
+          } catch (statusErr) {
+            if (++statusMisses < SIMULATION_STATUS_MISS_TOLERANCE) return; // transient (e.g. API restart)
+            throw statusErr;
+          }
 
           // Update progress bar on every tick
           handleUpdateConfig(index, { progress: statusData.progress, status: statusData.status } as any);
@@ -878,9 +887,17 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       recordInflightJob(simulation_id, 'pyroom', { configId: config.id, instanceId: config.simulationInstanceId, versionId });
 
       // Poll for progress every 1.5 seconds
+      let statusMisses = 0;
       const pollInterval = setInterval(async () => {
         try {
-          const statusData = await apiService.getPyroomacousticsSimulationStatus(simulation_id);
+          let statusData;
+          try {
+            statusData = await apiService.getPyroomacousticsSimulationStatus(simulation_id);
+            statusMisses = 0;
+          } catch (statusErr) {
+            if (++statusMisses < SIMULATION_STATUS_MISS_TOLERANCE) return; // transient (e.g. API restart)
+            throw statusErr;
+          }
 
           // Build status string — include queue position when waiting
           const statusStr = statusData.queue_position != null

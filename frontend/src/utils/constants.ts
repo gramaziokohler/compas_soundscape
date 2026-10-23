@@ -782,6 +782,11 @@ export function normalizeTtsModel(model: string | null | undefined): string {
 // before treating the job as gone. See pollLlmJob in store/analysisStore.ts.
 export const LLM_JOB_STATUS_MISS_TOLERANCE = 5;
 
+// Same for a pyroom/choras simulation poll: the job runs in a worker process, so a
+// failed status check (e.g. a 502 while the API restarts on deploy) must not mark
+// the card as failed. Consecutive failures tolerated (~30 s at 1–1.5 s per poll).
+export const SIMULATION_STATUS_MISS_TOLERANCE = 20;
+
 export const DEFAULT_SOUND_CONFIG = {
   prompt: "",
   duration: DEFAULT_DURATION_SECONDS,
