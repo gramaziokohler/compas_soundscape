@@ -22,6 +22,7 @@ import { useAudioControlsStore } from '@/store/audioControlsStore';
 import { collapseVariantsToOne, groupSoundsByPosition } from '@/utils/positionKey';
 import { isFreshHomeUrl } from '@/utils/homeStage';
 import { cardEventId } from '@/utils/config-id';
+import { latestAcousticsJobPerCard } from '@/utils/acousticsJobRecovery';
 import { generatedEventFieldsFromConfig } from '@/utils/event-factory';
 import { parseSoundCopyIndex } from '@/lib/audio/utils/variant-sound-id';
 import {
@@ -232,9 +233,17 @@ export function useJobRecovery({ domainReady }: { domainReady: boolean }): {
         setRemoteJobCount(remoteRecords.length);
 
         const modelId = pageModelId();
-        const records = [...local, ...remoteRecords]
-          .filter(isJobLikelyStillAlive)
-          .filter((r) => belongsToPage(r, modelId));
+        const { keep: records, superseded } = latestAcousticsJobPerCard(
+          [...local, ...remoteRecords]
+            .filter(isJobLikelyStillAlive)
+            .filter((r) => belongsToPage(r, modelId)),
+        );
+        // An older run of a re-run card must not overwrite the newer result.
+        for (const r of superseded) {
+          console.log(`[useJobRecovery] ${r.jobType} job ${r.jobId} superseded by a newer run of card ${r.meta?.configId} — skipped`);
+          _handledJobIds.add(r.jobId);
+          removeInflightJob(r.jobId);
+        }
         if (records.length === 0) return;
         setRecoveredSomething(true);
 
