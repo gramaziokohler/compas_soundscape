@@ -14,6 +14,7 @@ import json
 import os
 import traceback
 from pathlib import Path
+from typing import Optional
 
 from models.schemas import MeshPrepSettings
 from services.pyroomacoustics_worker import _write_progress, _write_result
@@ -21,6 +22,8 @@ from services.simulation_geometry_loader import load_speckle_simulation_geometry
 from services.simulation_mesh_service import MeshPrepOptions, SimulationMeshService
 from services.simulation_preflight_service import (
     ENGINE_CHORAS,
+    ENGINE_PFFDTD,
+    ENGINE_PYROOMACOUSTICS,
     PreflightContext,
     SeedMeta,
     SimulationPreflightService,
@@ -51,6 +54,7 @@ def run_simulation_preflight(
     ray_tracing: bool,
     mesh_settings: dict,
     payload_dir: str,
+    pffdtd_settings: Optional[dict] = None,
 ) -> None:
     try:
         inputs = load_speckle_simulation_geometry(
@@ -60,7 +64,8 @@ def run_simulation_preflight(
         )
 
         settings = MeshPrepSettings(**(mesh_settings or {}))
-        if engine == ENGINE_CHORAS:
+        if engine in (ENGINE_CHORAS, ENGINE_PFFDTD):
+            # same as the run: gmsh needs conforming edges; PFFDTD voxelises the triangles as-is
             settings = settings.model_copy(update={"merge_coplanar": False})
         seed_meta = seeds_from_pairs(pairs_data)
 
@@ -78,7 +83,8 @@ def run_simulation_preflight(
             pairs=[(str(p["source_id"]), str(p["receiver_id"])) for p in pairs_data],
             max_order=int(max_order),
             ray_tracing=bool(ray_tracing),
-            two_sided_supported=two_sided_supported(),
+            two_sided_supported=two_sided_supported() if engine == ENGINE_PYROOMACOUSTICS else True,
+            **{f"pffdtd_{k}": float(v) for k, v in (pffdtd_settings or {}).items()},
         )
         analysis = SimulationPreflightService.analyze(mesh, ctx)
 

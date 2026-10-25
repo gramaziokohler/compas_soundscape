@@ -22,6 +22,9 @@ from typing import Optional
 
 from config.constants import (
     JOB_TYPE_PYROOMACOUSTICS,
+    PFFDTD_DEFAULT_DURATION,
+    PFFDTD_DEFAULT_FMAX,
+    PFFDTD_DEFAULT_PPW,
     PREFLIGHT_PAYLOAD_DIR,
     PYROOMACOUSTICS_DEFAULT_MAX_ORDER,
     PYROOMACOUSTICS_DEFAULT_RAY_TRACING,
@@ -30,13 +33,13 @@ from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import FileResponse
 from models.schemas import JobEnqueueResponse
 from services.job_store import job_store
-from services.simulation_preflight_service import ENGINE_CHORAS, ENGINE_PYROOMACOUSTICS
+from services.simulation_preflight_service import ENGINE_PFFDTD, ENGINE_PYROOMACOUSTICS, ENGINES
 from services.simulation_preflight_worker import preflight_payload_path
 from utils.request_parsing import parse_mesh_settings
 
 router = APIRouter(prefix="/api")
 
-_ENGINES = (ENGINE_PYROOMACOUSTICS, ENGINE_CHORAS)
+_ENGINES = ENGINES
 _SAFE_SEGMENT = re.compile(r"[^A-Za-z0-9_-]")
 
 
@@ -59,6 +62,9 @@ async def preflight_speckle(
     max_order: int = Form(PYROOMACOUSTICS_DEFAULT_MAX_ORDER),
     ray_tracing: bool = Form(PYROOMACOUSTICS_DEFAULT_RAY_TRACING),
     mesh_settings: Optional[str] = Form(None),
+    fmax: float = Form(PFFDTD_DEFAULT_FMAX),          # PFFDTD only
+    ppw: float = Form(PFFDTD_DEFAULT_PPW),            # PFFDTD only
+    duration: float = Form(PFFDTD_DEFAULT_DURATION),  # PFFDTD only
 ):
     if engine not in _ENGINES:
         raise HTTPException(status_code=400, detail=f"engine must be one of {_ENGINES}")
@@ -93,6 +99,9 @@ async def preflight_speckle(
             ray_tracing=ray_tracing,
             mesh_settings=settings.model_dump(),
             payload_dir=str(_workspace_dir(req)),
+            pffdtd_settings=(
+                {"fmax": fmax, "ppw": ppw, "duration": duration} if engine == ENGINE_PFFDTD else None
+            ),
         ),
     }
     job_id = await job_store.enqueue(JOB_TYPE_PYROOMACOUSTICS, session_id, payload)

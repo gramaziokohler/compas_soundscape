@@ -51,7 +51,7 @@ from services.study_log_store import study_log_store
 # from services.modal_analysis_service import ModalAnalysisService
 
 # Import routers
-from routers import upload, generation, sounds, stable_audio, sed_analysis, sed_extract, library_search, reprocess, impulse_responses, modal_analysis, choras, pyroomacoustics, simulation_preflight, speckle, soundscape, tokens, tts, tts_voices, loop_analysis, jobs, auth, workspaces, preferences, bug_reports, study
+from routers import upload, generation, sounds, stable_audio, sed_analysis, sed_extract, library_search, reprocess, impulse_responses, modal_analysis, choras, pffdtd, pyroomacoustics, simulation_preflight, speckle, soundscape, tokens, tts, tts_voices, loop_analysis, jobs, auth, workspaces, preferences, bug_reports, study
 
 # Import constants
 from config.constants import (
@@ -99,6 +99,9 @@ from config.constants import (
     SOUNDSCAPE_DATA_DIR,
     SOUNDSCAPE_DATA_URL_PREFIX,
     CHORAS_RIR_DIR,
+    PFFDTD_RIR_DIR,
+    PFFDTD_RIR_URL_PREFIX,
+    PFFDTD_VERSION,
     )
 
 # --- Initialization ---
@@ -281,6 +284,14 @@ app.mount(
     name="choras_rir"
 )
 
+# Mount PFFDTD RIR output directory
+os.makedirs(PFFDTD_RIR_DIR, exist_ok=True)
+app.mount(
+    PFFDTD_RIR_URL_PREFIX,
+    NoStoreStaticFiles(directory=PFFDTD_RIR_DIR),
+    name="pffdtd_rir"
+)
+
 # --- Session Middleware (before CORS) ---
 app.add_middleware(SessionMiddleware)
 
@@ -323,6 +334,7 @@ app.include_router(reprocess.router)
 app.include_router(impulse_responses.router)
 # app.include_router(modal_analysis.router)
 app.include_router(choras.router)
+app.include_router(pffdtd.router)
 app.include_router(pyroomacoustics.router)
 app.include_router(simulation_preflight.router)
 app.include_router(speckle.router)
@@ -350,6 +362,7 @@ def get_service_versions(llm_model: str = None):
     from services.llm_service import LLMService
     from services.sed_service import SEDService
     from services.choras_service import ChorasService
+    from services.pffdtd_job import pffdtd_available
     from services.tts_service import TTSService
 
     return {
@@ -362,5 +375,6 @@ def get_service_versions(llm_model: str = None):
         "yamnet": SEDService.get_service_version_info(),
         "acousticDE": ChorasService.get_de_version_info(),
         "edg_acoustics": ChorasService.get_dg_version_info(),
+        "pffdtd": {"name": "PFFDTD (vendored, CUDA)", "version": PFFDTD_VERSION, "available": pffdtd_available() is None},
         "gemini-tts": TTSService.get_service_version_info(),
     }

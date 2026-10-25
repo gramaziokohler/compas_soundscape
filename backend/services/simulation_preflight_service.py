@@ -24,6 +24,11 @@ from config.constants import (
     PREFLIGHT_MODEL_DIAGONAL_MAX_M,
     PREFLIGHT_MODEL_DIAGONAL_MIN_M,
     PREFLIGHT_SURFACE_ERROR_DISTANCE_M,
+    PFFDTD_DEFAULT_DURATION,
+    PFFDTD_DEFAULT_FMAX,
+    PFFDTD_DEFAULT_PPW,
+    PFFDTD_PHASE_ACCURATE_PPW,
+    PFFDTD_SEED_CLEARANCE_CELLS,
     PYROOMACOUSTICS_RAY_TRACING_RECEIVER_RADIUS,
     SIM_MESH_INTERIOR_OBJECT_MAX_DEPTH_M,
 )
@@ -35,9 +40,12 @@ from services.simulation_mesh_service import (
 )
 from utils.air_visibility import SEED_LEAKY, SEED_OUTSIDE
 from utils.mesh_raycast import TriangleSet, point_triangle_distances, segment_crossings
+from utils.pffdtd_grid import oblique_area_fraction, plan_grid
 
 ENGINE_PYROOMACOUSTICS = "pyroomacoustics"
 ENGINE_CHORAS = "choras"
+ENGINE_PFFDTD = "pffdtd"
+ENGINES = (ENGINE_PYROOMACOUSTICS, ENGINE_CHORAS, ENGINE_PFFDTD)
 
 
 @dataclass
@@ -55,6 +63,9 @@ class PreflightContext:
     max_order: int = 0
     ray_tracing: bool = False
     two_sided_supported: bool = True
+    pffdtd_fmax: float = PFFDTD_DEFAULT_FMAX
+    pffdtd_ppw: float = PFFDTD_DEFAULT_PPW
+    pffdtd_duration: float = PFFDTD_DEFAULT_DURATION
 
 
 @dataclass
@@ -262,6 +273,8 @@ class SimulationPreflightService:
                         f"Image-source search is very large (~{ism:.1e} paths)",
                         f"{n_walls} walls at order {ctx.max_order}. Enable coplanar merging, simplify the "
                         "model or lower the max order (ray tracing covers the late tail).")
+        if ctx.engine == ENGINE_PFFDTD and len(mesh.faces):
+            _pffdtd_checks(mesh, ctx, out, dists)
         if len(mesh.vertices):
             diag = float(np.linalg.norm(mesh.vertices.max(axis=0) - mesh.vertices.min(axis=0)))
             if not (PREFLIGHT_MODEL_DIAGONAL_MIN_M <= diag <= PREFLIGHT_MODEL_DIAGONAL_MAX_M):
@@ -295,6 +308,37 @@ class SimulationPreflightService:
             )
             flags[k] = bool(near.any())
         return flags
+
+
+def _pffdtd_checks(mesh: SimulationMesh, ctx: PreflightContext, out: _Issues, dists: list[float]) -> None:
+    """Grid cost, stencil clearance, staircasing and band limit for the PFFDTD engine."""
+    pts = mesh.vertices[mesh.faces.ravel()]
+    plan = plan_grid(pts.max(axis=0) - pts.min(axis=0), ctx.pffdtd_fmax, ctx.pffdtd_ppw, ctx.pffdtd_duration)
+    cost = (f"{plan.nodes / 1e6:.1f} M grid points (h = {plan.h * 100:.2f} cm), {plan.gpu_bytes / 1e9:.2f} GB "
+            f"of {plan.gpu_budget_bytes / 1e9:.1f} GB GPU memory, ~{plan.est_runtime_s:.0f} s per source")
+    if not plan.fits_gpu:
+        out.add("error", "pffdtd_grid_too_large", "Grid does not fit in GPU memory",
+                f"{cost}. Lower the max frequency or the points per wavelength (memory depends on "
+                "the grid size, not on the IR length).")
+    else:
+        out.add("info", "pffdtd_grid", "Wave simulation grid", cost + ".")
+    clearance = PFFDTD_SEED_CLEARANCE_CELLS * plan.h
+    for meta, d in zip(ctx.seeds, dists):
+        if d < clearance:
+            out.add("error", "pffdtd_seed_clearance", f"{_label(meta)} is too close to a surface for the grid",
+                    f"It is {d * 100:.1f} cm from a surface; the wave solver needs {clearance * 100:.1f} cm "
+                    f"({PFFDTD_SEED_CLEARANCE_CELLS:g} grid cells). Move it or raise the resolution.",
+                    position=[float(x) for x in meta.position])
+    oblique = oblique_area_fraction(mesh.normals, mesh.areas)
+    if oblique > 0:
+        out.add("info", "pffdtd_oblique_walls", f"{oblique:.0%} of the surface is oblique to the grid",
+                "Walls not parallel to the x/y/z axes are staircased on the grid: their modes come out "
+                "slightly low (first-order error, ~0.2-0.4 grid cells of effective wall offset). "
+                "Axis-aligned walls are exact.")
+    out.add("info", "pffdtd_band_limited", f"Impulse response is band-limited to {ctx.pffdtd_fmax:.0f} Hz",
+            f"The wave solver resolves frequencies up to the max frequency at "
+            f"{plan.ppw_effective:.1f} points per wavelength; phase-accurate long IRs need about "
+            f"{PFFDTD_PHASE_ACCURATE_PPW:g}.")
 
 
 def two_sided_supported() -> bool:

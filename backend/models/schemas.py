@@ -1181,7 +1181,7 @@ class PreflightIssue(BaseModel):
 
 class PreflightSummary(BaseModel):
     preflight_id: str
-    engine: Literal["pyroomacoustics", "choras"]
+    engine: Literal["pyroomacoustics", "choras", "pffdtd"]
     n_errors: int
     n_warnings: int
     n_infos: int

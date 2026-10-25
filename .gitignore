@@ -174,3 +174,6 @@ test-results/
 src/compas_acoustics_gh_components/bin/
 src/compas_acoustics_gh_components/obj/
 
+
+# PFFDTD engine binaries (built per machine by backend/pffdtd_backend/c_cuda/build_engine.ps1)
+backend/pffdtd_backend/c_cuda/bin/

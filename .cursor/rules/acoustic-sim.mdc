@@ -1,6 +1,6 @@
 ---
-description: Room acoustics simulation — pyroomacoustics and Choras FEM/DG solver, plus applying simulation results to sounds (IR matching, muting, IR panel, mismatch coloring)
-globs: backend/services/pyroomacoustics_service.py,backend/services/pyroomacoustics_room_builder.py,backend/services/simulation_mesh_service.py,backend/services/simulation_preflight_service.py,backend/services/simulation_preflight_worker.py,backend/services/simulation_geometry_loader.py,backend/utils/mesh_*.py,backend/utils/air_visibility.py,backend/utils/preflight_payload.py,backend/routers/simulation_preflight.py,frontend/src/components/layout/sidebar/acoustics/SimulationPreflightPanel.tsx,frontend/src/lib/three/simulation-mesh-*.ts,frontend/src/store/simulationPreflightStore.ts,frontend/src/utils/simulationRequest.ts,backend/services/choras_service.py,backend/services/choras_job.py,backend/choras_backend/**,backend/routers/pyroomacoustics.py,backend/routers/choras.py,backend/workers/**,backend/routers/jobs.py,backend/utils/acoustic_measurement.py,backend/utils/speckle_geometry_mapper.py,backend/services/pyroomacoustics_worker.py,frontend/src/lib/audio/AudioOrchestrator.ts,frontend/src/lib/audio/modes/AmbisonicIRMode.ts,frontend/src/components/layout/sidebar/AcousticsSection.tsx,frontend/src/components/audio/ImpulseResponseUpload.tsx,frontend/src/components/scene/hooks/useSpeckleSimulationMismatch.ts,frontend/src/components/scene/hooks/useSpeckleSoundHighlight.ts
+description: Room acoustics simulation — pyroomacoustics, Choras FEM/DG and PFFDTD GPU FDTD solvers, plus applying simulation results to sounds (IR matching, muting, IR panel, mismatch coloring)
+globs: backend/services/pyroomacoustics_service.py,backend/services/pyroomacoustics_room_builder.py,backend/services/simulation_mesh_service.py,backend/services/simulation_preflight_service.py,backend/services/simulation_preflight_worker.py,backend/services/simulation_geometry_loader.py,backend/utils/mesh_*.py,backend/utils/air_visibility.py,backend/utils/preflight_payload.py,backend/routers/simulation_preflight.py,frontend/src/components/layout/sidebar/acoustics/SimulationPreflightPanel.tsx,frontend/src/lib/three/simulation-mesh-*.ts,frontend/src/store/simulationPreflightStore.ts,frontend/src/utils/simulationRequest.ts,backend/services/pffdtd_job.py,backend/services/pffdtd_scene_export.py,backend/routers/pffdtd.py,backend/utils/pffdtd_grid.py,backend/pffdtd_backend/*.py,backend/services/choras_service.py,backend/services/choras_job.py,backend/choras_backend/**,backend/routers/pyroomacoustics.py,backend/routers/choras.py,backend/workers/**,backend/routers/jobs.py,backend/utils/acoustic_measurement.py,backend/utils/speckle_geometry_mapper.py,backend/services/pyroomacoustics_worker.py,frontend/src/lib/audio/AudioOrchestrator.ts,frontend/src/lib/audio/modes/AmbisonicIRMode.ts,frontend/src/components/layout/sidebar/AcousticsSection.tsx,frontend/src/components/audio/ImpulseResponseUpload.tsx,frontend/src/components/scene/hooks/useSpeckleSimulationMismatch.ts,frontend/src/components/scene/hooks/useSpeckleSoundHighlight.ts
 ---
 
 # Acoustic Simulation Rules
@@ -114,11 +114,13 @@ deterministic (`SIM_MESH_RAY_SEED`).
 
 ### Geometry Preflight (pre-simulation check)
 
-- `POST /api/simulation/preflight-speckle` (`engine` = `pyroomacoustics` | `choras`) is a CPU job
+- `POST /api/simulation/preflight-speckle` (`engine` = `pyroomacoustics` | `choras` | `pffdtd`) is a CPU job
   (variant `pyroomacoustics_preflight`). It writes `temp/simulations/preflight/<workspace>/preflight_<id>.json`,
   served by `GET /api/simulation/preflight/{id}`.
 - Issues come from `SimulationPreflightService.analyze` with **per-engine severities**. For Choras,
   holes, open edges, non-manifold edges and two-sided surfaces are errors.
+  For PFFDTD (extra `fmax`/`ppw`/`duration` form fields), the grid must fit `PFFDTD_GPU_MEMORY_GB` and
+  sources/receivers need 3 cells of clearance (errors); oblique walls and the band limit are infos.
 - The frontend builds the run request and the preflight request with the same helper
   (`utils/simulationRequest.ts`). The signature it produces detects stale results.
   `AcousticsSection.runSimulation` gates the run: errors ask "Run anyway"; warnings and failed checks
@@ -264,6 +266,50 @@ events and may confuse the frontend progress bar.
 - Dispatched via the **Choras worker child process** (`workers/choras_runner.py`) — gmsh
   `initialize()`/`finalize()` run in the child's main thread; `_gmsh_initialize()` in
   `choras_service.py` handles SIGINT safety for non-main threads.
+
+## PFFDTD (GPU FDTD wave solver) Pipeline
+
+Vendored PFFDTD (Brian Hamilton, MIT) in `backend/pffdtd_backend/` — local patches are marked
+`compas:` and listed in `VENDORED.md`; validation (A1–A4, B1–B3) in `validation/REPORT.md`.
+
+```
+POST /api/pffdtd/run-simulation-speckle   (same geometry fields as pyroomacoustics + fmax, ppw, duration, air_absorption)
+  └─ router: 503 if pffdtd_available() fails → job_store.enqueue("pffdtd") → {job_id, position, total}
+  worker: python -m workers.worker_main --role pffdtd (compas-toy) leases queue:pffdtd, 1 slot per GPU
+    └─ child services/pffdtd_job.run_pffdtd_simulation():
+       1. load_speckle_simulation_geometry → SimulationMeshService.prepare (merge_coplanar OFF)
+       2. SimulationPreflightService.analyze(engine="pffdtd"); any `pffdtd_*` error aborts the run
+       3. utils/pffdtd_grid.plan_grid: h = c/(fmax·ppw), shrunk ≤15% so the bbox extents are whole cells
+       4. services/pffdtd_scene_export.build_scene → mats_hash (sides: 1 = air/back side, 3 = two-sided)
+       5. PFFDTD_PYTHON -I pffdtd_backend/pipeline.py job.json --parent-pid <child pid>
+          (compas-pffdtd env: fit materials → voxelise → CUDA engine → IRs at 48 kHz, src_<i>.npz)
+       6. float32 WAVs temp/static/pffdtd_rir/pffdtd_<sim>_src_<s>_rcv_<r>.wav + metrics
+          → temp/simulations/pffdtd_<sim>_results.json (grid, geometry_diagnostics, band limit)
+```
+
+Rules:
+- **Never import `pffdtd_backend` in the API / compas-toy process.** Its `__init__` puts upstream
+  `python/` (modules `common`, `fdtd`, `voxelizer`, `materials`) on `sys.path`. compas-toy only
+  launches `pipeline.py` with `PFFDTD_PYTHON`; the subprocess env must have the env's `Library/bin`
+  on PATH (numpy/BLAS and hdf5 DLLs), see `_pipeline_env()`.
+- **Cartesian grid + double precision only.** The FCC grid is first-order at any wall (its cells
+  cannot follow axis-aligned planes) and single precision fails the long rigid-room test (A3).
+- **Grid alignment:** cell faces start at the bbox minimum (CartGrid 3.5-cell offset); `plan_grid`
+  picks h so the bbox extents are whole cells → axis-aligned walls exact (A3 passes from PPW ≈ 28).
+  **Oblique walls are staircased** and converge only at first order (modes ~0.2–0.4 h low; A4 −8.6 dB
+  at PPW 82). The preflight reports this as `pffdtd_oblique_walls` (info). Conformal (cut-cell)
+  boundaries are the planned fix — do not try to "correct" it by shifting geometry.
+- **IR scale:** unit-sample source convention → in-band direct path |H| = 1/(4πr), like
+  pyroomacoustics (resampling multiplies by fs_sim/48000). The uniform-pressure mode (a ramp in a
+  rigid room) is removed by the 10 Hz low-cut. IRs carry nothing above `fmax` (`band_limited: true`).
+- **FOA:** 6 pressure probes at ±1 cell around each receiver; X/Y/Z = c·∫∂p/∂axis dt → ACN W,Y,Z,X,
+  SN3D (`encoding_method: "pressure_gradient"`). Sources/receivers need
+  `PFFDTD_SEED_CLEARANCE_CELLS` (3) cells of clearance from any surface (`pffdtd_seed_clearance` error).
+- **Cancel:** the runner hard-kills the child; `pipeline.py` polls its `--parent-pid` and kills the
+  engine exe, so the GPU is freed.
+- **Voxeliser adjacency must stay symmetric** (`count_asymmetric_links` runs on every prepare). An
+  isolated "near boundary" node with one-sided links acts as a pressure-release point — upstream's
+  check was a no-op (`assert ~(a ^ b)`), fixed here.
 
 ---
 

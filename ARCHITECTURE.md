@@ -14,11 +14,17 @@ compas_soundscape/
 │   │   ├── AudioSet_classes.py      # AudioSet class definitions
 │   │   ├── BBCSoundEffects.csv      # BBC sound effects database
 │   │   └── [3D model samples]       # IFC, OBJ test files
+│   ├── pffdtd_backend/              # Vendored PFFDTD (MIT) + compas driver, compas-pffdtd env only
+│   │   ├── python/ c_cuda/          # Upstream sources (local patches marked `compas:`, VENDORED.md)
+│   │   ├── sim_prepare.py engine.py outputs.py materials.py postprocess.py
+│   │   ├── pipeline.py              # Job CLI called by services/pffdtd_job.py
+│   │   └── validation/              # A1–A4, B1–B3 tests + REPORT.md
 │   ├── models/
 │   │   └── schemas.py               # Pydantic request/response models
 │   ├── routers/
 │   │   ├── __init__.py
 │   │   ├── choras.py                # Choras acoustic simulation integration
+│   │   ├── pffdtd.py                # PFFDTD GPU wave simulation (run, materials, status, results)
 │   │   ├── generation.py            # LLM text/prompt generation endpoints
 │   │   ├── impulse_responses.py     # IR upload/list/delete endpoints
 │   │   ├── library_search.py        # Sound library search (BBC, Freesound)
@@ -26,7 +32,7 @@ compas_soundscape/
 │   │   ├── pyroomacoustics.py       # Pyroomacoustics acoustic simulation (ISM, RT60)
 │   │   ├── reprocess.py             # Audio reprocessing (denoising)
 │   │   ├── sed_analysis.py          # Sound Event Detection endpoints
-│   │   ├── simulation_preflight.py  # Pre-simulation geometry check (both engines)
+│   │   ├── simulation_preflight.py  # Pre-simulation geometry check (pyroomacoustics / choras / pffdtd)
 │   │   ├── sounds.py                # Audio generation endpoints
 │   │   └── upload.py                # File upload endpoints
 │   ├── services/
@@ -38,6 +44,8 @@ compas_soundscape/
 │   │   ├── impulse_response_service.py  # IR processing & channel extraction
 │   │   ├── llm_service.py           # Google Gemini LLM
 │   │   ├── modal_analysis_service.py    # Modal analysis & mode shape visualization
+│   │   ├── pffdtd_job.py            # PFFDTD worker child: mesh prep → compas-pffdtd pipeline → WAV/results
+│   │   ├── pffdtd_scene_export.py   # SimulationMesh → PFFDTD scene + material coefficients
 │   │   ├── pyroomacoustics_service.py   # Pyroomacoustics simulation (ISM, RT60, EDT)
 │   │   ├── pyroomacoustics_room_builder.py  # pra.Room from a prepared SimulationMesh
 │   │   ├── simulation_geometry_loader.py    # Speckle fetch + per-face materials (all engines)
@@ -59,6 +67,7 @@ compas_soundscape/
 │   │   ├── air_visibility.py        # Diffuse random walk from sources/receivers
 │   │   ├── mesh_orientation.py      # Hierarchical one-/two-sided orientation
 │   │   ├── mesh_coplanar.py         # Coplanar triangles → polygon walls, hull test
+│   │   ├── pffdtd_grid.py           # PFFDTD grid spacing (bbox-aligned), cost, oblique walls
 │   │   ├── preflight_payload.py     # Preview payload for the frontend
 │   │   └── sed_processing.py        # SED processing utilities
 │   └── temp/                        # Parent temporary directory (all temp files)
@@ -66,7 +75,8 @@ compas_soundscape/
 │       │   ├── sounds/
 │       │   │   └── generated/       # Generated audio files
 │       │   ├── impulse_responses/   # Uploaded IR files (1/2/4/16 channels)
-│       │   └── pyroomacoustics_rir/ # Pyroomacoustics generated RIR files
+│       │   ├── pyroomacoustics_rir/ # Pyroomacoustics generated RIR files
+│       │   └── pffdtd_rir/          # PFFDTD IR WAVs (float32, 48 kHz, band-limited)
 │       ├── uploads/                 # Uploaded files staging area
 │       ├── library_downloads/       # Downloaded library audio files
 │       └── simulations/             # Choras/Pyroomacoustics simulation results

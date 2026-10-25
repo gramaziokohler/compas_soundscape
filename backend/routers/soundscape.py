@@ -37,6 +37,7 @@ from config.constants import (
     IMPULSE_RESPONSE_DIR,
     PYROOMACOUSTICS_RIR_DIR,
     CHORAS_RIR_DIR,
+    PFFDTD_RIR_DIR,
     TEMP_SIMULATIONS_DIR,
     TEMP_ANALYSIS_DIR,
     TEMP_STATIC_DIR,
@@ -406,7 +407,7 @@ def _copy_ir_files(session_id: str, model_id: str, ir_urls: list[str]) -> int:
             continue
 
         # Workspace IR library first, then the (legacy) shared root, then the
-        # simulated RIR dirs (pyroom / choras).
+        # simulated RIR dirs (pyroom / choras / pffdtd).
         source = _ir_library_dir(session_id) / filename
         if not source.exists():
             source = Path(IMPULSE_RESPONSE_DIR) / filename
@@ -414,6 +415,8 @@ def _copy_ir_files(session_id: str, model_id: str, ir_urls: list[str]) -> int:
             source = Path(PYROOMACOUSTICS_RIR_DIR) / filename
         if not source.exists():
             source = Path(CHORAS_RIR_DIR) / filename
+        if not source.exists():
+            source = Path(PFFDTD_RIR_DIR) / filename
         if not source.exists():
             logger.warning(f"IR source not found: {filename}")
             continue

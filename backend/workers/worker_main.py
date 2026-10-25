@@ -144,7 +144,7 @@ def _make_worker_id(role: str, explicit: str | None) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Redis job store worker process")
-    parser.add_argument("--role", required=True, choices=["gpu", "cpu", "choras", "sa3"])
+    parser.add_argument("--role", required=True, choices=["gpu", "cpu", "choras", "sa3", "pffdtd"])
     parser.add_argument("--slots", type=int, default=1)
     parser.add_argument("--worker-id", default=None)
     args = parser.parse_args()
@@ -193,10 +193,17 @@ def main() -> None:
         from workers.cpu_runner import CpuRunner
 
         runner = CpuRunner(job_store, state, worker_id, slots=args.slots)
-    else:
+    elif args.role == "pffdtd":
+        # GPU FDTD solver; needs PFFDTD_PYTHON (compas-pffdtd env) and the built engine.
+        from workers.pffdtd_runner import PffdtdRunner
+
+        runner = PffdtdRunner(job_store, state, worker_id, slots=args.slots)
+    elif args.role == "choras":
         from workers.choras_runner import ChorasRunner
 
         runner = ChorasRunner(job_store, state, worker_id, slots=args.slots)
+    else:
+        raise ValueError(f"unknown role {args.role}")
 
     try:
         runner.run_forever(shutdown)

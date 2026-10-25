@@ -16,6 +16,7 @@ The operational scripts live **outside this repo**, in `C:\compas\`. Their full 
 | Config | `C:\compas\config.psd1`: paths, service names, ports, intervals, `EnableAutoDeploy`, `PipExcludePackages` |
 | Backend Python env | `PythonExe` = `…\miniconda3\envs\compas-soundscape\python.exe` (**not** `compas-toy`) |
 | Stable Audio 3 env | `Sa3PythonExe` = `…\miniconda3\envs\compas-sa3\python.exe` |
+| PFFDTD env (not yet installed) | `compas-pffdtd` + built CUDA engine, see `deploy/README.md` §0.2. The worker itself runs in the backend env (`--role pffdtd`); point `PFFDTD_PYTHON` in `.env` at the `compas-pffdtd` `python.exe`. A `CompasWorkerPffdtd` service still has to be added to `config.psd1` / the `compas` CLI. `compas deps` never touches this env. |
 | Services | `CompasApi`, `CompasWorkerGpu`, `CompasWorkerCpu`, `CompasWorkerSa3`, `CompasFrontend` (`next start`), `CompasNginx` (:80), `CompasCloudflared`, `Memurai` |
 | Supervisor | Scheduled task `CompasSupervisor` (SYSTEM, at boot) → `compas-supervisor.ps1` |
 | Request path | Cloudflare Access → tunnel → nginx :80 → `/api/*` FastAPI :8000, `/` Next :3000 |

@@ -1,0 +1,22 @@
+# compas-pffdtd: isolated env for the vendored PFFDTD solver (setup, voxeliser, numpy
+# engine, validation) -- never installed into compas-toy.
+#   mamba env create -f backend/pffdtd_backend/environment.yml
+#   powershell -ExecutionPolicy Bypass -File backend/pffdtd_backend/c_cuda/build_engine.ps1
+# The CUDA engine also needs the CUDA toolkit (nvcc) and VS 2022 C++ build tools.
+# Validated with: python 3.11.17, numpy 2.4.6, scipy 1.17.1, h5py 3.16.0, hdf5 2.2.0,
+# numba 0.68.0, resampy 0.4.3, CUDA 12.8 (sm_89).
+name: compas-pffdtd
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - numpy>=2.0
+  - scipy>=1.13
+  - h5py>=3.11
+  - hdf5>=1.14  # headers + hdf5.lib for build_engine.ps1, hdf5.dll at run time
+  - numba>=0.60
+  - resampy>=0.4
+  - psutil
+  - tqdm
+  - matplotlib
+  - pytest

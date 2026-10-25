@@ -31,6 +31,7 @@ from config.constants import (
     REDIS_URL,
     JOB_TYPE_QUEUE,
     JOB_TYPE_SOUND,
+    JOB_TYPE_PFFDTD,
     GPU_LIKE_JOB_TYPES,
     JOB_STATUS_QUEUED,
     JOB_STATUS_RUNNING,
@@ -247,6 +248,7 @@ class AsyncJobStore:
             "sa3": "queue:sa3",
             "cpu": "queue:cpu",
             "choras": "queue:choras",
+            "pffdtd": JOB_TYPE_QUEUE[JOB_TYPE_PFFDTD],
         }.items():
             depths[role] = await self.redis.llen(queue_key)
         return depths

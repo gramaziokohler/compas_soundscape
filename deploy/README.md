@@ -101,6 +101,41 @@ python -m workers.worker_main --role sa3 --slots 1 --worker-id sa3-1
 
 ---
 
+## 0.2 PFFDTD wave solver (`compas-pffdtd`) — isolated environment
+
+PFFDTD (vendored in `backend/pffdtd_backend/`, see `VENDORED.md`) is a GPU
+finite-difference wave solver. Its setup/voxeliser and CUDA engine run in their own
+env; the API never imports it. The **`pffdtd` worker runs in `compas-toy`** and calls
+the `compas-pffdtd` interpreter as a subprocess.
+
+Needs: an NVIDIA GPU, the CUDA toolkit (`nvcc`, 12.x) and the Visual Studio 2022 C++
+build tools (`vcvars64.bat`).
+
+```powershell
+# 1. Create the env (python 3.11, numpy 2, h5py, hdf5, numba, resampy, ...)
+mamba env create -f backend/pffdtd_backend/environment.yml
+
+# 2. Build the CUDA engine (writes backend/pffdtd_backend/c_cuda/bin/*.exe, gitignored).
+#    -Arch: sm_89 = RTX 40xx / Ada; use sm_86 for RTX 30xx, sm_75 for RTX 20xx.
+powershell -ExecutionPolicy Bypass -File backend/pffdtd_backend/c_cuda/build_engine.ps1 -Arch sm_89
+
+# 3. Optional: validation suite (~15 min on a laptop RTX 2000 Ada); report in
+#    backend/pffdtd_backend/validation/REPORT.md
+mamba activate compas-pffdtd
+cd backend
+python -m pffdtd_backend.validation.run_validation --work-dir D:/pffdtd_val
+```
+
+`PFFDTD_PYTHON` defaults to `~/.local/share/mamba/envs/compas-pffdtd/python.exe`; set
+it in `.env` if the env lives elsewhere. `GET /api/pffdtd/status` reports whether the
+env and the engine are found.
+
+Known limitation: walls parallel to the x/y/z axes are exact on the grid (the grid is
+aligned to the model's bounding box); oblique walls are staircased and converge only at
+first order (modes slightly low). Results are band-limited to the chosen max frequency.
+
+---
+
 ## 1. Environment file (repo root `.env`)
 
 The backend and the workers load `.env.local` (overrides) then `.env` from the
@@ -117,9 +152,11 @@ repo root. Create/keep them there. Recognized keys (values never printed here):
 | `HF_TOKEN` | Token for the gated `stabilityai/stable-audio-3-small-sfx` repo (default TTA model) | yes for Stable Audio 3, or `HF_HUB_OFFLINE=1` once cached |
 | `STABLE_AUDIO_MODEL` | Stable Audio 3 variant (default `small-sfx`) | optional |
 | `STABLE_AUDIO_PYTHON` | Path to the `compas-sa3` `python.exe` if the env is not on `PATH` | optional |
+| `PFFDTD_PYTHON` | Path to the `compas-pffdtd` `python.exe` (default: the mamba env location) | for PFFDTD, if elsewhere |
+| `PFFDTD_GPU_MEMORY_GB` (8) | GPU memory budget used by the PFFDTD preflight grid check | optional |
 | `STABLE_AUDIO_LOCAL_DIR` | Mirror Stable Audio 3 weights to a plain local dir on Windows | optional |
 | `REDIS_URL` | Default `redis://127.0.0.1:6379/0` | optional override |
-| `GPU_WORKER_SLOTS`, `CPU_WORKER_SLOTS`, `CHORAS_WORKER_SLOTS`, `SA3_WORKER_SLOTS` | Slot counts read by `--slots` defaults / docs | optional |
+| `GPU_WORKER_SLOTS`, `CPU_WORKER_SLOTS`, `CHORAS_WORKER_SLOTS`, `SA3_WORKER_SLOTS`, `PFFDTD_WORKER_SLOTS` | Slot counts read by `--slots` defaults / docs | optional |
 | `LLM_MAX_CONCURRENT` (8), `TTS_MAX_CONCURRENT` (2), `GPU_QUEUE_PER_SESSION_MAX` (3) | Concurrency tuning | optional |
 | `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD` | Cloudflare Access team domain + app Audience tag. When set, the verified Access email is the user identity (multi-user mode). | for multi-user behind Cloudflare |
 | `LOADTEST_SERVICE_TOKEN_IDS` | Comma-separated Cloudflare service-token client ids allowed to act as synthetic load-test users (`X-Loadtest-User` header). Unset = disabled. See `scripts/loadtest/README.md`. | only while load testing |
@@ -189,7 +226,7 @@ uvicorn main:app --reload --log-config log_config.json
 - Interactive docs: `http://localhost:8000/docs`
 - Smoke check: `http://localhost:8000/api/versions` (needs the backend running;
   the `[env] .env*` lines at startup tell you which env file was found)
-- Check `http://localhost:8000/api/queue/status` → `{"gpu":0,"sa3":0,"cpu":0,"choras":0}`
+- Check `http://localhost:8000/api/queue/status` → `{"gpu":0,"sa3":0,"cpu":0,"choras":0,"pffdtd":0}`
 
 ---
 
@@ -212,6 +249,9 @@ python -m workers.worker_main --role cpu --slots 4 --worker-id cpu-1
 
 # Choras worker — FEM/DG acoustics. 1 slot.
 python -m workers.worker_main --role choras --slots 1 --worker-id choras-1
+
+# PFFDTD worker — GPU wave solver (needs the compas-pffdtd env + built engine, §0.2). 1 slot per GPU.
+python -m workers.worker_main --role pffdtd --slots 1 --worker-id pffdtd-1
 ```
 
 **Stable Audio 3 worker** (the default text-to-audio model) runs in its own

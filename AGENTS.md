@@ -44,6 +44,9 @@ cd backend
 python -m workers.worker_main --role gpu --slots 1 --worker-id gpu-1     # ×2 for two GPU lanes
 python -m workers.worker_main --role cpu --slots 4 --worker-id cpu-1
 python -m workers.worker_main --role choras --slots 1 --worker-id choras-1
+# PFFDTD GPU wave solver: worker runs in compas-toy and calls the isolated compas-pffdtd
+# env + CUDA engine (setup and build: deploy/README.md §0.2)
+python -m workers.worker_main --role pffdtd --slots 1 --worker-id pffdtd-1
 # Stable Audio 3 (stable-audio-3-small-sfx, the default TTA model) MUST run in the
 # isolated compas-sa3 env (torch 2.7.1 / transformers 5 for T5Gemma; incompatible
 # with compas-toy). Full env setup on a new machine: deploy/README.md §0.1. One-time:
@@ -71,11 +74,12 @@ backend/
     job_store.py           # Redis-backed job store (AsyncJobStore + WorkerJobStore)
     io_jobs.py             # LLM/model-analysis/TTS asyncio jobs + SSE keepalive helper
     runtime_config.py      # Redis-persisted runtime config (e.g. Speckle token)
-  workers/                 # Resident worker processes (GPU / CPU / Choras)
-    worker_main.py         # python -m workers.worker_main --role gpu|cpu|choras
+  workers/                 # Resident worker processes (GPU / CPU / Choras / SA3 / PFFDTD)
+    worker_main.py         # python -m workers.worker_main --role gpu|cpu|choras|sa3|pffdtd
   middleware/session.py    # UUID cookie injection → request.state.session_id
   utils/                   # Stateless helpers (audio_processing, file_operations, etc.)
   choras_backend/          # Choras FEM/DG acoustic solver interfaces
+  pffdtd_backend/          # Vendored PFFDTD (GPU FDTD) + compas driver; runs in the compas-pffdtd env only
   temp/                    # All generated/transient files (gitignored)
     static/sounds/generated/<session_id>/
     static/impulse_responses/

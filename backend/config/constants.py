@@ -875,6 +875,65 @@ CHORAS_ABSORPTION_MATERIALS = {
 }
 
 # ============================================================================
+# PFFDTD (GPU finite-difference wave solver, vendored in backend/pffdtd_backend)
+# ============================================================================
+# The solver runs in the isolated compas-pffdtd env (never imported by the API);
+# the worker child process calls PFFDTD_PYTHON on backend/pffdtd_backend/pipeline.py.
+# Validation (A1-A4, B1-B3): backend/pffdtd_backend/validation/REPORT.md.
+
+PFFDTD_DIR = BACKEND_DIR / "pffdtd_backend"
+PFFDTD_PIPELINE_SCRIPT = str(PFFDTD_DIR / "pipeline.py")
+PFFDTD_ENGINE_EXE = str(PFFDTD_DIR / "c_cuda" / "bin" / "fdtd_main_gpu_double.exe")
+PFFDTD_ENV_NAME = "compas-pffdtd"
+_PFFDTD_DEFAULT_PYTHON = Path.home() / ".local" / "share" / "mamba" / "envs" / PFFDTD_ENV_NAME / "python.exe"
+# compas-pffdtd python.exe; falls back to the default mamba env location on dev machines
+PFFDTD_PYTHON = os.environ.get("PFFDTD_PYTHON", "") or (
+    str(_PFFDTD_DEFAULT_PYTHON) if _PFFDTD_DEFAULT_PYTHON.exists() else ""
+)
+PFFDTD_VERSION = "aa319f6+compas"  # upstream commit + local patches (pffdtd_backend/VENDORED.md)
+
+PFFDTD_RIR_DIR = str(BACKEND_DIR / "temp" / "static" / "pffdtd_rir")
+PFFDTD_RIR_URL_PREFIX = "/static/pffdtd_rir"
+PFFDTD_TEMP_DIR = str(BACKEND_DIR / "temp" / "pffdtd_sims")
+PFFDTD_MATERIAL_CACHE_DIR = str(BACKEND_DIR / "temp" / "pffdtd_materials")
+
+# Grid / band limit. PPW counts Cartesian grid points per wavelength at fmax.
+# Phase-accurate long IRs (A3: -20 dB complex error over 150 ms) need PPW >= ~28 with
+# grid-aligned walls; oblique (staircased) walls converge only at first order.
+PFFDTD_DEFAULT_FMAX = 500.0          # Hz
+PFFDTD_FMAX_MIN = 100.0
+PFFDTD_FMAX_MAX = 4000.0
+PFFDTD_DEFAULT_PPW = 20.0
+PFFDTD_PPW_MIN = 6.0
+PFFDTD_PPW_MAX = 80.0
+PFFDTD_PHASE_ACCURATE_PPW = 28.0
+PFFDTD_DEFAULT_DURATION = 1.0        # s, IR length
+PFFDTD_DURATION_MIN = 0.05
+PFFDTD_DURATION_MAX = 5.0
+PFFDTD_PRECISION = "double"          # single precision fails A3 (long low-loss IRs)
+PFFDTD_TEMPERATURE_C = 20.0          # PFFDTD c(20 degC) = 343.2 m/s
+PFFDTD_RELATIVE_HUMIDITY = 50.0
+PFFDTD_DEFAULT_AIR_ABSORPTION = True
+# grid spacing may shrink by up to this fraction to put the bounding-box planes on cell faces
+PFFDTD_ALIGN_SEARCH_FRACTION = 0.15
+PFFDTD_FOA_OFFSET_CELLS = 1.0        # pressure-gradient probes at +/- this many cells
+# sources/receivers need this clearance: trilinear stencil (1 cell) + FOA probes (1 cell) + margin
+PFFDTD_SEED_CLEARANCE_CELLS = 3.0
+PFFDTD_LOWCUT_HZ = 10.0              # removes the (non-decaying) uniform-pressure mode
+PFFDTD_LOWCUT_ORDER = 4
+PFFDTD_LOWPASS_ORDER = 4             # applied forward-backward (8th-order magnitude)
+PFFDTD_OBLIQUE_WALL_TOLERANCE_DEG = 1.0  # walls within this of a grid plane count as aligned
+
+# Cost estimates (preflight): double precision keeps two fields (16 B/node) on the GPU.
+PFFDTD_GPU_MEMORY_GB = float(os.environ.get("PFFDTD_GPU_MEMORY_GB", "8"))
+PFFDTD_GPU_MEMORY_USABLE_FRACTION = 0.85
+PFFDTD_BYTES_PER_NODE = 16
+PFFDTD_GRID_PADDING_CELLS = 8        # halo cells added around the bounding box (CartGrid offset)
+PFFDTD_NODE_UPDATES_PER_S = float(os.environ.get("PFFDTD_NODE_UPDATES_PER_S", "5.8e9"))  # RTX 2000 Ada, double
+PFFDTD_COURANT_CART = 0.999 / 3 ** 0.5
+PFFDTD_SPEED_OF_SOUND = 343.2
+
+# ============================================================================
 # Speckle Configuration
 # ============================================================================
 
@@ -937,6 +996,7 @@ GPU_WORKER_SLOTS = int(os.environ.get("GPU_WORKER_SLOTS", "2"))
 CPU_WORKER_SLOTS = int(os.environ.get("CPU_WORKER_SLOTS", "4"))
 CHORAS_WORKER_SLOTS = int(os.environ.get("CHORAS_WORKER_SLOTS", "1"))
 SA3_WORKER_SLOTS = int(os.environ.get("SA3_WORKER_SLOTS", "1"))
+PFFDTD_WORKER_SLOTS = int(os.environ.get("PFFDTD_WORKER_SLOTS", "1"))  # one GPU solve at a time
 
 # Fairness / rate limiting
 GPU_QUEUE_PER_SESSION_MAX = int(os.environ.get("GPU_QUEUE_PER_SESSION_MAX", "3"))
@@ -968,6 +1028,7 @@ JOB_TYPE_PYROOMACOUSTICS = "pyroomacoustics"  # also carries the geometry prefli
 JOB_TYPE_SED = "sed"
 JOB_TYPE_LOOP = "loop"
 JOB_TYPE_CHORAS = "choras"
+JOB_TYPE_PFFDTD = "pffdtd"
 
 # IO job types (asyncio.create_task in the API process — no queue, no worker)
 JOB_TYPE_TTS = "tts"
@@ -990,6 +1051,7 @@ JOB_TYPE_QUEUE = {
     JOB_TYPE_SED: "queue:cpu",
     JOB_TYPE_LOOP: "queue:cpu",
     JOB_TYPE_CHORAS: "queue:choras",
+    JOB_TYPE_PFFDTD: "queue:pffdtd",
 }
 
 # GPU-style jobs share the per-session fairness cap and the pending-GPU set.
