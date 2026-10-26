@@ -250,6 +250,26 @@ class PyroomacousticsMaterialsResponse(BaseModel):
 # Speckle Model Schemas
 # ============================================================================
 
+class SpeckleUploadPrepareRequest(BaseModel):
+    """Request a presigned Speckle blob URL for a direct browser upload (POST /api/upload/prepare)."""
+    file_name: str
+
+
+class SpeckleUploadPrepareResponse(BaseModel):
+    """Presigned blob URL the browser PUTs the model file to, plus Speckle's file id."""
+    upload_url: str
+    file_id: str
+
+
+class SpeckleUploadFinalizeRequest(BaseModel):
+    """Start ingestion of a file the browser uploaded to blob storage (POST /api/upload/finalize)."""
+    file_id: str
+    etag: str
+    file_name: str
+    # Existing model to add the file to as a new version (else matched by file name)
+    model_id: Optional[str] = None
+
+
 class SpeckleIngestionStatusResponse(BaseModel):
     """Live status of an async Speckle file ingestion (GET /api/speckle/ingestion/{id})."""
     status: Optional[str] = None

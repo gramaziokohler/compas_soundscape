@@ -10,7 +10,12 @@ from fastapi import APIRouter, File, Form, UploadFile, HTTPException
 from fastapi.concurrency import run_in_threadpool
 
 from services.speckle_service import SpeckleService
-from config.constants import TEMP_UPLOADS_DIR, SAMPLE_IFC_FILE_PATH
+from config.constants import TEMP_UPLOADS_DIR, SAMPLE_IFC_FILE_PATH, SPECKLE_SUPPORTED_FORMATS
+from models.schemas import (
+    SpeckleUploadPrepareRequest,
+    SpeckleUploadPrepareResponse,
+    SpeckleUploadFinalizeRequest,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -18,6 +23,63 @@ router = APIRouter(prefix="/api", tags=["upload"])
 
 # Initialize Speckle service (singleton pattern)
 speckle_service = SpeckleService()
+
+
+def _ensure_speckle_project() -> None:
+    """Authenticate the shared Speckle client on first use; 500 if no project."""
+    if not speckle_service.client:
+        if speckle_service.authenticate():
+            speckle_service.get_or_create_project()
+    if not speckle_service.project_id:
+        raise HTTPException(status_code=500, detail="Speckle project not configured")
+
+
+def _check_model_file_type(file_name: str) -> None:
+    ext = os.path.splitext(file_name)[1].lstrip(".").lower()
+    if ext not in SPECKLE_SUPPORTED_FORMATS:
+        supported = ", ".join(f".{f}" for f in SPECKLE_SUPPORTED_FORMATS)
+        raise HTTPException(status_code=400, detail=f"Unsupported file type. Supported formats: {supported}")
+
+
+@router.post("/upload/prepare", response_model=SpeckleUploadPrepareResponse)
+async def prepare_model_upload(body: SpeckleUploadPrepareRequest):
+    """
+    Step 1 of the direct browser upload: return a presigned Speckle blob URL.
+
+    The browser PUTs the file there itself, so model files never pass through
+    the Cloudflare tunnel (100 MB request limit) or this server.
+    """
+    _check_model_file_type(body.file_name)
+    await run_in_threadpool(_ensure_speckle_project)
+    target = await run_in_threadpool(speckle_service.generate_upload_url, os.path.basename(body.file_name))
+    if not target:
+        raise HTTPException(status_code=502, detail="Could not get a Speckle upload URL")
+    return SpeckleUploadPrepareResponse(upload_url=target["url"], file_id=target["file_id"])
+
+
+@router.post("/upload/finalize")
+async def finalize_model_upload(body: SpeckleUploadFinalizeRequest):
+    """
+    Step 2 of the direct browser upload: start Speckle ingestion of the uploaded
+    blob. Returns the same ``{speckle, geometry}`` shape as ``POST /api/upload``;
+    the client polls ``/api/speckle/ingestion/{id}`` for the created version.
+    """
+    _check_model_file_type(body.file_name)
+    await run_in_threadpool(_ensure_speckle_project)
+    file_name = os.path.basename(body.file_name)
+    speckle_data = await run_in_threadpool(
+        speckle_service.start_ingestion,
+        file_id=body.file_id,
+        etag=body.etag,
+        file_name=file_name,
+        model_name=os.path.splitext(file_name)[0],
+        model_id=body.model_id or None,
+    )
+    if not speckle_data:
+        raise HTTPException(status_code=502, detail="Failed to start Speckle ingestion")
+    if speckle_service.auth_token:
+        speckle_data["auth_token"] = speckle_service.auth_token
+    return {"speckle": speckle_data, "geometry": {"vertices": [], "faces": []}}
 
 
 @router.post("/upload")
