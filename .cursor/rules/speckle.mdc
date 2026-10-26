@@ -109,12 +109,15 @@ payload on the `/api/v2` parquet rail, **no legacy object graph**.
 (`routers/upload.py` → `services/speckle_service.py`):
 
 ```
-POST /api/upload
-  └─ SpeckleService.upload_model()               # run_in_threadpool (blocking HTTP)
-       ├─ generateUploadUrl + S3 PUT
+POST /api/upload/prepare {file_name}
+  └─ SpeckleService.generate_upload_url()        # generateUploadUrl → {upload_url, file_id}
+browser PUTs the file straight to upload_url      # XHR; never through Cloudflare (100 MB cap) or nginx
+POST /api/upload/finalize {file_id, etag, file_name, model_id?}
+  └─ SpeckleService.start_ingestion()            # run_in_threadpool (blocking HTTP)
        ├─ _get_or_create_model()
        └─ fileUploadMutations.startFileIngestion # async; returns ModelIngestion.id
             → {model_id, url, ingestion_id, version_id: ""}
+(legacy POST /api/upload multipart = upload_model(): same steps server-side; capped at 100 MB by the tunnel)
 client polls GET /api/speckle/ingestion/{ingestion_id}   (every 1 s, SPECKLE_INGESTION)
   └─ get_ingestion_status()
        ├─ queued / processing → {stage, progress (0–1), phase, attempt, progress_message}
@@ -243,13 +246,15 @@ Scale to metres: `mm=0.001, cm=0.01, ft=0.3048, in=0.0254`.
 - **Simulations and the preflight send the LOADED version id** (`resolveSimulationVersionId()` in
   `utils/simulationRequest.ts`), never the bare model id (which the backend resolves to the latest).
 - `soundscape.json` `version_id` is the version loaded when saved; the next open compares the latest with it.
-- `POST /api/upload` accepts an optional `model_id` form field: the file becomes a new version of that model
+- `POST /api/upload/finalize` (and legacy `POST /api/upload`) accept an optional `model_id`: the file becomes a new version of that model
   whatever its file name (without it, the model is matched by file name).
 
 ## REST Endpoints
 
 - `GET  /api/speckle/models` → project + all models with `latest_version`
-- `POST /api/upload` (multipart) → `{speckle: {model_id, url, ingestion_id, version_id}, geometry}`
+- `POST /api/upload/prepare` `{file_name}` → `{upload_url, file_id}` (presigned blob URL, CORS-enabled for the app origin)
+- `POST /api/upload/finalize` `{file_id, etag, file_name, model_id?}` → `{speckle: {model_id, url, ingestion_id, version_id}, geometry}`
+- `POST /api/upload` (multipart, legacy server-side path, ≤ 100 MB) → same shape as finalize
 - `GET  /api/speckle/ingestion/{ingestion_id}` → `SpeckleIngestionStatusResponse` `{status, stage, progress_message, progress, phase, attempt, version_id, object_id, error}`
 - `POST /api/speckle/model-entities` `{project_id, version_id}` → entity list
 - `POST /api/speckle/model-screenshots` `{project_id, version_id}` → 3 base64 PNGs

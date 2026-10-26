@@ -1,4 +1,4 @@
-import { API_BASE_URL, SPECKLE_INGESTION } from '@/utils/constants';
+import { API_BASE_URL, SPECKLE_DIRECT_UPLOAD, SPECKLE_INGESTION } from '@/utils/constants';
 import type { CompasGeometry, SoundEvent, SoundGenerationConfig, FileUploadResponse, JobType, JobRecord, UserPreferences, BugReportPayload, BugReportCreated } from '@/types';
 import { recordFailedRequest } from '@/lib/diagnostics/diagnosticsBuffer';
 import type { TtsCustomVoice, TtsCustomVoiceCreateRequest, TtsDialectsResponse, TtsLanguageMatch } from '@/types/ttsLanguage';
@@ -78,10 +78,52 @@ async function fetchWithErrorHandling(
 
 // ─── Speckle file-ingestion polling ─────────────────────────────────────────
 //
-// `POST /api/upload` triggers Speckle's `startFileIngestion`, which creates the
+// `POST /api/upload/finalize` triggers Speckle's `startFileIngestion`, which creates the
 // model version asynchronously. Every upload caller (viewer, file-upload store,
 // model analysis) needs the real version_id/object_id, so `uploadFile` waits
 // here until ingestion succeeds instead of each caller racing the pipeline.
+
+/**
+ * PUT a model file straight to Speckle's presigned blob URL (CORS-enabled for
+ * the app origin). XHR rather than fetch: only XHR reports upload progress.
+ * Resolves with the ETag `startFileIngestion` needs; rejects on HTTP error,
+ * network error or a stall longer than SPECKLE_DIRECT_UPLOAD.STALL_TIMEOUT_MS.
+ */
+function putFileToSpeckleStorage(
+  url: string,
+  file: File,
+  onProgress: (fraction: number) => void
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    let stallTimer: ReturnType<typeof setTimeout> | undefined;
+    const armStallTimer = () => {
+      clearTimeout(stallTimer);
+      stallTimer = setTimeout(() => xhr.abort(), SPECKLE_DIRECT_UPLOAD.STALL_TIMEOUT_MS);
+    };
+
+    xhr.open('PUT', url);
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.upload.onprogress = (event) => {
+      armStallTimer();
+      if (event.lengthComputable && event.total > 0) onProgress(event.loaded / event.total);
+    };
+    xhr.onload = () => {
+      clearTimeout(stallTimer);
+      const etag = xhr.getResponseHeader('ETag');
+      if (xhr.status >= 200 && xhr.status < 300 && etag) resolve(etag);
+      else reject(new Error(`Upload to Speckle storage failed (HTTP ${xhr.status})`));
+    };
+    xhr.onerror = () => {
+      clearTimeout(stallTimer);
+      reject(new Error('Upload to Speckle storage failed (network error)'));
+    };
+    xhr.onabort = () => reject(new Error('Upload to Speckle storage stalled — check your connection and try again'));
+
+    armStallTimer();
+    xhr.send(file);
+  });
+}
 
 /** Map one ingestion status probe onto the client-side upload progress shape. */
 function toUploadProgress(status: SpeckleIngestionStatus): SpeckleUploadProgress {
@@ -721,15 +763,35 @@ export const apiService = {
   ): Promise<FileUploadResponse | CompasGeometry> {
     try {
       onProgress?.({ stage: 'uploading', message: null, progress: null, phase: null, attempt: null });
-      const formData = new FormData();
-      formData.append("file", file);
-      if (targetModelId) formData.append('model_id', targetModelId);
 
-      const response = await fetchWithErrorHandling(
-        `${API_BASE_URL}/api/upload`,
+      // 1. Presigned Speckle blob URL — the file itself never goes through our server.
+      const prepareResponse = await fetchWithErrorHandling(
+        `${API_BASE_URL}/api/upload/prepare`,
         {
           method: 'POST',
-          body: formData
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ file_name: file.name }),
+        },
+        'File upload'
+      );
+      if (!prepareResponse.ok) {
+        const err = await prepareResponse.json().catch(() => ({ detail: 'File upload failed' }));
+        throw new Error(err.detail || 'File upload failed');
+      }
+      const { upload_url, file_id } = (await prepareResponse.json()) as { upload_url: string; file_id: string };
+
+      // 2. Browser → blob storage, with live byte progress.
+      const etag = await putFileToSpeckleStorage(upload_url, file, (fraction) =>
+        onProgress?.({ stage: 'uploading', message: null, progress: fraction, phase: null, attempt: null })
+      );
+
+      // 3. Start Speckle ingestion of the uploaded blob.
+      const response = await fetchWithErrorHandling(
+        `${API_BASE_URL}/api/upload/finalize`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ file_id, etag, file_name: file.name, model_id: targetModelId ?? null }),
         },
         'File upload'
       );

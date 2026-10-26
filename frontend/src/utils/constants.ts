@@ -877,6 +877,12 @@ export const SPECKLE_INGESTION = {
   MAX_ATTEMPTS: 300,            // 5 minutes — large IFC/RVT conversions can be slow
 } as const;
 
+// Direct browser → Speckle blob-storage upload (bypasses the Cloudflare tunnel's
+// 100 MB request limit). The PUT fails if no bytes move for STALL_TIMEOUT_MS.
+export const SPECKLE_DIRECT_UPLOAD = {
+  STALL_TIMEOUT_MS: 60000,
+} as const;
+
 // Loading-overlay labels for each client-side model upload stage.
 export const SPECKLE_UPLOAD_STAGE_LABELS = {
   uploading: 'Uploading file to Speckle…',

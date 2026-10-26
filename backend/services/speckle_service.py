@@ -833,93 +833,83 @@ class SpeckleService:
             )
         return legacy
 
-    def upload_model(self, file_path: str, file_type: str, model_name: str = None, model_id: str = None) -> Optional[Dict]:
+    def generate_upload_url(self, file_name: str) -> Optional[Dict[str, str]]:
         """
-        Upload 3dm/obj/ifc file to Speckle using the file upload API.
+        Ask Speckle for a presigned blob-storage URL to upload ``file_name`` to.
 
-        This follows the proper Speckle file upload workflow:
-        1. Generate presigned upload URL
-        2. Upload file to S3
-        3. Get or create model (reuses existing model to create new version)
-        4. Trigger file ingestion (startFileIngestion) — asynchronous on Speckle's side
-        5. Return model_id + URL + ingestion_id; the client polls for the created version
-
-        **Version Handling:**
-        - If a model with the same name exists, the file will be uploaded as a NEW VERSION
-        - If no model exists, a new model will be created with the file as version 1
-        - This prevents "branch already exists" errors when re-uploading files
-
-        Args:
-            file_path: Path to the file to upload
-            file_type: File extension (3dm, obj, ifc)
-            model_name: Optional custom model name (defaults to filename without extension)
-            model_id: Optional existing model to add the upload to as a new version
-                (takes precedence over matching by ``model_name``)
+        The URL accepts a plain ``PUT`` of the file bytes and allows CORS from the
+        app origin, so the browser uploads directly (bypassing the Cloudflare
+        tunnel's 100 MB request limit) and then calls ``start_ingestion``.
 
         Returns:
-            dict: {model_id, version_id, file_id, url} if successful, None otherwise
+            dict: {url, file_id} or None on failure
         """
-        import requests
-        
         if not self.client or not self.project_id:
             logger.error("Not authenticated or no project selected.")
             return None
 
-        if file_type.lower() not in SPECKLE_SUPPORTED_FORMATS:
+        generate_url_mutation = gql("""
+        mutation GenerateFileUploadUrl($input: GenerateFileUploadUrlInput!) {
+            fileUploadMutations {
+                generateUploadUrl(input: $input) {
+                    url
+                    fileId
+                }
+            }
+        }
+        """)
+
+        try:
+            response = self.client.httpclient.execute(
+                generate_url_mutation,
+                variable_values={"input": {"fileName": file_name, "projectId": self.project_id}},
+            )
+        except Exception as exc:
+            logger.error(f"Failed to generate Speckle upload URL: {exc}")
+            return None
+
+        generated = response["fileUploadMutations"]["generateUploadUrl"]
+        return {"url": generated["url"], "file_id": generated["fileId"]}
+
+    def start_ingestion(
+        self,
+        file_id: str,
+        etag: str,
+        file_name: str,
+        model_name: str = None,
+        model_id: str = None,
+    ) -> Optional[Dict]:
+        """
+        Start Speckle's file ingestion for a file already uploaded to the URL from
+        ``generate_upload_url``.
+
+        **Version Handling:**
+        - With ``model_id`` the file becomes a NEW VERSION of that model
+        - Otherwise a model with the same name is reused (new version) or created
+
+        Args:
+            file_id: ``fileId`` returned by ``generate_upload_url``
+            etag: ETag returned by the storage ``PUT`` (quotes optional)
+            file_name: Original file name (its extension selects the converter)
+            model_name: Optional model name (defaults to file name without extension)
+            model_id: Optional existing model to add the upload to as a new version
+
+        Returns:
+            dict: {model_id, version_id, file_id, url, object_id, ingestion_id} or
+            None on failure. ``version_id`` is empty — ingestion is asynchronous and
+            the client polls ``get_ingestion_status(ingestion_id)``.
+        """
+        if not self.client or not self.project_id:
+            logger.error("Not authenticated or no project selected.")
+            return None
+
+        file_type = os.path.splitext(file_name)[1].lstrip(".").lower()
+        if file_type not in SPECKLE_SUPPORTED_FORMATS:
             logger.error(f"Unsupported file type: {file_type}")
             return None
 
         try:
-            file_name = os.path.basename(file_path)
-            logger.info(f"Uploading {file_type} file to Speckle: {file_name}")
-
-            # Step 1: Generate upload URL
-            logger.info("Step 1/5: Generating upload URL...")
-            generate_url_mutation = gql("""
-            mutation GenerateFileUploadUrl($input: GenerateFileUploadUrlInput!) {
-                fileUploadMutations {
-                    generateUploadUrl(input: $input) {
-                        url
-                        fileId
-                    }
-                }
-            }
-            """)
-            
-            variables = {
-                "input": {
-                    "fileName": file_name,
-                    "projectId": self.project_id
-                }
-            }
-            
-            response = self.client.httpclient.execute(
-                generate_url_mutation, variable_values=variables
-            )
-            upload_url = response["fileUploadMutations"]["generateUploadUrl"]["url"]
-            file_id = response["fileUploadMutations"]["generateUploadUrl"]["fileId"]
-            logger.info(f"Got upload URL and file ID: {file_id}")
-
-            # Step 2: Upload file to S3
-            logger.info("Step 2/5: Uploading file to S3...")
-            with open(file_path, 'rb') as f:
-                file_data = f.read()
-            
-            upload_response = requests.put(
-                upload_url,
-                data=file_data,
-                headers={'Content-Type': 'application/octet-stream'}
-            )
-            
-            if upload_response.status_code != 200:
-                logger.error(f"S3 upload failed with status {upload_response.status_code}")
-                return None
-            
-            etag = upload_response.headers.get('ETag', '').strip('"')
-            logger.info(f"File uploaded to S3, ETag: {etag}")
-
-            # Step 3: Get or create model (reuse existing to create new version)
-            logger.info("Step 3/5: Getting or creating model...")
+            # Get or create model (reuse existing to create new version)
             if not model_name:
                 model_name = os.path.splitext(file_name)[0]
 
@@ -931,12 +921,10 @@ class SpeckleService:
             else:
                 model = self._get_or_create_model(model_name, file_type, file_name)
 
-            # Step 4: Trigger file ingestion
             # NOTE: `startFileImport` was removed from the Speckle Server GraphQL API
             # (2026.9 release) — calling it now fails with a 400 UNSUPPORTED_FILE_TYPE.
             # The replacement is `fileUploadMutations.startFileIngestion`, which takes the
             # same `StartFileImportInput` and returns a `ModelIngestion` with a `statusData` union.
-            logger.info("Step 4/5: Triggering file ingestion...")
             start_ingestion_mutation = gql("""
             mutation StartFileIngestion($input: StartFileImportInput!) {
                 fileUploadMutations {
@@ -954,16 +942,16 @@ class SpeckleService:
                 }
             }
             """)
-            
+
             import_variables = {
                 "input": {
-                    "etag": f'"{etag}"',  # Must be double-quoted
+                    "etag": f'"{etag.strip(chr(34))}"',  # Must be double-quoted
                     "fileId": file_id,
                     "modelId": model.id,
                     "projectId": self.project_id
                 }
             }
-            
+
             import_response = self.client.httpclient.execute(
                 start_ingestion_mutation, variable_values=import_variables
             )
@@ -972,13 +960,12 @@ class SpeckleService:
             import_status = (ingestion.get("statusData") or {}).get("status")
             logger.info(f"File ingestion started: {ingestion_id}, status: {import_status}")
 
-            # Step 5: Return immediately — ingestion runs asynchronously on Speckle.
-            # The client polls `get_ingestion_status(ingestion_id)` until the version exists,
-            # then loads the model. We must NOT return the ingestion id as `version_id`: for
-            # simulations the app needs the real version id, which only exists after ingestion.
+            # Return immediately — ingestion runs asynchronously on Speckle. We must NOT
+            # return the ingestion id as `version_id`: for simulations the app needs the
+            # real version id, which only exists after ingestion.
             viewer_url = f"https://{SPECKLE_SERVER_URL}/projects/{self.project_id}/models/{model.id}"
 
-            result = {
+            return {
                 "model_id": model.id,
                 "version_id": "",          # resolved by the client once ingestion succeeds
                 "file_id": file_id,
@@ -987,15 +974,56 @@ class SpeckleService:
                 "ingestion_id": ingestion_id,
             }
 
-            logger.info(f"File upload initiated: {result['url']} (ingestion {ingestion_id})")
-            logger.info("Ingestion is async — client polls for status until the model is ready")
-            return result
-
         except Exception as e:
-            logger.error(f"Failed to upload model: {str(e)}")
+            logger.error(f"Failed to start ingestion: {str(e)}")
             import traceback
             logger.error(traceback.format_exc())
             return None
+
+    def upload_model(self, file_path: str, file_type: str, model_name: str = None, model_id: str = None) -> Optional[Dict]:
+        """
+        Upload a local 3dm/obj/ifc file to Speckle (server-side path).
+
+        Generates a presigned upload URL, PUTs the file to blob storage, then starts
+        ingestion. The browser flow does the PUT itself (``generate_upload_url`` →
+        PUT → ``start_ingestion``) so large files never pass through the tunnel.
+
+        Returns:
+            dict: same shape as ``start_ingestion`` or None on failure
+        """
+        import requests
+
+        if file_type.lower() not in SPECKLE_SUPPORTED_FORMATS:
+            logger.error(f"Unsupported file type: {file_type}")
+            return None
+
+        file_name = os.path.basename(file_path)
+        target = self.generate_upload_url(file_name)
+        if not target:
+            return None
+
+        try:
+            with open(file_path, 'rb') as f:
+                upload_response = requests.put(
+                    target["url"],
+                    data=f,
+                    headers={'Content-Type': 'application/octet-stream'}
+                )
+        except Exception as exc:
+            logger.error(f"Blob upload failed: {exc}")
+            return None
+
+        if upload_response.status_code != 200:
+            logger.error(f"Blob upload failed with status {upload_response.status_code}")
+            return None
+
+        return self.start_ingestion(
+            file_id=target["file_id"],
+            etag=upload_response.headers.get('ETag', ''),
+            file_name=file_name,
+            model_name=model_name,
+            model_id=model_id,
+        )
 
     def get_model_geometry(self, project_id: str, version_id_or_object_id: str, layer_name: str = None, object_ids_filter: list = None) -> Optional[Dict]:
         """
