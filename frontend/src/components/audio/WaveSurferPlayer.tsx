@@ -194,6 +194,9 @@ export function WaveSurferPlayer({
 
   const displayHeight = pendingHeight ?? waveformHeight;
   const isSpectrogramMode = showSpectrograms;
+  // The Spectrogram plugin fixes its canvas height at creation, so a resize in
+  // spectrogram mode must recreate the instance (0 = waveform mode, no recreate).
+  const spectrogramHeight = isSpectrogramMode ? waveformHeight : 0;
   // Callers may mount with an empty URL and fill it in from an effect (e.g. a
   // blob URL created post-mount) — the instance must be created once it arrives.
   const hasAudioUrl = audioUrl !== '';
@@ -317,7 +320,7 @@ export function WaveSurferPlayer({
     // hasAudioUrl (not audioUrl) so a URL swap reuses the instance, but a first
     // URL arriving after mount still creates it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSpectrogramMode, hasAudioUrl]);
+  }, [isSpectrogramMode, spectrogramHeight, hasAudioUrl]);
 
   // Load — or seamlessly swap — the audio source.
   //   * first load / after a recreate: load from the start.
@@ -368,7 +371,7 @@ export function WaveSurferPlayer({
       });
     // `resolveAudioUrl` is stable; only the URL/instance identity matters here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [audioUrl, isSpectrogramMode]);
+  }, [audioUrl, isSpectrogramMode, spectrogramHeight]);
 
   // Live cosmetic/interaction updates — no re-decode, no instance recreation.
   useEffect(() => {

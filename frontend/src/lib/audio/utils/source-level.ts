@@ -4,11 +4,15 @@
  * Per-source realtime level probe used to drive audio-reactive visuals
  * (sound-sphere highlight + dark-mode point-light intensity).
  *
- * It wraps a single `AnalyserNode` that is inserted INLINE into a source's
- * persistent gain chain. `AnalyserNode` is a transparent pass-through, so
- * inserting it does not alter the signal. Reading RMS from the analyser yields
- * the post-fader signal level, which already folds in the source volume — the
- * visual layer only needs to multiply by its own brightness range.
+ * It wraps a single `AnalyserNode` attached as a dead-end SIDE TAP of a source's
+ * persistent gain node (`tap()`), never inline. An inline analyser does not
+ * propagate silence, so every node after it (e.g. each IR ConvolverNode) keeps
+ * rendering while the source is silent; on a model with many convolvers that
+ * saturates the audio thread until each source has played once. Browsers still
+ * process an output-less analyser (automatic pull), so reads keep working.
+ * Reading RMS from the analyser yields the post-fader signal level, which
+ * already folds in the source volume — the visual layer only needs to multiply
+ * by its own brightness range.
  *
  * Reading is cheap (a 256-sample time-domain copy) and smoothed with a fast
  * attack / slow release so a light does not flicker on every sampled frame.
@@ -20,12 +24,22 @@ export class SourceLevelMeter {
   readonly node: AnalyserNode;
   private readonly buffer: Float32Array<ArrayBuffer>;
   private smoothed = 0;
+  private tapped: AudioNode | null = null;
 
   constructor(audioContext: AudioContext) {
     this.node = audioContext.createAnalyser();
     this.node.fftSize = AUDIO_LEVEL.FFT_SIZE;
     this.node.smoothingTimeConstant = 0;
     this.buffer = new Float32Array(this.node.fftSize) as Float32Array<ArrayBuffer>;
+  }
+
+  /**
+   * Meter `source` from a side branch. The analyser has no outputs, so it never
+   * sits between `source` and the rest of the chain.
+   */
+  tap(source: AudioNode): void {
+    source.connect(this.node);
+    this.tapped = source;
   }
 
   /**
@@ -54,9 +68,10 @@ export class SourceLevelMeter {
 
   dispose(): void {
     try {
-      this.node.disconnect();
+      this.tapped?.disconnect(this.node);
     } catch {
       // Already disconnected
     }
+    this.tapped = null;
   }
 }

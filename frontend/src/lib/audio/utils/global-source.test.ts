@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { applyOmniToEncoder, isConfigGlobal, isGlobalSoundCategory, omniLevelGain, toOmniFilter } from './global-source';
 import { GLOBAL_SOURCE } from '@/utils/constants';
 
-/** Encoder stub: one gain node per ACN channel, as JSAmbisonics monoEncoder exposes. */
+/** Encoder stub: one gain node per ACN channel, as AmbisonicMonoEncoder exposes. */
 function fakeEncoder(channels: number) {
   return { gainNodes: Array.from({ length: channels }, () => ({ gain: { value: 0.5 } }) as unknown as GainNode) };
 }

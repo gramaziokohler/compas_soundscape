@@ -5,7 +5,7 @@
  *
  * Workflow:
  * 1. Load dry audio source
- * 2. Encode to ambisonics based on source position using JSAmbisonics monoEncoder
+ * 2. Encode to ambisonics (ACN/SN3D) based on source position using AmbisonicMonoEncoder
  * 3. Route to binaural decoder for HRTF spatialization
  * 4. Output stereo for headphones
  *
@@ -16,12 +16,12 @@
  * - Distance attenuation via ambisonic encoding
  *
  * Physical Accuracy:
- * - JSAmbisonics monoEncoder for accurate spherical harmonics
+ * - Real spherical-harmonic encoding (utils/ambisonic-encoder.ts)
  * - HRTF decoding provides ITD/ILD cues
  * - No artificial reverberation
  *
  * Implementation:
- * - Uses JSAmbisonics monoEncoder for each source
+ * - Uses an AmbisonicMonoEncoder for each source
  * - All encoder outputs are mixed (W+W, X+X, Y+Y, Z+Z, etc.)
  * - Mixed ambisonic stream → binaural decoder
  * - Source positions are encoded in listener-local coordinates (rotation applied before encoding)
@@ -32,22 +32,14 @@ import type { IAudioMode } from '../core/interfaces/IAudioMode';
 import type { AudioMode, Position, Orientation, AmbisonicOrder, AmbisonicSendTap } from '@/types/audio';
 import type { FadeOptions } from '../utils/fade-envelope';
 import { applyFadeInOut } from '../utils/fade-envelope';
-import { applySn3dToEncoder, cartesianToSpherical } from '../utils/ambisonic-utils';
+import { cartesianToSpherical } from '../utils/ambisonic-utils';
+import { AmbisonicMonoEncoder } from '../utils/ambisonic-encoder';
 import { applyOmniToEncoder } from '../utils/global-source';
 import { SourceLevelMeter } from '../utils/source-level';
 import { AUDIO_CONTROL } from '@/utils/constants';
 
-// Lazy load ambisonics to avoid SSR issues (window is not defined)
-let ambisonics: any = null;
-async function loadAmbisonics() {
-  if (!ambisonics && typeof window !== 'undefined') {
-    ambisonics = await import('ambisonics');
-  }
-  return ambisonics;
-}
-
 /**
- * Audio source with JSAmbisonics encoding
+ * Audio source with ambisonic encoding
  */
 interface AnechoicSource {
   sourceId: string;
@@ -60,11 +52,11 @@ interface AnechoicSource {
   muteGainNode: GainNode;   // Mute control
   distanceGainNode: GainNode; // Distance attenuation
 
-  // Realtime level probe (inline pass-through) for audio-reactive visuals
+  // Realtime level probe (side tap on gainNode) for audio-reactive visuals
   levelMeter: SourceLevelMeter;
 
-  // JSAmbisonics encoder
-  encoder: any; // ambisonics.monoEncoder
+  // ACN/SN3D encoder
+  encoder: AmbisonicMonoEncoder;
 
   // Playback state
   isPlaying: boolean;
@@ -106,9 +98,6 @@ export class AnechoicMode implements IAudioMode {
     this.audioContext = audioContext;
     this.ambisonicOrder = order || 1;
 
-    // Lazy load ambisonics library (avoid SSR issues)
-    await loadAmbisonics();
-
     // Calculate number of ambisonic channels: (order + 1)^2
     this.numChannels = Math.pow(this.ambisonicOrder + 1, 2);
 
@@ -126,7 +115,7 @@ export class AnechoicMode implements IAudioMode {
     // Connect mix bus → master gain (master gain will be connected to binaural decoder by AudioOrchestrator)
     this.ambisonicMixBus.connect(this.masterGain);
 
-    console.log(`[AnechoicMode] Initialized with JSAmbisonics (order ${this.ambisonicOrder}, ${this.numChannels} channels)`);
+    console.log(`[AnechoicMode] Initialized (order ${this.ambisonicOrder}, ${this.numChannels} channels)`);
 
     if (this.debug && typeof window !== 'undefined') {
       (window as any).__anechoicMode = this;
@@ -149,7 +138,7 @@ export class AnechoicMode implements IAudioMode {
    * Global: omni (W only, level-matched), no distance attenuation — `position`
    * is still stored by the caller so switching back re-encodes from it.
    */
-  private encodeSource(sourceId: string, encoder: any, position: Position): number {
+  private encodeSource(sourceId: string, encoder: AmbisonicMonoEncoder, position: Position): number {
     if (this.globalSourceIds.has(sourceId)) {
       applyOmniToEncoder(encoder, this.ambisonicOrder);
       return 1.0;
@@ -157,25 +146,22 @@ export class AnechoicMode implements IAudioMode {
 
     const spherical = this.worldSpaceSpherical(position, this.listenerPosition);
 
-    // Negate azimuth: JSAmbisonics monoEncoder internal convention
-    encoder.azim = -spherical.azimuth * (180 / Math.PI);
-    encoder.elev = spherical.elevation * (180 / Math.PI);
-    encoder.updateGains();
-    // JSAmbisonics encodes N3D; the decoder and the send expect SN3D.
-    applySn3dToEncoder(encoder);
+    // Negated azimuth: the encoding convention this pipeline has always used
+    // (kept from the JSAmbisonics era so every rendered direction is unchanged).
+    encoder.setDirection(-spherical.azimuth, spherical.elevation);
 
     const refDistance = 1.0;
     return refDistance / Math.max(refDistance, spherical.distance);
   }
 
   /**
-   * Create audio source at given position using JSAmbisonics monoEncoder
+   * Create audio source at given position using AmbisonicMonoEncoder
    *
    * Workflow:
    * Source → Gain → MuteGain → Encoder.in → Encoder.out → Mixer → Output
    */
   createSource(sourceId: string, audioBuffer: AudioBuffer, position: Position): void {
-    if (!this.audioContext) {
+    if (!this.audioContext || !this.ambisonicMixBus) {
       throw new Error('[AnechoicMode] Not initialized');
     }
 
@@ -195,18 +181,17 @@ export class AnechoicMode implements IAudioMode {
     const distanceGainNode = this.audioContext.createGain();
     distanceGainNode.gain.value = 1.0;
 
-    // Realtime level probe — inserted inline (transparent pass-through) so the
-    // visuals layer can read the post-volume signal level without touching routing.
+    // Realtime level probe — a side tap on gainNode (never inline, see
+    // SourceLevelMeter) so the visuals layer can read the post-volume level.
     const levelMeter = new SourceLevelMeter(this.audioContext);
 
-    // Create JSAmbisonics monoEncoder
-    // Note: monoEncoder uses GainNode matrix, not ConvolverNode, so no normalize property to set
-    const encoder = new ambisonics.monoEncoder(this.audioContext, this.ambisonicOrder);
+    // ACN/SN3D encoder: one GainNode per ambisonic channel
+    const encoder = new AmbisonicMonoEncoder(this.audioContext, this.ambisonicOrder);
     distanceGainNode.gain.value = this.encodeSource(sourceId, encoder, position);
 
-    // Connect audio graph: Gain → LevelMeter → MuteGain → DistanceGain → Encoder
-    gainNode.connect(levelMeter.node);
-    levelMeter.node.connect(muteGainNode);
+    // Connect audio graph: Gain → MuteGain → DistanceGain → Encoder (+ Gain → LevelMeter tap)
+    gainNode.connect(muteGainNode);
+    levelMeter.tap(gainNode);
     muteGainNode.connect(distanceGainNode);
     distanceGainNode.connect(encoder.in);
 
@@ -235,7 +220,7 @@ export class AnechoicMode implements IAudioMode {
   }
 
   /**
-   * Update source position using JSAmbisonics encoder
+   * Update source position (re-encodes the direction)
    */
   updateSourcePosition(sourceId: string, position: Position): void {
     const source = this.sources.get(sourceId);
@@ -460,10 +445,7 @@ export class AnechoicMode implements IAudioMode {
     source.distanceGainNode.disconnect();
     source.levelMeter.dispose();
 
-    // Disconnect JSAmbisonics encoder
-    if (source.encoder && source.encoder.out) {
-      source.encoder.out.disconnect();
-    }
+    source.encoder.dispose();
 
     this.sources.delete(sourceId);
   }

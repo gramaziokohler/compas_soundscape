@@ -17,7 +17,8 @@ import { ToggleField } from "@/components/ui/ToggleField";
 import type { VariantsBarProps } from "@/components/ui/VariantsBar";
 import { createTtsSpeechLines } from "@/hooks/useTtsSpeechLines";
 import { apiService } from "@/services/api";
-import { useAnalysisStore, useAudioControlsStore, useSoundscapeStore, usePositionClipboardStore, useSpeckleStore, configValidationError, orchestrateInputsSignature } from "@/store";
+import { useAnalysisStore, useAudioControlsStore, useSoundscapeStore, usePositionClipboardStore, useSpeckleStore, configValidationError, orchestrateInputsSignature, notifyError } from "@/store";
+import { buildSoundFilename, downloadSoundFile } from "@/utils/downloadSound";
 import { useSpeckleEngineStore } from "@/store/speckleEngineStore";
 import { useUIStore } from "@/store/uiStore";
 import { useServiceVersions } from "@/hooks/useServiceVersions";
@@ -679,6 +680,34 @@ export function SoundGenerationSection({
         ),
         label: 'Duplicate sound',
         onClick: (e) => { e.stopPropagation(); onDuplicateConfig(originalIndex); },
+      });
+    }
+
+    // Download the card's sound. `generatedSound` is already the card's selected
+    // variant, so a multi-variant card downloads exactly the one shown/played.
+    if (isGenerated && generatedSound?.url) {
+      const hasMultipleVariants = variants.length > 1;
+      const variantLabel = hasMultipleVariants ? String.fromCharCode(65 + selectedVariantIdx) : undefined;
+      const soundUrl = generatedSound.url;
+      const downloadName = buildSoundFilename(
+        config.display_name || getSoundSourceName(generatedSound, config),
+        soundUrl,
+        variantLabel,
+      );
+      customButtons.push({
+        key: 'download',
+        icon: (
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V4" />
+          </svg>
+        ),
+        label: variantLabel ? `Download sound (variant ${variantLabel})` : 'Download sound',
+        onClick: (e) => {
+          e.stopPropagation();
+          downloadSoundFile(soundUrl, downloadName).catch((err) => {
+            notifyError(err instanceof Error ? err.message : 'Failed to download sound');
+          });
+        },
       });
     }
 

@@ -42,9 +42,9 @@ function orderFromChannelCount(channels: number): AmbisonicOrder {
 }
 
 /**
- * Overwrite a JSAmbisonics monoEncoder's gains with an omni encoding:
- * W = omni level gain, every directional channel 0. Use it instead of
- * `updateGains()` + `applySn3dToEncoder()` for a global source.
+ * Overwrite an encoder's gains with an omni encoding: W = omni level gain,
+ * every directional channel 0. Use it instead of `setDirection()` for a
+ * global source.
  */
 export function applyOmniToEncoder(encoder: AmbisonicGainEncoder, order: AmbisonicOrder): void {
   encoder.gainNodes[0].gain.value = omniLevelGain(order);

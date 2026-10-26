@@ -8,12 +8,13 @@
  *
  * Pipeline:
  * For each source:
- *   1. Dry Mono Source → JSAmbisonics Multi-channel Convolution
- *      - Uses JSAmbisonics convolver class for all orders (FOA/SOA/TOA)
- *      - Handles multi-channel IR convolution internally
+ *   1. Dry Mono Source → per-source gains → shared multi-channel convolution bank
+ *      - Sources whose filter is the same AudioBuffer share ONE AmbisonicConvolver
+ *        (convolution is linear: conv(Σ gᵢxᵢ, h) = Σ conv(gᵢxᵢ, h)), so variants,
+ *        copies at one position and a global IR cost one convolver set, not one each
+ *      - All-zero IR channels get no ConvolverNode (mono IR stored as FOA = 1 node)
  *   2. Convolution Output → ChannelMerger (sum all sources)
- *   3. Merged Ambisonic → Rotation (JSAmbisonics sceneRotator)
- *   4. Rotated Ambisonic → Binaural Decoder (HRTF-based) → Stereo Output
+ *   3. Merged Ambisonic → OmnitoneDecoder: rotation (setRotationMatrix3) + HRTF → Stereo Output
  *
  * Characteristics:
  * - 3 DOF: Head rotation only (receiver mode required, position LOCKED)
@@ -28,15 +29,13 @@
  * - Normalization: SN3D (Schmidt semi-normalized, AmbiX standard)
  * - Backend outputs AmbiX (ACN + SN3D) from pyroomacoustics directivity capture
  * - Omnitone decoder: uses AmbiX natively (no conversion)
- * - JSAmbisonics decoder: converts SN3D → N3D at convolver input
  * - FOA IRs from pyroomacoustics use directivity-based MicrophoneArray (coincident)
  *
  * Implementation:
- * - Uses JSAmbisonics convolver for multi-channel IR convolution
- * - Uses BinauralDecoder for HRTF convolution and rotation
+ * - Uses AmbisonicConvolver (utils/ambisonic-convolver.ts) for multi-channel IR convolution
+ * - Uses OmnitoneDecoder for HRTF decoding and real-time head rotation
  * - Supports FOA (4-ch), SOA (9-ch), and TOA (16-ch) ambisonic IRs
- * - Per-source convolution (each source has independent JSAmbisonics convolver)
- * - Real-time head rotation via JSAmbisonics sceneRotator
+ * - Per-source gain chains feeding convolver banks shared per filter buffer
  */
 
 import type { IAudioMode } from '../core/interfaces/IAudioMode';
@@ -47,21 +46,24 @@ import type { IBinauralDecoder } from '../core/interfaces/IBinauralDecoder';
 import { AudioMode } from '@/types/audio';
 import { OmnitoneDecoder } from '../decoders/OmnitoneDecoder';
 import { SourceLevelMeter } from '../utils/source-level';
+import { AmbisonicConvolver } from '../utils/ambisonic-convolver';
 import { omniLevelGain, toOmniFilter } from '../utils/global-source';
 import { AMBISONIC, AUDIO_CONTROL, IMPULSE_RESPONSE } from '@/utils/constants';
 import { linearToDbfs } from '@/utils/utils';
 
-// Lazy load ambisonics to avoid SSR issues (window is not defined)
-let ambisonics: any = null;
-async function loadAmbisonics() {
-  if (!ambisonics && typeof window !== 'undefined') {
-    ambisonics = await import('ambisonics');
-  }
-  return ambisonics;
+/**
+ * One convolver set shared by every source chain whose filter is the same
+ * AudioBuffer (and the same global/spatial rendering). Disposed with its last user.
+ */
+interface ConvolverBank {
+  convolver: AmbisonicConvolver;
+  filter: AudioBuffer;
+  isGlobal: boolean;
+  users: number;
 }
 
 /**
- * Per-source audio chain for ambisonic IR convolution using JSAmbisonics
+ * Per-source audio chain for ambisonic IR convolution
  */
 interface SourceChain {
   sourceId: string;
@@ -74,12 +76,12 @@ interface SourceChain {
   muteGainNode: GainNode;
   irGainNode: GainNode;
 
-  // Realtime level probe (inline pass-through) for audio-reactive visuals
+  // Realtime level probe (side tap on gainNode) for audio-reactive visuals
   levelMeter: SourceLevelMeter;
 
-  // JSAmbisonics convolver (handles all orders)
-  convolver: any; // ambisonics.convolver
-  filterBuffer: AudioBuffer | null; // Filter last loaded into the convolver, before any omni conversion
+  // Shared convolver set for this chain's filter (null until a filter is loaded)
+  bank: ConvolverBank | null;
+  filterBuffer: AudioBuffer | null; // Filter last loaded into the bank, before any omni conversion
   sourceIRBuffer: AudioBuffer | null; // Per-source IR buffer (for simulation mode)
   sourceIRPeak: number; // Peak amplitude of the IR fed to the convolver (0 = no IR / identity)
   sourceIRL2: number; // W-channel L2 norm of that IR = broadband convolution gain (0 = no IR)
@@ -117,6 +119,19 @@ export class AmbisonicIRMode implements IAudioMode {
   // Per-source chains
   private sourceChains: Map<string, SourceChain> = new Map();
 
+  // Convolver banks shared per filter buffer: spatial (full IR) and omni (global sources)
+  private spatialBanks: Map<AudioBuffer, ConvolverBank> = new Map();
+  private omniBanks: Map<AudioBuffer, ConvolverBank> = new Map();
+
+  // Identity / silent IRs reused per channel count, so cleared or muted sources
+  // share one bank instead of each loading a fresh buffer.
+  private constantIRs: Map<string, AudioBuffer> = new Map();
+
+  // Raw per-source IR → FOA-converted + resampled buffer. Sources given the same
+  // decoded IR (the orchestrator caches them by IR id) then get the same filter
+  // buffer and share a bank.
+  private processedSourceIRs: WeakMap<AudioBuffer, AudioBuffer> = new WeakMap();
+
   // Sources rendered as global: convolved with the IR's omni (W) channel only.
   // Kept apart from the chains so it survives order rebuilds (ensureOrder /
   // setImpulseResponse recreate every chain) and can precede createSource.
@@ -142,9 +157,6 @@ export class AmbisonicIRMode implements IAudioMode {
    */
   async initialize(audioContext: AudioContext): Promise<void> {
     this.audioContext = audioContext;
-
-    // Lazy load ambisonics library (avoid SSR issues)
-    await loadAmbisonics();
 
     // Create master gain
     this.masterGain = audioContext.createGain();
@@ -407,21 +419,16 @@ export class AmbisonicIRMode implements IAudioMode {
   }
 
   /**
-   * Get IR buffer in the normalization expected by the current decoder.
-   * Backend outputs AmbiX (ACN + SN3D).
-   * - Omnitone: uses SN3D (AmbiX native), no conversion needed
-   * - JSAmbisonics: needs SN3D → N3D normalization only
-   *
-   * No Y-axis flip needed: the sceneRotator's transposed Rz is compensated
-   * by negating yaw/pitch in BinauralDecoder.updateOrientation instead.
-   * This keeps the IR in standard +Y=Left convention throughout.
+   * Get IR buffer in the normalization expected by the decoder.
+   * Backend outputs AmbiX (ACN + SN3D) and Omnitone decodes SN3D natively, so
+   * no conversion is needed. The IR stays in the standard +Y=Left convention.
    */
   private getConvolverIR(sn3dBuffer: AudioBuffer): AudioBuffer {
     return sn3dBuffer; // Omnitone uses SN3D natively, no conversion needed
   }
 
   /**
-   * Create a new audio source with JSAmbisonics IR convolution
+   * Create a new audio source (its IR is attached through loadFilter)
    */
   createSource(sourceId: string, audioBuffer: AudioBuffer, position: Position): void {
     if (!this.audioContext) {
@@ -448,26 +455,15 @@ export class AmbisonicIRMode implements IAudioMode {
     const initialIRPeak = this.irBuffer ? this.computePeak(this.irBuffer) : 0;
     irGainNode.gain.value = this.computeIRGainValue(initialIRPeak);
 
-    // Create JSAmbisonics convolver for multi-channel IR
-    const convolver = new ambisonics.convolver(this.audioContext, this.ambisonicOrder);
-
-    // Realtime level probe — inserted inline (transparent pass-through) so the
-    // visuals layer can read the post-volume signal level without touching routing.
+    // Realtime level probe — a side tap on gainNode, never inline: an inline
+    // analyser keeps every convolver after it rendering while the source is silent.
     const levelMeter = new SourceLevelMeter(this.audioContext);
 
-    // Connect: GainNode → LevelMeter → NormGain → MuteGain → IRGain → Convolver → Decoder
-    gainNode.connect(levelMeter.node);
-    levelMeter.node.connect(normGainNode);
+    // Connect: GainNode → NormGain → MuteGain → IRGain → (shared bank, see loadFilter)
+    gainNode.connect(normGainNode);
+    levelMeter.tap(gainNode);
     normGainNode.connect(muteGainNode);
     muteGainNode.connect(irGainNode);
-    irGainNode.connect(convolver.in);
-    
-    // Connect convolver to the discrete mix bus (Web Audio sums all convolvers)
-    if (this.irMixBus) {
-      convolver.out.connect(this.irMixBus);
-    } else {
-      console.warn('[AmbisonicIRMode] Cannot connect convolver - mix bus not initialized');
-    }
 
     const chain: SourceChain = {
       sourceId,
@@ -478,7 +474,7 @@ export class AmbisonicIRMode implements IAudioMode {
       muteGainNode,
       irGainNode,
       levelMeter,
-      convolver,
+      bank: null,
       filterBuffer: null,
       sourceIRBuffer: null, // No per-source IR yet (will be set in simulation mode)
       sourceIRPeak: initialIRPeak,
@@ -498,7 +494,7 @@ export class AmbisonicIRMode implements IAudioMode {
 
     this.sourceChains.set(sourceId, chain);
 
-    console.log(`[AmbisonicIRMode] Created source "${sourceId}" with JSAmbisonics convolver (order ${this.ambisonicOrder}, ${this.numAmbisonicChannels} channels)`);
+    console.log(`[AmbisonicIRMode] Created source "${sourceId}" (order ${this.ambisonicOrder}, ${this.numAmbisonicChannels} channels, ${this.spatialBanks.size + this.omniBanks.size} convolver banks)`);
   }
 
   /**
@@ -578,15 +574,8 @@ export class AmbisonicIRMode implements IAudioMode {
 
     if (!this.audioContext) return;
 
-    // Create a Dirac impulse buffer (identity filter — passes audio through unchanged)
-    const numChannels = this.numAmbisonicChannels;
-    const identityIR = this.audioContext.createBuffer(numChannels, 2, this.audioContext.sampleRate);
-    for (let ch = 0; ch < numChannels; ch++) {
-      const data = identityIR.getChannelData(ch);
-      data[0] = 1.0;
-    }
-
-    this.loadFilter(chain, identityIR);
+    // Dirac impulse on every channel (identity filter — passes audio through unchanged)
+    this.loadFilter(chain, this.getConstantIR('identity'));
     chain.sourceIRBuffer = null;
     chain.sourceIRPeak = 0;
     chain.sourceIRL2 = 0;
@@ -616,11 +605,8 @@ export class AmbisonicIRMode implements IAudioMode {
 
     if (!this.audioContext) return;
 
-    const numChannels = this.numAmbisonicChannels;
-    const silentIR = this.audioContext.createBuffer(numChannels, 2, this.audioContext.sampleRate);
-    // All samples default to 0 → convolution yields silence.
-
-    this.loadFilter(chain, silentIR);
+    // All-zero filter → silence (its bank holds no ConvolverNode at all).
+    this.loadFilter(chain, this.getConstantIR('silent'));
     chain.sourceIRBuffer = null;
     chain.sourceIRPeak = 0;
     chain.sourceIRL2 = 0;
@@ -651,19 +637,9 @@ export class AmbisonicIRMode implements IAudioMode {
       return;
     }
 
-    // Convert mono/stereo IR to FOA format BEFORE processing
-    // This ensures processImpulseResponse treats it as ambisonic (preserves gain balance)
-    let bufferToProcess = irBuffer;
-    if (channels === 1) {
-      bufferToProcess = this.convertMonoToFOA(irBuffer);
-      console.log(`[AmbisonicIRMode] Converted mono IR to FOA (W channel only) for source "${sourceId}"`);
-    } else if (channels === 2) {
-      bufferToProcess = this.convertStereoToFOA(irBuffer);
-      console.log(`[AmbisonicIRMode] Converted stereo IR to FOA (L/R at ±30°) for source "${sourceId}"`);
-    }
-
-    // Resample if needed, no gain manipulation
-    const processedBuffer = this.resampleIfNeeded(bufferToProcess);
+    // Mono/stereo → FOA, then resample (no gain manipulation). Memoized per raw IR
+    // so every source given the same IR shares one filter buffer, hence one bank.
+    const processedBuffer = this.processSourceIR(irBuffer);
 
     // The per-source IR dictates the ambisonic order. If it differs from the
     // currently active order (e.g. an imported global IR left SOA/TOA active and
@@ -681,8 +657,6 @@ export class AmbisonicIRMode implements IAudioMode {
       return;
     }
 
-    // Update JSAmbisonics convolver with new IR
-    // Convert SN3D → N3D if JSAmbisonics decoder is active
     this.loadFilter(chain, this.getConvolverIR(processedBuffer));
     chain.sourceIRBuffer = processedBuffer;
     chain.sourceIRPeak = this.computePeak(processedBuffer);
@@ -698,7 +672,38 @@ export class AmbisonicIRMode implements IAudioMode {
     // Apply the current IR gain offset so the rendered peak matches the preview
     this.applyIRGain(chain);
 
-    console.log(`[AmbisonicIRMode] ✅ Updated IR for source "${sourceId}" (${channels}ch → ${bufferToProcess.numberOfChannels}ch, ${bufferToProcess.length} samples @ ${bufferToProcess.sampleRate}Hz)`);
+    console.log(`[AmbisonicIRMode] ✅ Updated IR for source "${sourceId}" (${channels}ch → ${processedBuffer.numberOfChannels}ch, ${processedBuffer.length} samples @ ${processedBuffer.sampleRate}Hz, ${chain.bank?.convolver.activeChannels ?? 0} convolvers shared by ${chain.bank?.users ?? 0} sources)`);
+  }
+
+  /** Mono/stereo IR → FOA, resampled to the context rate; cached per raw buffer. */
+  private processSourceIR(irBuffer: AudioBuffer): AudioBuffer {
+    const cached = this.processedSourceIRs.get(irBuffer);
+    if (cached) return cached;
+
+    let buffer = irBuffer;
+    if (irBuffer.numberOfChannels === 1) {
+      buffer = this.convertMonoToFOA(irBuffer);
+    } else if (irBuffer.numberOfChannels === 2) {
+      buffer = this.convertStereoToFOA(irBuffer);
+    }
+    const processed = this.resampleIfNeeded(buffer);
+    this.processedSourceIRs.set(irBuffer, processed);
+    return processed;
+  }
+
+  /** Shared 2-sample identity (Dirac) or all-zero filter at the current channel count. */
+  private getConstantIR(kind: 'identity' | 'silent'): AudioBuffer {
+    const numChannels = this.numAmbisonicChannels;
+    const key = `${kind}:${numChannels}`;
+    const cached = this.constantIRs.get(key);
+    if (cached) return cached;
+
+    const buffer = this.audioContext!.createBuffer(numChannels, 2, this.audioContext!.sampleRate);
+    if (kind === 'identity') {
+      for (let ch = 0; ch < numChannels; ch++) buffer.getChannelData(ch)[0] = 1.0;
+    }
+    this.constantIRs.set(key, buffer);
+    return buffer;
   }
 
   /**
@@ -737,15 +742,51 @@ export class AmbisonicIRMode implements IAudioMode {
 
 
   /**
-   * Load a filter into a chain's convolver. Global chains get its omni version
-   * (W only, level-matched); the original is kept in `filterBuffer` so a later
-   * global toggle can reload it either way. Peak/L2/normalization are always
-   * measured on the original IR, so every gain stage matches the spatial render.
+   * Route a chain through the convolver bank for `filter`. Global chains get its
+   * omni version (W only, level-matched); the original is kept in `filterBuffer`
+   * so a later global toggle can reload it either way. Peak/L2/normalization are
+   * always measured on the original IR, so every gain stage matches the spatial render.
+   *
+   * Chains whose filter is the same AudioBuffer share one bank — their irGain
+   * outputs sum at its input, which equals summing separate convolutions.
    */
   private loadFilter(chain: SourceChain, filter: AudioBuffer): void {
     chain.filterBuffer = filter;
+    if (!this.audioContext || !this.irMixBus) return;
+
     const isGlobal = this.globalSourceIds.has(chain.sourceId);
-    chain.convolver.updateFilters(isGlobal && this.audioContext ? toOmniFilter(this.audioContext, filter) : filter);
+    const banks = isGlobal ? this.omniBanks : this.spatialBanks;
+    let bank = banks.get(filter);
+    if (bank && bank === chain.bank) return;
+
+    this.releaseBank(chain);
+    if (!bank) {
+      const convolver = new AmbisonicConvolver(this.audioContext, this.ambisonicOrder);
+      convolver.updateFilters(isGlobal ? toOmniFilter(this.audioContext, filter) : filter);
+      convolver.out.connect(this.irMixBus);
+      bank = { convolver, filter, isGlobal, users: 0 };
+      banks.set(filter, bank);
+    }
+    bank.users++;
+    chain.irGainNode.connect(bank.convolver.in);
+    chain.bank = bank;
+  }
+
+  /** Detach a chain from its bank; the last user disposes the bank's convolvers. */
+  private releaseBank(chain: SourceChain): void {
+    const bank = chain.bank;
+    if (!bank) return;
+    try {
+      chain.irGainNode.disconnect(bank.convolver.in);
+    } catch {
+      // Already disconnected
+    }
+    chain.bank = null;
+
+    bank.users--;
+    if (bank.users > 0) return;
+    bank.convolver.dispose();
+    (bank.isGlobal ? this.omniBanks : this.spatialBanks).delete(bank.filter);
   }
 
   /**
@@ -762,15 +803,13 @@ export class AmbisonicIRMode implements IAudioMode {
   }
 
   /**
-   * Update chain IR buffer when IR changes (uses JSAmbisonics convolver)
+   * Update chain IR buffer when the global IR changes
    */
   private updateChainIR(chain: SourceChain): void {
     if (!this.irBuffer) {
       return;
     }
 
-    // Update JSAmbisonics convolver with new IR
-    // Convert SN3D → N3D if JSAmbisonics decoder is active
     this.loadFilter(chain, this.getConvolverIR(this.irBuffer));
     // Keep the chain's peak + gain offset in sync with the new global IR
     chain.sourceIRPeak = this.computePeak(this.irBuffer);
@@ -1002,7 +1041,7 @@ export class AmbisonicIRMode implements IAudioMode {
       console.log(`[AmbisonicIRMode] Receiver position locked at (${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)})`);
     }
 
-    // Update binaural decoder with camera orientation (head rotation via sceneRotator)
+    // Update binaural decoder with camera orientation (head rotation inside OmnitoneDecoder)
     // The ambisonic IR contains spatial information, so we rotate the field with head movement
     if (this.binauralDecoder) {
       this.binauralDecoder.updateOrientation(orientation);
@@ -1085,7 +1124,12 @@ export class AmbisonicIRMode implements IAudioMode {
     });
     this.sourceChains.clear();
     this.voices.clear();
-    
+    this.spatialBanks.forEach((bank) => bank.convolver.dispose());
+    this.omniBanks.forEach((bank) => bank.convolver.dispose());
+    this.spatialBanks.clear();
+    this.omniBanks.clear();
+    this.constantIRs.clear();
+
     // Disconnect and cleanup nodes
     if (this.binauralDecoder) {
       this.binauralDecoder.dispose();
@@ -1289,16 +1333,14 @@ export class AmbisonicIRMode implements IAudioMode {
 
     // Disconnect nodes
     try {
+      chain.levelMeter.dispose();
       chain.gainNode.disconnect();
       chain.muteGainNode.disconnect();
-      chain.levelMeter.dispose();
-
-      // Disconnect JSAmbisonics convolver
-      if (chain.convolver && chain.convolver.out) {
-        chain.convolver.out.disconnect();
-      }
     } catch (error) {
       // Already disconnected
     }
+
+    // Leave the shared bank (disposed when this was its last user)
+    this.releaseBank(chain);
   }
 }

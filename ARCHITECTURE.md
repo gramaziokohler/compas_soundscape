@@ -235,6 +235,8 @@ compas_soundscape/
 │       │   │   │   └── destination-layout.ts    # 16-ch discrete destination / stereo restore
 │       │   │   └── utils/                       # Audio utilities
 │       │   │       ├── ambisonic-utils.ts       # Ambisonic encoding/decoding utilities
+│       │   │       ├── ambisonic-convolver.ts   # Mono → ACN IR convolver; no ConvolverNode for all-zero channels (shared per filter by AmbisonicIRMode)
+│       │   │       ├── ambisonic-encoder.ts     # Mono → ACN/SN3D spherical-harmonic encoder (replaces JSAmbisonics monoEncoder)
 │       │   │       ├── global-source.ts         # Global (non-spatial) background beds: omni encoder / W-only IR
 │       │   │       ├── audio-file-decoder.ts    # Audio file decoding
 │       │   │       ├── audio-info.ts            # Audio file loading & metadata

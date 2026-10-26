@@ -17,9 +17,6 @@ importers:
       '@speckle/viewer':
         specifier: ^2.26.9
         version: 2.26.9(@tiptap/core@2.27.2(@tiptap/pm@2.27.2))(bull@4.16.5)(knex@3.1.0)(mixpanel@0.17.0)(pino-http@8.6.1)(pino-pretty@13.1.3)(pino@8.21.0)(ua-parser-js@1.0.41)(znv@0.4.0(zod@3.25.76))(zod@3.25.76)
-      ambisonics:
-        specifier: ^0.4.0
-        version: 0.4.0
       dotenv:
         specifier: ^17.2.4
         version: 17.4.1
@@ -655,15 +652,9 @@ packages:
     resolution: {integrity: sha512-h8lQ8tacZYnR3vNQTgibj+tODHI5/+l06Au2Pcriv/Gmet0eaj4TwWH41sO9wnHDiQsEj19q0drzdWdeAHtweg==}
     engines: {node: '>=6.5'}
 
-  affine-hull@1.0.0:
-    resolution: {integrity: sha512-3QNG6+vFAwJvSZHsJYDJ/mt1Cxx9n5ffA+1Ohmj7udw0JuRgUVIXK0P9N9pCMuEdS3jCNt8GFX5q2fChq+GO3Q==}
-
   agent-base@6.0.2:
     resolution: {integrity: sha512-RZNwNclF7+MS/8bDg70amg32dyeZGZxiDuQmZxKLAlQjr3jGyLx+4Kkk58UO7D2QdgFIQCovuSuZESne6RG6XQ==}
     engines: {node: '>= 6.0.0'}
-
-  ambisonics@0.4.0:
-    resolution: {integrity: sha512-wy0A67hxEymSjxPPrfMJgeuOx6agYJukW2oZ2qYg6J4oT/jojEmnCj+5//7hf8rj2jaiwGTJjzs5WeVX5ijuEA==}
 
   argparse@2.0.1:
     resolution: {integrity: sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q==}
@@ -676,20 +667,11 @@ packages:
     resolution: {integrity: sha512-kNOjDqAh7px0XWNI+4QbzoiR/nTkHAWNud2uvnJquD1/x5a7EQZMJT0AczqK0Qn67oY/TTQ1LbUKajZpp3I9tQ==}
     engines: {node: '>=8.0.0'}
 
-  babel-runtime@5.8.38:
-    resolution: {integrity: sha512-KpgoA8VE/pMmNCrnEeeXqFG24TIH11Z3ZaimIhJWsin8EbfZy3WzFKUTIan10ZIDgRVvi9EkLbruJElJC9dRlg==}
-
-  babel-runtime@6.26.0:
-    resolution: {integrity: sha512-ITKNuq2wKlW1fJg9sSW52eepoYgZBggvOAHC0u/CYu/qxQ9EVzThCgR69BnSXLHjy2f7SY5zaQ4yt7H9ZVxY2g==}
-
   base64-js@1.5.1:
     resolution: {integrity: sha512-AKpaYlHn8t4SVbOHCy+b5+KKgvR4vrsD8vbvrbiQJps7fKDTkjkDry6ji0rUJjC0kzbNePLwzxq8iypo41qeWA==}
 
   bidi-js@1.0.3:
     resolution: {integrity: sha512-RKshQI1R3YQ+n9YJz2QQ147P66ELpa1FQEg20Dk8oW9t2KgLbpDLLp9aGZ7y8WHSshDknG0bknqGw5/tyCs5tw==}
-
-  bit-twiddle@1.0.2:
-    resolution: {integrity: sha512-B9UhK0DKFZhoTFcfvAzhqsjStvGJp9vYWf3+6SNTtdSQnvIgfkHbgHrg/e4+TH71N2GDu8tpmCVoyfrL1d7ntA==}
 
   buffer@6.0.3:
     resolution: {integrity: sha512-FTiCpNxtwiZZHEZbcbTIcZjERVICn9yq/pDFkTl95/AxzD1naBctN7YO68riM/gLSDY7sdrMby8hofADYuuqOA==}
@@ -727,17 +709,6 @@ packages:
   commander@10.0.1:
     resolution: {integrity: sha512-y4Mg2tXshplEbSGzx7amzPwKKOCGuoSRP/CjEdwwk0FOGlUbq6lKuoyDZTNZkmxHdJtp54hdfY/JUrdL7Xfdug==}
     engines: {node: '>=14'}
-
-  convex-hull@1.0.3:
-    resolution: {integrity: sha512-24rZAoh81t41GHPLAxcsokgjH9XNoVqU2OiSi8iMHUn6HUURfiefcEWAPt1AfwZjBBWTKadOm1xUcUMnfFukhQ==}
-
-  core-js@1.2.7:
-    resolution: {integrity: sha512-ZiPp9pZlgxpWRu0M+YWbm6+aQ84XEfH1JRXvfOc/fILWI0VKhLC2LX13X1NYq4fULzLMq7Hfh43CSo2/aIaUPA==}
-    deprecated: core-js@<3.23.3 is no longer maintained and not recommended for usage due to the number of issues. Because of the V8 engine whims, feature detection in old core-js versions could cause a slowdown up to 100x even if nothing is polyfilled. Some versions have web compatibility issues. Please, upgrade your dependencies to the actual version of core-js.
-
-  core-js@2.6.12:
-    resolution: {integrity: sha512-Kb2wC0fvsWfQrgk8HU5lW6U/Lcs8+9aaYcy4ZFc6DDlo4nZ7n70dEgE5rtR0oG6ufKDUnrwfWL1mXR5ljDatrQ==}
-    deprecated: core-js@<3.23.3 is no longer maintained and not recommended for usage due to the number of issues. Because of the V8 engine whims, feature detection in old core-js versions could cause a slowdown up to 100x even if nothing is polyfilled. Some versions have web compatibility issues. Please, upgrade your dependencies to the actual version of core-js.
 
   crelt@1.0.6:
     resolution: {integrity: sha512-VQ2MBenTq1fWZUH9DJNGti7kKv6EeAuYr3cLwxUWhIu1baTaXh4Ib5W2CqHVqib4/MqbYGJqiL3Zb8GJZr3l4g==}
@@ -859,10 +830,6 @@ packages:
     resolution: {integrity: sha512-b6suED+5/3rTpUBdG1gupIl8MPFCAMA0QXwmljLhvCUKcUvdE4gWky9zpuGCcXHOsz4J9wPGNWq6OKpmIzz3hQ==}
     hasBin: true
 
-  fractional-delay@https://codeload.github.com/Ircam-RnD/fractional-delay/tar.gz/687be9b8c42716c72ccae922510867c264a0ccf5:
-    resolution: {tarball: https://codeload.github.com/Ircam-RnD/fractional-delay/tar.gz/687be9b8c42716c72ccae922510867c264a0ccf5}
-    version: 0.1.0
-
   fsevents@2.3.2:
     resolution: {integrity: sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA==}
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
@@ -884,9 +851,6 @@ packages:
     resolution: {integrity: sha512-DyFP3BM/3YHTQOCUL/w0OZHR0lpKeGrxotcHWcqNEdnltqFwXVfhEBQ94eIo34AfQpo0rGki4cyIiftY06h2Fg==}
     engines: {node: 6.* || 8.* || >= 10.*}
 
-  get-float-time-domain-data@0.1.0:
-    resolution: {integrity: sha512-6lWdVMny7vJ+xWxGUmVdSW7rd4L2byptiVkjH3QEBsxcHSa8UbC/HsZmixHK/ZQ1EYsOaQjaeRgR+NAsIerEJQ==}
-
   get-package-type@0.1.0:
     resolution: {integrity: sha512-pjzuKtY64GYfWizNAJ0fr9VqttZkNiK2iS430LtIHzjBEr6bX8Am2zm4sW4Ro5wjWW5cAlRL1qAMTcXbjNAO2Q==}
     engines: {node: '>=8.0.0'}
@@ -897,9 +861,6 @@ packages:
 
   getopts@2.3.0:
     resolution: {integrity: sha512-5eDf9fuSXwxBL6q5HX+dhDj+dslFGWzU5thZ9kNKUkcPtaPdatmUFKwHFrLb/uf/WpA4BHET+AX3Scl56cAjpA==}
-
-  gl-matrix@2.8.1:
-    resolution: {integrity: sha512-0YCjVpE3pS5XWlN3J4X7AiAx65+nqAI54LndtVFnQZB6G/FVLkZH8y8V6R3cIoOQR4pUdfwQGd1iwyoXHJ4Qfw==}
 
   graceful-fs@4.2.11:
     resolution: {integrity: sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ==}
@@ -925,9 +886,6 @@ packages:
   ieee754@1.2.1:
     resolution: {integrity: sha512-dcyqhDvX1C46lXZcVqCpK+FtMRQVdIMN6/Df5js2zouUsqG7I6sFxitIC+7KYK29KdXOLHdu9zL4sFnoVQnqaA==}
 
-  incremental-convex-hull@1.0.1:
-    resolution: {integrity: sha512-mKRJDXtzo1R9LxCuB1TdwZXHaPaIEldoGPsXy2jrJc/kufyqp8y/VAQQxThSxM2aroLoh6uObexPk1ASJ7FB7Q==}
-
   interpret@2.2.0:
     resolution: {integrity: sha512-Ju0Bz/cEia55xDwUWEa8+olFpCiQoypjnQySseKtmjNrnps3P+xfpUmGr90T7yjlVJmOtybRvPXhKMbHr+fWnw==}
     engines: {node: '>= 0.10'}
@@ -950,10 +908,6 @@ packages:
 
   js-logger@1.6.1:
     resolution: {integrity: sha512-yTgMCPXVjhmg28CuUH8CKjU+cIKL/G+zTu4Fn4lQxs8mRFH/03QTNvEFngcxfg/gRDiQAOoyCKmMTOm9ayOzXA==}
-
-  kd.tree@https://codeload.github.com/akshaylive/node-kdt/tar.gz/39bc780704a324393bca68a17cf7bc71be8544c6:
-    resolution: {tarball: https://codeload.github.com/akshaylive/node-kdt/tar.gz/39bc780704a324393bca68a17cf7bc71be8544c6}
-    version: 0.1.3
 
   knex@3.1.0:
     resolution: {integrity: sha512-GLoII6hR0c4ti243gMs5/1Rb3B+AjwMOfjYm97pu0FOQa7JH56hgBxYf5WK2525ceSbBY1cjeZ9yk99GPMB6Kw==}
@@ -1181,9 +1135,6 @@ packages:
   mixpanel@0.17.0:
     resolution: {integrity: sha512-DY5WeOy/hmkPrNiiZugJpWR0iMuOwuj1a3u0bgwB2eUFRV6oIew/pIahhpawdbNjb+Bye4a8ID3gefeNPvL81g==}
     engines: {node: '>=10.0'}
-
-  monotone-convex-hull-2d@1.0.1:
-    resolution: {integrity: sha512-ixQ3qdXTVHvR7eAoOjKY8kGxl9YjOFtzi7qOjwmFFPfBqZHVOjUFOBy/Dk9dusamRSPJe9ggyfSypRbs0Bl8BA==}
 
   ms@2.1.2:
     resolution: {integrity: sha512-sGkPx+VjMtmA6MX27oA4FBFELFCZZ4S4XqeGOXCv68tT+jb3vk/RyaKWP0PTKyWtmLSM0b+adUTEvbs1PEaH2w==}
@@ -1439,9 +1390,6 @@ packages:
     resolution: {integrity: sha512-DJnGAeenTdpMEH6uAJRK/uiyEIH9WVsUmoLwzudwGJUwZPp80PDBWPHXSAGNPwNvIXAbe7MSUB1zQFugFml66A==}
     engines: {node: '>=4'}
 
-  regenerator-runtime@0.11.1:
-    resolution: {integrity: sha512-MguG95oij0fC3QV3URf4V2SDYGJhJnJGqvIIgdECeODCT98wSWDAJ94SSuVpYQUoTcGUIL6L4yNB7j1DFFHSBg==}
-
   require-from-string@2.0.2:
     resolution: {integrity: sha512-Xf0nWe6RseziFMu+Ap9biiUbmplq6S9/p+7w7YXP/JBHhrUDDUhwa+vANyubuqfZWTveU//DYVGsDG7RKL/vEw==}
     engines: {node: '>=0.10.0'}
@@ -1461,18 +1409,6 @@ packages:
   rgb-hex@3.0.0:
     resolution: {integrity: sha512-8h7ZcwxCBDKvchSWbWngJuSCqJGQ6nDuLLg+QcRyQDbX9jMWt+PpPeXAhSla0GOooEomk3lCprUpGkMdsLjKyg==}
     engines: {node: '>=8'}
-
-  robust-orientation@1.2.1:
-    resolution: {integrity: sha512-FuTptgKwY6iNuU15nrIJDLjXzCChWB+T4AvksRtwPS/WZ3HuP1CElCm1t+OBfgQKfWbtZIawip+61k7+buRKAg==}
-
-  robust-scale@1.0.2:
-    resolution: {integrity: sha512-jBR91a/vomMAzazwpsPTPeuTPPmWBacwA+WYGNKcRGSh6xweuQ2ZbjRZ4v792/bZOhRKXRiQH0F48AvuajY0tQ==}
-
-  robust-subtract@1.0.0:
-    resolution: {integrity: sha512-xhKUno+Rl+trmxAIVwjQMiVdpF5llxytozXJOdoT4eTIqmqsndQqFb1A0oiW3sZGlhMRhOi6pAD4MF1YYW6o/A==}
-
-  robust-sum@1.0.0:
-    resolution: {integrity: sha512-AvLExwpaqUqD1uwLU6MwzzfRdaI6VEZsyvQ3IAQ0ZJ08v1H+DTyqskrf2ZJyh0BDduFVLN7H04Zmc+qTiahhAw==}
 
   rolldown@1.2.11:
     resolution: {integrity: sha512-qpSwIyz0jHQq5qXBTNxFmE6664rJ7O+4TvPFOiOaBSrz8IOHc1koKKSqTM2H6u1UG1+TveuC6vaDHKXFOvb1Kw==}
@@ -1500,20 +1436,12 @@ packages:
     engines: {node: '>=10'}
     hasBin: true
 
-  serve-sofa-hrir@https://codeload.github.com/Ircam-RnD/serveSofaHrir/tar.gz/33a72fc68a4fb35375da4845e758d50dfdef3836:
-    resolution: {tarball: https://codeload.github.com/Ircam-RnD/serveSofaHrir/tar.gz/33a72fc68a4fb35375da4845e758d50dfdef3836}
-    version: 0.4.2
-    engines: {node: 0.12 || 4, npm: '>=1.0.0 <3.0.0'}
-
   sharp@0.34.5:
     resolution: {integrity: sha512-Ou9I5Ft9WNcCbXrU9cMgPBcCK8LiwLqcbywW3t4oDV37n1pzpuNLsYiAV8eODnjbtQlSDwZ2cUEeQz4E54Hltg==}
     engines: {node: ^18.17.0 || ^20.3.0 || >=21.0.0}
 
   siginfo@2.0.0:
     resolution: {integrity: sha512-ybx0WO1/8bSBLEWXZvEd7gMW3Sn3JFlW3TvX1nREbDLRNQNaeNN8WK0meBwPdAaOI7TtRRRJn/Es1zhrrCHu7g==}
-
-  simplicial-complex@1.0.0:
-    resolution: {integrity: sha512-mHauIKSOy3GquM5VnYEiu7eP5y4A8BiaN9ezUUgyYFz1k68PqDYcyaH3kenp2cyvWZE96QKE3nrxYw65Allqiw==}
 
   sonic-boom@3.8.1:
     resolution: {integrity: sha512-y4Z8LCDBuum+PBP3lSV7RHrXscqksve/bi0as7mhwVnBW+/wUqKT/2Kb7um8yqcFy0duYbbPxzt89Zy2nOCaxg==}
@@ -1635,12 +1563,6 @@ packages:
   tslib@2.8.1:
     resolution: {integrity: sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==}
 
-  two-product@1.0.2:
-    resolution: {integrity: sha512-vOyrqmeYvzjToVM08iU52OFocWT6eB/I5LUWYnxeAPGXAhAxXYU/Yr/R2uY5/5n4bvJQL9AQulIuxpIsMoT8XQ==}
-
-  two-sum@1.0.0:
-    resolution: {integrity: sha512-phP48e8AawgsNUjEY2WvoIWqdie8PoiDZGxTDv70LDr01uX5wLEQbOgSP7Z/B6+SW5oLtbe8qaYX2fKJs3CGTw==}
-
   type-fest@3.13.1:
     resolution: {integrity: sha512-tLq3bSNx+xSpwvAJnzrK0Ep5CLNWjvFTOp71URMaAEWBfRb9nnJiBoUe0tF8bI4ZFO3omgBR6NvnbzVUT3Ly4g==}
     engines: {node: '>=14.16'}
@@ -1663,9 +1585,6 @@ packages:
 
   undici-types@6.21.0:
     resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
-
-  union-find@1.0.2:
-    resolution: {integrity: sha512-wFA9bMD/40k7ZcpKVXfu6X1qD3ri5ryO8HUsuA1RnxPCQl66Mu6DgkxyR+XNnd+osD0aLENixcJVFj+uf+O4gw==}
 
   uuid@8.3.2:
     resolution: {integrity: sha512-+NYs2QeMWy+GWFOEm9xnn6HCDp0l7QBD7ml8zLUmJ+93Q5NF0NocErnwkTkXVFNiX3/fpC6afS8Dhb/gz7R7eg==}
@@ -2297,24 +2216,11 @@ snapshots:
     dependencies:
       event-target-shim: 5.0.1
 
-  affine-hull@1.0.0:
-    dependencies:
-      robust-orientation: 1.2.1
-
   agent-base@6.0.2:
     dependencies:
       debug: 4.4.3
     transitivePeerDependencies:
       - supports-color
-
-  ambisonics@0.4.0:
-    dependencies:
-      babel-runtime: 6.26.0
-      convex-hull: 1.0.3
-      get-float-time-domain-data: 0.1.0
-      numeric: 1.2.6
-      serve-sofa-hrir: https://codeload.github.com/Ircam-RnD/serveSofaHrir/tar.gz/33a72fc68a4fb35375da4845e758d50dfdef3836
-      spherical-harmonic-transform: 0.1.1
 
   argparse@2.0.1: {}
 
@@ -2322,22 +2228,11 @@ snapshots:
 
   atomic-sleep@1.0.0: {}
 
-  babel-runtime@5.8.38:
-    dependencies:
-      core-js: 1.2.7
-
-  babel-runtime@6.26.0:
-    dependencies:
-      core-js: 2.6.12
-      regenerator-runtime: 0.11.1
-
   base64-js@1.5.1: {}
 
   bidi-js@1.0.3:
     dependencies:
       require-from-string: 2.0.2
-
-  bit-twiddle@1.0.2: {}
 
   buffer@6.0.3:
     dependencies:
@@ -2373,16 +2268,6 @@ snapshots:
   command-exists@1.2.9: {}
 
   commander@10.0.1: {}
-
-  convex-hull@1.0.3:
-    dependencies:
-      affine-hull: 1.0.0
-      incremental-convex-hull: 1.0.1
-      monotone-convex-hull-2d: 1.0.1
-
-  core-js@1.2.7: {}
-
-  core-js@2.6.12: {}
 
   crelt@1.0.6: {}
 
@@ -2457,10 +2342,6 @@ snapshots:
 
   flat@5.0.2: {}
 
-  fractional-delay@https://codeload.github.com/Ircam-RnD/fractional-delay/tar.gz/687be9b8c42716c72ccae922510867c264a0ccf5:
-    dependencies:
-      babel-runtime: 5.8.38
-
   fsevents@2.3.2:
     optional: true
 
@@ -2473,15 +2354,11 @@ snapshots:
 
   get-caller-file@2.0.5: {}
 
-  get-float-time-domain-data@0.1.0: {}
-
   get-package-type@0.1.0: {}
 
   get-port@5.1.1: {}
 
   getopts@2.3.0: {}
-
-  gl-matrix@2.8.1: {}
 
   graceful-fs@4.2.11: {}
 
@@ -2503,11 +2380,6 @@ snapshots:
       - supports-color
 
   ieee754@1.2.1: {}
-
-  incremental-convex-hull@1.0.1:
-    dependencies:
-      robust-orientation: 1.2.1
-      simplicial-complex: 1.0.0
 
   interpret@2.2.0: {}
 
@@ -2534,8 +2406,6 @@ snapshots:
   joycon@3.1.1: {}
 
   js-logger@1.6.1: {}
-
-  kd.tree@https://codeload.github.com/akshaylive/node-kdt/tar.gz/39bc780704a324393bca68a17cf7bc71be8544c6: {}
 
   knex@3.1.0:
     dependencies:
@@ -2708,10 +2578,6 @@ snapshots:
       https-proxy-agent: 5.0.0
     transitivePeerDependencies:
       - supports-color
-
-  monotone-convex-hull-2d@1.0.1:
-    dependencies:
-      robust-orientation: 1.2.1
 
   ms@2.1.2: {}
 
@@ -3023,8 +2889,6 @@ snapshots:
     dependencies:
       redis-errors: 1.2.0
 
-  regenerator-runtime@0.11.1: {}
-
   require-from-string@2.0.2: {}
 
   resolve-from@5.0.0: {}
@@ -3040,22 +2904,6 @@ snapshots:
       omnitone: 1.3.0
 
   rgb-hex@3.0.0: {}
-
-  robust-orientation@1.2.1:
-    dependencies:
-      robust-scale: 1.0.2
-      robust-subtract: 1.0.0
-      robust-sum: 1.0.0
-      two-product: 1.0.2
-
-  robust-scale@1.0.2:
-    dependencies:
-      two-product: 1.0.2
-      two-sum: 1.0.0
-
-  robust-subtract@1.0.0: {}
-
-  robust-sum@1.0.0: {}
 
   rolldown@1.2.11:
     dependencies:
@@ -3090,12 +2938,6 @@ snapshots:
 
   semver@7.7.3: {}
 
-  serve-sofa-hrir@https://codeload.github.com/Ircam-RnD/serveSofaHrir/tar.gz/33a72fc68a4fb35375da4845e758d50dfdef3836:
-    dependencies:
-      fractional-delay: https://codeload.github.com/Ircam-RnD/fractional-delay/tar.gz/687be9b8c42716c72ccae922510867c264a0ccf5
-      gl-matrix: 2.8.1
-      kd.tree: https://codeload.github.com/akshaylive/node-kdt/tar.gz/39bc780704a324393bca68a17cf7bc71be8544c6
-
   sharp@0.34.5:
     dependencies:
       '@img/colour': 1.0.0
@@ -3129,11 +2971,6 @@ snapshots:
     optional: true
 
   siginfo@2.0.0: {}
-
-  simplicial-complex@1.0.0:
-    dependencies:
-      bit-twiddle: 1.0.2
-      union-find: 1.0.2
 
   sonic-boom@3.8.1:
     dependencies:
@@ -3233,10 +3070,6 @@ snapshots:
 
   tslib@2.8.1: {}
 
-  two-product@1.0.2: {}
-
-  two-sum@1.0.0: {}
-
   type-fest@3.13.1: {}
 
   type-fest@4.41.0: {}
@@ -3248,8 +3081,6 @@ snapshots:
   uc.micro@2.1.0: {}
 
   undici-types@6.21.0: {}
-
-  union-find@1.0.2: {}
 
   uuid@8.3.2: {}
 

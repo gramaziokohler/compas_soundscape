@@ -792,6 +792,10 @@ export class AudioOrchestrator implements IAudioOrchestrator {
         try {
           const irBuffer = await this.downloadAndDecodeIR(irMetadata);
           await (this.currentModeInstance as any).setSourceImpulseResponse(sourceId, irBuffer);
+          // Record it like resolveSourceIR does, or the source's first clip dispatch
+          // (Transport → updateSourcePosition) sees no applied key and re-applies the
+          // same IR into its convolver mid-playback.
+          this.sourceIRAppliedKey.set(sourceId, posKey);
 
           console.log(`[AudioOrchestrator] ✅ Updated IR for source "${sourceId}" (posKey ${posKey}) with receiver "${receiverId}"`);
         } catch (error) {

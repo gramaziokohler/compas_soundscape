@@ -219,15 +219,15 @@ export class ResonanceMode implements IAudioMode {
       const muteGainNode = this.audioContext.createGain();
       muteGainNode.gain.value = 1.0; // Not muted by default
 
-      // Realtime level probe — inserted inline (transparent pass-through) so the
-      // visuals layer can read the post-volume signal level without touching routing.
+      // Realtime level probe — a side tap on gainNode (never inline, see
+      // SourceLevelMeter) so the visuals layer can read the post-volume level.
       const levelMeter = new SourceLevelMeter(this.audioContext);
 
       // Wire the persistent chain now (not lazily inside playSource) so that
       // startVoice() can play through it even if the legacy single-slot
       // playSource() is never called for this source.
-      gainNode.connect(levelMeter.node);
-      levelMeter.node.connect(muteGainNode);
+      gainNode.connect(muteGainNode);
+      levelMeter.tap(gainNode);
       muteGainNode.connect(resonanceSource.input);
 
       // Configure source properties
@@ -291,7 +291,7 @@ export class ResonanceMode implements IAudioMode {
     applyFadeInOut(sourceNode, source.gainNode, opts ? { ...opts, durationSec: duration } : {});
 
     // Persistent chain is already wired in createSource
-    // (gainNode → levelMeter → muteGainNode → Resonance source input); only the
+    // (gainNode → muteGainNode → Resonance source input, levelMeter tapped); only the
     // transient sourceNode → gainNode connection is created here.
     source.sourceNode = sourceNode;
 

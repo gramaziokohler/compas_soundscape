@@ -1,10 +1,10 @@
 /**
  * Ambisonic Utilities
  *
- * Coordinate, normalization and rotation helpers for ambisonic processing.
- * Encoding is handled by JSAmbisonics monoEncoder, which produces ACN/N3D gains —
- * every encoder MUST go through applySn3dToEncoder() because the rest of the
- * pipeline (OmnitoneDecoder, IR convolution, the multichannel send) is SN3D.
+ * Coordinate and rotation helpers for ambisonic processing. Encoding is done
+ * by AmbisonicMonoEncoder (ambisonic-encoder.ts), which writes ACN/SN3D gains —
+ * the normalization of every bus in the pipeline (OmnitoneDecoder, IR
+ * convolution, the multichannel send).
  */
 
 import type { AmbisonicOrder, Orientation, Position3D, SphericalPosition } from '@/types/audio';
@@ -14,7 +14,7 @@ export function ambisonicChannelCount(order: AmbisonicOrder): number {
   return (order + 1) ** 2;
 }
 
-/** Minimal shape of a JSAmbisonics monoEncoder (one GainNode per ACN channel). */
+/** Minimal shape of an ambisonic gain encoder (one GainNode per ACN channel). */
 export interface AmbisonicGainEncoder {
   gainNodes: GainNode[];
 }
@@ -49,25 +49,6 @@ export function cartesianToSpherical(position: Position3D): SphericalPosition {
   const elevation = Math.asin(Math.max(-1, Math.min(1, z / distance)));
 
   return { azimuth, elevation, distance };
-}
-
-/**
- * Gain that converts ACN channel `acn` from N3D to SN3D: 1/√(2n+1), n = ⌊√acn⌋.
- */
-export function n3dToSn3dGain(acn: number): number {
-  const n = Math.floor(Math.sqrt(acn));
-  return 1 / Math.sqrt(2 * n + 1);
-}
-
-/**
- * Rescale a JSAmbisonics monoEncoder's N3D gains to SN3D in place.
- * Call it right after every `encoder.updateGains()` — updateGains rewrites the
- * gains from scratch, so the conversion must be re-applied each time.
- */
-export function applySn3dToEncoder(encoder: AmbisonicGainEncoder): void {
-  for (let ch = 1; ch < encoder.gainNodes.length; ch++) {
-    encoder.gainNodes[ch].gain.value *= n3dToSn3dGain(ch);
-  }
 }
 
 /** 3×3 identity in Omnitone's column-major `setRotationMatrix3` layout. */

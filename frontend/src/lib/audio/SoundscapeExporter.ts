@@ -11,8 +11,8 @@
  * - toa:      16-channel 3rd order raw ambisonics (no limiter)
  *
  * Supported audio modes:
- * - Anechoic:     JSAmbisonics monoEncoder → ambisonic mix → format decoder
- * - AmbisonicIR:  JSAmbisonics convolver (IR) → ambisonic mix → format decoder
+ * - Anechoic:     AmbisonicMonoEncoder → ambisonic mix → format decoder
+ * - AmbisonicIR:  AmbisonicConvolver (IR) → ambisonic mix → format decoder
  * - Resonance:    Google Resonance Audio scene → format output tap
  *
  * All exports use 24-bit PCM WAV encoding.
@@ -20,7 +20,9 @@
 
 import type { TimelineSound, Position, Position3D, Orientation, AmbisonicOrder, IterationLink, TrimRange } from '@/types/audio';
 import { AudioMode } from '@/types/audio';
-import { applySn3dToEncoder, cartesianToSpherical } from './utils/ambisonic-utils';
+import { cartesianToSpherical } from './utils/ambisonic-utils';
+import { AmbisonicMonoEncoder } from './utils/ambisonic-encoder';
+import { AmbisonicConvolver } from './utils/ambisonic-convolver';
 import { applyAmbisonicRotation } from './utils/ambisonic-rotation';
 import { OmnitoneDecoder } from './decoders/OmnitoneDecoder';
 import { applyFadeInOut, resolveClipFade, type FadeOptions } from './utils/fade-envelope';
@@ -150,14 +152,6 @@ function isGlobalSound(sound: TimelineSound, config: SoundscapeExportConfig): bo
 // Lazy-load libraries
 // ============================================================================
 
-let ambisonics: any = null;
-async function loadAmbisonics(): Promise<any> {
-  if (!ambisonics && typeof window !== 'undefined') {
-    ambisonics = await import('ambisonics');
-  }
-  return ambisonics;
-}
-
 let resonanceAudioLib: any = null;
 async function loadResonanceAudioLib(): Promise<any> {
   if (!resonanceAudioLib && typeof window !== 'undefined') {
@@ -196,7 +190,6 @@ export async function exportSoundscapeToWav(
     throw new Error('No active sounds to export');
   }
 
-  await loadAmbisonics();
   onProgress?.(0.05);
 
   const fmt = getFormatDescriptor(config.exportFormat);
@@ -265,7 +258,7 @@ export async function exportSoundscapeToWav(
 
 // ============================================================================
 // Anechoic Mode Graph
-// monoEncoder per source → ambisonic mix bus → format decoder
+// AmbisonicMonoEncoder per source → ambisonic mix bus → format decoder
 // ============================================================================
 
 async function buildAnechoicGraph(
@@ -287,7 +280,7 @@ async function buildAnechoicGraph(
 
   // Format-specific output stage
   if (fmt.rawAmbisonic) {
-    // Raw ambisonic: rotation baked into monoEncoder per-source positions
+    // Raw ambisonic: rotation baked into the per-source encoder positions
     mixBus.connect(destinationNode);
   } else if (fmt.label === 'binaural') {
     // binaural: OmnitoneDecoder handles all orders
@@ -338,18 +331,15 @@ async function buildAnechoicGraph(
     const refDist = 1.0;
     const dist = Math.max(refDist, spherical.distance);
 
-    const encoder = new ambisonics.monoEncoder(offlineCtx, encodeOrder);
+    const encoder = new AmbisonicMonoEncoder(offlineCtx, encodeOrder);
     if (isGlobalSound(sound, config)) {
       // Global bed: omni, level-matched, no distance attenuation
       distNode.gain.value = 1.0;
       applyOmniToEncoder(encoder, encodeOrder);
     } else {
       distNode.gain.value = refDist / dist;
-      encoder.azim = -spherical.azimuth * (180 / Math.PI);
-      encoder.elev = spherical.elevation * (180 / Math.PI);
-      encoder.updateGains();
-      // Convert N3D encoder gains to SN3D (mixBus stays SN3D throughout)
-      applySn3dToEncoder(encoder);
+      // SN3D gains (mixBus stays SN3D throughout); negated azimuth as in AnechoicMode
+      encoder.setDirection(-spherical.azimuth, spherical.elevation);
     }
 
     gainNode.connect(distNode);
@@ -463,7 +453,7 @@ async function buildAmbisonicIRGraph(
     const gainNode = offlineCtx.createGain();
     gainNode.gain.value = soundGains.get(sound.id) ?? 1.0;
 
-    const convolver = new ambisonics.convolver(offlineCtx, irOrder);
+    const convolver = new AmbisonicConvolver(offlineCtx, irOrder);
     // Global bed: the IR's omni (W) response only — room reverb, no direction
     convolver.updateFilters(isGlobalSound(sound, config) ? toOmniFilter(offlineCtx, sourceIR) : sourceIR);
 

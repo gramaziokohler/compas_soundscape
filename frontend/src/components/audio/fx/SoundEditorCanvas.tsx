@@ -12,6 +12,7 @@ import {
   resolveCssVar,
 } from '@/lib/audio/waveform-silhouette';
 import { getCssColorString } from '@/utils/utils';
+import { AUDIO_SAMPLE_RATE } from '@/utils/constants';
 import type { FxRegion } from '@/lib/audio/fx/fx-types';
 import { Spinner } from '@/components/ui/Spinner';
 import { OutputMeter } from './OutputMeter';
@@ -50,6 +51,22 @@ const ZOOM_WHEEL_SENSITIVITY = 0.0011;
 const WHEEL_LINE_PX = 16;
 const WHEEL_PAGE_PX = 400;
 const ZOOM_MAX = 4000;
+const FREQ_AXIS_WIDTH = 40;
+const FREQ_AXIS_MIN_TICK_PX = 20;
+const FREQ_AXIS_STEPS_HZ = [100, 200, 250, 500, 1000, 2000, 2500, 5000, 10000];
+
+function formatFreq(hz: number): string {
+  return hz >= 1000 ? `${+(hz / 1000).toFixed(1)} kHz` : `${hz} Hz`;
+}
+
+/** Ticks for a linear 0..maxHz axis, spaced at least FREQ_AXIS_MIN_TICK_PX apart. */
+function freqTicks(maxHz: number, heightPx: number): number[] {
+  const step = FREQ_AXIS_STEPS_HZ.find((s) => (s / maxHz) * heightPx >= FREQ_AXIS_MIN_TICK_PX)
+    ?? FREQ_AXIS_STEPS_HZ[FREQ_AXIS_STEPS_HZ.length - 1];
+  const ticks: number[] = [];
+  for (let f = 0; f <= maxHz; f += step) ticks.push(f);
+  return ticks;
+}
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
@@ -66,6 +83,7 @@ export function SoundEditorCanvas({
   const regionsPluginRef = useRef<RegionsPlugin | null>(null);
   const [ready, setReady] = useState(false);
   const [spectrogram, setSpectrogram] = useState(false);
+  const [sampleRate, setSampleRate] = useState(0);
   const [zoom, setZoom] = useState(0); // 0 = fit; otherwise px/sec
   const [waveHeight, setWaveHeight] = useState(DEFAULT_HEIGHT);
   const applyingRef = useRef(false);
@@ -124,6 +142,7 @@ export function SoundEditorCanvas({
         labels: false,
         height,
         fftSamples: 1024,
+        scale: 'linear',
       }));
     }
 
@@ -131,6 +150,8 @@ export function SoundEditorCanvas({
       container: containerRef.current,
       backend: 'WebAudio',
       height: spectrogram ? 0 : height,
+      // WaveSurfer decodes at 8 kHz by default, which would cap the spectrogram at 4 kHz.
+      ...(spectrogram ? { sampleRate: AUDIO_SAMPLE_RATE } : {}),
       waveColor: palette.fill,
       progressColor: resolveCssVar('var(--color-secondary)'),
       cursorColor: resolveCssVar('var(--color-warning)'),
@@ -147,6 +168,7 @@ export function SoundEditorCanvas({
 
     ws.on('ready', () => {
       setReady(true);
+      setSampleRate(ws.getDecodedData()?.sampleRate ?? 0);
       applyingRef.current = true;
       regionsPlugin.clearRegions();
       const dur = ws.getDuration() || 1;
@@ -321,6 +343,33 @@ export function SoundEditorCanvas({
               </div>
             )}
             <div ref={containerRef} />
+            {spectrogram && ready && sampleRate > 0 && (
+              <div
+                className="absolute left-0.5 top-0 z-20 pointer-events-none select-none"
+                style={{ width: FREQ_AXIS_WIDTH, height: waveHeight }}
+                aria-hidden
+              >
+                {freqTicks(sampleRate / 2, waveHeight).map((hz) => {
+                  const pct = (1 - hz / (sampleRate / 2)) * 100;
+                  const transform = hz === 0 ? 'translateY(-100%)' : pct === 0 ? 'none' : 'translateY(-50%)';
+                  return (
+                    <span
+                      key={hz}
+                      className="absolute left-0 px-0.5 rounded-sm whitespace-nowrap font-medium tabular-nums text-secondary-hover"
+                      style={{
+                        top: `${pct}%`,
+                        transform,
+                        fontSize: 7,
+                        lineHeight: 1,
+                        background: 'var(--color-overlay-bg)',
+                      }}
+                    >
+                      {formatFreq(hz)}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
           </div>
           {/* Resize strip lives below the box so it never overlaps WaveSurfer's
               own horizontal scrollbar (used to pan when zoomed). */}

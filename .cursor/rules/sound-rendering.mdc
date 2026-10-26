@@ -9,8 +9,8 @@ globs: frontend/src/lib/audio/**,frontend/src/hooks/useAmbisonicSendSync.ts,fron
 
 | Mode | Enum | Signal chain | DOF |
 | ---- | ---- | ------------ | --- |
-| Anechoic | `AudioMode.ANECHOIC` | Dry source → monoEncoder → sceneRotator → BinauralDecoder | 6DOF (position + rotation) |
-| Ambisonic IR | `AudioMode.AMBISONIC_IR` | Source → IR convolution → sceneRotator → BinauralDecoder | 3DOF (rotation only — receiver position locked) |
+| Anechoic | `AudioMode.ANECHOIC` | Dry source → AmbisonicMonoEncoder → OmnitoneDecoder (rotation + HRTF) | 6DOF (position + rotation) |
+| Ambisonic IR | `AudioMode.AMBISONIC_IR` | Source → shared AmbisonicConvolver bank → OmnitoneDecoder (rotation + HRTF) | 3DOF (rotation only — receiver position locked) |
 | Resonance | `AudioMode.NO_IR_RESONANCE` | Resonance Audio synthetic room (early reflections + reverb) | 6DOF (position + rotation) |
 
 Mode enum and type definitions: `frontend/src/types/audio.ts`
@@ -70,10 +70,10 @@ attenuation, still through the room. Driven per card by `config.global_playback`
 only, default on — the "Global" switch beside the card's Background badge) via `useSpeckleAudioSync`,
 which also hides those spheres (`SoundSphereManager.setHiddenSounds`). Helpers in `utils/global-source.ts`.
 
-- Anechoic: `applyOmniToEncoder()` (W only) instead of `updateGains()` + `applySn3dToEncoder()`;
-  distance gain 1. AmbisonicIR: every filter goes through `loadFilter()`, which feeds global chains
-  `toOmniFilter()` (W × gain, directional channels zeroed) — never call `convolver.updateFilters`
-  directly. Resonance: pinned to the listener with `setSourceWidth(360)`.
+- Anechoic: `applyOmniToEncoder()` (W only) instead of `encoder.setDirection()`;
+  distance gain 1. AmbisonicIR: every filter goes through `loadFilter()`, which gives global chains
+  an omni bank built from `toOmniFilter()` (W × gain, directional channels zeroed) — never build or
+  load a convolver outside `loadFilter()`. Resonance: pinned to the listener with `setSourceWidth(360)`.
 - **Level:** W gets `GLOBAL_SOURCE.OMNI_LEVEL_GAIN[order]` (diffuse-field match through Omnitone's
   HRIRs). Resonance compensates its own 360° width — do not add the gain there.
 - **Never move the stored position for a global source.** Modes keep updating `position` and only
@@ -87,11 +87,31 @@ which also hides those spheres (`SoundSphereManager.setHiddenSounds`). Helpers i
 
 ```
 Sound source (mono)
-  └─ [ANECHOIC]     JSAmbisonics monoEncoder → applySn3dToEncoder → ambisonicMixBus
-  └─ [AMBISONIC_IR] JSAmbisonics convolver (AmbiX IR)            → irMixBus
+  └─ [ANECHOIC]     AmbisonicMonoEncoder (SN3D)                    → ambisonicMixBus
+  └─ [AMBISONIC_IR] per-source gains → shared AmbisonicConvolver bank (AmbiX IR) → irMixBus
         └─ OmnitoneDecoder (rotation via setRotationMatrix3 + built-in HRIRs) → stereo
   └─ [NO_IR_RESONANCE] Resonance scene (own Omnitone; ambisonicOutput is listener-rotated)
 ```
+
+### Convolution cost — keep idle chains silent and shared
+
+The browser skips a ConvolverNode only while its input is silent. Every AMBISONIC_IR rule below
+exists because breaking it made one model's audio thread saturate (crackle for the first 20–30 s
+after activating a simulation, until each sound had played once).
+
+- **`SourceLevelMeter` is a side tap, never inline.** Use `levelMeter.tap(gainNode)`. An inline
+  `AnalyserNode` does not propagate silence, so every node after it renders forever until signal
+  has passed once. Applies to all modes.
+- **Banks are shared per filter buffer.** `loadFilter()` routes a chain's `irGainNode` into the
+  `AmbisonicConvolver` bank keyed by the filter `AudioBuffer` (spatial and omni maps), disposed with
+  its last user. Sources with the same IR (variants, copies at one position, a global IR) sum at one
+  bank — identical output, since convolution is linear. Keep filters identity-stable:
+  `processSourceIR()` memoizes FOA conversion/resampling per raw buffer, `getConstantIR()` reuses
+  identity/silent IRs, and the orchestrator's `irCache` returns one decoded buffer per IR id.
+- **All-zero IR channels get no ConvolverNode** (`AmbisonicConvolver`). A mono IR stored as FOA is
+  one convolver, a mute IR none.
+- **Record `sourceIRAppliedKey` whenever an IR is applied** (`updateSourceIRsForReceiver`,
+  `resolveSourceIR`). A missing key makes the first clip dispatch re-apply the IR mid-playback.
 
 - `decoders/OmnitoneDecoder.ts` is the only binaural decoder: `createFOARenderer` for order 1,
   `createHOARenderer` for orders 2/3. HRIRs are Omnitone's built-in set (no custom HRTF loading).
@@ -104,12 +124,15 @@ Sound source (mono)
 ### Normalization — every mode bus is ACN/SN3D (AmbiX)
 
 Omnitone, the IR files (backend AmbiX) and the multichannel send all use **SN3D**.
-JSAmbisonics `monoEncoder` produces **N3D** (`computeRealSH` scales order n by √(2n+1)):
+`AmbisonicMonoEncoder` (`utils/ambisonic-encoder.ts`, replaces JSAmbisonics `monoEncoder`) writes
+SN3D directly:
 
 ```typescript
-encoder.updateGains();
-applySn3dToEncoder(encoder); // ALWAYS, after every updateGains() — it rewrites the gains
+encoder.setDirection(-spherical.azimuth, spherical.elevation); // radians; azimuth negated by convention
 ```
+
+Its gains are pinned to the old JSAmbisonics N3D × 1/√(2n+1) output by `ambisonic-encoder.test.ts`
+— keep that test passing when touching the encoder. The `ambisonics` package is no longer a dependency.
 
 Synthetic IR conversions (`AmbisonicIRMode.convertMonoToFOA/convertStereoToFOA`) write ACN order
 **W, Y, Z, X** with SN3D coefficients (W = 1 per plane wave).
