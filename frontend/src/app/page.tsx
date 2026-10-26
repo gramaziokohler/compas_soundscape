@@ -25,7 +25,6 @@ import {
   useModalImpactStore,
   useAcousticsSimulationStore,
   usePyroomAcousticsStore,
-  useChorasStore,
   useSEDStore,
   useRoomMaterialsStore,
   useRightSidebarStore,
@@ -57,6 +56,7 @@ import { reapplyUserPreferences } from "@/lib/user-preferences-sync";
 import { useAudioOrchestrator } from "@/hooks/useAudioOrchestrator";
 import { useAudioOutputDeviceSync } from "@/hooks/useAudioOutputDeviceSync";
 import { useAmbisonicSendSync } from "@/hooks/useAmbisonicSendSync";
+import { usePffdtdFreeMovement } from "@/hooks/usePffdtdFreeMovement";
 import { applyOutputDevice } from "@/lib/audio/output-device";
 import { useViewportScale } from "@/hooks/useViewportScale";
 import { useUndoRedo } from "@/hooks/useUndoRedo";
@@ -221,9 +221,6 @@ function applyRestoredSoundscapePayload(
     restored.simulationConfigs.forEach(config => {
       if (config.type === 'pyroomacoustics' && config.simulationInstanceId) {
         usePyroomAcousticsStore.getState().seedInstance(config.simulationInstanceId, {});
-      }
-      if (config.type === 'choras' && config.simulationInstanceId) {
-        useChorasStore.getState().seedInstance(config.simulationInstanceId, {});
       }
     });
     useAcousticsSimulationStore.getState().restoreSimulationState(
@@ -991,6 +988,8 @@ function HomeContent() {
 
   // Multichannel ambisonic send (16-ch AmbiX → Dante / DAW) settings ↔ orchestrator.
   useAmbisonicSendSync(audioOrchestrator.orchestrator);
+  // Wave-based free positioning: moved listeners / sources get their IR without re-running
+  usePffdtdFreeMovement();
 
   // Audio feature hooks (modular, integrate with orchestrator)
   const audioNormalization = useAudioNormalization(audioOrchestrator.orchestrator);
@@ -1041,7 +1040,6 @@ function HomeContent() {
     groundGridSpacing, setGroundGridSpacing,
     groundGridColor, setGroundGridColor,
     setGlobalSoundSpeed,
-    setGlobalMeshLc,
     listenerOrientation, setListenerOrientation,
   } = useUIStore();
   // roomScale lives in acousticsSimulationStore so undo/redo works for Resonance Audio
@@ -1189,7 +1187,7 @@ function HomeContent() {
   const getSimIRMapping = useCallback((index: number | null) => {
     if (index === null) return null;
     const config = acousticsSimulation.simulationConfigs[index];
-    if (!config || (config.type !== 'pyroomacoustics' && config.type !== 'import-irs')) return null;
+    if (!config || (config.type !== 'pyroomacoustics' && config.type !== 'pffdtd' && config.type !== 'import-irs')) return null;
     const mapping = (config as any).sourceReceiverIRMapping || null;
     return mapping && Object.keys(mapping).length > 0 ? mapping : null;
   }, [acousticsSimulation.simulationConfigs]);
@@ -1205,7 +1203,7 @@ function HomeContent() {
     if (acousticsSimulation.activeSimulationIndex !== null) {
       const activeConfig = acousticsSimulation.simulationConfigs[acousticsSimulation.activeSimulationIndex];
 
-      if (activeConfig && (activeConfig.type === 'pyroomacoustics' || activeConfig.type === 'choras' || activeConfig.type === 'import-irs')) {
+      if (activeConfig && (activeConfig.type === 'pyroomacoustics' || activeConfig.type === 'pffdtd' || activeConfig.type === 'import-irs')) {
         const simConfig = activeConfig as any;
         const simulationMode = activeConfig.type === 'import-irs' ? 'pyroomacoustics' : activeConfig.type as AcousticSimulationMode;
 
@@ -1226,10 +1224,16 @@ function HomeContent() {
               simulationId: activeConfig.id,
               sourceCount: Object.keys(simConfig.sourceReceiverIRMapping).length
             });
+            // Keep the listener being heard (a moved receiver or a free-positioning IR swap
+            // re-pushes the mapping; falling back to receivers[0] would switch listeners).
+            const activeReceiverId = audioOrchestrator.orchestrator.getActiveReceiverId();
+            const keepReceiverId = activeReceiverId && receivers.receivers.some((r) => r.id === activeReceiverId)
+              ? activeReceiverId
+              : initialReceiverId;
             audioOrchestrator.orchestrator.hotSwapSourceReceiverIRMapping(
               simConfig.sourceReceiverIRMapping,
               simulationMode,
-              initialReceiverId,
+              keepReceiverId,
               simulationSourcePositions
             ).then(() => {
               console.log('[Page] ✅ IR mapping hot-swapped successfully');
@@ -3062,13 +3066,13 @@ function HomeContent() {
   }, [audioOrchestrator]);
 
   /**
-   * Handle IR imported from Choras simulation
+  * Handle IR imported from a simulation
    * Triggers a refresh of the IR library list
    */
   const handleIRImported = useCallback(() => {
     // Increment trigger to force ImpulseResponseUpload to reload its list
     triggerIRRefresh();
-    console.log('[Page] IR imported from Choras simulation, triggering IR library refresh');
+    console.log('[Page] IR imported from simulation, triggering IR library refresh');
   }, []);
 
   /**
@@ -3101,7 +3105,7 @@ function HomeContent() {
   // or its config changes — otherwise the values only take effect while dragging.
   //
   // The IR peak-offset gain is a GLOBAL control on the mode, but its value is
-  // per-card. Applying a leftover import-irs offset (e.g. -0.87) to a pyroom/choras
+  // per-card. Applying a leftover import-irs offset (e.g. -0.87) to a   pyroom/pffdtd
   // IR with a different natural peak drives (peak + offset)/peak to <= 0, i.e. the
   // gain node mutes and the convolution goes silent. So always re-apply the ACTIVE
   // card's values, defaulting to 0/off when the card does not define them.
@@ -3142,7 +3146,6 @@ function HomeContent() {
     setShowSceneListeners(true);
     useUIStore.getState().setShowScenarioParcours(false);
     setGlobalSoundSpeed(343);
-    setGlobalMeshLc(1.5);
     const audio = useAudioControlsStore.getState();
     audio.resetGlobalBaseDbfs();
     audio.setTtsLanguage(TTS_DEFAULT_LANGUAGE);
@@ -3154,7 +3157,7 @@ function HomeContent() {
     useUIStore.getState().setShowGroundGridLabels(true);
   }, [soundGen.handleResetToDefaults, audioNormalization.reset,
       setShowLabelSprites, setShowHoveringHighlight, setShowSoundSpheres, setShowSceneListeners,
-      setGlobalSoundSpeed, setGlobalMeshLc,
+      setGlobalSoundSpeed,
       setShowGroundGrid, setGroundGridSpacing, setGroundGridColor]);
 
   const handleDeleteHistory = useCallback(async () => {
@@ -3267,9 +3270,8 @@ function HomeContent() {
         // Get the geometry data to find all faces affected by this assignment
         const geometryData = fileUpload.geometryData;
 
-        // Strip prefix from material ID (choras_/pyroom_) to match backend format
+        // Strip prefix from material ID (pyroom_) to match backend format
         const materialId = material ? (
-          material.id.startsWith('choras_') ? material.id.substring(7) :
           material.id.startsWith('pyroom_') ? material.id.substring(7) :
           material.id
         ) : null;

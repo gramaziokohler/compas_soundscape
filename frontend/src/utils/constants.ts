@@ -782,7 +782,7 @@ export function normalizeTtsModel(model: string | null | undefined): string {
 // before treating the job as gone. See pollLlmJob in store/analysisStore.ts.
 export const LLM_JOB_STATUS_MISS_TOLERANCE = 5;
 
-// Same for a pyroom/choras simulation poll: the job runs in a worker process, so a
+// Same for a pyroom simulation poll: the job runs in a worker process, so a
 // failed status check (e.g. a 502 while the API restarts on deploy) must not mark
 // the card as failed. Consecutive failures tolerated (~30 s at 1–1.5 s per poll).
 export const SIMULATION_STATUS_MISS_TOLERANCE = 20;
@@ -1455,6 +1455,35 @@ export const AUDIO_VISUALIZATION = {
     PAD_BOTTOM: 14,
     PK_GAP: 6,
   },
+
+  /** Frequency-response view of the IR preview panel */
+  FREQUENCY_RESPONSE: {
+    MIN_HZ: 20,
+    MAX_HZ: 20000,
+    POINTS: 300,
+    /** Fractional-octave smoothing width (1/6 octave) */
+    SMOOTHING_OCTAVES: 1 / 6,
+    MIN_FFT_SIZE: 4096,
+    /** IRs longer than this many samples are truncated before the FFT */
+    MAX_FFT_SIZE: 1 << 18,
+    /** Channels overlaid in the plot (W, Y, Z, X for FOA) */
+    MAX_CHANNELS: 4,
+    /** Visible dB span below the loudest point */
+    DB_RANGE: 60,
+    DB_STEP: 10,
+  },
+} as const;
+
+/** Pinned (click-to-open) impulse-response preview panel */
+export const IR_PREVIEW_PANEL = {
+  /** Estimated height used to place and clamp the panel before it is measured */
+  ESTIMATED_HEIGHT: 260,
+  HEADER_HEIGHT: 40,
+  MIN_WIDTH: 240,
+  MIN_HEIGHT: 150,
+  /** Gap kept to the sidebar when the panel first opens */
+  SIDEBAR_GAP: 16,
+  MARGIN: 8,
 } as const;
 
 
@@ -2287,44 +2316,92 @@ export const SIMULATION_PREFLIGHT = {
 } as const;
 
 // ============================================================================
-// Choras (DE/DG Wave Simulation) Configuration
+// PFFDTD (Wave-based GPU FDTD simulation)
+// (mirrors backend/config/constants.py PFFDTD_*)
 // ============================================================================
 
-export const CHORAS_DEFAULT_METHOD = 'DE';
+export const PFFDTD = {
+  DEFAULT_FMAX: 500, // Hz — the IR is band-limited to this
+  FMAX_MIN: 100,
+  FMAX_MAX: 4000,
+  FMAX_STEP: 50,
+  DEFAULT_PPW: 20, // points per wavelength at fmax
+  PPW_MIN: 6,
+  PPW_MAX: 80,
+  /** Above this PPW the grid dispersion error is negligible ("phase accurate"). */
+  PHASE_ACCURATE_PPW: 28,
+  DEFAULT_DURATION: 1.0, // s, IR length
+  DURATION_MIN: 0.05,
+  DURATION_MAX: 5.0,
+  DURATION_STEP: 0.05,
+  DEFAULT_AIR_ABSORPTION: true,
+  DEFAULT_ANIMATION_MS: 50,
+  ANIMATION_MS_MIN: 10,
+  ANIMATION_MS_MAX: 300,
+  ANIMATION_MS_STEP: 5,
+  ANIM_FRAMES: 120,
+  /** PFFDTD c(20 °C). */
+  SPEED_OF_SOUND: 343.2,
+  /** Sources and listeners need this many cells of clearance from a surface. */
+  SEED_CLEARANCE_CELLS: 3,
+  STATUS_POLL_INTERVAL_MS: 1500,
+  PREVIEW_POLL_INTERVAL_MS: 800,
+  /** Material index of rigid (unassigned) boundary nodes in the preview points file. */
+  RIGID_MATERIAL_INDEX: 255,
+  /** Frontend id prefix of the (shared pyroomacoustics) material database; the backend legend omits it. */
+  MATERIAL_ID_PREFIX: 'pyroom_',
+  /** Free positioning (mirrors PFFDTD_FREE_* in backend/config/constants.py). */
+  DEFAULT_FREE_MODE: 'off',
+  FREE_GRID_SPACING_DEFAULT: 0.5, // m
+  FREE_GRID_SPACING_MIN: 0.1,
+  FREE_GRID_SPACING_MAX: 2.0,
+  FREE_GRID_SPACING_STEP: 0.05,
+  /** A moved object snaps to the nearest grid point within this (m); farther needs a re-run. */
+  FREE_SNAP_RADIUS_M: 0.5,
+  /** Wait this long after the last move before asking for the new IR. */
+  FREE_DEBOUNCE_MS: 500,
+  /** A free object counts as moved once it is this far (m) from the position its IR was made for. */
+  FREE_MOVE_EPSILON_M: 0.001,
+  /** Static URL prefix of the run's IR WAVs (backend PFFDTD_RIR_URL_PREFIX). */
+  RIR_URL_PREFIX: '/static/pffdtd_rir',
+} as const;
 
-// DE (Diffusion Equation / FVM) defaults
-export const CHORAS_DE_DEFAULT_SIM_LEN_TYPE = 'edt';
-export const CHORAS_DE_DEFAULT_EDT = 35;
-export const CHORAS_DE_DEFAULT_IR_LENGTH = 0.5;
-export const CHORAS_DE_DEFAULT_C0 = 343;
-export const CHORAS_DE_DEFAULT_LC = 1.5;
-
-// DG (Discontinuous Galerkin) defaults
-export const CHORAS_DG_DEFAULT_FREQ_UPPER = 200;
-export const CHORAS_DG_DEFAULT_C0 = 343;
-export const CHORAS_DG_DEFAULT_RHO0 = 1.213;
-export const CHORAS_DG_DEFAULT_IR_LENGTH = 0.1;
-export const CHORAS_DG_DEFAULT_POLY_ORDER = 4;
-export const CHORAS_DG_DEFAULT_PPW = 2;
-export const CHORAS_DG_DEFAULT_CFL = 1.0;
-
-// Shared slider ranges
-export const CHORAS_DE_IR_LENGTH_MIN = 0.05;
-export const CHORAS_DE_IR_LENGTH_MAX = 5.0;
-export const CHORAS_DE_LC_MIN = 0.1;
-export const CHORAS_DE_LC_MAX = 10.0;
-export const CHORAS_DE_EDT_MIN = 10;
-export const CHORAS_DE_EDT_MAX = 60;
-export const CHORAS_DG_FREQ_UPPER_MIN = 50;
-export const CHORAS_DG_FREQ_UPPER_MAX = 1000;
-export const CHORAS_DG_IR_LENGTH_MIN = 0.01;
-export const CHORAS_DG_IR_LENGTH_MAX = 2.0;
-export const CHORAS_DG_POLY_ORDER_MIN = 1;
-export const CHORAS_DG_POLY_ORDER_MAX = 8;
-export const CHORAS_DG_PPW_MIN = 1;
-export const CHORAS_DG_PPW_MAX = 6;
-export const CHORAS_DG_CFL_MIN = 0.1;
-export const CHORAS_DG_CFL_MAX = 2.0;
+/** Viewer overlays of the wave-based card (voxel preview, SPL map, wave animation). */
+export const PFFDTD_VISUALS = {
+  /** Plane sits this far off the field height / slice position along its normal (same offset as the gradient map). */
+  PLANE_Z_OFFSET_M: 0.03,
+  /** Strength-G volume slice position slider step (m); positions between lattice layers interpolate. */
+  SLICE_STEP_M: 0.01,
+  PLANE_OPACITY: 0.85,
+  RENDER_ORDER: 100,
+  VOXEL_RENDER_ORDER: 9790,
+  VOXEL_OPACITY: 0.9,
+  /** Problem marker sphere radius in grid cells (clearance / clash). */
+  MARKER_RADIUS_CELLS: 3,
+  MARKER_SPHERE_SEGMENTS: 12,
+  LEAK_POINT_SIZE_CELLS: 2,
+  /** Animation playback rates (frames per second). */
+  FPS_OPTIONS: [10, 15, 24, 30] as const,
+  DEFAULT_FPS: 15,
+  /** Padding (m) around problem markers when the camera frames them. */
+  FOCUS_PADDING_M: 1.0,
+  FOCUS_FIT: 1.2,
+  /** Diverging colormap LUT size. */
+  LUT_SIZE: 256,
+  /** CSS tokens resolved at render time. */
+  COLOR_VARS: {
+    RIGID: '--color-secondary-hover',
+    WALL: '--color-foreground',
+    ERROR: '--color-error',
+    WARNING: '--color-warning',
+    INFO: '--color-info',
+    FREE_GRID: '--color-primary',
+  },
+  /** Free-positioning candidate grid points (size in m, world units). */
+  FREE_GRID_POINT_SIZE_M: 0.06,
+  FREE_GRID_OPACITY: 0.55,
+  FREE_GRID_RENDER_ORDER: 9780,
+} as const;
 
 // Generic speed of sound — shared by all simulation engines
 export const DEFAULT_SPEED_OF_SOUND = 343; // m/s

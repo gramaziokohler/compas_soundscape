@@ -2,7 +2,7 @@
  * Speckle-based surface materials types for acoustic simulations
  *
  * These types support material assignment to Speckle mesh objects for
- * PyroomAcoustics and Choras simulations.
+ * PyroomAcoustics simulations.
  */
 
 /**

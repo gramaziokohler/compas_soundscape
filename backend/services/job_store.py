@@ -8,7 +8,7 @@ Design (see .cursor/plans/multi-user_distributed_backend_a4752c5d.plan.md §4.1)
 
 - Keys: `job:{id}` hash (type, session_id, status, progress, status_text,
   partial, result, error, worker_id, heartbeat, attempts, created, payload,
-  cancel_requested); lists `queue:gpu` / `queue:cpu` / `queue:choras`;
+  cancel_requested); lists `queue:gpu` / `queue:cpu`;
   set `session:{sid}:pending_gpu` (GPU fairness cap); pub/sub channel
   `job:cancel`.
 - `AsyncJobStore` (redis.asyncio) is used by the API process: enqueue, get,
@@ -104,7 +104,7 @@ def _parse_json_field(raw: str) -> Optional[Any]:
 
 
 def _queue_key_for_type(job_type: str) -> Optional[str]:
-    """Return the Redis list key for a queued (GPU/CPU/Choras) job type, or
+    """Return the Redis list key for a queued (GPU/CPU) job type, or
     None for IO job types (llm/model_analysis/tts) which run immediately as
     asyncio tasks in the API process and never sit in a BLPOP list."""
     return JOB_TYPE_QUEUE.get(job_type)
@@ -247,7 +247,6 @@ class AsyncJobStore:
             "gpu": "queue:gpu",
             "sa3": "queue:sa3",
             "cpu": "queue:cpu",
-            "choras": "queue:choras",
             "pffdtd": JOB_TYPE_QUEUE[JOB_TYPE_PFFDTD],
         }.items():
             depths[role] = await self.redis.llen(queue_key)

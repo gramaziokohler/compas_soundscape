@@ -43,6 +43,16 @@ def resolve_material(value: Any) -> dict:
     return {"coeffs": list(resolved["coeffs"]), "center_freqs": list(resolved["center_freqs"])[:n]}
 
 
+def scene_material_ids(mesh: SimulationMesh) -> dict[str, str]:
+    """PFFDTD material name (m000, ...) -> the assigned material id, in build_scene's naming order."""
+    keys: dict[str, str] = {}
+    for value in mesh.face_material:
+        key = json.dumps(value, sort_keys=True, default=str)
+        if key not in keys:
+            keys[key] = str(value) if not isinstance(value, dict) else key
+    return {f"m{i:03d}": material_id for i, material_id in enumerate(keys.values())}
+
+
 def build_scene(mesh: SimulationMesh) -> tuple[dict, dict]:
     """Return (mats_hash, materials) for the PFFDTD pipeline job."""
     keys: dict[str, str] = {}

@@ -3,7 +3,7 @@ Redis-backed runtime configuration shared by the API process and worker processe
 
 The only value stored today is the Speckle token (`config:speckle_token`). A user
 can paste a token in Advanced Settings (POST /api/tokens) at runtime; the API
-writes it to Redis so long-lived worker child processes (CPU / Choras) can pick
+writes it to Redis so long-lived worker child processes (CPU / PFFDTD) can pick
 it up even though they never receive the HTTP request that set it.
 
 Environment variables still win — deployment injects `SPECKLE_TOKEN` into every

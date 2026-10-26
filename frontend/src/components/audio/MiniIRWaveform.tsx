@@ -21,6 +21,10 @@ interface MiniIRWaveformProps {
    * When omitted, the thumbnail self-normalises to its own peak (legacy behavior).
    */
   amplitudeScale?: number;
+  /** When provided the thumbnail is clickable (pins the full preview panel). */
+  onClick?: (e: React.MouseEvent<HTMLElement>) => void;
+  /** True when this thumbnail's IR is the one shown in the pinned panel. */
+  pinned?: boolean;
 }
 
 const WIDTH = 56;
@@ -38,6 +42,8 @@ export function MiniIRWaveform({
   loading = false,
   lowEnergy = false,
   amplitudeScale,
+  onClick,
+  pinned = false,
 }: MiniIRWaveformProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const colorTheme = useResolvedColorTheme();
@@ -110,11 +116,17 @@ export function MiniIRWaveform({
   }, [audioBuffer, colorTheme, onBlueBackground, lowEnergy, amplitudeScale]);
 
   const borderClass = lowEnergy ? ' border-2' : '';
+  const clickClass = onClick ? ' cursor-pointer' : '';
+  const pinnedRingColor = onBlueBackground ? 'var(--color-on-blue)' : 'var(--color-primary)';
+  const clickProps = onClick
+    ? { onClick, title: 'Click to pin a draggable preview' }
+    : {};
 
   if (!audioBuffer) {
     return (
       <div
-        className={`shrink-0 rounded border bg-transparent${borderClass} ${className}`}
+        className={`shrink-0 rounded border bg-transparent${borderClass}${clickClass} ${className}`}
+        {...clickProps}
         style={{
           width: WIDTH,
           height: MONO_HEIGHT,
@@ -141,8 +153,9 @@ export function MiniIRWaveform({
   return (
     <canvas
       ref={canvasRef}
-      className={`shrink-0 rounded border bg-transparent${borderClass} ${className}`}
-      style={borderStyle}
+      className={`shrink-0 rounded border bg-transparent${borderClass}${clickClass} ${className}`}
+      style={pinned ? { ...borderStyle, boxShadow: `0 0 0 1px ${pinnedRingColor}` } : borderStyle}
+      {...clickProps}
       width={WIDTH}
       height={height}
     />

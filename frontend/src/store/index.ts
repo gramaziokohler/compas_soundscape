@@ -22,7 +22,6 @@ import {
   acousticsSimulationUndo,
 } from './acousticsSimulationStore';
 import { usePyroomAcousticsStore } from './pyroomAcousticsStore';
-import { useChorasStore } from './chorasStore';
 import { useSoundscapeStore, soundscapeUndo, configValidationError, orchestrateInputsSignature, applyRecoveredOrchestrateResult, resumeOrchestrateJob } from './soundscapeStore';
 import { useTextGenerationStore } from './textGenerationStore';
 import { useAnalysisStore, analysisUndo, applyRecoveredLlmResult, resumeLlmJob } from './analysisStore';
@@ -138,14 +137,6 @@ export type {
   PyroomSimulationSettings,
 } from './pyroomAcousticsStore';
 
-export { useChorasStore };
-export type {
-  ChorasStoreState,
-  ChorasInstanceState,
-  ChorasMaterial,
-  ChorasSimulationSettings,
-} from './chorasStore';
-
 export {
   useSoundscapeStore,
   configValidationError,
@@ -175,6 +166,22 @@ export type { SceneHighlightStoreState } from './sceneHighlightStore';
 
 export { useSimulationPreflightStore } from './simulationPreflightStore';
 export type { SimulationPreflightStoreState, RunPreflightArgs } from './simulationPreflightStore';
+
+export { usePffdtdVisualsStore } from './pffdtdVisualsStore';
+export type {
+  PffdtdVisualsStoreState,
+  PffdtdVoxelPreviewEntry,
+  PffdtdOverlay,
+  PffdtdFieldCacheEntry,
+  PffdtdFieldView,
+  RunVoxelPreviewArgs,
+} from './pffdtdVisualsStore';
+
+export { usePffdtdAnimationStore } from './pffdtdAnimationStore';
+
+export { usePffdtdFreeStore } from './pffdtdFreeStore';
+export type { PffdtdFreeGridEntry, PffdtdFreeObjectStatus } from './pffdtdFreeStore';
+export type { PffdtdAnimationStoreState, PffdtdAnimationJob } from './pffdtdAnimationStore';
 
 export { useModalImpactStore };
 export type { ModalImpactStoreState } from './modalImpactStore';

@@ -47,8 +47,8 @@ import type {
   SimulationState,
   BaseSimulationConfig,
   ResonanceSimulationConfig,
-  ChorasSimulationConfig,
   PyroomAcousticsSimulationConfig,
+  PffdtdSimulationConfig,
   SimulationConfig,
   SimulationTabProps
 } from './acoustics';
@@ -57,8 +57,8 @@ export type {
   SimulationState,
   BaseSimulationConfig,
   ResonanceSimulationConfig,
-  ChorasSimulationConfig,
   PyroomAcousticsSimulationConfig,
+  PffdtdSimulationConfig,
   SimulationConfig,
   SimulationTabProps
 };
@@ -280,7 +280,7 @@ export interface CatalogSoundSelection {
 
 // ─── Job persistence types ────────────────────────────────────────────────────
 
-export type JobType = 'sound' | 'tts' | 'sed' | 'choras' | 'pyroom' | 'llm' | 'loop';
+export type JobType = 'sound' | 'tts' | 'sed' | 'pyroom' | 'pffdtd' | 'llm' | 'loop';
 
 export interface JobRecord {
   jobId: string;
@@ -290,11 +290,11 @@ export interface JobRecord {
     configIndex?: number;
     kind?: string;
     scenarioId?: string;
-    /** pyroom/choras: the simulation config id the job belongs to (stable across reorder/reload). */
+    /** pyroom: the simulation config id the job belongs to (stable across reorder/reload). */
     configId?: string;
-    /** pyroom/choras: which simulation instance card the job belongs to. */
+    /** pyroom: which simulation instance card the job belongs to. */
     instanceId?: string;
-    /** pyroom/choras: Speckle version submitted for simulation (tagged on the recovered result). */
+    /** pyroom: Speckle version submitted for simulation (tagged on the recovered result). */
     versionId?: string;
     /** loop: which sound the loop region applies to. */
     soundId?: string;
@@ -402,3 +402,21 @@ export type {
 
 // Send sound scenes to another model
 export type { SendScenesRequest, SendScenesResponse, SendTargetEntry } from './sceneTransfer';
+export type {
+  PffdtdStatus,
+  PffdtdSettings,
+  PffdtdJobResult,
+  PffdtdFieldBlock,
+  PffdtdFieldSource,
+  PffdtdFieldVolume,
+  PffdtdFieldVolumeSource,
+  PffdtdSlice,
+  PffdtdSliceAxis,
+  PffdtdTexelGrid,
+  PffdtdResultsJson,
+  PffdtdVoxelPreviewPayload,
+  PffdtdVoxelPreviewJobResult,
+  PffdtdVoxelPoints,
+  PffdtdVoxelProblem,
+  PffdtdOverlayKind,
+} from './pffdtd';

@@ -3,7 +3,7 @@
 import { useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight, RotateCcw } from 'lucide-react';
 import type { CardBaseConfig, CardType } from '@/types/card';
-import type { PyroomAcousticsSimulationConfig, ChorasSimulationConfig } from '@/types/acoustics';
+import type { PyroomAcousticsSimulationConfig, PffdtdSimulationConfig } from '@/types/acoustics';
 import type {
   TextAnalysisConfig,
   AnalyzeModelConfig,
@@ -209,8 +209,8 @@ const SOUND_TYPES: CardType[] = [
 
 const SIMULATION_TYPES: CardType[] = [
   'resonance',
-  'choras',
   'pyroomacoustics',
+  'pffdtd',
   'import-irs',
 ];
 
@@ -276,15 +276,13 @@ export function getSettingsRows(config: CardBaseConfig): SettingsRow[] {
     return rows;
   }
 
-  if (config.type === 'choras') {
-    const s = (config as ChorasSimulationConfig).settings;
-    rows.push({ label: 'Method', value: s.simulation_method });
-    if (s.simulation_method === 'DG') {
-      rows.push({ label: 'Freq. Upper Limit', value: `${s.dg_freq_upper_limit} Hz` });
-      rows.push({ label: 'Polynomial Order', value: String(s.dg_poly_order) });
-      rows.push({ label: 'Points per Wavelength', value: String(s.dg_ppw) });
-      rows.push({ label: 'CFL', value: String(s.dg_cfl) });
-    }
+  if (config.type === 'pffdtd') {
+    const s = (config as PffdtdSimulationConfig).settings;
+    rows.push({ label: 'Simulation Mode', value: s.simulation_mode === 'foa' ? 'FOA' : 'Mono' });
+    rows.push({ label: 'Max Frequency', value: `${s.fmax} Hz (band-limited)` });
+    rows.push({ label: 'Points per Wavelength', value: String(s.ppw) });
+    rows.push({ label: 'IR Duration', value: `${s.duration} s` });
+    if (s.air_absorption) rows.push({ label: 'Air Absorption', value: 'Yes' });
     return rows;
   }
 

@@ -1,5 +1,5 @@
 # backend/services/simulation_mesh_service.py
-# Shared simulation-mesh preparation for pyroomacoustics, Choras and the
+# Shared simulation-mesh preparation for pyroomacoustics, PFFDTD and the
 # geometry preflight.
 #
 # Invariant: the preflight preview and the simulation both call

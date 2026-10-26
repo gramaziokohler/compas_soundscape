@@ -6,7 +6,7 @@ import type { ImpulseResponseMetadata } from '@/types/audio';
 
 /**
  * Research-study events for room-acoustics simulations (pyroomacoustics /
- * Choras), called from AcousticsSection so the component only needs one line
+ * PFFDTD), called from AcousticsSection so the component only needs one line
  * per site. `sim.launch` carries the design snapshot hash, so a simulation can
  * be tied to the exact geometry / materials / sources it was run on.
  */

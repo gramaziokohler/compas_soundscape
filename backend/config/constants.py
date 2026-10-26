@@ -811,70 +811,6 @@ SUPPORTED_IR_CHANNELS = [1, 2, 4, 9, 16]  # Mono, Binaural, FOA, SOA, TOA
 MAX_IR_CHANNELS = 16
 
 # ============================================================================
-# Choras (DE/DG Wave Simulation) Configuration
-# ============================================================================
-
-# Output directories (mirrors pyroomacoustics pattern)
-CHORAS_RIR_DIR  = str(BACKEND_DIR / "temp" / "static" / "choras_rir")
-CHORAS_TEMP_DIR = str(BACKEND_DIR / "temp" / "choras_sims")
-
-# DE (Diffusion Equation / FVM) defaults
-CHORAS_DE_DEFAULT_C0           = 343        # Speed of sound (m/s)
-CHORAS_DE_DEFAULT_IR_LENGTH    = 0.5        # IR length in seconds
-CHORAS_DE_DEFAULT_LC           = 1        # Mesh characteristic length (m)
-CHORAS_DE_DEFAULT_EDT          = 35         # EDT target (dB)
-CHORAS_DE_DEFAULT_SIM_LEN_TYPE = "edt"     # "edt" or "ir_length"
-CHORAS_DE_SAMPLE_RATE          = 44100      # DE solver INPUT rate (1/dt of the pressure CSV); resampled to AUDIO_SAMPLE_RATE
-
-# DG (Discontinuous Galerkin) defaults
-CHORAS_DG_DEFAULT_C0          = 343         # Speed of sound (m/s)
-CHORAS_DG_DEFAULT_RHO0        = 1.213       # Air density (kg/m³)
-CHORAS_DG_DEFAULT_IR_LENGTH   = 0.5         # IR length in seconds
-CHORAS_DG_DEFAULT_FREQ_UPPER  = 200         # Upper frequency limit (Hz)
-CHORAS_DG_DEFAULT_POLY_ORDER  = 4           # Polynomial order
-CHORAS_DG_DEFAULT_PPW         = 2           # Points per wavelength
-CHORAS_DG_DEFAULT_CFL         = 1.0         # CFL number
-
-# Frequency bands (shared by DE and DG)
-CHORAS_DEFAULT_FREQUENCIES = [125, 250, 500, 1000, 2000, 4000, 8000]
-
-# Absorption material database (5-band: 125, 250, 500, 1000, 2000, 4000, 8000 Hz)
-CHORAS_ABSORPTION_MATERIALS = {
-    "concrete_plain": {
-        "description": "Plain concrete (painted/unpainted)",
-        "coeffs": [0.01, 0.01, 0.02, 0.02, 0.02, 0.02, 0.02],
-    },
-    "brick_unplastered": {
-        "description": "Brick, unplastered",
-        "coeffs": [0.02, 0.03, 0.03, 0.04, 0.05, 0.05, 0.05],
-    },
-    "plasterboard": {
-        "description": "Plasterboard on battens",
-        "coeffs": [0.15, 0.10, 0.06, 0.04, 0.04, 0.04, 0.04],
-    },
-    "wood_floor": {
-        "description": "Parquet / wood floor on concrete",
-        "coeffs": [0.04, 0.04, 0.07, 0.06, 0.06, 0.06, 0.06],
-    },
-    "carpet_thick": {
-        "description": "Thick carpet on concrete",
-        "coeffs": [0.02, 0.06, 0.14, 0.37, 0.60, 0.60, 0.60],
-    },
-    "glass_window": {
-        "description": "Glass window",
-        "coeffs": [0.35, 0.25, 0.18, 0.12, 0.07, 0.07, 0.07],
-    },
-    "acoustic_tile": {
-        "description": "Acoustic ceiling tile",
-        "coeffs": [0.15, 0.25, 0.55, 0.65, 0.65, 0.65, 0.65],
-    },
-    "medium_absorber": {
-        "description": "Medium absorber (generic)",
-        "coeffs": [0.60, 0.69, 0.71, 0.70, 0.63, 0.63, 0.63],
-    },
-}
-
-# ============================================================================
 # PFFDTD (GPU finite-difference wave solver, vendored in backend/pffdtd_backend)
 # ============================================================================
 # The solver runs in the isolated compas-pffdtd env (never imported by the API);
@@ -896,10 +832,12 @@ PFFDTD_RIR_DIR = str(BACKEND_DIR / "temp" / "static" / "pffdtd_rir")
 PFFDTD_RIR_URL_PREFIX = "/static/pffdtd_rir"
 PFFDTD_TEMP_DIR = str(BACKEND_DIR / "temp" / "pffdtd_sims")
 PFFDTD_MATERIAL_CACHE_DIR = str(BACKEND_DIR / "temp" / "pffdtd_materials")
+# voxelisations shared by the voxel preview and the runs of the same geometry + grid
+PFFDTD_VOXEL_CACHE_DIR = str(BACKEND_DIR / "temp" / "pffdtd_voxels")
 
 # Grid / band limit. PPW counts Cartesian grid points per wavelength at fmax.
 # Phase-accurate long IRs (A3: -20 dB complex error over 150 ms) need PPW >= ~28 with
-# grid-aligned walls; oblique (staircased) walls converge only at first order.
+# grid-aligned walls; oblique walls (conformal cut cells) need PPW >= ~34 (validation A4).
 PFFDTD_DEFAULT_FMAX = 500.0          # Hz
 PFFDTD_FMAX_MIN = 100.0
 PFFDTD_FMAX_MAX = 4000.0
@@ -920,6 +858,11 @@ PFFDTD_FOA_OFFSET_CELLS = 1.0        # pressure-gradient probes at +/- this many
 # sources/receivers need this clearance: trilinear stencil (1 cell) + FOA probes (1 cell) + margin
 PFFDTD_SEED_CLEARANCE_CELLS = 3.0
 PFFDTD_LOWCUT_HZ = 10.0              # removes the (non-decaying) uniform-pressure mode
+# IR reference: the solver's unit-sample source gives the free-field Green's function 1/(4 pi r).
+# IRs are written re the free field at 1 m (direct path 1/r), the convention of the
+# pyroomacoustics ISM/ray-tracing code (simulation/ism.py: att / dist) and of auralisation
+# with dry sources recorded at ~1 m. Strength-G maps are ratios and do not depend on it.
+PFFDTD_IR_REFERENCE_GAIN = 4.0 * 3.141592653589793
 PFFDTD_LOWCUT_ORDER = 4
 PFFDTD_LOWPASS_ORDER = 4             # applied forward-backward (8th-order magnitude)
 PFFDTD_OBLIQUE_WALL_TOLERANCE_DEG = 1.0  # walls within this of a grid plane count as aligned
@@ -932,6 +875,51 @@ PFFDTD_GRID_PADDING_CELLS = 8        # halo cells added around the bounding box 
 PFFDTD_NODE_UPDATES_PER_S = float(os.environ.get("PFFDTD_NODE_UPDATES_PER_S", "5.8e9"))  # RTX 2000 Ada, double
 PFFDTD_COURANT_CART = 0.999 / 3 ** 0.5
 PFFDTD_SPEED_OF_SOUND = 343.2
+
+# Field outputs: strength-G volume on a 3D lattice (every run) + on-demand wave animation on one
+# horizontal plane (default height = mean listener z)
+PFFDTD_FIELD_DIR = str(BACKEND_DIR / "temp" / "pffdtd_fields")  # spl / animation / mask binaries
+PFFDTD_FIELD_MAX_PX = 384            # animation-plane nodes are decimated to at most this along the long side
+# strength-G volume: band-passed p^2 accumulated on every Nth grid node in x, y and z. Measured on
+# a 23.7 M-node model (RTX 2000 Ada): stride 4 adds +7 % GPU time (6: +2 %, 3: +15 %, 2: +52 %)
+PFFDTD_SPL_VOLUME_STRIDE = 4
+PFFDTD_SPL_VOLUME_MAX_NODES = 1_000_000  # the stride is raised until the lattice fits (~113 B GPU/node)
+PFFDTD_SPL_REFERENCE_M = 10.0        # strength G: 0 dB = same source in free field at 10 m (ISO 3382)
+PFFDTD_ANIM_FRAMES = 120
+PFFDTD_DEFAULT_ANIMATION_MS = 50.0   # band-limited pulse run length (cheap next to the IR run)
+# a finished run keeps only this sub-folder of its work dir (voxelisation + prepared run) so wave
+# animations can be generated later; the temp janitor removes it with the results (24 h)
+PFFDTD_ANIM_BASE_DIR_NAME = "anim_base"
+PFFDTD_ANIMATION_MS_MIN = 10.0
+PFFDTD_ANIMATION_MS_MAX = 300.0
+
+# Voxel preview (CPU job: voxelise only, no engine)
+PFFDTD_PREVIEW_MAX_POINTS = 150_000         # boundary nodes sent to the viewer (subsampled)
+PFFDTD_PREVIEW_MAX_LABEL_NODES = 60_000_000  # leak / reachability labelling above this is skipped (RAM)
+PFFDTD_PREVIEW_MAX_LEAK_POINTS = 2_000
+
+# Free positioning: every run also records a 3D grid of candidate points (exact grid nodes);
+# after the run a moved listener ("listener", forward runs per source) or source ("source",
+# reciprocal runs per listener, x4 for an FOA listener) gets its IR from the stored signals
+# (pffdtd_backend/free_runs.py, ir_server.py) instead of a new GPU run. Sources stay omni.
+PFFDTD_FREE_MODE_OFF = "off"
+PFFDTD_FREE_MODE_LISTENER = "listener"
+PFFDTD_FREE_MODE_SOURCE = "source"
+PFFDTD_FREE_MODES = (PFFDTD_FREE_MODE_OFF, PFFDTD_FREE_MODE_LISTENER, PFFDTD_FREE_MODE_SOURCE)
+PFFDTD_DEFAULT_FREE_MODE = PFFDTD_FREE_MODE_OFF
+PFFDTD_FREE_GRID_SPACING_DEFAULT = 0.5   # m; snapped to a multiple of the grid spacing h
+PFFDTD_FREE_GRID_SPACING_MIN = 0.1
+PFFDTD_FREE_GRID_SPACING_MAX = 2.0
+PFFDTD_FREE_SNAP_RADIUS_M = 0.5          # a moved object snaps to the nearest point within this
+# caps (the spacing is coarsened until both hold): engine host RAM per run (float64 rows) and
+# the float32 raw store on disk for the whole job
+PFFDTD_FREE_MAX_RECORD_BYTES = float(os.environ.get("PFFDTD_FREE_MAX_RECORD_GB", "4")) * 1e9
+PFFDTD_FREE_MAX_DISK_BYTES = float(os.environ.get("PFFDTD_FREE_MAX_DISK_GB", "16")) * 1e9
+PFFDTD_FREE_DIR = str(BACKEND_DIR / "temp" / "pffdtd_free")  # raw stores, one folder per simulation
+PFFDTD_IR_SERVER_SCRIPT = str(PFFDTD_DIR / "ir_server.py")
+PFFDTD_IR_SERVER_START_TIMEOUT_S = 120.0  # first start compiles numba kernels
+PFFDTD_IR_SERVER_REQUEST_TIMEOUT_S = 60.0
+PFFDTD_IR_SERVER_IDLE_S = 900.0          # the resident process exits after this long unused
 
 # ============================================================================
 # Speckle Configuration
@@ -994,7 +982,6 @@ REDIS_URL = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
 # without a code change; see deploy/README.md)
 GPU_WORKER_SLOTS = int(os.environ.get("GPU_WORKER_SLOTS", "2"))
 CPU_WORKER_SLOTS = int(os.environ.get("CPU_WORKER_SLOTS", "4"))
-CHORAS_WORKER_SLOTS = int(os.environ.get("CHORAS_WORKER_SLOTS", "1"))
 SA3_WORKER_SLOTS = int(os.environ.get("SA3_WORKER_SLOTS", "1"))
 PFFDTD_WORKER_SLOTS = int(os.environ.get("PFFDTD_WORKER_SLOTS", "1"))  # one GPU solve at a time
 
@@ -1027,8 +1014,8 @@ JOB_TYPE_SA3 = "sa3"
 JOB_TYPE_PYROOMACOUSTICS = "pyroomacoustics"  # also carries the geometry preflight (variant "pyroomacoustics_preflight")
 JOB_TYPE_SED = "sed"
 JOB_TYPE_LOOP = "loop"
-JOB_TYPE_CHORAS = "choras"
 JOB_TYPE_PFFDTD = "pffdtd"
+JOB_TYPE_PFFDTD_ANIMATION = "pffdtd_animation"  # on-demand wave animation of a finished run
 
 # IO job types (asyncio.create_task in the API process — no queue, no worker)
 JOB_TYPE_TTS = "tts"
@@ -1050,8 +1037,8 @@ JOB_TYPE_QUEUE = {
     JOB_TYPE_PYROOMACOUSTICS: "queue:cpu",
     JOB_TYPE_SED: "queue:cpu",
     JOB_TYPE_LOOP: "queue:cpu",
-    JOB_TYPE_CHORAS: "queue:choras",
     JOB_TYPE_PFFDTD: "queue:pffdtd",
+    JOB_TYPE_PFFDTD_ANIMATION: "queue:pffdtd",
 }
 
 # GPU-style jobs share the per-session fairness cap and the pending-GPU set.

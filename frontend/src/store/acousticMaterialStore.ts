@@ -40,7 +40,7 @@ interface LayerData {
   layerOptions: SpeckleLayerInfo[];
 }
 
-export type AcousticCardType = 'pyroomacoustics' | 'choras' | null;
+export type AcousticCardType = 'pyroomacoustics' | 'pffdtd' | null;
 
 export interface AcousticMaterialStoreState {
   // ── Cross-component data (synced by SpeckleSurfaceMaterialsSection) ──

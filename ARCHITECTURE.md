@@ -17,14 +17,19 @@ compas_soundscape/
 │   ├── pffdtd_backend/              # Vendored PFFDTD (MIT) + compas driver, compas-pffdtd env only
 │   │   ├── python/ c_cuda/          # Upstream sources (local patches marked `compas:`, VENDORED.md)
 │   │   ├── sim_prepare.py engine.py outputs.py materials.py postprocess.py
-│   │   ├── pipeline.py              # Job CLI called by services/pffdtd_job.py
+│   │   ├── pipeline.py              # Job CLI (simulation / voxel_preview / animation) called by the pffdtd services
+│   │   ├── animation.py             # Kept voxelisation of a finished run + on-demand wave-animation runs
+│   │   ├── fields.py                # Strength G (3D lattice volume, outputs.lattice_nodes) + animation-plane frames
+│   │   ├── free_grid.py free_ir.py free_runs.py  # Free positioning: candidate grid, raw store, reciprocal runs
+│   │   ├── ir_server.py             # Resident IR server (free positioning), started by services/pffdtd_ir_server.py
+│   │   ├── air_absorption.py        # numba build of upstream's visco air-absorption filter (bit-identical, ~80x faster)
 │   │   └── validation/              # A1–A4, B1–B3 tests + REPORT.md
 │   ├── models/
 │   │   └── schemas.py               # Pydantic request/response models
 │   ├── routers/
 │   │   ├── __init__.py
-│   │   ├── choras.py                # Choras acoustic simulation integration
-│   │   ├── pffdtd.py                # PFFDTD GPU wave simulation (run, materials, status, results)
+│   │   ├── pffdtd.py                 # PFFDTD GPU wave simulation (run, materials, status, results, field files, voxel preview)
+│   │   ├── pffdtd_free.py           # Free positioning: IRs of a moved listener / source (direct request), grid points
 │   │   ├── generation.py            # LLM text/prompt generation endpoints
 │   │   ├── impulse_responses.py     # IR upload/list/delete endpoints
 │   │   ├── library_search.py        # Sound library search (BBC, Freesound)
@@ -32,20 +37,23 @@ compas_soundscape/
 │   │   ├── pyroomacoustics.py       # Pyroomacoustics acoustic simulation (ISM, RT60)
 │   │   ├── reprocess.py             # Audio reprocessing (denoising)
 │   │   ├── sed_analysis.py          # Sound Event Detection endpoints
-│   │   ├── simulation_preflight.py  # Pre-simulation geometry check (pyroomacoustics / choras / pffdtd)
+│   │   ├── simulation_preflight.py  # Pre-simulation geometry check (pyroomacoustics / pffdtd)
 │   │   ├── sounds.py                # Audio generation endpoints
 │   │   └── upload.py                # File upload endpoints
 │   ├── services/
 │   │   ├── audio_service.py         # Multi-model audio generation (TangoFlux + AudioLDM2)
 │   │   ├── audioldm2_service.py     # AudioLDM2 audio generation service
 │   │   ├── bbc_service.py           # BBC Sound Effects API
-│   │   ├── choras_openapi.json      # Choras API OpenAPI spec
-│   │   ├── freesound_service.py     # Freesound API integration
+│   │   ├── freesound_service.py      # Freesound API integration
 │   │   ├── impulse_response_service.py  # IR processing & channel extraction
 │   │   ├── llm_service.py           # Google Gemini LLM
 │   │   ├── modal_analysis_service.py    # Modal analysis & mode shape visualization
-│   │   ├── pffdtd_job.py            # PFFDTD worker child: mesh prep → compas-pffdtd pipeline → WAV/results
+│   │   ├── pffdtd_job.py            # PFFDTD worker child: mesh prep → compas-pffdtd pipeline → WAV/results/field
+│   │   ├── pffdtd_preview_job.py    # CPU worker child: voxelise-only grid check → preview payload + points
+│   │   ├── pffdtd_animation_job.py  # pffdtd worker child: wave animation of a finished run on a chosen plane
 │   │   ├── pffdtd_scene_export.py   # SimulationMesh → PFFDTD scene + material coefficients
+│   │   ├── pffdtd_free.py           # Free positioning (compas-toy side): job/results blocks, nearest grid point, WAV names
+│   │   ├── pffdtd_ir_server.py      # Owns the resident compas-pffdtd IR server process (API side)
 │   │   ├── pyroomacoustics_service.py   # Pyroomacoustics simulation (ISM, RT60, EDT)
 │   │   ├── pyroomacoustics_room_builder.py  # pra.Room from a prepared SimulationMesh
 │   │   ├── simulation_geometry_loader.py    # Speckle fetch + per-face materials (all engines)
@@ -79,7 +87,7 @@ compas_soundscape/
 │       │   └── pffdtd_rir/          # PFFDTD IR WAVs (float32, 48 kHz, band-limited)
 │       ├── uploads/                 # Uploaded files staging area
 │       ├── library_downloads/       # Downloaded library audio files
-│       └── simulations/             # Choras/Pyroomacoustics simulation results
+│       └── simulations/             # Pyroomacoustics/PFFDTD simulation results
 │
 ├── frontend/
 │   ├── package.json
@@ -122,7 +130,6 @@ compas_soundscape/
 │       │   │   └── sidebar/               # Sidebar sub-components
 │       │   │       ├── acoustics/          # Acoustics tab sub-components
 │       │   │       │   ├── index.ts
-│       │   │       │   ├── ChorasSimulationSettings.tsx       # Choras settings UI
 │       │   │       │   ├── PyroomAcousticsSimulationSettings.tsx # Pyroomacoustics settings
 │       │   │       │   ├── ResonanceAudioControls.tsx         # Resonance Audio controls
 │       │   │       │   ├── ResonanceContent.tsx               # Resonance mode content
@@ -187,7 +194,6 @@ compas_soundscape/
 │       │   ├── useAudioControls.ts          # Audio playback state & controls
 │       │   ├── useAudioNormalization.ts     # Audio normalization utilities
 │       │   ├── useAudioOrchestrator.ts      # Audio orchestrator integration
-│       │   ├── useChoras.ts                 # Choras simulation state management
 │       │   ├── useFileUpload.ts             # File upload & processing
 │       │   ├── useHorizontalScroll.ts       # Mouse wheel horizontal scrolling
 │       │   ├── useModalImpact.ts            # Modal analysis & impact sound synthesis
@@ -263,7 +269,6 @@ compas_soundscape/
 │       │   ├── analysis.ts          # Analysis types
 │       │   ├── audio.ts             # Audio type definitions (modes, IR, etc.)
 │       │   ├── card.ts              # Sound card types
-│       │   ├── Choras.ts            # Choras simulation types
 │       │   ├── components.ts        # Component prop types
 │       │   ├── index.ts             # Type exports
 │       │   ├── materials.ts         # Acoustic material types
@@ -358,7 +363,7 @@ compas_soundscape/
 │    ┌─────────▼─────────┐   ┌─────────▼─────────┐   ┌─────────▼─────┐
 │    │  Routers/         │   │  Routers/         │   │  Routers/      │
 │    │  upload.py        │   │  pyroomacoustics  │   │  generation.py │
-│    │                   │   │  choras.py        │   │                │
+│    │                   │   │                   │   │                │
 │    │ - /api/upload     │   │ - /api/simulate   │   │ - /api/gen-    │
 │    │                   │   │                   │   │    -text       │
 │    └─────────┬─────────┘   └─────────┬─────────┘   └─────────┬──────┘
@@ -573,14 +578,14 @@ section title (**Revert**, `onRevertSettings`), and marks the edited labels with
 ```
 utils/generationSignature.ts   per-type whitelist of generation inputs → stable string (null = cannot regenerate)
   captureGenerationSignature   written as config.generatedSignature in the SAME store write as the result:
-                                 soundscapeStore generate merge · AcousticsSection pyroom/choras completion ·
+                                 soundscapeStore generate merge · AcousticsSection pyroom completion ·
                                  analysisStore text result / scenario result · serializer restore (baseline)
   isGenerationDirty            live config vs snapshot → Card settingsDirty
   getModifiedGenerationFields  edited keys (`duration`, `settings.max_order`, `materials`, `prompt`…) → "*" marks
   getGenerationRevertPatch     snapshot values of the differing fields → "Revert" (sounds:
                                  soundscapeStore.revertGenerationSettings; text also re-syncs areaDrawingStore)
 Regenerate actions             sounds → soundscapeStore.handleRegenerateConfig (handleGenerateInternal force:
-                                 same event ids, stale variants dropped) · pyroom/choras → runSimulation ·
+                                 same event ids, stale variants dropped) · pyroom → runSimulation ·
                                  text → analysisStore.handleRegenerateText · scenario → handleScenarioAnalyze
 Read-only (no signature)       upload, sample-audio, import-irs, audio & model analysis, freeform, listeners
 ```
@@ -1023,14 +1028,14 @@ opens Settings → Workspaces (`openAdvancedSettingsAt('workspaces')`).
 
 ### Simulation Mesh Preparation & Geometry Preflight
 
-pyroomacoustics and Choras never consume the raw Speckle mesh. Both go through
+pyroomacoustics and PFFDTD never consume the raw Speckle mesh. Both go through
 `SimulationMeshService.prepare()`. The pre-simulation **geometry check** (preflight) calls the
 same function with the same inputs and shows its output, so **what the user inspects is exactly
 what gets simulated**. The preparation is deterministic, using a fixed RNG seed.
 
 ```
 Speckle layer ──simulation_geometry_loader──▶ vertices, faces, object face ranges, face materials
-        │                                    (identical for the pyroom worker, the Choras job, the preflight)
+        │                                    (identical for the pyroom worker, the PFFDTD job, the preflight)
         ▼
 SimulationMeshService.prepare(seeds = sources + receivers, MeshPrepSettings)
   1. drop faces without material (both engines, Speckle + Grasshopper)
@@ -1048,7 +1053,7 @@ SimulationMeshService.prepare(seeds = sources + receivers, MeshPrepSettings)
   8. coplanar merge → simple polygon walls (pyroomacoustics only)
         │
         ├─ pyroomacoustics_worker → pyroomacoustics_room_builder.build_room (recentred, two_sided walls)
-        ├─ choras_job → write_geo_from_mesh (triangles regrouped per object, no merge)
+        ├─ pffdtd_job → pffdtd_scene_export.build_scene (triangles as-is, no merge)
         └─ simulation_preflight_worker → SimulationPreflightService.analyze → preflight_<id>.json
 ```
 

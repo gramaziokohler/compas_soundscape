@@ -2,7 +2,7 @@
  * Acoustics Simulation Store
  *
  * Replaces useAcousticsSimulation. Manages the list of acoustic simulation
- * configurations (Resonance / Choras / Pyroomacoustics), active/expanded
+ * configurations (Resonance / Pyroomacoustics / PFFDTD), active/expanded
  * tab indices, and a counter for unique naming.
  *
  * Previously used a module-level singleton to survive tab switches — this
@@ -19,8 +19,8 @@ import type {
   AcousticSimulationMode,
   SimulationConfig,
   ResonanceSimulationConfig,
-  ChorasSimulationConfig,
   PyroomAcousticsSimulationConfig,
+  PffdtdSimulationConfig,
   ImportIRsSimulationConfig,
 } from '@/types/acoustics';
 import { CARD_TYPE_LABELS } from '@/types/card';
@@ -31,15 +31,7 @@ import {
   PYROOMACOUSTICS_RAY_TRACING_N_RAYS,
   PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE,
   PYROOMACOUSTICS_DEFAULT_ENABLE_GRID,
-  CHORAS_DEFAULT_METHOD,
-  CHORAS_DE_DEFAULT_C0,
-  CHORAS_DE_DEFAULT_LC,
-  CHORAS_DG_DEFAULT_FREQ_UPPER,
-  CHORAS_DG_DEFAULT_C0,
-  CHORAS_DG_DEFAULT_RHO0,
-  CHORAS_DG_DEFAULT_POLY_ORDER,
-  CHORAS_DG_DEFAULT_PPW,
-  CHORAS_DG_DEFAULT_CFL,
+  PFFDTD,
 } from '@/utils/constants';
 import { UNDO_HISTORY_LIMIT, undoEquality, type RegisterTemporalStoreOptions } from './undoRedoRegistry';
 
@@ -52,13 +44,13 @@ import { UNDO_HISTORY_LIMIT, undoEquality, type RegisterTemporalStoreOptions } f
 // excluded the same way. Card activation / expansion are navigation state —
 // they follow their card by id across undo instead of being restored.
 
-/** Fields written by a simulation run (Choras / Pyroomacoustics cards). */
+/** Fields written by a simulation run (Pyroomacoustics / PFFDTD cards). */
 const SIM_RUN_KEYS = [
   'state', 'completedAt', 'isRunning', 'progress', 'status', 'error',
   'simulationResults', 'currentSimulationId', 'currentSimulationRunId',
   'importedIRIds', 'importedIRMetadata', 'sourceReceiverIRMapping',
   'simulationPositions', 'savedSettings', 'generatedSignature', 'simulatedVersionId',
-  'queuePosition', 'queueTotal',
+  'queuePosition', 'queueTotal', 'runProblems',
 ] as const;
 /** Transient execution fields of cards without a backend run (import-irs). */
 const EXECUTION_KEYS = ['isRunning', 'progress', 'status', 'error', 'currentSimulationRunId'] as const;
@@ -68,7 +60,9 @@ const SIM_VIEW_KEYS = [
 ] as const;
 
 function liveOnlyKeys(config: SimulationConfig): readonly string[] {
-  const runKeys = config.type === 'choras' || config.type === 'pyroomacoustics' ? SIM_RUN_KEYS : EXECUTION_KEYS;
+  const runKeys = config.type === 'pyroomacoustics' || config.type === 'pffdtd'
+    ? SIM_RUN_KEYS
+    : EXECUTION_KEYS;
   return [...runKeys, ...SIM_VIEW_KEYS];
 }
 
@@ -197,34 +191,6 @@ export const useAcousticsSimulationStore = create<AcousticsSimulationStoreState>
               } as ResonanceSimulationConfig;
               break;
 
-            case 'choras':
-              newConfig = {
-                id,
-                display_name: name,
-                type: 'choras',
-                state: 'before-simulation',
-                createdAt: timestamp,
-                simulationInstanceId: `choras_${timestamp}`,
-                settings: {
-                  simulation_method: CHORAS_DEFAULT_METHOD as 'DE' | 'DG',
-                  de_c0: CHORAS_DE_DEFAULT_C0,
-                  de_lc: CHORAS_DE_DEFAULT_LC,
-                  dg_freq_upper_limit: CHORAS_DG_DEFAULT_FREQ_UPPER,
-                  dg_c0: CHORAS_DG_DEFAULT_C0,
-                  dg_rho0: CHORAS_DG_DEFAULT_RHO0,
-                  dg_poly_order: CHORAS_DG_DEFAULT_POLY_ORDER,
-                  dg_ppw: CHORAS_DG_DEFAULT_PPW,
-                  dg_cfl: CHORAS_DG_DEFAULT_CFL,
-                },
-                faceToMaterialMap: new Map(),
-                isRunning: false,
-                progress: 0,
-                status: 'Idle',
-                error: null,
-                simulationResults: null,
-              } as ChorasSimulationConfig;
-              break;
-
             case 'pyroomacoustics':
               newConfig = {
                 id,
@@ -248,6 +214,32 @@ export const useAcousticsSimulationStore = create<AcousticsSimulationStoreState>
                 error: null,
                 simulationResults: null,
               } as PyroomAcousticsSimulationConfig;
+              break;
+
+            case 'pffdtd':
+              newConfig = {
+                id,
+                display_name: name,
+                type: 'pffdtd',
+                state: 'before-simulation',
+                createdAt: timestamp,
+                simulationInstanceId: `pffdtd_${timestamp}`,
+                settings: {
+                  simulation_mode: PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE,
+                  fmax: PFFDTD.DEFAULT_FMAX,
+                  ppw: PFFDTD.DEFAULT_PPW,
+                  duration: PFFDTD.DEFAULT_DURATION,
+                  air_absorption: PFFDTD.DEFAULT_AIR_ABSORPTION,
+                  free_mode: PFFDTD.DEFAULT_FREE_MODE,
+                  free_grid_spacing: PFFDTD.FREE_GRID_SPACING_DEFAULT,
+                },
+                faceToMaterialMap: new Map(),
+                isRunning: false,
+                progress: 0,
+                status: 'Idle',
+                error: null,
+                simulationResults: null,
+              } satisfies PffdtdSimulationConfig;
               break;
 
             case 'import-irs':

@@ -40,7 +40,7 @@ export type CardColor =
  *
  * Analysis types: 'audio', 'text'
  * Sound types: 'text-to-audio', 'upload', 'library', 'sample-audio'
- * Acoustics types: 'resonance', 'choras', 'pyroomacoustics', 'import-irs'
+ * Acoustics types: 'resonance', 'pyroomacoustics', 'pffdtd', 'import-irs'
  */
 export type CardType =
   | 'audio'
@@ -52,8 +52,8 @@ export type CardType =
   | 'catalog'
   | 'sample-audio'
   | 'resonance'
-  | 'choras'
   | 'pyroomacoustics'
+  | 'pffdtd'
   | 'import-irs'
   | 'listener'
   | 'grid-listener'
@@ -74,8 +74,8 @@ export const CARD_TYPE_LABELS: Record<CardType, string> = {
   'catalog': 'Catalog Sound',
   'sample-audio': 'Sample Audio',
   'resonance': 'Shoebox simulation',
-  'choras': 'Wave-based simulation',
   'pyroomacoustics': 'Ray-tracing simulation',
+  'pffdtd': 'Wave-based simulation',
   'import-irs': 'Import IRs',
   'listener': 'Listener',
   'grid-listener': 'Grid Listener',
@@ -107,8 +107,8 @@ export const CARD_TYPE_DESCRIPTIONS: Record<CardType, string> = {
   'sample-audio': 'A dry-recorded sound sample.',
   'resonance':
     'Resonance Audio synthetic room: parametric shoebox with early reflections + late reverb rendered by the Web Audio engine. No external solver; instant real-time 6DOF auralization.',
-  'choras':
-    'Wave-based solver (Diffusion Equation / Discontinuous Galerkin) on a gmsh-meshed room. Full impulse responses, highest fidelity, slowest.',
+  'pffdtd':
+    'GPU finite-difference (FDTD) wave solver on a Cartesian voxel grid. Captures diffraction and room modes exactly up to the max frequency; the IR has no content above it. Axis-aligned walls are exact, oblique walls are staircased. Also records a strength-G SPL map and an optional pressure-wave animation on a horizontal plane.',
   'pyroomacoustics':
     'ISM + ray tracing on mesh faces. Multi-band absorption coefficients, single scattering coefficient per face. Computes RT60 / EDT / C80 and per-source-per-receiver IR WAVs (mono or FOA B-format).',
   'import-irs':

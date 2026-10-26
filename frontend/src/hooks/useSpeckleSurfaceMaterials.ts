@@ -4,7 +4,7 @@
  * Extracts layers from world tree, finds "Acoustics" layer or provides alternatives,
  * extracts mesh objects from selected layer, and tracks material assignments per object ID.
  *
- * Used for PyroomAcoustics and Choras simulations with Speckle models.
+ * Used for PyroomAcoustics simulations with Speckle models.
  */
 
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';

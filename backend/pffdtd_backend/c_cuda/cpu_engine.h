@@ -71,6 +71,7 @@ double run_sim(struct SimData *sd)
    int64_t *in_ixyz   = sd->in_ixyz;
    int64_t *out_ixyz  = sd->out_ixyz;
    uint16_t *adj_bn   = sd->adj_bn;
+   assert(sd->wgt_bn == NULL); // compas: cut cells are implemented in the GPU engine only
    uint8_t *bn_mask   = sd->bn_mask;
    int8_t *mat_bnl    = sd->mat_bnl;
    int8_t *Q_bna      = sd->Q_bna;

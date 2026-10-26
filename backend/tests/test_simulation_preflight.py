@@ -11,7 +11,6 @@ import json
 import numpy as np
 
 from services.simulation_preflight_service import (
-    ENGINE_CHORAS,
     ENGINE_PYROOMACOUSTICS,
     PreflightContext,
     SeedMeta,
@@ -82,17 +81,6 @@ def test_closed_rooms_have_no_acoustic_path():
     scene.add("b", vb, fb)
     _, _, a = _analyze(scene, [[1.5, 2, 1.5]], [[4.5, 2, 1.5]])
     assert "no_acoustic_path" in _codes(a, "error")
-
-
-def test_choras_profile_rejects_thin_surfaces():
-    scene = _Scene()
-    _room(scene)
-    scene.add("panel", [[3, 1, 0.5], [3, 3, 0.5], [3, 3, 2.5], [3, 1, 2.5]], [[0, 1, 2], [0, 2, 3]])
-    _, _, pra_a = _analyze(scene, [[1.5, 2, 1.5]], [[4.5, 2, 1.5]])
-    _, _, ch_a = _analyze(scene, [[1.5, 2, 1.5]], [[4.5, 2, 1.5]], engine=ENGINE_CHORAS, merge_coplanar=False)
-    assert "two_sided_surfaces" in _codes(pra_a, "info")
-    assert "two_sided_surfaces" in _codes(ch_a, "error")
-    assert "open_edges" in _codes(ch_a, "error")
 
 
 def test_payload_is_serializable_and_consistent():

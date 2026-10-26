@@ -116,6 +116,7 @@ def rotate_sim_data(data_dir,tr=None,compress=False):
     h5f = h5py.File(data_dir / Path('vox_out.h5'),'r+')
     h5f['bn_ixyz'][...] = bn_ixyzt
     h5f['adj_bn'][...] = adj_bnt
+    assert 'beta_bn' not in h5f, 'cut-cell data cannot be rotated' # compas (sim_prepare never rotates)
     h5f['Nx'][()] = Nxt
     h5f['Ny'][()] = Nyt
     h5f['Nz'][()] = Nzt
@@ -142,6 +143,10 @@ def sort_sim_data(data_dir):
     bn_ixyz = h5f['bn_ixyz'][...]
     mat_bn  = h5f['mat_bn'][...]
     saf_bn  = h5f['saf_bn'][...]
+    cut = 'vol_bn' in h5f # compas: cut-cell data travels with the boundary nodes
+    if cut:
+        beta_bn = h5f['beta_bn'][...]
+        vol_bn  = h5f['vol_bn'][...]
     h5f.close()
 
     h5f = h5py.File(data_dir / Path('comms_out.h5'),'r')
@@ -159,6 +164,9 @@ def sort_sim_data(data_dir):
     adj_bn = adj_bn[ii] 
     mat_bn = mat_bn[ii]
     saf_bn = saf_bn[ii]
+    if cut:
+        beta_bn = beta_bn[ii]
+        vol_bn = vol_bn[ii]
 
     ii = np.argsort(in_ixyz)
     in_ixyz = in_ixyz[ii]
@@ -185,6 +193,9 @@ def sort_sim_data(data_dir):
     h5f['adj_bn'][...] = adj_bn
     h5f['mat_bn'][...] = mat_bn
     h5f['saf_bn'][...] = saf_bn
+    if cut:
+        h5f['beta_bn'][...] = beta_bn
+        h5f['vol_bn'][...] = vol_bn
     h5f.close()
     _print(timer.ftoc('write'))
 

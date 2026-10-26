@@ -96,7 +96,6 @@ def soundscape_save_payload(user_id: str, iteration: int, base_revision: int | N
 BROWSE_GETS = (
     "/api/tts/dialects",
     "/api/pyroomacoustics/materials",
-    "/api/choras/materials",
     "/api/impulse-responses",
     "/api/queue/status",
 )

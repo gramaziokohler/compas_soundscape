@@ -48,7 +48,7 @@ The app no longer fights this with two stateKeys + a rAF re-apply loop. Instead:
   `applyVisibility()`; its `hiddenObjects`/`isolatedObjects` read the applied sets.
 - **Auto-hide of unassigned objects** (`useAutoHideUnassignedObjects`, driven by
   `AcousticsSection`). It applies in Acoustics view to a generated, not-running, not-in-edit-mode
-  pyroomacoustics/Choras card: the **powered-on** card first, else the **expanded** card.
+  pyroomacoustics/PFFDTD card: the **powered-on** card first, else the **expanded** card.
   `syncAutoHiddenIds(cardId, ids)` writes the region's unassigned ids into
   `acousticExplorerHiddenIds`, so each one is re-showable with its eye.
   - Assignments come from the live material store when the card is the expanded one. Otherwise they

@@ -1,6 +1,6 @@
 # backend/services/simulation_geometry_loader.py
 # Fetch Speckle geometry and expand per-object materials / scattering to
-# per-face maps. Shared by the pyroomacoustics worker, the Choras job and the
+# per-face maps. Shared by the pyroomacoustics worker, the PFFDTD job and the
 # geometry preflight so all three see exactly the same inputs.
 
 from __future__ import annotations

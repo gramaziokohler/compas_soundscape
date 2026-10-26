@@ -8,7 +8,7 @@
  */
 
 /** Target engine of a preflight (severities differ per engine). */
-export type SimulationEngine = 'pyroomacoustics' | 'choras';
+export type SimulationEngine = 'pyroomacoustics';
 
 /** User-tunable simulation mesh preparation (Advanced settings > Acoustics). */
 export interface SimulationMeshSettings {

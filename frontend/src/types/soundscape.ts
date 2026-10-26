@@ -9,6 +9,7 @@ import type { DrawnArea } from './area-drawing';
 import type { GridPlacementMode } from './receiver';
 import type { IRAcousticParameters } from './audio';
 import type { FoleySoundDetail } from './analysis';
+import type { PffdtdVoxelProblem } from './pffdtd';
 
 /** Global generation settings for a soundscape session */
 export interface SoundscapeGlobalSettings {
@@ -163,14 +164,24 @@ export interface SoundscapeIRMetadata {
   acoustic_parameters?: IRAcousticParameters;
 }
 
-/** Serializable pyroomacoustics simulation settings */
+/**
+ * Serializable simulation settings. Pyroomacoustics fields are absent on
+ * wave-based (PFFDTD) cards, which carry the grid / field fields instead
+ * (the backend schema defaults whatever is missing).
+ */
 export interface SoundscapeSimulationSettings {
-  max_order: number;
-  ray_tracing: boolean;
+  max_order?: number;
+  ray_tracing?: boolean;
   air_absorption: boolean;
-  n_rays: number;
+  n_rays?: number;
   simulation_mode: string;
-  enable_grid: boolean;
+  enable_grid?: boolean;
+  // PFFDTD (wave-based) only
+  fmax?: number;
+  ppw?: number;
+  duration?: number;
+  free_mode?: string; // 'off' | 'listener' | 'source'
+  free_grid_spacing?: number;
 }
 
 /**
@@ -190,7 +201,7 @@ export interface SoundscapeAcousticSelection {
 export interface SoundscapeSimulationConfig {
   id: string;
   display_name: string;
-  type: string; // "pyroomacoustics", "choras", "resonance", "import-irs"
+  type: string; // "pyroomacoustics", "pffdtd", "resonance", "import-irs"
   state: string;
   simulation_instance_id?: string;
   settings?: SoundscapeSimulationSettings;
@@ -206,6 +217,8 @@ export interface SoundscapeSimulationConfig {
   current_simulation_id?: string;
   /** Backend job id of an in-flight simulation, persisted so recovery can reattach after a reload. */
   current_simulation_run_id?: string;
+  /** PFFDTD: grid problems the run reported after voxelising. */
+  run_problems?: PffdtdVoxelProblem[];
   imported_ir_ids?: string[];
   source_receiver_ir_mapping?: Record<string, Record<string, SoundscapeIRMetadata>>;
   receiver_positions?: Record<string, number[]>; // receiverId -> [x, y, z]

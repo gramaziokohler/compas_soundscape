@@ -27,7 +27,6 @@ export interface UserPreferences {
   groundGridColor?: string;
   // Acoustic
   globalSoundSpeed?: number;
-  globalMeshLc?: number;
   // Models
   llmModel?: string;
   ttsModel?: string;

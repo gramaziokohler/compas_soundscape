@@ -1,7 +1,7 @@
 /**
  * Shared assembly of a Speckle simulation request.
  *
- * The pyroomacoustics run, the Choras run and the geometry preflight must send
+ * The pyroomacoustics run and the geometry preflight must send
  * EXACTLY the same geometry inputs (model, acoustic region, materials,
  * scattering, source/receiver pairs, mesh settings) — the preflight shows the
  * mesh the simulation will use only if its inputs match. This module is the
@@ -142,15 +142,23 @@ export function buildSimulationGeometryRequest(args: BuildArgs): BuildResult {
   };
 }
 
+/** Engine settings that change the check result (pyroom ISM preflight / PFFDTD voxel grid). */
+export interface SimulationSignatureExtra {
+  maxOrder?: number;
+  rayTracing?: boolean;
+  fmax?: number;
+  ppw?: number;
+}
+
 /**
  * Fingerprint of everything that changes the prepared simulation mesh or its
- * diagnostics. Equal signatures ⇒ a preflight result is still valid.
+ * diagnostics (geometry preflight), or the PFFDTD voxel grid (voxel preview). Equal signatures ⇒ a preflight result is still valid.
  */
 export function simulationRequestSignature(
-  engine: SimulationEngine,
+  engine: SimulationEngine | 'pffdtd',
   request: SimulationGeometryRequest,
   meshSettings: SimulationMeshSettings,
-  extra: { maxOrder?: number; rayTracing?: boolean } = {},
+  extra: SimulationSignatureExtra = {},
 ): string {
   const sortedEntries = <T,>(o: Record<string, T>) =>
     Object.keys(o).sort().map((k) => [k, o[k]] as const);
@@ -167,5 +175,7 @@ export function simulationRequestSignature(
     meshSettings,
     extra.maxOrder ?? null,
     extra.rayTracing ?? null,
+    extra.fmax ?? null,
+    extra.ppw ?? null,
   ]);
 }

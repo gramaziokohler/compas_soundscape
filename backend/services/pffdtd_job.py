@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import time
 import traceback
@@ -26,8 +27,14 @@ from scipy.io import wavfile
 
 from config.constants import (
     AUDIO_SAMPLE_RATE,
+    PFFDTD_ANIM_BASE_DIR_NAME,
+    PFFDTD_DEFAULT_FREE_MODE,
     PFFDTD_ENGINE_EXE,
+    PFFDTD_FIELD_DIR,
+    PFFDTD_FIELD_MAX_PX,
     PFFDTD_FOA_OFFSET_CELLS,
+    PFFDTD_FREE_GRID_SPACING_DEFAULT,
+    PFFDTD_IR_REFERENCE_GAIN,
     PFFDTD_LOWCUT_HZ,
     PFFDTD_LOWCUT_ORDER,
     PFFDTD_LOWPASS_ORDER,
@@ -36,11 +43,16 @@ from config.constants import (
     PFFDTD_PRECISION,
     PFFDTD_PYTHON,
     PFFDTD_RELATIVE_HUMIDITY,
+    PFFDTD_SPL_REFERENCE_M,
+    PFFDTD_SPL_VOLUME_MAX_NODES,
+    PFFDTD_SPL_VOLUME_STRIDE,
     PFFDTD_TEMP_DIR,
     PFFDTD_TEMPERATURE_C,
+    PFFDTD_VOXEL_CACHE_DIR,
     PYROOMACOUSTICS_SIMULATION_MODE_FOA,
 )
 from models.schemas import MeshPrepSettings
+from services.pffdtd_free import FreeOptions, job_block as free_job_block, reset_store as reset_free_store, results_block as free_results_block
 from services.pffdtd_scene_export import bounding_box, build_scene
 from services.simulation_geometry_loader import load_speckle_simulation_geometry
 from services.simulation_mesh_service import MeshPrepOptions, SimulationMeshService
@@ -76,8 +88,12 @@ def _atomic_write(path: str, payload: dict) -> None:
             time.sleep(0.02 * (attempt + 1))
 
 
-def _write_progress(progress_file: str, value: float, status: str) -> None:
-    _atomic_write(progress_file, {"value": int(value), "status": status})
+def _write_progress(progress_file: str, value: float, status: str, partial: Optional[dict] = None) -> None:
+    """``partial`` (pipeline milestones, e.g. {"voxelised": true}) becomes the job's ``partial``."""
+    payload: dict = {"value": int(value), "status": status}
+    if partial:
+        payload["partial"] = partial
+    _atomic_write(progress_file, payload)
 
 
 def pffdtd_available() -> Optional[str]:
@@ -116,10 +132,17 @@ def _run_pipeline(job_path: Path, progress_file: str) -> None:
         )
         assert proc.stdout is not None
         span = PROGRESS_PIPELINE_END - PROGRESS_PIPELINE_START
+        value, status = float(PROGRESS_PIPELINE_START), ""
+        stages: dict = {}  # COMPAS_STAGE milestones, sticky for the rest of the run
         for line in proc.stdout:
             if line.startswith("COMPAS_PROGRESS"):
                 _, pct, *msg = line.rstrip("\n").split(" ", 2)
-                _write_progress(progress_file, PROGRESS_PIPELINE_START + span * float(pct) / 100.0, msg[0] if msg else "")
+                value, status = PROGRESS_PIPELINE_START + span * float(pct) / 100.0, msg[0] if msg else ""
+                _write_progress(progress_file, value, status, stages)
+            elif line.startswith("COMPAS_STAGE"):
+                name, _, raw = line[len("COMPAS_STAGE"):].strip().partition(" ")
+                stages[name] = json.loads(raw) if raw else True
+                _write_progress(progress_file, value, status, stages)
             elif line.startswith("COMPAS_ERROR"):
                 error = line[len("COMPAS_ERROR"):].strip()
             else:
@@ -148,6 +171,9 @@ def run_pffdtd_simulation(
     rir_output_dir: str,
     temp_dir: str,
     mesh_settings: Optional[dict] = None,
+    field_plane_z: Optional[float] = None,
+    free_mode: str = PFFDTD_DEFAULT_FREE_MODE,
+    free_grid_spacing: float = PFFDTD_FREE_GRID_SPACING_DEFAULT,
 ) -> None:
     try:
         reason = pffdtd_available()
@@ -158,14 +184,12 @@ def run_pffdtd_simulation(
             speckle_project_id, speckle_version_id, layer_name, object_ids_filter,
             object_materials_dict, progress=lambda v, s: _write_progress(progress_file, min(v, PROGRESS_GEOMETRY_END), s),
         )
-        geometry = {
-            "vertices": inputs.vertices, "faces": inputs.faces,
-            "object_face_ranges": inputs.object_face_ranges, "face_materials": inputs.face_materials,
-        }
         _run_from_geometry(
-            simulation_id, progress_file, result_file, geometry, pairs_data, simulation_mode, fmax, ppw,
+            simulation_id, progress_file, result_file, geometry_dict(inputs), pairs_data, simulation_mode, fmax, ppw,
             duration, air_absorption, simulation_name, rir_output_dir, temp_dir, mesh_settings,
+            FieldOptions(field_plane_z),
             header_meta={"speckle_source": {"project_id": speckle_project_id, "version_id": speckle_version_id, "layer_name": layer_name}},
+            free=FreeOptions(free_mode, free_grid_spacing),
         )
     except Exception as exc:
         tb = traceback.format_exc()
@@ -173,12 +197,28 @@ def run_pffdtd_simulation(
         _atomic_write(result_file, {"type": "error", "message": str(exc), "traceback": tb})
 
 
-def _run_from_geometry(
-    simulation_id, progress_file, result_file, geometry, pairs_data, simulation_mode, fmax, ppw,
-    duration, air_absorption, simulation_name, rir_output_dir, temp_dir, mesh_settings, header_meta=None,
-) -> None:
-    """Shared by the Speckle entry point and tests (geometry given directly)."""
-    _write_progress(progress_file, PROGRESS_GEOMETRY_END, "Preparing simulation mesh...")
+class FieldOptions:
+    """Field outputs of a run: the strength-G volume and the default plane (mask) at plane_z.
+
+    Wave animations are generated on demand afterwards (services/pffdtd_animation_job.py).
+    """
+
+    def __init__(self, plane_z: Optional[float] = None):
+        self.plane_z = plane_z
+
+
+def geometry_dict(inputs) -> dict:
+    return {
+        "vertices": inputs.vertices, "faces": inputs.faces,
+        "object_face_ranges": inputs.object_face_ranges, "face_materials": inputs.face_materials,
+    }
+
+
+def prepare_pffdtd_mesh(geometry: dict, pairs_data: list, mesh_settings: Optional[dict]):
+    """Same mesh preparation as the preflight (merge_coplanar off: PFFDTD voxelises triangles as-is).
+
+    Returns (mesh, seed_meta); shared by the simulation and the voxel preview.
+    """
     settings = MeshPrepSettings(**(mesh_settings or {})).model_copy(update={"merge_coplanar": False})
     seed_meta = seeds_from_pairs(pairs_data)
     mesh = SimulationMeshService.prepare(
@@ -187,6 +227,35 @@ def _run_from_geometry(
     )
     if len(mesh.faces) < 4:
         raise RuntimeError("No surfaces with a material assigned — nothing to simulate.")
+    return mesh, seed_meta
+
+
+def unique_seeds(pairs_data: list) -> tuple["OrderedDict[str, list]", "OrderedDict[str, list]"]:
+    """Unique sources and receivers (in pair order) -> position."""
+    sources: "OrderedDict[str, list]" = OrderedDict()
+    receivers: "OrderedDict[str, list]" = OrderedDict()
+    for p in pairs_data:
+        sources.setdefault(str(p["source_id"]), p["source_position"])
+        receivers.setdefault(str(p["receiver_id"]), p["receiver_position"])
+    return sources, receivers
+
+
+def run_pipeline_job(job: dict, work_dir: Path, progress_file: str) -> None:
+    job_path = work_dir / "job.json"
+    job_path.write_text(json.dumps(job))
+    _run_pipeline(job_path, progress_file)
+
+
+def _run_from_geometry(
+    simulation_id, progress_file, result_file, geometry, pairs_data, simulation_mode, fmax, ppw,
+    duration, air_absorption, simulation_name, rir_output_dir, temp_dir, mesh_settings,
+    field: Optional[FieldOptions] = None, header_meta=None, free: Optional[FreeOptions] = None,
+) -> None:
+    """Shared by the Speckle entry point and tests (geometry given directly)."""
+    field = field or FieldOptions()
+    free = free or FreeOptions()
+    _write_progress(progress_file, PROGRESS_GEOMETRY_END, "Preparing simulation mesh...")
+    mesh, seed_meta = prepare_pffdtd_mesh(geometry, pairs_data, mesh_settings)
 
     bmin, bmax = bounding_box(mesh)
     plan = plan_grid(bmax - bmin, fmax, ppw, duration)
@@ -207,13 +276,11 @@ def _run_from_geometry(
         "stats": {**mesh.stats, "air_volume_m3": mesh.air_volume_m3, "air_volume_method": mesh.air_volume_method},
     }
 
-    # unique sources (in pair order) and receivers
-    sources: "OrderedDict[str, list]" = OrderedDict()
-    receivers: "OrderedDict[str, list]" = OrderedDict()
-    for p in pairs_data:
-        sources.setdefault(str(p["source_id"]), p["source_position"])
-        receivers.setdefault(str(p["receiver_id"]), p["receiver_position"])
+    sources, receivers = unique_seeds(pairs_data)
     foa = simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_FOA
+    plane_z = field.plane_z if field.plane_z is not None else float(np.mean([r[2] for r in receivers.values()]))
+    if free.reciprocal:
+        plane_z = None  # free source: the runs are from the listeners -- no per-source field outputs
 
     mats_hash, materials = build_scene(mesh)
     work_dir = Path(PFFDTD_TEMP_DIR) / simulation_id
@@ -223,6 +290,7 @@ def _run_from_geometry(
         "mats_hash": mats_hash,
         "materials": materials,
         "material_cache_dir": PFFDTD_MATERIAL_CACHE_DIR,
+        "voxel_cache_dir": PFFDTD_VOXEL_CACHE_DIR,
         "sources": list(sources.values()),
         "receivers": list(receivers.values()),
         "h": plan.h,
@@ -238,17 +306,25 @@ def _run_from_geometry(
         "lowpass_order": PFFDTD_LOWPASS_ORDER,
         "Tc": PFFDTD_TEMPERATURE_C,
         "rh": PFFDTD_RELATIVE_HUMIDITY,
+        "plane_z": plane_z,
+        "field_max_px": PFFDTD_FIELD_MAX_PX,
+        "spl_reference_m": PFFDTD_SPL_REFERENCE_M,
+        "spl_volume_stride": PFFDTD_SPL_VOLUME_STRIDE,
+        "spl_volume_max_nodes": PFFDTD_SPL_VOLUME_MAX_NODES,
+        "anim_base_dir": PFFDTD_ANIM_BASE_DIR_NAME,
     }
-    job_path = work_dir / "job.json"
-    job_path.write_text(json.dumps(job))
+    if free.enabled:
+        reset_free_store(simulation_id)
+        job["free"] = free_job_block(simulation_id, free)
     print(
         f"[{simulation_id[:8]}] PFFDTD: {len(mesh.faces)} faces, {len(materials)} materials, "
         f"{len(sources)} source(s) x {len(receivers)} receiver(s), h={plan.h:.4f} m "
         f"(PPW {plan.ppw_effective:.1f} @ {fmax:.0f} Hz), grid {plan.shape}, ~{plan.est_runtime_s:.0f} s/source"
     )
     _write_progress(progress_file, PROGRESS_PIPELINE_START, "Starting GPU wave simulation...")
-    _run_pipeline(job_path, progress_file)
+    run_pipeline_job(job, work_dir, progress_file)
     meta = json.loads((work_dir / "meta.json").read_text())
+    field_block = _collect_field_outputs(simulation_id, work_dir, meta, list(sources), fmax)
 
     _write_progress(progress_file, PROGRESS_PIPELINE_END, "Writing impulse responses...")
     rid_index = {rid: i for i, rid in enumerate(receivers)}
@@ -266,6 +342,7 @@ def _run_from_geometry(
         "grid_misalignment_cells": plan.misalignment_cells,
         "oblique_area_fraction": oblique,
         "band_limited": True,
+        "ir_reference": "free field at 1 m (direct path 1/r, as pyroomacoustics)",
         "precision": PFFDTD_PRECISION,
     }
     for p in pairs_data:
@@ -273,7 +350,7 @@ def _run_from_geometry(
         si = sid_index[sid]
         if si not in loaded:
             loaded[si] = np.load(work_dir / f"src_{si}.npz")["irs"]
-        ir = loaded[si][rid_index[rid]]  # [C, N]
+        ir = loaded[si][rid_index[rid]] * PFFDTD_IR_REFERENCE_GAIN  # [C, N], re free field at 1 m
         data = ir[0] if not foa else ir.T
         filename = f"pffdtd_{simulation_id}_src_{sid}_rcv_{rid}.wav"
         wavfile.write(str(rir_dir / filename), AUDIO_SAMPLE_RATE, np.ascontiguousarray(data, dtype=np.float32))
@@ -302,11 +379,19 @@ def _run_from_geometry(
         "method": "PFFDTD",
         "results": results,
         "grid": {**plan.as_dict(), "runs": meta.get("sources", [])},
+        "field": field_block,
+        "free": free_results_block(simulation_id, meta["free"], list(sources), list(receivers)) if meta.get("free") else None,
         "geometry_diagnostics": geometry_diagnostics,
         **(header_meta or {}),
     }
     with open(Path(temp_dir) / results_filename, "w") as f:
         json.dump(results_json, f, indent=2)
+    # everything else is now in rir_output_dir / PFFDTD_FIELD_DIR / the results JSON; the rest of
+    # the work folder (GPU data, raw outputs) can be GBs. Only the animation base (voxelisation +
+    # prepared run) stays, for on-demand wave animations, until the temp janitor
+    # (TEMP_JANITOR_MAX_AGE_H) removes it with the results. Failed or cancelled runs keep the whole
+    # folder for diagnosis until then.
+    prune_work_dir(work_dir)
 
     _atomic_write(result_file, {
         "type": "done",
@@ -318,6 +403,76 @@ def _run_from_geometry(
             "method": "PFFDTD",
         },
     })
+
+
+def prune_work_dir(work_dir: Path) -> None:
+    """Delete everything in a finished run's work folder but the animation base."""
+    for entry in Path(work_dir).iterdir():
+        if entry.name == PFFDTD_ANIM_BASE_DIR_NAME:
+            continue
+        if entry.is_dir():
+            shutil.rmtree(entry, ignore_errors=True)
+        else:
+            entry.unlink(missing_ok=True)
+
+
+def _collect_field_outputs(simulation_id: str, work_dir: Path, meta: dict, source_ids: list, fmax: float) -> Optional[dict]:
+    """Move the field binaries to PFFDTD_FIELD_DIR and describe them for the frontend.
+
+    All binaries are little-endian and row-major. Mask values: 0 air, 1 wall, 2 outside.
+    - ``volume``: strength G (float32 dB, NaN outside) per source and a mask (uint8), both
+      [nz, ny, nx] (z outer, x inner). Node (ix, iy, iz) sits at (x0 + ix*dx, y0 + iy*dy, z0 + iz*dz)
+      and stands for the stride^3 block of grid nodes around it.
+    - top level (the animation plane at height z; the mean listener height until an animation is
+      generated): mask uint8 [ny, nx] and animation int8 [frames, ny, nx] (value = q / 127 * vmax).
+      Node (ix, iy) sits at (x0 + ix*dx, y0 + iy*dy, z). Animations are generated on demand
+      (``animation_on_demand``; services/pffdtd_animation_job.py rewrites this block).
+      ``sources[].spl_file`` (a strength-G map on this plane) exists only in results written
+      before the volume; it is null now.
+    """
+    plane, volume = meta.get("plane"), meta.get("volume")
+    if not plane or not volume:
+        return None
+    out_dir = Path(PFFDTD_FIELD_DIR)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    def move(name: str, target: str) -> str:
+        shutil.move(str(work_dir / name), str(out_dir / target))
+        return target
+
+    prefix = f"pffdtd_{simulation_id}_"
+    sources, volume_sources = [], []
+    for si, run in enumerate(meta["sources"]):
+        sid = source_ids[si]
+        spl = run.get("spl") or {}
+        sources.append({
+            "source_id": sid,
+            "spl_file": None,
+            "spl_min_db": spl.get("min_db"),
+            "spl_max_db": spl.get("max_db"),
+            "animation": None,
+        })
+        volume_sources.append({
+            "source_id": sid,
+            "spl_volume_file": move(spl["volume_file"], f"{prefix}spl_vol_src_{sid}.f32") if spl.get("volume_file") else None,
+        })
+    return {
+        "z": plane["z"], "x0": plane["x0"], "y0": plane["y0"], "dx": plane["dx"], "dy": plane["dy"],
+        "nx": plane["nx"], "ny": plane["ny"],
+        "mask_file": move(plane["mask_file"], f"{prefix}plane_mask.u8"),
+        "band_hz": [PFFDTD_LOWCUT_HZ, fmax],
+        "reference": f"Strength G: dB re the same source in free field at {volume['reference_m']:g} m",
+        "air_absorption_applied": False,
+        "animation_on_demand": True,
+        "sources": sources,
+        "volume": {
+            "x0": volume["x0"], "y0": volume["y0"], "z0": volume["z0"],
+            "dx": volume["dx"], "dy": volume["dy"], "dz": volume["dz"],
+            "nx": volume["nx"], "ny": volume["ny"], "nz": volume["nz"], "stride": volume["stride"],
+            "mask_file": move(volume["mask_file"], f"{prefix}volume_mask.u8"),
+            "sources": volume_sources,
+        },
+    }
 
 
 def run_pffdtd_simulation_from_geometry(
@@ -335,6 +490,9 @@ def run_pffdtd_simulation_from_geometry(
     rir_output_dir: str,
     temp_dir: str,
     mesh_settings: Optional[dict] = None,
+    field_plane_z: Optional[float] = None,
+    free_mode: str = PFFDTD_DEFAULT_FREE_MODE,
+    free_grid_spacing: float = PFFDTD_FREE_GRID_SPACING_DEFAULT,
 ) -> None:
     """Direct-geometry entry point (vertices/faces/object_face_ranges/face_materials), used by tests."""
     try:
@@ -344,6 +502,7 @@ def run_pffdtd_simulation_from_geometry(
         _run_from_geometry(
             simulation_id, progress_file, result_file, geometry, pairs_data, simulation_mode, fmax, ppw,
             duration, air_absorption, simulation_name, rir_output_dir, temp_dir, mesh_settings,
+            FieldOptions(field_plane_z), free=FreeOptions(free_mode, free_grid_spacing),
         )
     except Exception as exc:
         tb = traceback.format_exc()

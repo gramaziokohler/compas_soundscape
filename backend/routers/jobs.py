@@ -1,7 +1,7 @@
 """
 Unified job status/cancel/queue-depth endpoints backed by services/job_store.py.
 
-Domain routers (sounds, pyroomacoustics, choras, sed_analysis, loop_analysis)
+Domain routers (sounds, pyroomacoustics, sed_analysis, loop_analysis)
 enqueue jobs via job_store.enqueue(...) and return {job_id, position, total};
 clients poll this router's /api/jobs/{id} for progress/result instead of a
 per-domain status route.

@@ -20,8 +20,7 @@ export function computePositionKey(
  * (e.g. a real sound/receiver UUID passed through a manual-upload pairing context).
  *
  * These are the exact values the backend embeds as `source_id` in generated IR
- * filenames (`sim_{simId}_src_{posKey}_rcv_{receiverId}.wav` /
- * `choras_{simId}_src_{posKey}_rcv_{receiverId}.wav`), since `computePositionKey()`'s
+ * filenames (`sim_{simId}_src_{posKey}_rcv_{receiverId}.wav`), since `computePositionKey()`'s
  * output is sent verbatim as `source_id` in `source_receiver_pairs`.
  */
 export function parsePositionKey(posKey: string): [number, number, number] | null {

@@ -15,6 +15,7 @@ import type {
   SoundscapeReceiver,
   SoundscapeGridListener,
   SoundscapeSimulationConfig,
+  SoundscapeSimulationSettings,
   SoundscapeIRMetadata,
   SerializedAnalysisConfig,
   AnalysisState,
@@ -25,10 +26,43 @@ import type { SimulationAcousticSelection } from '@/types/acoustics';
 import type { GridListenerData } from '@/types/receiver';
 import type { ImpulseResponseMetadata, SourceReceiverIRMapping, ResonanceAudioConfig } from '@/types/audio';
 import type { AnalysisConfig, AnalysisResult, TextPromptResult } from '@/types/analysis';
-import { API_BASE_URL, AUDIO_PLAYBACK, PYROOMACOUSTICS_DEFAULT_MAX_ORDER } from '@/utils/constants';
+import { API_BASE_URL, AUDIO_PLAYBACK, PFFDTD, PYROOMACOUSTICS_DEFAULT_MAX_ORDER, PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE } from '@/utils/constants';
+import type { PffdtdFreeMode, PffdtdSettings } from '@/types/pffdtd';
 import { newConfigId } from '@/utils/config-id';
 import { parseAuthoredSeconds } from '@/lib/audio/utils/timeline-utils';
 import { captureGenerationSignature } from '@/utils/generationSignature';
+
+const PFFDTD_FREE_MODES: readonly PffdtdFreeMode[] = ['off', 'listener', 'source'];
+
+function isPffdtdFreeMode(v: string | null | undefined): v is PffdtdFreeMode {
+  return PFFDTD_FREE_MODES.includes(v as PffdtdFreeMode);
+}
+
+/** Wave-based (PFFDTD) card settings → saved settings (no pyroomacoustics fields). */
+function serializePffdtdSettings(s: PffdtdSettings): SoundscapeSimulationSettings {
+  return {
+    simulation_mode: s.simulation_mode,
+    air_absorption: s.air_absorption,
+    fmax: s.fmax,
+    ppw: s.ppw,
+    duration: s.duration,
+    free_mode: s.free_mode,
+    free_grid_spacing: s.free_grid_spacing,
+  };
+}
+
+/** Saved settings → wave-based card settings (defaults fill fields missing on older saves). */
+function restorePffdtdSettings(s: SoundscapeSimulationSettings | undefined): PffdtdSettings {
+  return {
+    simulation_mode: s?.simulation_mode ?? PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE,
+    air_absorption: s?.air_absorption ?? PFFDTD.DEFAULT_AIR_ABSORPTION,
+    fmax: s?.fmax ?? PFFDTD.DEFAULT_FMAX,
+    ppw: s?.ppw ?? PFFDTD.DEFAULT_PPW,
+    duration: s?.duration ?? PFFDTD.DEFAULT_DURATION,
+    free_mode: isPffdtdFreeMode(s?.free_mode) ? s.free_mode : PFFDTD.DEFAULT_FREE_MODE,
+    free_grid_spacing: s?.free_grid_spacing ?? PFFDTD.FREE_GRID_SPACING_DEFAULT,
+  };
+}
 
 /**
  * Coerce a persisted schedule to numbers. The backend `SoundscapeSoundEvent`
@@ -322,7 +356,12 @@ export function buildSoundscapeSavePayload(
   const serializedSimConfigs: SoundscapeSimulationConfig[] = [];
 
   for (const config of simulationConfigs || []) {
-    if (config.type !== 'pyroomacoustics' && config.type !== 'import-irs' && config.type !== 'resonance') continue;
+    if (
+      config.type !== 'pyroomacoustics'
+      && config.type !== 'pffdtd'
+      && config.type !== 'import-irs'
+      && config.type !== 'resonance'
+    ) continue;
 
     const pyConfig = config as any;
 
@@ -429,14 +468,16 @@ export function buildSoundscapeSavePayload(
       type: config.type,
       state: config.state,
       simulation_instance_id: config.simulationInstanceId,
-      settings: pyConfig.settings ? {
-        max_order: pyConfig.settings.max_order,
-        ray_tracing: pyConfig.settings.ray_tracing,
-        air_absorption: pyConfig.settings.air_absorption,
-        n_rays: pyConfig.settings.n_rays,
-        simulation_mode: pyConfig.settings.simulation_mode,
-        enable_grid: pyConfig.settings.enable_grid,
-      } : undefined,
+      settings: config.type === 'pffdtd'
+        ? serializePffdtdSettings(config.settings)
+        : pyConfig.settings ? {
+          max_order: pyConfig.settings.max_order,
+          ray_tracing: pyConfig.settings.ray_tracing,
+          air_absorption: pyConfig.settings.air_absorption,
+          n_rays: pyConfig.settings.n_rays,
+          simulation_mode: pyConfig.settings.simulation_mode,
+          enable_grid: pyConfig.settings.enable_grid,
+        } : undefined,
       speckle_material_assignments: speckleMaterialAssignments,
       speckle_layer_name: speckleLayerName,
       speckle_geometry_object_ids: speckleGeometryObjectIds,
@@ -446,6 +487,7 @@ export function buildSoundscapeSavePayload(
       simulation_results: pyConfig.simulationResults,
       current_simulation_id: pyConfig.currentSimulationId,
       current_simulation_run_id: pyConfig.currentSimulationRunId,
+      run_problems: config.type === 'pffdtd' && config.runProblems?.length ? config.runProblems : undefined,
       imported_ir_ids: pyConfig.importedIRIds,
       source_receiver_ir_mapping: serializedMapping,
       receiver_positions: Object.keys(receiverPositions).length > 0 ? receiverPositions : undefined,
@@ -892,7 +934,9 @@ export function restoreSoundscapeState(
       state: (saved.state || 'completed') as SimulationConfig['state'],
       createdAt: Date.now(),
       simulationInstanceId: saved.simulation_instance_id,
-      settings: hasSettings ? {
+      settings: saved.type === 'pffdtd'
+        ? restorePffdtdSettings(saved.settings)
+        : hasSettings ? {
         max_order: settings.max_order,
         ray_tracing: settings.ray_tracing,
         air_absorption: settings.air_absorption,
@@ -917,6 +961,7 @@ export function restoreSoundscapeState(
       simulationResults: saved.simulation_results ?? null,
       currentSimulationId: saved.current_simulation_id,
       currentSimulationRunId: saved.current_simulation_run_id,
+      runProblems: saved.run_problems,
       importedIRIds: saved.imported_ir_ids,
       sourceReceiverIRMapping,
       // Restore simulation-time source/receiver positions (needed by the mismatch
@@ -966,7 +1011,7 @@ export function restoreSoundscapeState(
       irImportMode: saved.ir_import_mode ?? undefined,
     } as any;
 
-    if (!hasSettings) {
+    if (!hasSettings && saved.type !== 'pffdtd') {
       delete (restoredConfig as any).settings;
       delete (restoredConfig as any).faceToMaterialMap;
     }

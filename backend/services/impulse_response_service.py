@@ -208,7 +208,7 @@ class ImpulseResponseService:
         acoustic_parameters = None
         try:
             # Lazy import: utils.acoustic_measurement pulls in pyroomacoustics, only
-            # needed when an IR is actually uploaded (matches choras_service).
+            # needed when an IR is actually uploaded.
             from utils.acoustic_measurement import AcousticMeasurement
             acoustic_parameters = AcousticMeasurement.calculate_acoustic_parameters_from_rir(
                 audio_data[0], sample_rate

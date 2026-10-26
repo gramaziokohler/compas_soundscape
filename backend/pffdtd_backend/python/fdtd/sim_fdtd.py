@@ -67,10 +67,16 @@ class SimEngine:
         self.zv       = h5f['zv'][()] #for plotting
         mat_bn        = h5f['mat_bn'][...]
         saf_bn        = h5f['saf_bn'][...]
+        # compas: cut cells (voxelizer/cut_cells.py): link weights beta/vol, wall terms scaled by 1/vol
+        self.cut = 'vol_bn' in h5f
+        if self.cut:
+            self.vol_bn = h5f['vol_bn'][...]
+            self.w_bn = h5f['beta_bn'][...]/self.vol_bn[:,None]
         h5f.close()
 
         ii = (mat_bn>-1)
         self.saf_bnl = saf_bn[ii]
+        self.vol_bnl = self.vol_bn[ii] if self.cut else np.ones(self.saf_bnl.size)
         self.mat_bnl = mat_bn[ii]
         self.bnl_ixyz = self.bn_ixyz[ii]
 
@@ -117,6 +123,7 @@ class SimEngine:
             self.ssaf_bnl = self.saf_bnl
             assert (self.l<=np.sqrt(1/3))
             assert (self.l2<=1/3)
+        self.ssaf_upd_bnl = self.ssaf_bnl/self.vol_bnl # compas: per unit cell volume (cut cells)
 
         
         h5f = h5py.File(Path(data_dir / Path('sim_mats.h5')),'r')
@@ -592,6 +599,8 @@ class SimEngine:
                 #NB: this is an 'energy-like' quantity, but not necessarily in Joules (off by ρ for u as velocity potential)
                 H_tot[n] = V_fac*0.5*h*nb_energy_int(u1,u2,Lu2,l2) #H_tot[n] = V_fac*0.5*h*np.sum((((u1-u2)**2)/l2 - u1*Lu2)[1:Nx-1,1:Ny-1,1:Nz-1])
                 H_tot[n] -=  V_fac*0.5*h*np.sum((1.0-V_bna)*(((u1.flat[bna_ixyz]-u2.flat[bna_ixyz])**2)/l2 - u1.flat[bna_ixyz]*Lu2.flat[bna_ixyz]))
+                if self.cut: # compas: cut cells weigh their kinetic and potential terms by vol
+                    H_tot[n] -=  V_fac*0.5*h*np.sum((1.0-self.vol_bn)*(((u1.flat[bn_ixyz]-u2.flat[bn_ixyz])**2)/l2 - u1.flat[bn_ixyz]*Lu2.flat[bn_ixyz]))
                 #H_tot[n] -=  V_fac*0.5*h*nb_energy_int_corr(V_bna,u1,u2,Lu2,l2,bna_ixyz) #problem with numba fn signature
 
                 H_tot[n] += V_fac*0.5*c/l2*nb_energy_stored(ssaf_bnl,vh1,D_bnl,gh1,F_bnl,Ts) #H_tot[n] += V_fac*0.5*c/l2*np.sum(ssaf_bnl*((vh1**2)*D_bnl + ((Ts*gh1)**2)*F_bnl).T)
@@ -600,10 +609,13 @@ class SimEngine:
             nb_flip_halos(u1)
 
             nb_stencil_air(Lu1,u1,bn_mask)
-            nb_stencil_bn(Lu1,u1,bn_ixyz,adj_bn)
+            if self.cut: # compas
+                nb_stencil_bn_cart_cut(Lu1,u1,bn_ixyz,self.w_bn)
+            else:
+                nb_stencil_bn(Lu1,u1,bn_ixyz,adj_bn)
             nb_save_bn(u0,u2b,bnl_ixyz)
             nb_leapfrog_update(u0,u1,Lu1,l2)
-            nb_update_bnl_fd(u0,u2b,l,bnl_ixyz,ssaf_bnl,vh0,vh1,gh1,mat_bnl,mat_coeffs_struct)
+            nb_update_bnl_fd(u0,u2b,l,bnl_ixyz,self.ssaf_upd_bnl,vh0,vh1,gh1,mat_bnl,mat_coeffs_struct)
 
             nb_update_abc(u0,u2ba,l,bna_ixyz,Q_bna)
 
@@ -768,6 +780,22 @@ def nb_stencil_bn_cart(Lu1,u1,bn_ixyz,adj_bn):
              + adj_bn[i,3]*u1.flat[ib-Nz]\
              + adj_bn[i,4]*u1.flat[ib+1]\
              + adj_bn[i,5]*u1.flat[ib-1]
+
+# compas: cut cells, Lu = sum_k (beta_k/vol) (u_k - u)
+@nb.jit(nopython=True,parallel=True)
+def nb_stencil_bn_cart_cut(Lu1,u1,bn_ixyz,w_bn):
+    Nx,Ny,Nz = u1.shape
+    Nb = bn_ixyz.size
+    for i in nb.prange(Nb):
+        W = w_bn[i,0]+w_bn[i,1]+w_bn[i,2]+w_bn[i,3]+w_bn[i,4]+w_bn[i,5]
+        ib = bn_ixyz[i]
+        Lu1.flat[ib] =  -W*u1.flat[ib]\
+             + w_bn[i,0]*u1.flat[ib+Ny*Nz]\
+             + w_bn[i,1]*u1.flat[ib-Ny*Nz]\
+             + w_bn[i,2]*u1.flat[ib+Nz]\
+             + w_bn[i,3]*u1.flat[ib-Nz]\
+             + w_bn[i,4]*u1.flat[ib+1]\
+             + w_bn[i,5]*u1.flat[ib-1]
 
 @nb.jit(nopython=True,parallel=True)
 def nb_flip_halos(u1):

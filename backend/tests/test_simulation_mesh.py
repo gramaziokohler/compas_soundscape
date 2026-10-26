@@ -212,25 +212,3 @@ def test_deterministic():
     assert np.array_equal(a.two_sided, b.two_sided)
     assert np.array_equal(a.face_class, b.face_class)
     assert a.air_volume_m3 == b.air_volume_m3
-
-
-def test_choras_geo_from_prepared_mesh_meshes(tmp_path):
-    gmsh = __import__("pytest").importorskip("gmsh")
-    from utils.speckle_geometry_mapper import write_geo_from_mesh
-
-    scene = _Scene()
-    _room(scene, inward=True)
-    mesh = scene.prepare([[3, 2, 1.5]], merge_coplanar=False)
-    geo = tmp_path / "room.geo"
-    write_geo_from_mesh(
-        vertices=mesh.vertices.tolist(), faces=mesh.faces.tolist(), object_ids=["room"],
-        object_face_ranges={"room": [0, len(mesh.faces) - 1]}, geo_file_path=str(geo),
-    )
-    gmsh.initialize(["", "-v", "0"])
-    try:
-        gmsh.open(str(geo))
-        gmsh.model.mesh.generate(3)
-        tets = gmsh.model.mesh.getElementsByType(4)[0]
-        assert len(tets) > 0
-    finally:
-        gmsh.finalize()

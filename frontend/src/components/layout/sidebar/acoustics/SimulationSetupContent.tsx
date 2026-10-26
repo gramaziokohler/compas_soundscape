@@ -2,8 +2,10 @@
  * SimulationSetupContent Component
  *
  * Wrapper component for simulation setup UI.
- * Shows the simulation-specific settings (Choras or Pyroomacoustics) and the
- * pre-simulation geometry check.
+ * Shows the simulation-specific settings (Pyroomacoustics or wave-based
+ * PFFDTD) and the pre-simulation check: the mesh geometry check for
+ * pyroomacoustics, the voxel preview for PFFDTD (it simulates the voxel grid,
+ * not the mesh).
  * Source / listener / material counts live in the card footer (SimulationSummaryBar).
  *
  * Also mounts the headless SpeckleSurfaceMaterialsSection so the acoustic
@@ -16,10 +18,11 @@
 'use client';
 
 import { SpeckleSurfaceMaterialsSection } from '@/components/acoustics/SpeckleSurfaceMaterialsSection';
-import { ChorasSimulationSettings } from './ChorasSimulationSettings';
 import { PyroomAcousticsSimulationSettings } from './PyroomAcousticsSimulationSettings';
+import { PffdtdSimulationSettings } from './PffdtdSimulationSettings';
 import { SimulationPreflightPanel, type PreflightPanelControl } from './SimulationPreflightPanel';
-import type { SimulationConfig, ChorasSimulationConfig, PyroomAcousticsSimulationConfig } from '@/types/acoustics';
+import { PffdtdVoxelPreviewPanel, type VoxelPreviewControl } from './PffdtdVoxelPreviewPanel';
+import type { SimulationConfig, PyroomAcousticsSimulationConfig } from '@/types/acoustics';
 import type { AcousticMaterial } from '@/types/materials';
 import type { Viewer } from '@speckle/viewer';
 
@@ -38,8 +41,10 @@ interface SimulationSetupContentProps {
   onMaterialAssignmentsChange: (assignments: Record<string, string>, layerName: string | null, geometryObjectIds: string[], scatteringAssignments: Record<string, number>) => void;
   onUpdateConfig: (updates: Partial<SimulationConfig>) => void;
   onIsolationChange?: (ids: string[] | null) => void;
-  /** Pre-simulation geometry check wiring (Choras / pyroomacoustics cards). */
+  /** Pre-simulation geometry check wiring (pyroomacoustics cards). */
   preflight?: PreflightPanelControl;
+  /** Voxel preview wiring (PFFDTD cards). */
+  voxelPreview?: VoxelPreviewControl;
 }
 
 /**
@@ -58,6 +63,7 @@ export function SimulationSetupContent({
   onUpdateConfig,
   onIsolationChange,
   preflight,
+  voxelPreview,
 }: SimulationSetupContentProps) {
   // Extract persisted Speckle state from config
   const initialAssignments = (config as any).speckleMaterialAssignments as Record<string, string> | undefined;
@@ -73,7 +79,7 @@ export function SimulationSetupContent({
         viewerRef={viewerRef}
         worldTree={worldTree}
         availableMaterials={availableMaterials}
-        cardType={config.type === 'pyroomacoustics' ? 'pyroomacoustics' : 'choras'}
+        cardType={config.type === 'pyroomacoustics' || config.type === 'pffdtd' ? config.type : null}
         filteringEnabled={filteringEnabled}
         isReadOnly={isReadOnly}
         isActive={isActive}
@@ -85,14 +91,6 @@ export function SimulationSetupContent({
         onIsolationChange={onIsolationChange}
       />
 
-      {/* Choras Settings */}
-      {config.type === 'choras' && (
-        <ChorasSimulationSettings
-          config={config as ChorasSimulationConfig}
-          onUpdateConfig={(updates) => onUpdateConfig(updates as Partial<SimulationConfig>)}
-        />
-      )}
-
       {/* Pyroomacoustics Settings */}
       {config.type === 'pyroomacoustics' && (
         <PyroomAcousticsSimulationSettings
@@ -101,13 +99,26 @@ export function SimulationSetupContent({
         />
       )}
 
+      {/* Wave-based (PFFDTD) Settings */}
+      {config.type === 'pffdtd' && (
+        <PffdtdSimulationSettings
+          config={config}
+          onUpdateConfig={(updates) => onUpdateConfig(updates as Partial<SimulationConfig>)}
+        />
+      )}
+
       {/* Pre-simulation geometry check: the exact mesh the engine will use */}
-      {preflight && (config.type === 'pyroomacoustics' || config.type === 'choras') && (
+      {preflight && config.type === 'pyroomacoustics' && (
         <SimulationPreflightPanel
           configId={config.id}
           engine={config.type}
           {...preflight}
         />
+      )}
+
+      {/* PFFDTD voxel grid: what the wave solver will actually see */}
+      {voxelPreview && config.type === 'pffdtd' && (
+        <PffdtdVoxelPreviewPanel configId={config.id} {...voxelPreview} />
       )}
 
     </div>

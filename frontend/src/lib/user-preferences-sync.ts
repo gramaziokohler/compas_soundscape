@@ -49,7 +49,6 @@ function collectPreferences(): UserPreferences {
     groundGridSpacing: ui.groundGridSpacing,
     groundGridColor: ui.groundGridColor,
     globalSoundSpeed: ui.globalSoundSpeed,
-    globalMeshLc: ui.globalMeshLc,
     listenerOrientation: { ...ui.listenerOrientation },
     showSpectrograms: ui.showSpectrograms,
     enableAutoSave: ui.enableAutoSave,
@@ -93,7 +92,6 @@ export function applyPreferences(prefs: UserPreferences): void {
     ui.setGroundGridColor(color === '' || color === '#888888' ? '#002aff' : color);
   }
   if (prefs.globalSoundSpeed !== undefined) ui.setGlobalSoundSpeed(prefs.globalSoundSpeed);
-  if (prefs.globalMeshLc !== undefined) ui.setGlobalMeshLc(prefs.globalMeshLc);
   if (prefs.listenerOrientation !== undefined) ui.setListenerOrientation(prefs.listenerOrientation);
   if (prefs.showSpectrograms !== undefined) ui.setShowSpectrograms(prefs.showSpectrograms);
   if (prefs.enableAutoSave !== undefined) ui.setEnableAutoSave(prefs.enableAutoSave);

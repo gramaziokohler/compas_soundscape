@@ -33,7 +33,7 @@ import type { SoundEvent } from '@/types';
  * panel mirrors it silently (no double playback).
  *
  * NOTE: Acoustic material/scattering assignment has moved to the Object Explorer
- * (two extra columns shown while a Pyroom/Choras card is active).
+ * (two extra columns shown while a Pyroom card is active).
  */
 
 interface EntityInfoPanelProps {

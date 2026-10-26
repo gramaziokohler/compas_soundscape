@@ -51,7 +51,7 @@ from services.study_log_store import study_log_store
 # from services.modal_analysis_service import ModalAnalysisService
 
 # Import routers
-from routers import upload, generation, sounds, stable_audio, sed_analysis, sed_extract, library_search, reprocess, impulse_responses, modal_analysis, choras, pffdtd, pyroomacoustics, simulation_preflight, speckle, soundscape, tokens, tts, tts_voices, loop_analysis, jobs, auth, workspaces, preferences, bug_reports, study
+from routers import upload, generation, sounds, stable_audio, sed_analysis, sed_extract, library_search, reprocess, impulse_responses, modal_analysis, pffdtd, pffdtd_free, pyroomacoustics, simulation_preflight, speckle, soundscape, tokens, tts, tts_voices, loop_analysis, jobs, auth, workspaces, preferences, bug_reports, study
 
 # Import constants
 from config.constants import (
@@ -98,7 +98,6 @@ from config.constants import (
     TEMP_SIMULATIONS_DIR,
     SOUNDSCAPE_DATA_DIR,
     SOUNDSCAPE_DATA_URL_PREFIX,
-    CHORAS_RIR_DIR,
     PFFDTD_RIR_DIR,
     PFFDTD_RIR_URL_PREFIX,
     PFFDTD_VERSION,
@@ -263,7 +262,7 @@ app.mount(
     name="impulse_responses"
 )
 
-# Mount simulations directory for Choras/Pyroomacoustics results
+# Mount simulations directory for Pyroomacoustics results
 app.mount(
     "/static/temp",
     NoStoreStaticFiles(directory=TEMP_SIMULATIONS_DIR),
@@ -275,13 +274,6 @@ app.mount(
     SOUNDSCAPE_DATA_URL_PREFIX,
     NoStoreStaticFiles(directory=SOUNDSCAPE_DATA_DIR),
     name="soundscapes"
-)
-
-# Mount Choras RIR output directory
-app.mount(
-    "/static/choras_rir",
-    NoStoreStaticFiles(directory=CHORAS_RIR_DIR),
-    name="choras_rir"
 )
 
 # Mount PFFDTD RIR output directory
@@ -333,8 +325,8 @@ app.include_router(library_search.router)
 app.include_router(reprocess.router)
 app.include_router(impulse_responses.router)
 # app.include_router(modal_analysis.router)
-app.include_router(choras.router)
 app.include_router(pffdtd.router)
+app.include_router(pffdtd_free.router)
 app.include_router(pyroomacoustics.router)
 app.include_router(simulation_preflight.router)
 app.include_router(speckle.router)
@@ -361,7 +353,6 @@ def get_service_versions(llm_model: str = None):
     from services.bbc_service import get_service_version_info as bbc_version_info
     from services.llm_service import LLMService
     from services.sed_service import SEDService
-    from services.choras_service import ChorasService
     from services.pffdtd_job import pffdtd_available
     from services.tts_service import TTSService
 
@@ -373,8 +364,6 @@ def get_service_versions(llm_model: str = None):
         "bbc": bbc_version_info(),
         "llm_providers": LLMService.get_service_version_info(),
         "yamnet": SEDService.get_service_version_info(),
-        "acousticDE": ChorasService.get_de_version_info(),
-        "edg_acoustics": ChorasService.get_dg_version_info(),
         "pffdtd": {"name": "PFFDTD (vendored, CUDA)", "version": PFFDTD_VERSION, "available": pffdtd_available() is None},
         "gemini-tts": TTSService.get_service_version_info(),
     }

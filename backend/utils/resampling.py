@@ -2,11 +2,11 @@
 Single resampler for every backend service that writes audio.
 
 Model/solver-native rates (TangoFlux, AudioLDM2, Stable Audio 3, Gemini TTS,
-Choras DE, uploaded IRs) are converted to the master ``AUDIO_SAMPLE_RATE``
+uploaded IRs) are converted to the master ``AUDIO_SAMPLE_RATE``
 here and nowhere else.
 
 Depends on numpy + scipy only, so it is importable from the isolated
-compas-sa3 worker env and the Choras code (``utils.audio_processing`` pulls in
+compas-sa3 worker env (``utils.audio_processing`` pulls in
 librosa and is not).
 """
 from __future__ import annotations

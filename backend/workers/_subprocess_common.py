@@ -1,8 +1,8 @@
 """
 Shared child-process-per-job executor for CPU-bound workers (cpu_runner.py,
-choras_runner.py). Both job families already carry legacy subprocess worker
+pffdtd_runner.py). Both job families already carry legacy subprocess worker
 functions that write progress/result JSON files (see services/*_worker.py and
-services/choras_job.py) — this spawns the process, polls progress_file,
+services/pffdtd_job.py) — this spawns the process, polls progress_file,
 forwards progress/heartbeat to Redis, and reads result_file on exit. Hard
 kill on cancel (no cooperative should_stop needed for CPU-bound solvers).
 """
@@ -55,7 +55,7 @@ def run_subprocess_job(
             try:
                 with open(progress_file) as f:
                     prog = json.load(f)
-                job_store.set_progress(job.job_id, prog.get("value", 0), prog.get("status", ""))
+                job_store.set_progress(job.job_id, prog.get("value", 0), prog.get("status", ""), prog.get("partial"))
                 job_store.heartbeat(job.job_id, worker_id)
             except Exception:
                 pass
@@ -83,7 +83,7 @@ def run_subprocess_job(
 
 
 class MultiSlotSubprocessRunner:
-    """Base for CPU/Choras runners: N threads, each independently leasing from
+    """Base for CPU/PFFDTD runners: N threads, each independently leasing from
     one queue and running one child-process-per-job at a time. Subclasses
     provide `queue_key` and `_resolve(job) -> (target_fn, kwargs)`.
     """

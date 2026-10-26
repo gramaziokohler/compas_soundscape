@@ -54,7 +54,8 @@ const SIGNATURE_SPECS: Partial<Record<CardType, SignatureSpec>> = {
   library: { fields: ['selectedLibrarySound'] },
   catalog: { fields: ['selectedCatalogSound'] },
   pyroomacoustics: { fields: ['settings', 'speckleMaterialAssignments', 'speckleScatteringAssignments'], nested: ['settings'] },
-  choras: { fields: ['settings', 'speckleMaterialAssignments', 'speckleScatteringAssignments'], nested: ['settings'] },
+  // Wave-based: no scattering (the FDTD grid models diffraction itself).
+  pffdtd: { fields: ['settings', 'speckleMaterialAssignments'], nested: ['settings'] },
   text: { fields: ['textInput', 'numSounds', 'useAnalysisResult', 'drawnArea'] },
   scenario: { fields: ['userContext', 'peopleCount', 'likeliness', 'timelineDurationMs', 'useAnalysisResult'] },
 };

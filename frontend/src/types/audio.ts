@@ -355,7 +355,7 @@ export enum OutputDecoderType {
 /**
  * Source-Receiver IR Mapping
  * Maps source IDs to receiver IDs to their corresponding IR metadata
- * Used for simulation-based acoustics (PyroomAcoustics, Choras)
+ * Used for simulation-based acoustics (PyroomAcoustics, PFFDTD)
  */
 export interface SourceReceiverIRMapping {
   [sourceId: string]: {
@@ -367,7 +367,7 @@ export interface SourceReceiverIRMapping {
  * Acoustic simulation mode types
  * Indicates which simulation engine generated the IRs
  */
-export type AcousticSimulationMode = 'none' | 'pyroomacoustics' | 'choras';
+export type AcousticSimulationMode = 'none' | 'pyroomacoustics' | 'pffdtd';
 
 /**
  * Audio mode configuration

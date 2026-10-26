@@ -1,7 +1,7 @@
 """
 Worker process entry point.
 
-python -m workers.worker_main --role gpu|cpu|choras --slots N --worker-id X
+python -m workers.worker_main --role gpu|cpu|sa3|pffdtd --slots N --worker-id X
 
 Responsibilities shared across all roles:
   - own a WorkerJobStore (sync redis client)
@@ -11,7 +11,7 @@ Responsibilities shared across all roles:
   - graceful shutdown on Ctrl+C / Ctrl+Break (nssm `stop`)
 
 Role-specific work (leasing a queue, running the job, reporting progress)
-lives in workers/gpu_runner.py, workers/cpu_runner.py, workers/choras_runner.py.
+lives in workers/gpu_runner.py, workers/cpu_runner.py, workers/sa3_runner.py, workers/pffdtd_runner.py.
 """
 from __future__ import annotations
 
@@ -55,7 +55,7 @@ configure_utf8_stdio()
 class WorkerState:
     """Shared mutable state between the heartbeat/cancel-listener threads and the
     runner(s). Tracks per-job_id cancellation so a process can run several jobs
-    concurrently (CPU/Choras multi-slot), not just one at a time (GPU).
+    concurrently (CPU/PFFDTD multi-slot), not just one at a time (GPU).
     """
 
     def __init__(self) -> None:
@@ -144,7 +144,7 @@ def _make_worker_id(role: str, explicit: str | None) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Redis job store worker process")
-    parser.add_argument("--role", required=True, choices=["gpu", "cpu", "choras", "sa3", "pffdtd"])
+    parser.add_argument("--role", required=True, choices=["gpu", "cpu", "sa3", "pffdtd"])
     parser.add_argument("--slots", type=int, default=1)
     parser.add_argument("--worker-id", default=None)
     args = parser.parse_args()
@@ -198,10 +198,6 @@ def main() -> None:
         from workers.pffdtd_runner import PffdtdRunner
 
         runner = PffdtdRunner(job_store, state, worker_id, slots=args.slots)
-    elif args.role == "choras":
-        from workers.choras_runner import ChorasRunner
-
-        runner = ChorasRunner(job_store, state, worker_id, slots=args.slots)
     else:
         raise ValueError(f"unknown role {args.role}")
 

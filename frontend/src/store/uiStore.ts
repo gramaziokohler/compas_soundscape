@@ -22,7 +22,6 @@ import type { LoadTab, RenderStyle } from '@/types';
 import type { AudioRenderingMode } from '@/components/audio/AudioRenderingModeSelector';
 import {
   DEFAULT_SPEED_OF_SOUND,
-  CHORAS_DE_DEFAULT_LC,
   DEFAULT_LISTENER_ORIENTATION,
 } from '@/utils/constants';
 import { applyColorTheme, type ColorThemePreference } from '@/utils/color-theme';
@@ -170,8 +169,6 @@ export interface UIStoreState {
   // ── Global acoustic simulation ────────────────────────────────────────────
   globalSoundSpeed: number;
   setGlobalSoundSpeed: (v: number) => void;
-  globalMeshLc: number;
-  setGlobalMeshLc: (v: number) => void;
   /** Simulation mesh preparation (weld / merge / two-sided) for every engine. */
   simulationMeshSettings: SimulationMeshSettings;
   setSimulationMeshSettings: (patch: Partial<SimulationMeshSettings>) => void;
@@ -249,6 +246,14 @@ export interface UIStoreState {
   // ── Floating panel positions & sizes (survive refresh) ──────────────────────
   objectExplorerPanel: { x: number; y: number; width: number; height: number } | null;
   setObjectExplorerPanel: (state: { x: number; y: number; width: number; height: number } | null) => void;
+  /** Pinned IR preview panel: last position and view mode (survive refresh). */
+  irPreviewPanel: { x: number; y: number; width?: number; height?: number } | null;
+  setIrPreviewPanel: (layout: { x: number; y: number; width?: number; height?: number } | null) => void;
+  irPreviewMode: 'impulse' | 'frequency';
+  setIrPreviewMode: (mode: 'impulse' | 'frequency') => void;
+  /** Which IR list currently owns the open pinned panel (transient, not persisted). */
+  irPreviewOwnerId: string | null;
+  setIrPreviewOwnerId: (id: string | null) => void;
   /** Bottom-docked DAW height in px (survives refresh). `autoFit` = the dock
    * sizes itself to the number of tracks present; it flips to `false` the first
    * time the user drags the top edge, after which the height is fully manual. */
@@ -304,7 +309,6 @@ export interface GradientMapState {
 // simulation output exactly like a card setting does.
 export const uiPartialize = (state: UIStoreState) => ({
   globalSoundSpeed: state.globalSoundSpeed,
-  globalMeshLc: state.globalMeshLc,
   simulationMeshSettings: state.simulationMeshSettings,
 });
 
@@ -463,8 +467,6 @@ export const useUIStore = create<UIStoreState>()(
       // ── Global acoustic simulation ───────────────────────────────────────
       globalSoundSpeed: DEFAULT_SPEED_OF_SOUND,
       setGlobalSoundSpeed: (v) => set({ globalSoundSpeed: v }, false, 'ui/setGlobalSoundSpeed'),
-      globalMeshLc: CHORAS_DE_DEFAULT_LC,
-      setGlobalMeshLc: (v) => set({ globalMeshLc: v }, false, 'ui/setGlobalMeshLc'),
       simulationMeshSettings: { ...SIMULATION_MESH_SETTINGS_DEFAULTS },
       setSimulationMeshSettings: (patch) =>
         set(
@@ -573,6 +575,12 @@ export const useUIStore = create<UIStoreState>()(
       // ── Floating panel positions & sizes ───────────────────────────────────
       objectExplorerPanel: null,
       setObjectExplorerPanel: (s) => set({ objectExplorerPanel: s }, false, 'ui/setObjectExplorerPanel'),
+      irPreviewPanel: null,
+      setIrPreviewPanel: (pos) => set({ irPreviewPanel: pos }, false, 'ui/setIrPreviewPanel'),
+      irPreviewMode: 'impulse' as const,
+      setIrPreviewMode: (mode) => set({ irPreviewMode: mode }, false, 'ui/setIrPreviewMode'),
+      irPreviewOwnerId: null,
+      setIrPreviewOwnerId: (id) => set({ irPreviewOwnerId: id }, false, 'ui/setIrPreviewOwnerId'),
       timelineDock: { height: 260, autoFit: true },
       setTimelineDock: (patch) =>
         set((s) => ({ timelineDock: { ...s.timelineDock, ...patch } }), false, 'ui/setTimelineDock'),
@@ -655,7 +663,9 @@ export const useUIStore = create<UIStoreState>()(
         // scene gizmo attaches after a refresh (the sidebar re-expands card 0).
         expandedSoundCardIndex, soundEditorSoundId, shortcutsOpen,
         // Transient: a collapse request must not replay after a refresh.
-        floatingPanelsCollapseNonce, ...persistable } = state;
+        floatingPanelsCollapseNonce,
+        // Transient: an open pinned IR preview must not reopen after a refresh.
+        irPreviewOwnerId, ...persistable } = state;
       return persistable;
     },
   }),

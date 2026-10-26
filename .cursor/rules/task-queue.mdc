@@ -1,6 +1,6 @@
 ---
 description: Background job system — Redis job store, resident worker processes, asyncio IO jobs
-globs: backend/services/job_store.py,backend/services/io_jobs.py,backend/workers/**,backend/routers/jobs.py,backend/routers/sounds.py,backend/routers/pyroomacoustics.py,backend/routers/choras.py,backend/routers/sed_analysis.py,backend/routers/loop_analysis.py,backend/routers/tts.py,backend/routers/generation.py
+globs: backend/services/job_store.py,backend/services/io_jobs.py,backend/workers/**,backend/routers/jobs.py,backend/routers/sounds.py,backend/routers/pyroomacoustics.py,backend/routers/sed_analysis.py,backend/routers/loop_analysis.py,backend/routers/tts.py,backend/routers/generation.py
 ---
 
 # Task Queue Rules (Redis job store + resident workers)
@@ -22,7 +22,7 @@ long-lived worker processes. See `.cursor/plans/multi-user_distributed_backend_a
 Browser ──POST /api/generate-sounds──▶ FastAPI (routers/sounds.py)
                                         └─ job_store.enqueue("sound", session_id, payload)
                                              → Redis hash job:{id} + RPUSH queue:gpu
-Worker: python -m workers.worker_main --role gpu|cpu|choras --slots N --worker-id X
+Worker: python -m workers.worker_main --role gpu|cpu|sa3|pffdtd --slots N --worker-id X
         └─ lease() (BLPOP) → run → heartbeat/set_progress/complete/fail
 Client polls GET /api/jobs/{id}  (routers/jobs.py reads the Redis hash)
 ```
@@ -31,8 +31,8 @@ Client polls GET /api/jobs/{id}  (routers/jobs.py reads the Redis hash)
 | ----- | ----- |
 | Job store (Redis) | `services/job_store.py` — `AsyncJobStore` (API), `WorkerJobStore` (workers), `job_store` singleton |
 | Unified endpoints | `routers/jobs.py` — `GET /api/jobs` (workspace listing), `GET /api/jobs/{id}`, `POST /api/jobs/{id}/cancel`, `POST /api/jobs/{id}/meta`, `GET /api/queue/status` |
-| Worker entry | `workers/worker_main.py` — `--role gpu\|cpu\|choras`, `--slots N`, `--worker-id X` |
-| Runners | `workers/gpu_runner.py`, `workers/cpu_runner.py`, `workers/choras_runner.py`, `workers/_subprocess_common.py` |
+| Worker entry | `workers/worker_main.py` — `--role gpu\|cpu\|sa3\|pffdtd`, `--slots N`, `--worker-id X` |
+| Runners | `workers/gpu_runner.py`, `workers/cpu_runner.py`, `workers/sa3_runner.py`, `workers/pffdtd_runner.py`, `workers/_subprocess_common.py` |
 | In-process IO jobs | `services/io_jobs.py` (LLM / model-analysis / TTS asyncio tasks) |
 
 ## Roles, Queues and Concurrency
@@ -42,7 +42,7 @@ Client polls GET /api/jobs/{id}  (routers/jobs.py reads the Redis hash)
 | `sound` (TangoFlux) | `queue:gpu` | `worker_main --role gpu` (1 model per process, resident) | `GPU_WORKER_SLOTS` (2) |
 | `sa3` (Stable Audio 3) | `queue:sa3` | `worker_main --role sa3` — **must run in the isolated `compas-sa3` env** (resident) | `SA3_WORKER_SLOTS` (1) |
 | `pyroomacoustics`, `sed`, `loop` | `queue:cpu` | `--role cpu` — child process per job | `CPU_WORKER_SLOTS` (4) |
-| `choras` (DE/DG) | `queue:choras` | `--role choras` — child process per job (gmsh in child main thread) | `CHORAS_WORKER_SLOTS` (1) |
+| `pffdtd`, `pffdtd_animation` | `queue:pffdtd` | `--role pffdtd` — child process per job (CUDA engine in the isolated `compas-pffdtd` env) | `PFFDTD_WORKER_SLOTS` (1) |
 | `llm`, `model_analysis`, `tts` | *(none)* | **Inside the API process** as `asyncio.create_task`, semaphore-gated | `LLM_MAX_CONCURRENT` (8), `TTS_MAX_CONCURRENT` (2) |
 
 - GPU jobs get a per-session fairness cap: max `GPU_QUEUE_PER_SESSION_MAX` (3) pending per
@@ -50,8 +50,8 @@ Client polls GET /api/jobs/{id}  (routers/jobs.py reads the Redis hash)
 - IO jobs never sit in a BLPOP queue: `enqueue_io()` creates the hash, then
   `services/io_jobs.start_io_job()` runs the coroutine in-process behind a semaphore so polling
   (`GET /api/jobs/{id}`) and startup recovery stay uniform.
-- CPU/Choras runners set `CUDA_VISIBLE_DEVICES=-1` in child envs so TensorFlow/YAMNet never
-  touch VRAM. Child-process-per-job is what makes a running `compute_rir()`/gmsh job
+- CPU/PFFDTD runners set `CUDA_VISIBLE_DEVICES=-1` in child envs so TensorFlow/YAMNet never
+  touch VRAM. Child-process-per-job is what makes a running `compute_rir()` job
   **hard-killable** (`process.kill()`) on cancel.
 
 ## Enqueueing From a Router (correct pattern)
@@ -82,7 +82,7 @@ async def generate_sounds(request: SoundGenerationRequest, req: Request):
    `mark_cancelled(job_id)`. Results/errors expire after `JOB_RESULT_TTL_S` (3600 s).
 5. Cancel: `AsyncJobStore.cancel()` — `LREM`s the queue if queued; if running it sets
    `cancel_requested` and `PUBLISH`es to `job:cancel`. GPU workers poll the flag between diffusion
-   steps (cooperative, via the `should_stop` callback into `tangoflux`); CPU/Choras workers
+   steps (cooperative, via the `should_stop` callback into `tangoflux`);    CPU/PFFDTD workers
    `process.kill()` their child.
 6. Reaper (asyncio task in `main.py` lifespan): every `JOB_REAPER_INTERVAL_S`, running jobs whose
    heartbeat is older than `JOB_HEARTBEAT_TIMEOUT_S` (90 s) are re-queued (up to `JOB_MAX_ATTEMPTS`)
@@ -104,10 +104,10 @@ async def generate_sounds(request: SoundGenerationRequest, req: Request):
 Deterministic filenames + a `_regeneration_ts` salt live in `routers/sounds.py:_build_clip_plan`
 (previously `sounds_worker.py`, now removed).
 
-## CPU/Choras Child-Process Contract
+## CPU/PFFDTD Child-Process Contract
 
 The legacy per-domain subprocess workers (`services/pyroomacoustics_worker.py`,
-`sed_worker.py`, `loop_worker.py`, `choras_job.py`) still write the JSON contract below —
+`sed_worker.py`, `loop_worker.py`, `pffdtd_job.py`) still write the JSON contract below —
 `_subprocess_common.py` spawns them, polls `progress_file`, forwards
 progress/heartbeat to Redis, and reads `result_file` on exit:
 
@@ -149,7 +149,7 @@ through `job_store.enqueue`.
 | 3D model analysis | in-process asyncio task (`run_blocking` for sync `analyze_3dmodel`) |
 | SSE agent streams | acquire `LLM_SEMAPHORE` directly; keepalive `: ping` every `SSE_KEEPALIVE_INTERVAL_S` |
 | pyroomacoustics / SED / loop | CPU worker (child process per job) |
-| Choras DE/DG | Choras worker (child process per job) |
+| PFFDTD | PFFDTD worker (child process per job) |
 | BBC/Freesound search, reprocess, calibrate, sed-extract, Speckle listing | `await run_in_threadpool(...)` in the handler |
 
 ## Conventions

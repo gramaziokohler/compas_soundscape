@@ -89,10 +89,13 @@ __global__ void KernelBoundaryRigidCart(Real * __restrict__ u0, const Real * __r
                                             const uint16_t * __restrict__ adj_bn,
                                             const int64_t * __restrict__ bn_ixyz, 
                                             const int8_t * __restrict__ K_bn);
-__global__ void KernelBoundaryRigidFCC(Real * __restrict__ u0, const Real * __restrict__ u1,  
+__global__ void KernelBoundaryRigidFCC(Real * __restrict__ u0, const Real * __restrict__ u1,
                                             const uint16_t * __restrict__ adj_bn,
-                                            const int64_t * __restrict__ bn_ixyz, 
+                                            const int64_t * __restrict__ bn_ixyz,
                                             const int8_t * __restrict__ K_bn);
+__global__ void KernelBoundaryCutCart(Real * __restrict__ u0, const Real * __restrict__ u1,
+                                      const Real * __restrict__ wgt_bn, const Real * __restrict__ W_bn,
+                                      const int64_t * __restrict__ bn_ixyz); // compas
 __global__ void KernelBoundaryABC(Real * __restrict__ u0, 
                                   const Real * __restrict__ u2ba,
                                   const int8_t * __restrict__ Q_bna,
@@ -104,6 +107,8 @@ __global__ void KernelBoundaryFD(Real * __restrict__ u0b, const Real *u2b,
 __global__ void AddIn(Real *u0, Real sample);
 __global__ void CopyToGridKernel(Real *u, const Real *buffer,  const int64_t *locs, int64_t N);
 __global__ void CopyFromGridKernel(Real *buffer, const Real *u,  const int64_t *locs, int64_t N);
+__global__ void KernelAccumPlane(double *acc, double *st, const Real *u, const int64_t *locs, int64_t N,
+                                 const double *sos, int64_t Nsos); // compas
 __global__ void FlipHaloXY_Zbeg(Real * __restrict__ u1);
 __global__ void FlipHaloXY_Zend(Real * __restrict__ u1);
 __global__ void FlipHaloXZ_Ybeg(Real * __restrict__ u1);
@@ -127,6 +132,8 @@ struct gpuHostData { //arrays on host (for copy), mirrors gpu local data
    int8_t   *mat_bnl; //aliased
    uint8_t  *bn_mask; //recomputed
    int8_t  *K_bn; //aliased
+   Real *wgt_bn; //aliased (compas: cut cells, NULL if binary)
+   Real *W_bn; //aliased (compas)
    int64_t Ns;
    int64_t Nr;
    int64_t Npts;
@@ -150,6 +157,8 @@ struct gpuData { //for or on gpu (arrays all on GPU)
    uint8_t  *bn_mask;
    int8_t   *mat_bnl;
    int8_t  *K_bn;
+   Real *wgt_bn; // compas: cut cells (NULL if binary)
+   Real *W_bn;
    Real  *mat_beta;
    struct MatQuad *mat_quads;
    Real *u0;
@@ -313,6 +322,33 @@ __global__ void KernelBoundaryRigidCart(Real * __restrict__ u0, const Real * __r
    }
 }
 
+// compas: cut-cell (conformal) boundaries, cartesian: same update as KernelBoundaryRigidCart
+// with link weights w = beta/vol (open face fraction over volume fraction) and W = sum(w)
+__global__ void KernelBoundaryCutCart(Real * __restrict__ u0, const Real * __restrict__ u1,
+                                      const Real * __restrict__ wgt_bn, const Real * __restrict__ W_bn,
+                                      const int64_t * __restrict__ bn_ixyz)
+{
+   int64_t nb = blockIdx.x*cuBb + threadIdx.x;
+   if (nb<cuNb) {
+      int64_t ii = bn_ixyz[nb];
+      const Real *w = wgt_bn + 6*nb;
+
+      Real _2 = 2.0;
+      Real b1 = (_2-csl2*W_bn[nb]);
+      Real b2 = c2;
+
+      Real tmp1,tmp2;
+      tmp1 = ADD_O(w[0]*u1[ii + cuNxNy],w[1]*u1[ii - cuNxNy]);
+      tmp2 = ADD_O(w[2]*u1[ii + cuNx],  w[3]*u1[ii - cuNx]);
+      tmp1 = ADD_O(tmp1,tmp2);
+      tmp2 = ADD_O(w[4]*u1[ii + 1],     w[5]*u1[ii - 1]);
+      tmp1 = ADD_O(tmp1,tmp2);
+      tmp1 = FMA_D(b1,u1[ii],FMA_D(b2,tmp1,-u0[ii]));
+
+      u0[ii] = tmp1; //write back to global memory
+   }
+}
+
 //rigid boundaries, FCC, using adj info
 __global__ void KernelBoundaryRigidFCC(Real * __restrict__ u0, const Real * __restrict__ u1,  
                                             const uint16_t * __restrict__ adj_bn,
@@ -429,6 +465,26 @@ __global__ void CopyFromGridKernel(Real *buffer, const Real *u,  const int64_t *
 {
    int64_t i = blockIdx.x*cuBrw + threadIdx.x;
    if (i<N) buffer[i] = u[locs[i]];
+}
+
+// compas: band-pass the plane nodes of u (cascade of DF2T biquads, state st[2*(s*N+i)..+1])
+// and accumulate y^2 per node (double accumulators, independent of Real)
+__global__ void KernelAccumPlane(double *acc, double *st, const Real *u, const int64_t *locs, int64_t N,
+                                 const double *sos, int64_t Nsos)
+{
+   int64_t i = blockIdx.x*cuBrw + threadIdx.x;
+   if (i<N) {
+      double x = (double)u[locs[i]];
+      for (int64_t s=0; s<Nsos; s++) {
+         const double *c = sos + 6*s;
+         double *z = st + 2*(s*N + i);
+         double y = c[0]*x + z[0];
+         z[0] = c[1]*x - c[4]*y + z[1];
+         z[1] = c[2]*x - c[5]*y;
+         x = y;
+      }
+      acc[i] += x*x;
+   }
 }
 
 //flip halos for ABCs
@@ -663,14 +719,27 @@ void split_data(const struct SimData *sd, struct gpuHostData *ghds, int ngpus) {
    free(Nxcc);
 }
 
-// compas: copy u^n (device u1) to host, rescale, and write it to snap_out.h5 (single device only)
-void take_snapshot(const struct SimData *sd, const Real *d_u1, Real *h_buf, double *h_dbl, int64_t k, int64_t n) {
+// compas: copy u^n (device u1) to host, rescale, and write it to snap_out.h5 (single device only).
+// With an output plane (sd->Nplane > 0) only the plane nodes are gathered and written.
+void take_snapshot(const struct SimData *sd, const Real *d_u1, Real *d_plane_buf, const int64_t *d_plane_ixyz,
+                   Real *h_buf, double *h_dbl, int64_t k, int64_t n) {
+   int64_t N = (sd->Nplane>0) ? sd->Nplane : sd->Npts;
    gpuErrchk( cudaDeviceSynchronize() );
-   gpuErrchk( cudaMemcpy(h_buf, d_u1, (size_t)(sd->Npts*sizeof(Real)), cudaMemcpyDeviceToHost) );
-   for (int64_t i=0; i<sd->Npts; i++) {
+   if (sd->Nplane>0) {
+      dim3 grid_dim((unsigned int)CU_DIV_CEIL(N,cuBrw));
+      dim3 block_dim(cuBrw);
+      CopyFromGridKernel<<<grid_dim,block_dim>>>(d_plane_buf, d_u1, d_plane_ixyz, N);
+      gpuErrchk( cudaPeekAtLastError() );
+      gpuErrchk( cudaDeviceSynchronize() );
+      gpuErrchk( cudaMemcpy(h_buf, d_plane_buf, (size_t)(N*sizeof(Real)), cudaMemcpyDeviceToHost) );
+   }
+   else {
+      gpuErrchk( cudaMemcpy(h_buf, d_u1, (size_t)(N*sizeof(Real)), cudaMemcpyDeviceToHost) );
+   }
+   for (int64_t i=0; i<N; i++) {
       h_dbl[i] = (double)h_buf[i]*sd->infac;
    }
-   write_snapshot(k, n, h_dbl, sd->Npts);
+   write_snapshot(k, n, h_dbl, N);
 }
 
 //run the sim!
@@ -781,6 +850,8 @@ double run_sim(const struct SimData *sd)
       ghd->adj_bn    = sd->adj_bn + Nb_read;
       ghd->mat_bnl   = sd->mat_bnl + Nbl_read;
       ghd->K_bn      = sd->K_bn + Nb_read;
+      ghd->wgt_bn    = (sd->wgt_bn != NULL) ? sd->wgt_bn + 6*Nb_read : NULL; // compas
+      ghd->W_bn      = (sd->W_bn != NULL) ? sd->W_bn + Nb_read : NULL;
       ghd->Q_bna     = sd->Q_bna + Nba_read;
       ghd->u_out     = sd->u_out + Nr_read*sd->Nt;
       ghd->u_out_buf = u_out_buf + Nr_read;
@@ -895,8 +966,17 @@ double run_sim(const struct SimData *sd)
       gpuErrchk( cudaMalloc(&(gd->out_ixyz), (size_t)(ghd->Nr*sizeof(int64_t))) );
       gpuErrchk( cudaMemcpy(gd->out_ixyz, ghd->out_ixyz, (size_t)ghd->Nr*sizeof(int64_t), cudaMemcpyHostToDevice) );
 
-      gpuErrchk( cudaMalloc(&(gd->adj_bn), (size_t)(ghd->Nb*sizeof(uint16_t))) );    
+      gpuErrchk( cudaMalloc(&(gd->adj_bn), (size_t)(ghd->Nb*sizeof(uint16_t))) );
       gpuErrchk( cudaMemcpy(gd->adj_bn, ghd->adj_bn, (size_t)ghd->Nb*sizeof(uint16_t), cudaMemcpyHostToDevice) );
+
+      gd->wgt_bn = NULL; // compas: cut-cell link weights
+      gd->W_bn = NULL;
+      if (ghd->wgt_bn != NULL) {
+         gpuErrchk( cudaMalloc(&(gd->wgt_bn), (size_t)(ghd->Nb*6*sizeof(Real))) );
+         gpuErrchk( cudaMemcpy(gd->wgt_bn, ghd->wgt_bn, (size_t)ghd->Nb*6*sizeof(Real), cudaMemcpyHostToDevice) );
+         gpuErrchk( cudaMalloc(&(gd->W_bn), (size_t)(ghd->Nb*sizeof(Real))) );
+         gpuErrchk( cudaMemcpy(gd->W_bn, ghd->W_bn, (size_t)ghd->Nb*sizeof(Real), cudaMemcpyHostToDevice) );
+      }
 
       gpuErrchk( cudaMalloc(&(gd->mat_bnl), (size_t)(ghd->Nbl*sizeof(int8_t))) );    
       gpuErrchk( cudaMemcpy(gd->mat_bnl, ghd->mat_bnl, (size_t)ghd->Nbl*sizeof(int8_t), cudaMemcpyHostToDevice) );
@@ -1019,15 +1099,37 @@ double run_sim(const struct SimData *sd)
    Real *snap_buf = NULL;
    double *snap_dbl = NULL;
    int64_t ksnap = 0;
+   int64_t Nsnap_pts = (sd->Nplane>0) ? sd->Nplane : sd->Npts;
    if (sd->Nsnap>0) {
       assert(ngpus==1);
-      mymalloc((void **)&snap_buf, sd->Npts*sizeof(Real));
-      mymalloc((void **)&snap_dbl, sd->Npts*sizeof(double));
+      mymalloc((void **)&snap_buf, Nsnap_pts*sizeof(Real));
+      mymalloc((void **)&snap_dbl, Nsnap_pts*sizeof(double));
+   }
+   // compas: output plane (gather buffer for snapshots + band-passed p^2 accumulators)
+   int64_t *d_plane_ixyz = NULL;
+   Real *d_plane_buf = NULL;
+   double *d_acc = NULL, *d_acc_st = NULL, *d_sos = NULL;
+   dim3 grid_dim_plane(1), block_dim_plane(cuBrw);
+   if (sd->Nplane>0) {
+      assert(ngpus==1);
+      assert(sd->fcc_flag==0); // plane indices are Cartesian engine-layout indices
+      grid_dim_plane = dim3((unsigned int)CU_DIV_CEIL(sd->Nplane,cuBrw));
+      gpuErrchk( cudaMalloc(&d_plane_ixyz, (size_t)(sd->Nplane*sizeof(int64_t))) );
+      gpuErrchk( cudaMemcpy(d_plane_ixyz, sd->plane_ixyz, (size_t)(sd->Nplane*sizeof(int64_t)), cudaMemcpyHostToDevice) );
+      gpuErrchk( cudaMalloc(&d_plane_buf, (size_t)(sd->Nplane*sizeof(Real))) );
+      if (sd->Nsos>0) {
+         gpuErrchk( cudaMalloc(&d_acc, (size_t)(sd->Nplane*sizeof(double))) );
+         gpuErrchk( cudaMemset(d_acc, 0, (size_t)(sd->Nplane*sizeof(double))) );
+         gpuErrchk( cudaMalloc(&d_acc_st, (size_t)(2*sd->Nsos*sd->Nplane*sizeof(double))) );
+         gpuErrchk( cudaMemset(d_acc_st, 0, (size_t)(2*sd->Nsos*sd->Nplane*sizeof(double))) );
+         gpuErrchk( cudaMalloc(&d_sos, (size_t)(6*sd->Nsos*sizeof(double))) );
+         gpuErrchk( cudaMemcpy(d_sos, sd->acc_sos, (size_t)(6*sd->Nsos*sizeof(double)), cudaMemcpyHostToDevice) );
+      }
    }
 
    for (int64_t n=0; n<sd->Nt; n++) { //loop over time-steps
       while ((ksnap < sd->Nsnap) && (sd->snap_steps[ksnap]==n)) { // compas
-         take_snapshot(sd, gds[0].u1, snap_buf, snap_dbl, ksnap, n);
+         take_snapshot(sd, gds[0].u1, d_plane_buf, d_plane_ixyz, snap_buf, snap_dbl, ksnap, n);
          ksnap++;
       }
       for (int gid=0; gid < ngpus; gid++) { //loop over GPUs (one thread launches all kernels)
@@ -1044,7 +1146,10 @@ double run_sim(const struct SimData *sd)
          gpuErrchk( cudaEventRecord(gd->cuEv_bn_roundtrip_start,gd->cuStream_bn) );
 
          //boundary updates
-         if (sd->fcc_flag==0) {
+         if ((sd->fcc_flag==0) && (gd->wgt_bn != NULL)) { // compas: cut cells
+            KernelBoundaryCutCart<<<gd->grid_dim_bn,gd->block_dim_bn,0,gd->cuStream_bn>>>(gd->u0,gd->u1,gd->wgt_bn,gd->W_bn,gd->bn_ixyz);
+         }
+         else if (sd->fcc_flag==0) {
             KernelBoundaryRigidCart<<<gd->grid_dim_bn,gd->block_dim_bn,0,gd->cuStream_bn>>>(gd->u0,gd->u1,gd->adj_bn,gd->bn_ixyz,gd->K_bn);
          }
          else {
@@ -1098,6 +1203,9 @@ double run_sim(const struct SimData *sd)
          CopyFromGridKernel<<<gd->grid_dim_readout,gd->block_dim_readout,0,gd->cuStream_bn>>>(gd->u_out_buf, gd->u1, gd->out_ixyz, ghd->Nr);
          //then async memory copy of outputs (not really async because on same stream as CopyFromGridKernel)
          gpuErrchk( cudaMemcpyAsync(ghd->u_out_buf, gd->u_out_buf, ghd->Nr*sizeof(Real), cudaMemcpyDeviceToHost, gd->cuStream_bn) );
+         if (d_acc != NULL) { // compas: same u^n as the readouts
+            KernelAccumPlane<<<grid_dim_plane,block_dim_plane,0,gd->cuStream_bn>>>(d_acc, d_acc_st, gd->u1, d_plane_ixyz, sd->Nplane, d_sos, sd->Nsos);
+         }
          gpuErrchk( cudaEventRecord(gd->cuEv_readout_end,gd->cuStream_bn) );
       }
 
@@ -1210,11 +1318,28 @@ double run_sim(const struct SimData *sd)
    }
    printf("\n");
    while ((ksnap < sd->Nsnap) && (sd->snap_steps[ksnap]==sd->Nt)) { // compas: u^{Nt} after last swap
-      take_snapshot(sd, gds[0].u1, snap_buf, snap_dbl, ksnap, sd->Nt);
+      take_snapshot(sd, gds[0].u1, d_plane_buf, d_plane_ixyz, snap_buf, snap_dbl, ksnap, sd->Nt);
       ksnap++;
    }
    free(snap_buf);
    free(snap_dbl);
+   if (d_acc != NULL) { // compas: rescale (u is stored times 1/infac) and write the accumulation
+      gpuErrchk( cudaSetDevice(0) );
+      gpuErrchk( cudaDeviceSynchronize() );
+      double *h_acc;
+      mymalloc((void **)&h_acc, sd->Nplane*sizeof(double));
+      gpuErrchk( cudaMemcpy(h_acc, d_acc, (size_t)(sd->Nplane*sizeof(double)), cudaMemcpyDeviceToHost) );
+      for (int64_t i=0; i<sd->Nplane; i++) h_acc[i] *= sd->infac*sd->infac;
+      write_plane_accum(h_acc, sd->Nplane);
+      free(h_acc);
+      gpuErrchk( cudaFree(d_acc) );
+      gpuErrchk( cudaFree(d_acc_st) );
+      gpuErrchk( cudaFree(d_sos) );
+   }
+   if (d_plane_ixyz != NULL) {
+      gpuErrchk( cudaFree(d_plane_ixyz) );
+      gpuErrchk( cudaFree(d_plane_buf) );
+   }
 
    for (int gid=0; gid < ngpus; gid++) {
       gpuErrchk( cudaSetDevice(gid) );
@@ -1265,6 +1390,10 @@ double run_sim(const struct SimData *sd)
       gpuErrchk( cudaFree(gd->adj_bn) );
       gpuErrchk( cudaFree(gd->mat_bnl) );
       gpuErrchk( cudaFree(gd->K_bn) );
+      if (gd->wgt_bn != NULL) { // compas
+         gpuErrchk( cudaFree(gd->wgt_bn) );
+         gpuErrchk( cudaFree(gd->W_bn) );
+      }
       gpuErrchk( cudaFree(gd->ssaf_bnl) );
       gpuErrchk( cudaFree(gd->mat_beta) );
       gpuErrchk( cudaFree(gd->mat_quads) );

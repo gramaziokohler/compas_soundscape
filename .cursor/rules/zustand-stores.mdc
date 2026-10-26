@@ -173,4 +173,4 @@ commitStore('myDomain') // one step — nothing if the state ended unchanged
 | `sedStore` | detected sounds, options, loaded file info (`sed`) | progress, errors |
 | `uiStore` | global sound speed, mesh size, mesh settings (`ui`) | everything else (navigation / display) |
 | `speckleStore` | hide / isolate / exclude-from-acoustic intent (`speckle`) | selection, hover, colors, view mode |
-| `pyroomAcousticsStore`, `chorasStore`, `modalImpactStore` | — (runtime job state only) | all |
+| `pyroomAcousticsStore`, `modalImpactStore` | — (runtime job state only) | all |

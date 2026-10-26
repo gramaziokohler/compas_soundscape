@@ -49,7 +49,7 @@ export function ImpulseIcon({ size = 18 }: BubbleIconProps) {
   );
 }
 
-/** Wave-based simulation (Choras) — propagating wave fronts. */
+/** Wave-based simulation (PFFDTD) — propagating wave fronts. */
 export function WaveFrontIcon({ size = 18 }: BubbleIconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
@@ -89,7 +89,7 @@ export interface SimulationTypeIconProps extends BubbleIconProps {
 export function SimulationTypeIcon({ type, size }: SimulationTypeIconProps) {
   if (type === "resonance") return <ShoeboxIcon size={size} />;
   if (type === "pyroomacoustics") return <RaysIcon size={size} />;
-  if (type === "choras") return <WaveFrontIcon size={size} />;
+  if (type === "pffdtd") return <WaveFrontIcon size={size} />;
   return <ImpulseIcon size={size} />;
 }
 

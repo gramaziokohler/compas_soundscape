@@ -411,7 +411,7 @@ export class SpeckleAudioCoordinator {
    * Set source-receiver IR mapping for simulation-based acoustics
    * Enables per-source IR assignment based on active receiver
    * @param mapping - Source-receiver IR mapping
-   * @param simulationMode - Type of simulation (pyroomacoustics, choras)
+   * @param simulationMode - Type of simulation (pyroomacoustics, pffdtd)
    * @param initialReceiverId - Initial receiver to activate (optional)
    */
   public async setSourceReceiverIRMapping(

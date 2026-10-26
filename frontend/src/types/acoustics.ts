@@ -8,6 +8,7 @@ import type { ReceiverData, SoundEvent, CompasGeometry } from './index';
 import type { ImpulseResponseMetadata, SourceReceiverIRMapping } from './audio';
 import type { AcousticMaterial } from './materials';
 import type { CardBaseConfig, CardType, CardExecutionState } from './card';
+import type { PffdtdSettings, PffdtdVoxelProblem } from './pffdtd';
 
 /**
  * Snapshot of a grid listener's configuration captured at simulation time.
@@ -29,7 +30,7 @@ export interface GridListenerSnapshot {
 /**
  * Acoustic simulation modes
  */
-export type AcousticSimulationMode = 'resonance' | 'choras' | 'pyroomacoustics' | 'import-irs';
+export type AcousticSimulationMode = 'resonance' | 'pyroomacoustics' | 'pffdtd' | 'import-irs';
 
 /**
  * Simulation states for UI display
@@ -74,51 +75,6 @@ export interface ResonanceSimulationConfig extends BaseSimulationConfig {
 }
 
 /**
- * Choras (DE/DG wave simulation) configuration
- */
-export interface ChorasSimulationConfig extends BaseSimulationConfig, CardExecutionState {
-  type: 'choras';
-  settings: {
-    simulation_method: 'DE' | 'DG';
-    // DE (Diffusion Equation / FVM) settings
-    de_c0: number;
-    de_lc: number;
-    // DG (Discontinuous Galerkin) settings
-    dg_freq_upper_limit: number;
-    dg_c0: number;
-    dg_rho0: number;
-    dg_poly_order: number;
-    dg_ppw: number;
-    dg_cfl: number;
-  };
-  // Material assignments per face
-  faceToMaterialMap: Map<number, string>;
-  // Material UI state (persisted across tab switches)
-  expandedMaterialItems?: Set<string>;
-  // Excluded layers
-  excludedLayers?: Set<string>;
-  // Saved settings for reset functionality
-  savedSettings?: {
-    settings: ChorasSimulationConfig['settings'];
-    faceToMaterialMap: Map<number, string>;
-    expandedMaterialItems?: Set<string>;
-    excludedLayers?: Set<string>;
-  };
-  // Runtime state
-  simulationResults: string | null;
-  importedIRIds?: string[];
-  sourceReceiverIRMapping?: import('./audio').SourceReceiverIRMapping;
-  /** Positions of sources and receivers at the time the simulation was run (source of truth for IR hover line) */
-  simulationPositions?: {
-    sources: Record<string, [number, number, number]>;
-    receivers: Record<string, [number, number, number]>;
-    soundToPosKey?: Record<string, string>;
-    /** Grid listener configs at simulation time (for drift detection + reset) */
-    gridListeners?: GridListenerSnapshot[];
-  };
-}
-
-/**
  * Pyroomacoustics simulation configuration
  */
 export interface PyroomAcousticsSimulationConfig extends BaseSimulationConfig, CardExecutionState {
@@ -156,6 +112,47 @@ export interface PyroomAcousticsSimulationConfig extends BaseSimulationConfig, C
     receivers: Record<string, [number, number, number]>;
     soundToPosKey?: Record<string, string>;
     /** Grid listener configs at simulation time (for drift detection + reset) */
+    gridListeners?: GridListenerSnapshot[];
+  };
+}
+
+/**
+ * PFFDTD (GPU finite-difference wave solver) configuration.
+ * Same shape as the pyroomacoustics card (materials, IR mapping, positions);
+ * only the settings differ. Scattering is not used by the wave solver.
+ */
+export interface PffdtdSimulationConfig extends BaseSimulationConfig, CardExecutionState {
+  type: 'pffdtd';
+  settings: PffdtdSettings;
+  faceToMaterialMap: Map<number, string>;
+  expandedMaterialItems?: Set<string>;
+  excludedLayers?: Set<string>;
+  savedSettings?: {
+    settings: PffdtdSettings;
+    faceToMaterialMap: Map<number, string>;
+    expandedMaterialItems?: Set<string>;
+    excludedLayers?: Set<string>;
+  };
+  simulationResults: string | null;
+  importedIRMetadata?: ImpulseResponseMetadata;
+  importedIRIds?: string[];
+  sourceReceiverIRMapping?: SourceReceiverIRMapping;
+  /** Backend simulation id of the completed run (results JSON + field files). */
+  currentSimulationId?: string | null;
+  /** Unified job id of the in-flight run. */
+  currentSimulationRunId?: string | null;
+  /** The in-flight run has finished voxelising (the voxel preview may run alongside the GPU solve). */
+  runVoxelised?: boolean;
+  /** Grid problems the last run reported after voxelising (kept with its result). */
+  runProblems?: PffdtdVoxelProblem[];
+  speckleMaterialAssignments?: Record<string, string>;
+  speckleLayerName?: string | null;
+  speckleGeometryObjectIds?: string[];
+  speckleIsolatedObjectIds?: string[] | null;
+  simulationPositions?: {
+    sources: Record<string, [number, number, number]>;
+    receivers: Record<string, [number, number, number]>;
+    soundToPosKey?: Record<string, string>;
     gridListeners?: GridListenerSnapshot[];
   };
 }
@@ -202,8 +199,8 @@ export interface ImportIRsSimulationConfig extends BaseSimulationConfig {
  */
 export type SimulationConfig =
   | ResonanceSimulationConfig
-  | ChorasSimulationConfig
   | PyroomAcousticsSimulationConfig
+  | PffdtdSimulationConfig
   | ImportIRsSimulationConfig;
 
 /**
@@ -232,7 +229,7 @@ export interface SimulationTabProps {
   receivers?: ReceiverData[];
   soundscapeData?: SoundEvent[] | null;
   
-  // Material assignment (for Choras and Pyroomacoustics)
+  // Material assignment (for Pyroomacoustics)
   availableMaterials?: AcousticMaterial[];
   modelEntities?: any[];
   modelType?: '3dm' | 'obj' | 'ifc' | null;

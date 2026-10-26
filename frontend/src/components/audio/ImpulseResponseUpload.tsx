@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback, useId } from "react";
 import { ChevronRight, Trash2 } from "lucide-react";
-import { AudioWaveformDisplay } from "@/components/audio/AudioWaveformDisplay";
+import { IRPreviewContent, IRPreviewPanel } from "@/components/audio/IRPreviewPanel";
 import { MiniIRWaveform } from "@/components/audio/MiniIRWaveform";
+import { useUIStore } from "@/store";
 import { FileDropRow } from "@/components/ui/FileDropRow";
 import { apiService } from "@/services/api";
 import { useApiErrorHandler } from "@/hooks/useApiErrorHandler";
@@ -12,7 +13,8 @@ import { Badge } from '@/components/ui/Badge';
 import { Spinner } from '@/components/ui/Spinner';
 import { EmptyState } from '@/components/ui/EmptyState';
 import type { ImpulseResponseMetadata, SourceReceiverIRMapping } from "@/types/audio";
-import { API_BASE_URL, IR_HOVER_LINE, IR_LOW_ENERGY_THRESHOLD, IMPULSE_RESPONSE, SIMULATION_POSITION_MATCH_THRESHOLD } from "@/utils/constants";
+import { API_BASE_URL, AUDIO_SAMPLE_RATE, IR_HOVER_LINE, IR_LOW_ENERGY_THRESHOLD, IR_PREVIEW_PANEL, AUDIO_VISUALIZATION, IMPULSE_RESPONSE, SIMULATION_POSITION_MATCH_THRESHOLD } from "@/utils/constants";
+import { clampToViewport } from "@/utils/scale";
 import { trimDisplayName } from "@/utils/utils";
 import { parsePositionKey } from "@/utils/positionKey";
 
@@ -235,8 +237,15 @@ export function ImpulseResponseUpload({
         if (!response.ok) throw new Error(`Failed to download IR: ${response.statusText}`);
         const audioBlob = await response.blob();
         const arrayBuffer = await audioBlob.arrayBuffer();
-        const audioContext = new AudioContext();
-        const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+        // Decode at the engine's rate (not the device default, e.g. 96 kHz, which would
+        // resample the IR and misreport its sample rate). Peaks then match the audio engine.
+        const audioContext = new AudioContext({ sampleRate: AUDIO_SAMPLE_RATE });
+        let audioBuffer: AudioBuffer;
+        try {
+          audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+        } finally {
+          void audioContext.close();
+        }
 
         let peakSum = 0;
         let maxPeak = 0;
@@ -549,14 +558,76 @@ export function ImpulseResponseUpload({
     }, 100);
   }, [isOverlayHovered, onIRHover]);
 
+  // ── Pinned (click-to-open) preview panel ───────────────────────────────────
+  // The panel is owned by one IR list at a time (store owner id), so clicking a
+  // thumbnail in another card moves the panel there instead of opening a second one.
+  const panelOwnerId = useId();
+  const irPreviewOwnerId = useUIStore((s) => s.irPreviewOwnerId);
+  const irPreviewMode = useUIStore((s) => s.irPreviewMode);
+  const [pinnedIRId, setPinnedIRId] = useState<string | null>(null);
+  const [pinnedDefaultPos, setPinnedDefaultPos] = useState<{ x: number; y: number } | null>(null);
+  const isPanelOwner = irPreviewOwnerId === panelOwnerId;
+
+  const findIR = useCallback((id: string | null): ImpulseResponseMetadata | undefined => {
+    if (!id) return undefined;
+    // Free-positioning IRs live only in the mapping (never in the library list).
+    return impulseResponses.find(ir => ir.id === id)
+      ?? groupedByReceiver?.groups.flatMap(g => g.sources).find(s => s.ir?.id === id)?.ir
+      ?? undefined;
+  }, [impulseResponses, groupedByReceiver]);
+
+  const closePinnedPanel = useCallback(() => {
+    setPinnedIRId(null);
+    if (useUIStore.getState().irPreviewOwnerId === panelOwnerId) {
+      useUIStore.getState().setIrPreviewOwnerId(null);
+    }
+  }, [panelOwnerId]);
+
+  // Release ownership if this list unmounts (e.g. its card collapses) while the panel is open.
+  useEffect(() => () => {
+    if (useUIStore.getState().irPreviewOwnerId === panelOwnerId) {
+      useUIStore.getState().setIrPreviewOwnerId(null);
+    }
+  }, [panelOwnerId]);
+
+  // Another list took the panel over.
+  useEffect(() => {
+    if (!isPanelOwner && pinnedIRId) setPinnedIRId(null);
+  }, [isPanelOwner, pinnedIRId]);
+
+  const pinIR = useCallback((e: React.MouseEvent<HTMLElement>, ir: ImpulseResponseMetadata) => {
+    e.stopPropagation();
+    if (hideTimeoutRef.current) { clearTimeout(hideTimeoutRef.current); hideTimeoutRef.current = null; }
+    setHoveredIRId(null); setHoveredIRBuffer(null); setOverlayPosition(null); setIsOverlayHovered(false);
+    if (IR_HOVER_LINE.ENABLED && onIRHover) onIRHover(null, null);
+
+    // First opening (nothing remembered yet): sit where the hover preview appears.
+    if (!useUIStore.getState().irPreviewPanel) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const sidebar = document.querySelector('aside.fixed.right-0');
+      const sidebarLeft = sidebar ? sidebar.getBoundingClientRect().left : rect.left;
+      const panelWidth = AUDIO_VISUALIZATION.WAVEFORM_WIDTH + 2;
+      setPinnedDefaultPos(clampToViewport(
+        sidebarLeft - IR_PREVIEW_PANEL.SIDEBAR_GAP - panelWidth,
+        rect.top + rect.height / 2 - IR_PREVIEW_PANEL.ESTIMATED_HEIGHT / 2,
+        panelWidth,
+        IR_PREVIEW_PANEL.ESTIMATED_HEIGHT,
+        IR_PREVIEW_PANEL.MARGIN,
+      ));
+    }
+
+    setPinnedIRId(ir.id);
+    useUIStore.getState().setIrPreviewOwnerId(panelOwnerId);
+    loadIRBuffer(ir);
+  }, [onIRHover, panelOwnerId]);
+
   const getSourceRowInfo = useCallback((
     sourceId: string,
     fallbackName?: string,
   ): { posLabel: string | null; soundCount: number; soundNames: string } => {
     const simPos = simulationSourcePositions?.[sourceId];
     // Label with the EXACT position values the backend embeds as `source_id` when
-    // naming the generated IR file (sim_..._src_{sourceId}_rcv_...wav /
-    // choras_..._src_{sourceId}_rcv_...wav) — sourceId IS that position key — rather
+    // naming the generated IR file (sim_..._src_{sourceId}_rcv_...wav) — sourceId IS that position key — rather
     // than the raw, un-quantized sound position, which can differ slightly.
     const keyPos = parsePositionKey(sourceId);
     const posLabel = keyPos
@@ -655,6 +726,8 @@ export function ImpulseResponseUpload({
           onBlueBackground={onBlueBackground}
           lowEnergy={isLowEnergy}
           amplitudeScale={gainPreview ? previewScale : undefined}
+          onClick={(e) => pinIR(e, ir)}
+          pinned={pinnedIRId === ir.id && isPanelOwner}
         />
         {options?.onClear && (
           <button
@@ -796,7 +869,12 @@ export function ImpulseResponseUpload({
     }
   };
 
-  const hoveredIR = impulseResponses.find(ir => ir.id === hoveredIRId);
+  const hoveredIR = findIR(hoveredIRId);
+  const pinnedIR = isPanelOwner ? findIR(pinnedIRId) : undefined;
+  const pinnedBuffer = pinnedIR ? bufferCache.get(pinnedIR.id) ?? null : null;
+  const irCount = groupedByReceiver && !allowPairUploads
+    ? groupedByReceiver.groups.reduce((n, g) => n + g.sources.filter(s => s.ir).length, 0) + groupedByReceiver.unmapped.length
+    : impulseResponses.length;
   const missingPairSetupMessage = (() => {
     if (!allowPairUploads) return null;
     const slotDescription = singleIRPerListener
@@ -857,7 +935,7 @@ export function ImpulseResponseUpload({
             >
               {allowPairUploads
                 ? (singleIRPerListener ? 'Listener IRs' : 'Source–listener IRs')
-                : `Impulse Responses (${impulseResponses.length})`}
+                : `Impulse Responses (${irCount})`}
             </h3>
             {slotStats && (
               <span
@@ -1054,6 +1132,8 @@ export function ImpulseResponseUpload({
                         onBlueBackground={onBlueBackground}
                         lowEnergy={isLowEnergy}
                         amplitudeScale={gainPreview ? previewScale : undefined}
+                        onClick={(e) => pinIR(e, ir)}
+                        pinned={pinnedIRId === ir.id && isPanelOwner}
                       />
                     </div>
                   </div>
@@ -1069,8 +1149,8 @@ export function ImpulseResponseUpload({
         <EmptyState message="No source–listener pairs yet. Add sound sources and listeners to create IR slots." />
       )}
 
-      {/* Waveform Overlay */}
-      {hoveredIRId && hoveredIRBuffer && overlayPosition && hoveredIR && (
+      {/* Waveform Overlay (hover preview; replaced by the pinned panel while that is open) */}
+      {hoveredIRId && hoveredIRBuffer && overlayPosition && hoveredIR && !pinnedIR && (
         <div
           className="fixed z-[9999] w-fit max-w-[90vw] rounded-lg border overflow-hidden shadow-lg"
           style={{
@@ -1087,22 +1167,37 @@ export function ImpulseResponseUpload({
             if (IR_HOVER_LINE.ENABLED && onIRHover) onIRHover(null, null);
           }}
         >
-          <AudioWaveformDisplay
+          <IRPreviewContent
+            name={hoveredIR.name}
+            sampleRate={hoveredIR.sampleRate || hoveredIRBuffer.sampleRate}
+            channelLabel={formatChannelLabel(hoveredIRBuffer.numberOfChannels)}
             audioBuffer={hoveredIRBuffer}
-            audioInfo={{
-              filename: hoveredIR.name,
-              sample_rate: hoveredIRBuffer.sampleRate,
-              channels: formatChannelLabel(hoveredIRBuffer.numberOfChannels),
-              duration: hoveredIRBuffer.duration,
-              num_samples: hoveredIRBuffer.length,
-            }}
-            enableWaveform={true}
-            hideTextInfo={false}
+            mode={irPreviewMode}
+            onModeChange={(m) => useUIStore.getState().setIrPreviewMode(m)}
             onDownload={() => handleDownloadIR(hoveredIR)}
             amplitudeScale={gainPreview ? computePreviewScale(getIRPeak(hoveredIR)) : undefined}
             fullScale={gainPreview}
           />
         </div>
+      )}
+
+      {/* Pinned, draggable, resizable preview panel (opened by clicking a thumbnail) */}
+      {pinnedIR && pinnedBuffer && (
+        <IRPreviewPanel
+          name={pinnedIR.name}
+          sampleRate={pinnedIR.sampleRate || pinnedBuffer.sampleRate}
+          channelLabel={formatChannelLabel(pinnedBuffer.numberOfChannels)}
+          audioBuffer={pinnedBuffer}
+          mode={irPreviewMode}
+          onModeChange={(m) => useUIStore.getState().setIrPreviewMode(m)}
+          onClose={closePinnedPanel}
+          onDownload={() => handleDownloadIR(pinnedIR)}
+          savedLayout={useUIStore.getState().irPreviewPanel}
+          defaultPosition={pinnedDefaultPos ?? { x: IR_PREVIEW_PANEL.MARGIN, y: IR_PREVIEW_PANEL.MARGIN }}
+          onLayoutCommit={(l) => useUIStore.getState().setIrPreviewPanel(l)}
+          amplitudeScale={gainPreview ? computePreviewScale(getIRPeak(pinnedIR)) : undefined}
+          fullScale={gainPreview}
+        />
       )}
 
       {/* Help text — only for the read-only simulation result list */}

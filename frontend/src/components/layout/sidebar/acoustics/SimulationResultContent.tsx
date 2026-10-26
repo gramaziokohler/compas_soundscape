@@ -1,7 +1,7 @@
 /**
  * SimulationResultContent Component
  *
- * Renders the results of a simulation (metrics and IR upload) for Choras and Pyroomacoustics cards.
+ * Renders the results of a simulation (metrics and IR upload) for Pyroomacoustics and PFFDTD cards.
  * Displayed in the `afterContent` slot of the card after completion.
  *
  * When grid receivers are detected in sourceReceiverIRMapping, the text metrics block
@@ -20,8 +20,11 @@ import { CardSelect } from '@/components/ui/CardSelect';
 import { NumberField } from '@/components/ui/NumberField';
 import type { GradientMetric } from '@/store/uiStore';
 import { useUIStore } from '@/store/uiStore';
-import { useGridListenersStore } from '@/store';
-import { fetchPerReceiverMetrics, fetchPyroomAcousticMetrics, fetchChorasAcousticMetrics, buildAcousticMetricsFromIRMapping, type PerReceiverMetrics, type AcousticParameters } from '@/utils/acousticMetrics';
+import { useGridListenersStore, usePffdtdFreeStore } from '@/store';
+import { fetchPerReceiverMetrics, fetchPyroomAcousticMetrics, fetchPffdtdPairMetrics, aggregateMappedPairMetrics, buildAcousticMetricsFromIRMapping, type PairMetrics, type PerReceiverMetrics, type AcousticParameters } from '@/utils/acousticMetrics';
+import { PffdtdFieldResults } from './PffdtdFieldResults';
+import { PffdtdFreePositioningResults } from './PffdtdFreePositioningResults';
+import { Badge } from '@/components/ui/Badge';
 import { GradientMapManager } from '@/lib/three/gradient-map-manager';
 import { SIMULATION_POSITION_THRESHOLD } from '@/utils/constants';
 
@@ -289,8 +292,10 @@ export function SimulationResultContent({
 
   const sourceReceiverIRMapping: SourceReceiverIRMapping | undefined = simulationConfig.sourceReceiverIRMapping;
   const simulationId: string | undefined = simulationConfig.currentSimulationId;
-  const simType: 'pyroomacoustics' | 'choras' | undefined =
-    config.type === 'pyroomacoustics' || config.type === 'choras' ? config.type : undefined;
+  const simType: 'pyroomacoustics' | 'pffdtd' | undefined =
+    config.type === 'pyroomacoustics' || config.type === 'pffdtd' ? config.type : undefined;
+  // Wave-based IRs carry no content above the grid's max frequency.
+  const bandLimitHz = config.type === 'pffdtd' ? config.settings.fmax : null;
   // Import-irs cards carry per-IR metrics in their mapping — no simulation to fetch.
   const isImportIrs = config.type === 'import-irs';
   const simulationSourcePositions = (simulationConfig.simulationPositions as {
@@ -298,6 +303,8 @@ export function SimulationResultContent({
   } | undefined)?.sources;
 
   const gridListeners = useGridListenersStore((s) => s.gridListeners);
+  // Free-source runs start at the listeners: no per-source field outputs to show.
+  const freeSourceRun = usePffdtdFreeStore((s) => (simulationId ? s.grids[simulationId]?.block?.mode === 'source' : false));
   // ── Position mismatch detection ─────────────────────────────────────────
   const mismatchInfo = useMemo<{
     names: string[];
@@ -431,26 +438,34 @@ export function SimulationResultContent({
   }, [isImportIrs, sourceReceiverIRMapping]);
 
   // Fetch aggregate acoustic metrics for the text-metrics panel (non-grid simulations)
+  const [pairMetrics, setPairMetrics] = useState<PairMetrics | null>(null);
   useEffect(() => {
     if (isImportIrs) return;
     if (canUseGrid || !simulationId || !simType) {
       setAcousticParams(null);
+      setPairMetrics(null);
       return;
     }
     let cancelled = false;
     setMetricsLoading(true);
-    const fetchMetrics = simType === 'pyroomacoustics'
-      ? fetchPyroomAcousticMetrics
-      : fetchChorasAcousticMetrics;
-    fetchMetrics(simulationId)
-      .then((params) => {
-        if (!cancelled) setAcousticParams(params);
-      })
-      .finally(() => {
-        if (!cancelled) setMetricsLoading(false);
-      });
+    if (simType === 'pffdtd') {
+      // Per-pair, fetched once: free-positioning moves re-aggregate locally (below).
+      fetchPffdtdPairMetrics(simulationId)
+        .then((m) => { if (!cancelled) setPairMetrics(m); })
+        .finally(() => { if (!cancelled) setMetricsLoading(false); });
+    } else {
+      fetchPyroomAcousticMetrics(simulationId)
+        .then((params) => { if (!cancelled) setAcousticParams(params); })
+        .finally(() => { if (!cancelled) setMetricsLoading(false); });
+    }
     return () => { cancelled = true; };
   }, [isImportIrs, canUseGrid, simulationId, simType]);
+
+  const wavePairParams = useMemo(
+    () => (simType === 'pffdtd' && !canUseGrid ? aggregateMappedPairMetrics(sourceReceiverIRMapping, pairMetrics) : null),
+    [simType, canUseGrid, sourceReceiverIRMapping, pairMetrics],
+  );
+  const shownParams = simType === 'pffdtd' ? wavePairParams : acousticParams;
 
   // ── Gradient map: compute point values and dispatch to uiStore ──────────
   useEffect(() => {
@@ -611,7 +626,32 @@ export function SimulationResultContent({
       ) : metricsLoading ? (
         <MetricsLoading />
       ) : (
-        acousticParams && <AcousticMetricsPanel params={acousticParams} />
+        shownParams && <AcousticMetricsPanel params={shownParams} />
+      )}
+
+      {bandLimitHz !== null && (
+        <div className="flex">
+          <Badge
+            variant="neutral"
+            onBlueBackground={onBlueBackground}
+            title="The wave solver resolves frequencies up to the grid's max frequency only"
+          >
+            band-limited to {bandLimitHz} Hz
+          </Badge>
+        </div>
+      )}
+
+      {/* Wave-based field plane: SPL map + pressure-wave animation */}
+      {config.type === 'pffdtd' && simulationId && isExpanded && (
+        <PffdtdFreePositioningResults configId={config.id} simulationId={simulationId} />
+      )}
+      {config.type === 'pffdtd' && simulationId && isExpanded && !freeSourceRun && (
+        <PffdtdFieldResults
+          configId={config.id}
+          simulationId={simulationId}
+          sourceDisplayNames={sourceDisplayNames}
+          onBlueBackground={onBlueBackground}
+        />
       )}
 
       {/* IR Library */}

@@ -27,13 +27,14 @@ import { generatedEventFieldsFromConfig } from '@/utils/event-factory';
 import { parseSoundCopyIndex } from '@/lib/audio/utils/variant-sound-id';
 import {
   importPyroomIRFiles,
-  importChorasIRFiles,
+  importPffdtdIRFiles,
   buildSimulationResultsText,
-  buildChorasSimulationResultsText,
+  buildPffdtdSimulationResultsText,
 } from '@/utils/acousticMetrics';
 import type { JobType, JobRecord } from '@/types';
 import type { ActiveJob } from '@/services/api';
-import type { PyroomAcousticsSimulationConfig } from '@/types/acoustics';
+import type { PffdtdSimulationConfig, PyroomAcousticsSimulationConfig } from '@/types/acoustics';
+import type { PffdtdJobPartial } from '@/types/pffdtd';
 
 const POLL_INTERVAL_MS = 1500;
 
@@ -381,7 +382,7 @@ function startPolling(jobType: JobType, jobId: string, record: JobRecord): void 
       }
 
       // Update progress indicators in relevant stores
-      updateProgress(jobType, status.progress, status.status, record);
+      updateProgress(jobType, status.progress, status.status, record, status.partial);
     } catch {
       clearInterval(interval);
       removeInflightJob(jobId);
@@ -391,7 +392,15 @@ function startPolling(jobType: JobType, jobId: string, record: JobRecord): void 
   }, POLL_INTERVAL_MS);
 }
 
-function updateProgress(jobType: JobType, progress: number, statusText: string, record: JobRecord): void {
+/** Card fields carried by a running PFFDTD job's milestones. */
+function pffdtdPartialPatch(partial: PffdtdJobPartial | null): Partial<PffdtdSimulationConfig> {
+  return {
+    runVoxelised: partial?.voxelised === true,
+    ...(partial?.problems ? { runProblems: partial.problems } : {}),
+  };
+}
+
+function updateProgress(jobType: JobType, progress: number, statusText: string, record: JobRecord, partial?: unknown): void {
   switch (jobType) {
     case 'sound':
       useSoundscapeStore.setState({
@@ -416,13 +425,14 @@ function updateProgress(jobType: JobType, progress: number, statusText: string, 
       });
       break;
     case 'pyroom':
-    case 'choras': {
+    case 'pffdtd': {
       const index = findAcousticsConfigIndex(record.jobId, record.jobId, record);
       if (index >= 0) {
         useAcousticsSimulationStore.getState().handleUpdateConfig(index, {
           isRunning: true,
           progress,
           status: statusText,
+          ...(jobType === 'pffdtd' ? pffdtdPartialPatch(partial as PffdtdJobPartial | null) : {}),
         } as any);
       }
       break;
@@ -451,7 +461,7 @@ function resetJobState(jobType: JobType, record: JobRecord): void {
       });
       break;
     case 'pyroom':
-    case 'choras': {
+    case 'pffdtd': {
       const index = findAcousticsConfigIndex(record.jobId, record.jobId, record);
       if (index >= 0) {
         useAcousticsSimulationStore.getState().handleUpdateConfig(index, {
@@ -570,8 +580,8 @@ async function processCompletedJob(
     case 'pyroom':
       await recoverAcousticsJob('pyroom', jobId, result, record);
       break;
-    case 'choras':
-      await recoverAcousticsJob('choras', jobId, result, record);
+    case 'pffdtd':
+      await recoverAcousticsJob('pffdtd', jobId, result, record);
       break;
     case 'loop':
       recoverLoopJob(result, record);
@@ -584,14 +594,14 @@ async function processCompletedJob(
 /**
  * Restore a completed (or still-running, then completed) acoustics simulation
  * job into the matching `acousticsSimulationStore` card — the UI source of
- * truth for pyroom/choras. Re-imports the IRs, rebuilds the metrics text and
+ * truth for pyroom/pffdtd. Re-imports the IRs, rebuilds the metrics text and
  * the simulation-time position snapshot, and marks the card complete.
  *
  * Idempotent: if the card already holds this simulation's results, it only
  * clears the in-flight run id (no duplicate IR upload).
  */
 async function recoverAcousticsJob(
-  jobType: 'pyroom' | 'choras',
+  jobType: 'pyroom' | 'pffdtd',
   jobId: string,
   result: any,
   record: JobRecord,
@@ -635,7 +645,7 @@ async function recoverAcousticsJob(
 
   const irImportResult = jobType === 'pyroom'
     ? await importPyroomIRFiles(simulationId, irFiles)
-    : await importChorasIRFiles(simulationId, irFiles);
+    : await importPffdtdIRFiles(simulationId, irFiles);
 
   if (irImportResult.importedCount === 0) {
     store.handleUpdateConfig(index, {
@@ -649,7 +659,7 @@ async function recoverAcousticsJob(
 
   const resultsText = jobType === 'pyroom'
     ? await buildSimulationResultsText(simulationId)
-    : await buildChorasSimulationResultsText(simulationId, irImportResult);
+    : await buildPffdtdSimulationResultsText(simulationId);
 
   const simulationPositions = buildRecoveredSimulationPositions();
 

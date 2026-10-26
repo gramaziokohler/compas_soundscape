@@ -1,8 +1,9 @@
 """Turn raw PFFDTD receiver signals into band-limited IRs at the backend sample rate.
 
 Convention: the output sequence's DTFT equals the transfer function for a unit-sample
-source, so the direct path has |H| = 1/(4 pi r) -- the same scale as pyroomacoustics IRs
-(A1 point-source test, within 0.05 dB on the Cartesian grid).
+source, so the direct path has |H| = 1/(4 pi r) (A1 point-source test, within 0.05 dB on the
+Cartesian grid). services/pffdtd_job.py multiplies by PFFDTD_IR_REFERENCE_GAIN = 4 pi so the WAVs
+are re the free field at 1 m (1/r), the scale of the pyroomacoustics IRs.
 """
 
 from __future__ import annotations
@@ -11,8 +12,7 @@ import numpy as np
 import resampy
 from scipy.signal import butter, sosfilt, sosfiltfilt
 
-import pffdtd_backend  # noqa: F401  (puts upstream python/ on sys.path)
-from air_abs.visco_filter import apply_visco_filter
+from pffdtd_backend.air_absorption import apply_visco_filter  # compiled upstream air_abs.visco_filter
 
 FOA_PROBE_OFFSETS = np.array([[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]], np.float64)
 

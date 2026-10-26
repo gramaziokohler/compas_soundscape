@@ -2,7 +2,7 @@
  * SimulationGeometrySettings — Advanced settings > Acoustics > Simulation geometry.
  *
  * How the Speckle acoustic layer is turned into the simulation mesh, for every
- * engine (pyroomacoustics and Choras) and for the pre-simulation geometry
+ * engine (pyroomacoustics) and for the pre-simulation geometry
  * check. Changing a value marks existing geometry checks as outdated.
  */
 

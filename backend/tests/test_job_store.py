@@ -230,7 +230,7 @@ def test_pool_depths():
         await api.enqueue(JOB_TYPE_PYROOMACOUSTICS, "s1", {})
         await api.enqueue(JOB_TYPE_PYROOMACOUSTICS, "s1", {})
         depths = await api.pool_depths()
-        assert depths == {"gpu": 1, "sa3": 0, "cpu": 2, "choras": 0, "pffdtd": 0}
+        assert depths == {"gpu": 1, "sa3": 0, "cpu": 2, "pffdtd": 0}
 
     run(body())
 

@@ -50,9 +50,6 @@ import {
   DEFAULT_SPEED_OF_SOUND,
   SPEED_OF_SOUND_MIN,
   SPEED_OF_SOUND_MAX,
-  CHORAS_DE_DEFAULT_LC,
-  CHORAS_DE_LC_MIN,
-  CHORAS_DE_LC_MAX,
   DEFAULT_DBFS,
   DBFS_MIN,
   DBFS_MAX,
@@ -133,7 +130,7 @@ type SettingKey =
   | 'label-sprites' | 'hovering-highlight' | 'sound-spheres' | 'playing-highlight' | 'listeners' | 'ground-grid'
   | 'appearance' | 'interface-detail'
   | 'grid-spacing' | 'grid-color' | 'grid-labels'
-  | 'sound-speed' | 'mesh-length' | 'simulation-geometry'
+  | 'sound-speed' | 'simulation-geometry'
   | 'tokens'
   | 'llm-model' | 'tts-model' | 'tts-language' | 'audio-model'
   | 'diffusion-steps' | 'negative-prompt' | 'noise-reduction' | 'trim-silence'
@@ -162,7 +159,6 @@ const SETTINGS: SettingEntry[] = [
   { section: 'display', key: 'grid-labels', terms: ['grid labels', 'grid numbers', 'axis labels', 'labels'] },
 
   { section: 'acoustic', key: 'sound-speed', terms: ['sound speed', 'speed', 'velocity'] },
-  { section: 'acoustic', key: 'mesh-length', terms: ['mesh length', 'lc', 'characteristic length', 'mesh'] },
   { section: 'acoustic', key: 'listener-orientation', terms: ['listener orientation', 'orientation', 'listener', 'x', 'y', 'z'] },
   { section: 'acoustic', key: 'simulation-geometry', terms: ['simulation geometry', 'weld', 'tolerance', 'coplanar', 'merge', 'two-sided', 'double-sided', 'orientation', 'preflight', 'geometry check'] },
 
@@ -631,8 +627,6 @@ export function AdvancedSettingsSection({
 
   const globalSoundSpeed = useUIStore((s) => s.globalSoundSpeed);
   const setGlobalSoundSpeed = useUIStore((s) => s.setGlobalSoundSpeed);
-  const globalMeshLc = useUIStore((s) => s.globalMeshLc);
-  const setGlobalMeshLc = useUIStore((s) => s.setGlobalMeshLc);
   const showSpectrograms = useUIStore((s) => s.showSpectrograms);
   const setShowSpectrograms = useUIStore((s) => s.setShowSpectrograms);
   const enableAutoSave = useUIStore((s) => s.enableAutoSave);
@@ -811,23 +805,9 @@ export function AdvancedSettingsSection({
                   unit="m/s"
                   onChange={setGlobalSoundSpeed}
                   defaultValue={DEFAULT_SPEED_OF_SOUND}
-                  hoverText="Applied to all simulation engines (Choras DE/DG, pyroomacoustics, Resonance Audio). Double-click to reset to 343 m/s."
+                  hoverText="Applied to all                   simulation engines (pyroomacoustics, Resonance Audio). Double-click to reset to 343 m/s."
                 />
-              )}
-              {isVisible('mesh-length') && (
-                <RangeSlider
-                  label="Mesh length (lc)"
-                  value={globalMeshLc}
-                  min={CHORAS_DE_LC_MIN}
-                  max={CHORAS_DE_LC_MAX}
-                  step={0.1}
-                  unit="m"
-                  onChange={setGlobalMeshLc}
-                  defaultValue={CHORAS_DE_DEFAULT_LC}
-                  hoverText="Characteristic mesh length for DE method. Double-click to reset to 1.5 m."
-                />
-              )}
-              {isVisible('listener-orientation') && (
+              )}              {isVisible('listener-orientation') && (
                 <CollapsibleGroup title="Listener orientation" forceExpanded={isSearchActive}>
                   {(['x', 'y', 'z'] as const).map((axis) => (
                     <RangeSlider

@@ -48,3 +48,26 @@ describe('restoreSoundscapeState', () => {
     expect(soundConfigs[1].uploadedAudioUrl).toBe('/audio/b0.wav');
   });
 });
+
+describe('wave-based (PFFDTD) free positioning settings', () => {
+  const saveWith = (settings: Record<string, unknown> | undefined): SoundscapeData => ({
+    ...staleSave(),
+    simulation_configs: [{ id: 'w1', display_name: 'Wave', type: 'pffdtd', state: 'before-simulation', settings }],
+  }) as unknown as SoundscapeData;
+
+  const restoredSettings = (settings: Record<string, unknown> | undefined) => {
+    const cfg = restoreSoundscapeState(saveWith(settings), '/audio').simulationConfigs[0];
+    if (cfg.type !== 'pffdtd') throw new Error('expected a wave-based card');
+    return cfg.settings;
+  };
+
+  it('restores the free mode and grid spacing', () => {
+    expect(restoredSettings({ simulation_mode: 'foa', free_mode: 'source', free_grid_spacing: 0.75 }))
+      .toMatchObject({ free_mode: 'source', free_grid_spacing: 0.75 });
+  });
+
+  it('defaults older or invalid saves to off at the default spacing', () => {
+    expect(restoredSettings({ simulation_mode: 'mono' })).toMatchObject({ free_mode: 'off', free_grid_spacing: 0.5 });
+    expect(restoredSettings({ simulation_mode: 'mono', free_mode: 'sideways' })).toMatchObject({ free_mode: 'off' });
+  });
+});

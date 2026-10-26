@@ -15,6 +15,21 @@ import type { ModelVersionImpactReport, ModelVersionImpactRequest } from '@/type
 import type { SoundscapeSavePayload, SoundscapeSaveResponse, SoundscapeLoadResponse, SoundscapeStats } from '@/types/soundscape';
 import type { SendScenesRequest, SendScenesResponse } from '@/types/sceneTransfer';
 import type { PreflightJobResult, PreflightPayload, SimulationEngine, SimulationMeshSettings } from '@/types/simulationPreflight';
+import type {
+  PffdtdAnimationJobResult,
+  PffdtdFreeGridPoints,
+  PffdtdFreeIRFailure,
+  PffdtdFreeIRResponse,
+  PffdtdJobPartial,
+  PffdtdJobResult,
+  PffdtdResultsJson,
+  PffdtdSettings,
+  PffdtdStatus,
+  PffdtdVoxelPoints,
+  PffdtdVoxelPreviewJobResult,
+  PffdtdVoxelPreviewPayload,
+} from '@/types/pffdtd';
+import type { SimulationGeometryRequest } from '@/utils/simulationRequest';
 import type { StudyConfig, StudyEventBatch, StudySnapshotUpload, StudyMomentCreate, StudyMomentNote } from '@/types/study';
 
 /**
@@ -214,6 +229,21 @@ function toLegacyJobStatus(job: UnifiedJobStatus) {
   };
 }
 
+/** Geometry form fields shared by the PFFDTD run and voxel preview (pyroomacoustics fields, no scattering). */
+function pffdtdGeometryForm(request: SimulationGeometryRequest, meshSettings?: SimulationMeshSettings): FormData {
+  const formData = new FormData();
+  formData.append('speckle_project_id', request.projectId);
+  formData.append('speckle_version_id', request.versionId);
+  formData.append('object_materials', JSON.stringify(request.objectMaterials));
+  formData.append('layer_name', request.layerName);
+  if (request.geometryObjectIds?.length) {
+    formData.append('geometry_object_ids', JSON.stringify(request.geometryObjectIds));
+  }
+  formData.append('source_receiver_pairs', JSON.stringify(request.sourceReceiverPairs));
+  if (meshSettings) formData.append('mesh_settings', JSON.stringify(meshSettings));
+  return formData;
+}
+
 export interface ServiceVersionInfo {
   name: string;
   version: string;
@@ -240,9 +270,9 @@ export interface ServiceVersions {
   bbc: ServiceVersionInfo;
   llm_providers: LLMProviders;
   yamnet: ServiceVersionInfo;
-  acousticDE: ServiceVersionInfo;
-  edg_acoustics: ServiceVersionInfo;
   'gemini-tts': ServiceVersionInfo;
+  /** PFFDTD wave solver (absent on older backends). */
+  pffdtd?: ServiceVersionInfo & { available?: boolean };
 }
 
 export interface TokenStatus {
@@ -328,7 +358,6 @@ const PREF_WIRE_KEYS: Record<keyof UserPreferences, string> = {
   groundGridSpacing: 'ground_grid_spacing',
   groundGridColor: 'ground_grid_color',
   globalSoundSpeed: 'global_sound_speed',
-  globalMeshLc: 'global_mesh_lc',
   llmModel: 'llm_model',
   ttsModel: 'tts_model',
   ttsLanguage: 'tts_language',
@@ -1298,8 +1327,6 @@ export const apiService = {
     }
   },
 
-  // Choras Acoustic Simulation
-
   // Pyroomacoustics Acoustic Simulation
 
   /**
@@ -1639,162 +1666,273 @@ export const apiService = {
     }
   },
 
-  // ─── Choras (DE/DG) API Methods ─────────────────────────────────────────
+  // ─── PFFDTD (wave-based GPU FDTD) API Methods ───────────────────────────
 
-  /**
-   * Get available absorption materials for Choras (DE/DG) simulations.
-   */
-  async getChorasMaterials(): Promise<Array<{
-    id: string;
-    name: string;
-    description?: string;
-    coeffs: number[];
-    center_freqs: number[];
-    absorption: number;
-  }>> {
-    try {
-      const response = await fetchWithErrorHandling(
-        `${API_BASE_URL}/api/choras/materials`,
-        undefined,
-        'Get Choras materials'
-      );
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({ detail: 'Failed to get Choras materials' }));
-        throw new Error(error.detail || 'Failed to get Choras materials');
-      }
-      return response.json();
-    } catch (error) {
-      handleApiError(error, 'Get Choras materials');
-    }
+  /** Whether this deployment can run PFFDTD (env + built engine). */
+  async getPffdtdStatus(): Promise<PffdtdStatus> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/pffdtd/status`,
+      undefined,
+      'PFFDTD status'
+    );
+    if (!response.ok) throw new Error('Failed to get PFFDTD status');
+    return response.json();
   },
 
   /**
-   * Start a Choras (DE or DG) acoustic simulation from a Speckle model.
-   * Returns immediately with a simulation_id — poll getChorasSimulationStatus()
-   * for live progress updates.
+   * Enqueue a wave-based simulation on the PFFDTD worker. Returns the unified
+   * job id; poll with getPffdtdSimulationStatus().
    */
-  async runChorasSimulationSpeckle(
-    speckleProjectId: string,
-    speckleVersionId: string,
-    objectMaterials: Record<string, string>,
-    layerName: string,
+  async runPffdtdSimulationSpeckle(
+    request: SimulationGeometryRequest,
     simulationName: string,
-    settings: {
-      simulation_method: 'DE' | 'DG';
-      de_c0?: number;
-      de_lc?: number;
-      dg_freq_upper_limit?: number;
-      dg_c0?: number;
-      dg_rho0?: number;
-      dg_poly_order?: number;
-      dg_ppw?: number;
-      dg_cfl?: number;
-    },
-    sourceReceiverPairs: Array<{
-      source_position: number[];
-      receiver_position: number[];
-      source_id: string;
-      receiver_id: string;
-    }>,
-    geometryObjectIds?: string[],
+    settings: PffdtdSettings,
     meshSettings?: SimulationMeshSettings,
-  ): Promise<{ simulation_id: string } & { job_id: string }> {
-    try {
-      const formData = new FormData();
-      formData.append('simulation_name', simulationName);
-      formData.append('speckle_project_id', speckleProjectId);
-      formData.append('speckle_version_id', speckleVersionId);
-      formData.append('object_materials', JSON.stringify(objectMaterials));
-      formData.append('layer_name', layerName);
-      formData.append('simulation_method', settings.simulation_method);
-      if (meshSettings) formData.append('mesh_settings', JSON.stringify(meshSettings));
+  ): Promise<{ job_id: string; position: number; total: number }> {
+    const formData = pffdtdGeometryForm(request, meshSettings);
+    formData.append('simulation_name', simulationName);
+    formData.append('simulation_mode', settings.simulation_mode);
+    formData.append('fmax', String(settings.fmax));
+    formData.append('ppw', String(settings.ppw));
+    formData.append('duration', String(settings.duration));
+    formData.append('air_absorption', String(settings.air_absorption));
+    formData.append('free_mode', settings.free_mode);
+    formData.append('free_grid_spacing', String(settings.free_grid_spacing));
 
-      if (settings.de_c0 !== undefined) formData.append('de_c0', String(settings.de_c0));
-      if (settings.de_lc !== undefined) formData.append('de_lc', String(settings.de_lc));
-      if (settings.dg_freq_upper_limit !== undefined) formData.append('dg_freq_upper_limit', String(settings.dg_freq_upper_limit));
-      if (settings.dg_c0 !== undefined) formData.append('dg_c0', String(settings.dg_c0));
-      if (settings.dg_rho0 !== undefined) formData.append('dg_rho0', String(settings.dg_rho0));
-      if (settings.dg_poly_order !== undefined) formData.append('dg_poly_order', String(settings.dg_poly_order));
-      if (settings.dg_ppw !== undefined) formData.append('dg_ppw', String(settings.dg_ppw));
-      if (settings.dg_cfl !== undefined) formData.append('dg_cfl', String(settings.dg_cfl));
-
-      if (geometryObjectIds?.length) {
-        formData.append('geometry_object_ids', JSON.stringify(geometryObjectIds));
-      }
-      formData.append('source_receiver_pairs', JSON.stringify(sourceReceiverPairs));
-
-      const response = await fetchWithErrorHandling(
-        `${API_BASE_URL}/api/choras/run-simulation-speckle`,
-        { method: 'POST', body: formData },
-        'Start Choras Speckle simulation'
-      );
-
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({ detail: 'Choras simulation failed' }));
-        throw new Error(error.detail || 'Choras simulation failed');
-      }
-      const json = await response.json();
-      return { ...json, simulation_id: json.job_id };
-    } catch (error) {
-      handleApiError(error, 'Start Choras Speckle simulation');
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/pffdtd/run-simulation-speckle`,
+      { method: 'POST', body: formData },
+      'Run wave-based simulation'
+    );
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: 'Wave-based simulation failed' }));
+      throw new Error(err.detail || 'Wave-based simulation failed');
     }
+    return response.json();
   },
 
-  /**
-   * Poll the status of a running (or recently completed) Choras simulation (via
-   * unified GET /api/jobs/{id}).
-   * Call every ~1 second while isRunning=true.
-   */
-  async getChorasSimulationStatus(simulationId: string): Promise<{
-    simulation_id: string;
+  /** Poll a wave-based simulation (unified GET /api/jobs/{id}). */
+  async getPffdtdSimulationStatus(jobId: string): Promise<{
     progress: number;
     status: string;
     completed: boolean;
     cancelled: boolean;
     error: string | null;
-    result?: {
-      simulation_id: string;
-      message: string;
-      ir_files: string[];
-      results_file: string;
-      method: string;
-    } | null;
-    queue_position?: number | null;
-    queue_total?: number | null;
+    result: PffdtdJobResult | null;
+    partial: PffdtdJobPartial | null;
+    queue_position: number | null;
+    queue_total: number | null;
   }> {
-    const job = await getUnifiedJobStatus(simulationId);
-    return { simulation_id: simulationId, ...toLegacyJobStatus(job) };
+    const job = await getUnifiedJobStatus(jobId);
+    return toLegacyJobStatus(job);
+  },
+
+  async cancelPffdtdSimulation(jobId: string): Promise<void> {
+    await cancelUnifiedJob(jobId);
   },
 
   /**
-   * Signal the backend to cancel a running Choras simulation (via unified
-   * POST /api/jobs/{id}/cancel). The worker kills the child process.
+   * Generate the wave animation of a finished wave-based run on the horizontal
+   * plane at `planeZ` (GPU job on the run's kept voxel grid). Poll with
+   * getPffdtdAnimationStatus(); the results JSON `field` block then holds the frames.
    */
-  async cancelChorasSimulation(simulationId: string): Promise<void> {
-    await cancelUnifiedJob(simulationId);
-  },
-
-  /**
-   * Retrieve a Choras simulation WAV file by filename.
-   */
-  async getChorasIRFile(simulationId: string, irFilename: string): Promise<Blob> {
-    try {
-      const url = `${API_BASE_URL}/api/choras/get-result-file/${simulationId}/wav?ir_filename=${encodeURIComponent(irFilename)}`;
-
-      const response = await fetchWithErrorHandling(
-        url,
-        undefined,
-        'Get Choras IR file'
-      );
-
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({ detail: 'Failed to get Choras IR file' }));
-        throw new Error(error.detail || 'Failed to get Choras IR file');
-      }
-      return response.blob();
-    } catch (error) {
-      handleApiError(error, 'Get Choras IR file');
+  async runPffdtdAnimation(
+    simulationId: string,
+    planeZ: number,
+    animationMs: number,
+  ): Promise<{ job_id: string; position: number; total: number }> {
+    const formData = new FormData();
+    formData.append('simulation_id', simulationId);
+    formData.append('plane_z', String(planeZ));
+    formData.append('animation_ms', String(animationMs));
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/pffdtd/animation`,
+      { method: 'POST', body: formData },
+      'Generate wave animation'
+    );
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: 'Failed to start the wave animation' }));
+      throw new Error(err.detail || 'Failed to start the wave animation');
     }
+    return response.json();
+  },
+
+  /** Poll a wave-animation job (unified GET /api/jobs/{id}). */
+  async getPffdtdAnimationStatus(jobId: string): Promise<{
+    progress: number;
+    status: string;
+    completed: boolean;
+    cancelled: boolean;
+    error: string | null;
+    result: PffdtdAnimationJobResult | null;
+    queue_position: number | null;
+    queue_total: number | null;
+  }> {
+    const job = await getUnifiedJobStatus(jobId);
+    return toLegacyJobStatus(job);
+  },
+
+  async cancelPffdtdAnimation(jobId: string): Promise<void> {
+    await cancelUnifiedJob(jobId);
+  },
+
+  /** One IR WAV of a wave-based simulation. */
+  async getPffdtdIRFile(simulationId: string, irFilename: string): Promise<Blob> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/pffdtd/get-result-file/${simulationId}/wav?ir_filename=${encodeURIComponent(irFilename)}`,
+      undefined,
+      'Get wave-based IR file'
+    );
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: 'Failed to retrieve IR file' }));
+      throw new Error(err.detail || 'Failed to retrieve IR file');
+    }
+    return response.blob();
+  },
+
+  /**
+   * IRs of a moved free listener / source of a free-positioning run (the nearest
+   * grid point's, one per fixed source or listener). Latest request per
+   * `objectId` wins; pass an AbortSignal to cancel a superseded one.
+   */
+  async getPffdtdFreeIR(
+    simulationId: string,
+    objectId: string,
+    position: [number, number, number],
+    signal?: AbortSignal,
+  ): Promise<{ ok: true; data: PffdtdFreeIRResponse } | { ok: false; failure: PffdtdFreeIRFailure; message: string }> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/pffdtd/free-ir`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ simulation_id: simulationId, object_id: objectId, position }),
+        signal,
+      },
+      'Get free-positioning IR'
+    );
+    if (response.ok) return { ok: true, data: await response.json() };
+    const err = await response.json().catch(() => ({ detail: null }));
+    const detail = err.detail as { code?: string; message?: string } | string | null;
+    const message = typeof detail === 'string' ? detail : detail?.message ?? 'Failed to derive the IR';
+    if (response.status === 404) return { ok: false, failure: 'expired', message };
+    if (response.status === 409 && typeof detail === 'object' && detail?.code === 'outside_grid') {
+      return { ok: false, failure: 'outside_grid', message };
+    }
+    if (response.status === 409) return { ok: false, failure: 'superseded', message };
+    return { ok: false, failure: 'error', message };
+  },
+
+  /** Candidate grid of a free-positioning run; null when expired (404). */
+  async getPffdtdFreeGridPoints(simulationId: string): Promise<PffdtdFreeGridPoints | null> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/pffdtd/free-grid/${simulationId}/points`,
+      undefined,
+      'Get free-positioning grid'
+    );
+    if (response.status === 404) return null;
+    if (!response.ok) throw new Error('Failed to load the free-positioning grid');
+    const buf = await response.arrayBuffer();
+    const n = Math.floor(buf.byteLength / 13); // float32 xyz + uint8 valid per point
+    return { positions: new Float32Array(buf, 0, 3 * n), valid: new Uint8Array(buf, 12 * n, n) };
+  },
+
+  /** Results JSON of a wave-based simulation (metrics + field block); null when expired. */
+  async getPffdtdResults(simulationId: string): Promise<PffdtdResultsJson | null> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/pffdtd/get-result-file/${simulationId}/json`,
+      undefined,
+      'Get wave-based results'
+    );
+    if (response.status === 404) return null;
+    if (!response.ok) throw new Error('Failed to load wave-based results');
+    return response.json();
+  },
+
+  /**
+   * One binary field file (SPL map, animation frames, plane mask) of a
+   * wave-based simulation. Returns null when the file has expired (404).
+   */
+  async getPffdtdFieldFile(simulationId: string, name: string): Promise<ArrayBuffer | null> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/pffdtd/get-result-file/${simulationId}/field?name=${encodeURIComponent(name)}`,
+      undefined,
+      'Get wave-based field file'
+    );
+    if (response.status === 404) return null;
+    if (!response.ok) throw new Error('Failed to load wave-based field data');
+    return response.arrayBuffer();
+  },
+
+  /**
+   * Enqueue a voxel preview (voxelisation only, no solve) of the card's
+   * geometry at the given grid settings. Poll with getPffdtdVoxelPreviewStatus().
+   */
+  async runPffdtdVoxelPreview(
+    request: SimulationGeometryRequest,
+    grid: { fmax: number; ppw: number },
+    meshSettings?: SimulationMeshSettings,
+  ): Promise<{ job_id: string; position: number; total: number }> {
+    const formData = pffdtdGeometryForm(request, meshSettings);
+    formData.append('fmax', String(grid.fmax));
+    formData.append('ppw', String(grid.ppw));
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/pffdtd/voxel-preview`,
+      { method: 'POST', body: formData },
+      'Run voxel preview'
+    );
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: 'Voxel preview failed' }));
+      throw new Error(err.detail || 'Voxel preview failed');
+    }
+    return response.json();
+  },
+
+  /** Poll a voxel-preview job (unified GET /api/jobs/{id}). */
+  async getPffdtdVoxelPreviewStatus(jobId: string): Promise<{
+    progress: number;
+    status: string;
+    completed: boolean;
+    cancelled: boolean;
+    error: string | null;
+    result: PffdtdVoxelPreviewJobResult | null;
+  }> {
+    const job = await getUnifiedJobStatus(jobId);
+    return toLegacyJobStatus(job);
+  },
+
+  async cancelPffdtdVoxelPreview(jobId: string): Promise<void> {
+    await cancelUnifiedJob(jobId);
+  },
+
+  async getPffdtdVoxelPreview(previewId: string): Promise<PffdtdVoxelPreviewPayload> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/pffdtd/voxel-preview/${previewId}`,
+      undefined,
+      'Load voxel preview'
+    );
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: 'Voxel preview not found' }));
+      throw new Error(err.detail || 'Voxel preview not found');
+    }
+    return response.json();
+  },
+
+  /** Boundary-node points: float32 xyz [3·n] followed by uint8 material index [n]. */
+  async getPffdtdVoxelPoints(previewId: string, nPoints: number): Promise<PffdtdVoxelPoints> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/pffdtd/voxel-preview/${previewId}/points`,
+      undefined,
+      'Load voxel points'
+    );
+    if (!response.ok) throw new Error('Voxel points not found');
+    const buffer = await response.arrayBuffer();
+    const xyzBytes = nPoints * 3 * Float32Array.BYTES_PER_ELEMENT;
+    if (buffer.byteLength < xyzBytes + nPoints) throw new Error('Voxel points file is truncated');
+    return {
+      positions: new Float32Array(buffer, 0, nPoints * 3),
+      materials: new Uint8Array(buffer, xyzBytes, nPoints),
+    };
   },
 
   // Speckle API Methods
@@ -2326,12 +2464,13 @@ export const apiService = {
         case 'sound':
         case 'tts':
         case 'sed':
-        case 'choras':
         case 'llm':
         case 'loop':
           return type;
         case 'pyroomacoustics':
           return 'pyroom';
+        case 'pffdtd':
+          return 'pffdtd';
         default:
           return null;
       }

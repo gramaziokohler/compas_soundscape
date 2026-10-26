@@ -6,15 +6,13 @@
  * Manages simulation configurations, material assignments, and execution.
  *
  * Simulation execution is delegated to individual hooks:
- * - runChorasSimulation for Choras (DE/DG) simulations
  * - usePyroomAcousticsSimulation for Pyroomacoustics simulations
+ * - runPffdtdSimulation (acoustics/runPffdtdSimulation.ts) for wave-based (PFFDTD) simulations
  * 
  * ARCHITECTURE:
  *   AcousticsSection.tsx (orchestration layer)
-  ├── useAcousticsMaterials() - loads Choras materials
   ├── useAcousticsMaterials() - loads Pyroom materials
-  ├── SimulationSetupContent - renders Choras / Pyroom settings
-  │   ├── ChorasSimulationSettings
+  ├── SimulationSetupContent - renders Pyroom / PFFDTD settings
   │   └── PyroomAcousticsSimulationSettings
   ├── SimulationSummaryBar - footer count dots (left of Start Simulation)
   ├── ResonanceContent
@@ -44,7 +42,7 @@ import { CARD_TYPE_LABELS } from '@/types/card';
 import { useSpeckleStore, useAcousticsSimulationStore, useReceiversStore, useGridListenersStore, useAudioControlsStore, useSoundscapeStore, useAcousticLayerStore, useRightSidebarStore, notifyError, runWithoutUndo } from '@/store';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { useUIStore } from '@/store/uiStore';
-import { useSimulationPreflightStore, type RunPreflightArgs } from '@/store';
+import { useSimulationPreflightStore, usePffdtdVisualsStore, type RunPreflightArgs } from '@/store';
 import { useModelVersionStore } from '@/store';
 import { SimulationOutdatedNotice } from '@/components/layout/sidebar/acoustics/SimulationOutdatedNotice';
 import { SimulationVersionBadge } from '@/components/layout/sidebar/acoustics/SimulationVersionBadge';
@@ -57,27 +55,28 @@ import {
   SimulationResultContent,
   getSimulationResultCollapsedInfo,
 } from '@/components/layout/sidebar/acoustics/SimulationResultContent';
+import { PffdtdRunProblems } from '@/components/layout/sidebar/acoustics/PffdtdRunProblems';
 import { SimulationSetupContent } from '@/components/layout/sidebar/acoustics/SimulationSetupContent';
 import { SimulationSummaryBar } from '@/components/layout/sidebar/acoustics/SimulationSummaryBar';
+import { runPffdtdSimulation } from '@/components/layout/sidebar/acoustics/runPffdtdSimulation';
 import { SpeckleSurfaceMaterialsSection } from '@/components/acoustics/SpeckleSurfaceMaterialsSection';
 
 // Hooks
 import { useAcousticsMaterials } from '@/hooks/useAcousticsMaterials';
 import { useAutoHideUnassignedObjects } from '@/hooks/useAutoHideUnassignedObjects';
+import { usePffdtdStatus } from '@/hooks/usePffdtdStatus';
 // Utils
 import {
   importPyroomIRFiles,
   buildSimulationResultsText,
-  importChorasIRFiles,
-  buildChorasSimulationResultsText
 } from '@/utils/acousticMetrics';
 
 // Types
 import type {
   SimulationConfig,
   AcousticSimulationMode,
-  ChorasSimulationConfig,
   PyroomAcousticsSimulationConfig,
+  PffdtdSimulationConfig,
   GridListenerSnapshot,
 } from '@/types/acoustics';
 import type { CardType, CustomMenuItem } from '@/types/card';
@@ -384,7 +383,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   // ==========================================================================
   // Geometry readiness for simulation cards
   // ==========================================================================
-  // This must match exactly what runChorasSimulation / runPyroomSimulation consume:
+  // This must match exactly what runPyroomSimulation consumes:
   // they parse project_id + model_id from speckleData.url (the backend fetches
   // geometry from the Speckle server at run time). They do NOT use speckleData.object_id,
   // so that field must not gate the button. On the soundscape-restore bootstrap path
@@ -446,15 +445,10 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   }, [soundscapeData, mutedSounds, activeSoundParentIndex, isInSoundsStep, soundConfigsFromStore]);
 
   // Only fetch materials when a card of that type exists
-  const hasChorasCard = simulationConfigs.some(c => c.type === 'choras');
-  const hasPyroomCard = simulationConfigs.some(c => c.type === 'pyroomacoustics');
+  // Wave-based (PFFDTD) cards share the pyroomacoustics absorption database and `pyroom_` ids.
+  const hasPyroomCard = simulationConfigs.some(c => c.type === 'pyroomacoustics' || c.type === 'pffdtd');
+  const pffdtdStatus = usePffdtdStatus();
   const hasImportIrsCard = simulationConfigs.some(c => c.type === 'import-irs');
-
-  const { materials: chorasMaterials } = useAcousticsMaterials({
-    fetchMaterials: () => apiService.getChorasMaterials(),
-    idPrefix: 'choras',
-    enabled: hasChorasCard
-  });
 
   const { materials: pyroomMaterials } = useAcousticsMaterials({
     fetchMaterials: () => apiService.getPyroomacousticsMaterials(),
@@ -539,7 +533,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     onAddSimulationConfig(mode);
 
     // Check for large layers to exclude
-    if (geometryData && geometryData.face_entity_map && (mode === 'choras' || mode === 'pyroomacoustics')) {
+    if (geometryData && geometryData.face_entity_map && (mode === 'pyroomacoustics' || mode === 'pffdtd')) {
       const layerFaceCounts = new Map<string, number>();
 
       geometryData.face_entity_map.forEach((entityIndex, faceIndex) => {
@@ -595,7 +589,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         const simulationId = (config as any).currentSimulationRunId as string;
         const pollInterval = setInterval(async () => {
           try {
-            const statusData = await apiService.getChorasSimulationStatus(simulationId);
+            const statusData = await apiService.getPyroomacousticsSimulationStatus(simulationId);
             handleUpdateConfig(index, { progress: statusData.progress, status: statusData.status } as any);
             if (statusData.completed) {
               clearInterval(pollInterval);
@@ -641,7 +635,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       receivers: allReceivers,
       sounds: activeSoundscapeData,
       selectedVariants: useAudioControlsStore.getState().selectedVariants,
-      materialPrefix: config.type === 'choras' ? /^choras_/ : /^pyroom_/,
+      materialPrefix: /^pyroom_/,
     });
   }, [speckleData, allReceivers, activeSoundscapeData]);
 
@@ -650,7 +644,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     (config: SimulationConfig): { ok: true; args: RunPreflightArgs } | { ok: false; error: string } => {
       const built = buildCardRequest(config);
       if (!built.ok) return built;
-      const engine: SimulationEngine = config.type === 'choras' ? 'choras' : 'pyroomacoustics';
+      const engine: SimulationEngine = 'pyroomacoustics';
       const pySettings = config.type === 'pyroomacoustics' ? config.settings : null;
       const extra = { maxOrder: pySettings?.max_order, rayTracing: pySettings?.ray_tracing };
       return {
@@ -681,161 +675,33 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   }, [buildPreflightArgs]);
 
   /**
-   * Run Choras simulation.
-   * Starts the simulation (returns immediately with simulation_id),
-   * then polls /choras/simulation-status every second and routes
-   * progress updates to the Card progress bar.
+   * Voxel-preview inputs of a wave-based card (same geometry as its run). The
+   * wave solver works on the voxel grid, so it has no mesh geometry check:
+   * the voxel preview is its pre-simulation check.
    */
-  const runChorasSimulation = useCallback(async (index: number) => {
-    const config = simulationConfigs[index] as ChorasSimulationConfig;
-    if (!config || config.type !== 'choras') return;
-    // Inputs this run is made of — stored on completion as the Regenerate baseline.
-    const runSignature = captureGenerationSignature(config);
-
-    if (!speckleData) {
-      handleUpdateConfig(index, { error: 'No Speckle data' } as any);
-      return;
-    }
-
-    const settings = config.settings;
+  const buildVoxelPreviewArgs = useCallback((config: PffdtdSimulationConfig): BuildResult & { signature?: string } => {
     const built = buildCardRequest(config);
-    if (!built.ok) {
-      handleUpdateConfig(index, { error: built.error } as any);
+    if (!built.ok) return built;
+    const { fmax, ppw } = config.settings;
+    return { ...built, signature: simulationRequestSignature('pffdtd', built.request, simulationMeshSettings, { fmax, ppw }) };
+  }, [buildCardRequest, simulationMeshSettings]);
+
+  /** "Preview voxels" of a wave-based card. */
+  const runVoxelPreviewForCard = useCallback((config: PffdtdSimulationConfig) => {
+    const prepared = buildVoxelPreviewArgs(config);
+    if (!prepared.ok || !prepared.signature) {
+      notifyError(prepared.ok ? 'Voxel preview unavailable' : prepared.error, 'warning');
       return;
     }
-    const {
-      projectId, versionId, layerName, objectMaterials, geometryObjectIds,
-      sourceReceiverPairs, uniqueSourcePositions, sourceSoundToPosKey,
-    } = built.request;
-
-    handleUpdateConfig(index, { isRunning: true, progress: 0, status: 'Initializing...', error: null } as any);
-
-    const receiversList = allReceivers;
-
-    try {
-
-      // Override per-card fields with global acoustic parameters from uiStore
-      const { globalSoundSpeed, globalMeshLc } = useUIStore.getState();
-      const mergedSettings = {
-        ...settings,
-        de_c0: globalSoundSpeed,
-        dg_c0: globalSoundSpeed,
-        de_lc: globalMeshLc,
-      };
-
-      // Start simulation — returns immediately with simulation_id
-      const { simulation_id } = await apiService.runChorasSimulationSpeckle(
-        projectId,
-        versionId,
-        objectMaterials,
-        layerName,
-        config.display_name || 'Simulation',
-        mergedSettings,
-        sourceReceiverPairs,
-        geometryObjectIds,
-        useUIStore.getState().simulationMeshSettings,
-      );
-
-      // Store the running simulation ID so the cancel handler can reach it
-      handleUpdateConfig(index, { currentSimulationRunId: simulation_id } as any);
-      recordInflightJob(simulation_id, 'choras', { configId: config.id, instanceId: config.simulationInstanceId, versionId });
-
-      // Poll for progress every second
-      let statusMisses = 0;
-      const pollInterval = setInterval(async () => {
-        try {
-          let statusData;
-          try {
-            statusData = await apiService.getChorasSimulationStatus(simulation_id);
-            statusMisses = 0;
-          } catch (statusErr) {
-            if (++statusMisses < SIMULATION_STATUS_MISS_TOLERANCE) return; // transient (e.g. API restart)
-            throw statusErr;
-          }
-
-          // Update progress bar on every tick
-          handleUpdateConfig(index, { progress: statusData.progress, status: statusData.status } as any);
-
-          if (!statusData.completed) return; // keep polling
-
-          // ── Terminal states ──────────────────────────────────────────────
-          clearInterval(pollInterval);
-          pollIntervalsRef.current.delete(index);
-          removeInflightJob(simulation_id);
-
-          if (statusData.cancelled) {
-            handleUpdateConfig(index, { isRunning: false, progress: 0, status: 'Cancelled', currentSimulationRunId: null } as any);
-            return;
-          }
-
-          if (statusData.error) {
-            handleUpdateConfig(index, { isRunning: false, status: 'Error', error: statusData.error, currentSimulationRunId: null } as any);
-            return;
-          }
-
-          const result = statusData.result;
-          if (!result?.ir_files?.length) {
-            handleUpdateConfig(index, { isRunning: false, error: 'Simulation completed but generated no impulse responses.', currentSimulationRunId: null } as any);
-            return;
-          }
-
-          // ── Import IRs + build results text (same as before) ─────────────
-          const irImportResult = await importChorasIRFiles(result.simulation_id, result.ir_files);
-          logSimulationResult(index, 'choras', result.simulation_id, irImportResult);
-
-          if (irImportResult.importedCount > 0) {
-            const resultsText = await buildChorasSimulationResultsText(result.simulation_id, irImportResult);
-
-            handleUpdateConfig(index, {
-              importedIRMetadata: irImportResult.importedIRMetadataList[0],
-              isRunning: false,
-              status: 'Complete!',
-              progress: 100,
-              state: 'completed',
-              completedAt: Date.now(),
-              ...runSignature,
-              // Geometry this result was simulated on (drives the outdated check).
-              simulatedVersionId: versionId,
-              simulationResults: resultsText,
-              importedIRIds: irImportResult.importedIRIds,
-              sourceReceiverIRMapping: irImportResult.sourceReceiverMapping,
-              currentSimulationRunId: null,
-              currentSimulationId: result.simulation_id,
-              simulationPositions: {
-                sources: Object.fromEntries(uniqueSourcePositions.entries()),
-                receivers: Object.fromEntries(receiversList.map(r => [r.id, r.position])),
-                soundToPosKey: Object.fromEntries(sourceSoundToPosKey.entries()),
-                gridListeners: buildGridListenerSnapshot(gridListeners),
-              },
-            } as any);
-            if (onIRImported) onIRImported();
-          } else {
-            handleUpdateConfig(index, {
-              isRunning: false,
-              error: 'Simulation completed but failed to import impulse responses.',
-              currentSimulationRunId: null,
-            } as any);
-          }
-
-        } catch (pollErr) {
-          clearInterval(pollInterval);
-          pollIntervalsRef.current.delete(index);
-          removeInflightJob(simulation_id);
-          handleUpdateConfig(index, {
-            isRunning: false,
-            status: 'Error',
-            error: pollErr instanceof Error ? pollErr.message : 'Status check failed',
-            currentSimulationRunId: null,
-          } as any);
-        }
-      }, 1000);
-
-      pollIntervalsRef.current.set(index, pollInterval);
-
-    } catch (e) {
-      handleUpdateConfig(index, { isRunning: false, error: e instanceof Error ? e.message : 'Failed' } as any);
-    }
-  }, [simulationConfigs, speckleData, allReceivers, activeSoundscapeData, handleUpdateConfig, onIRImported]);
+    void usePffdtdVisualsStore.getState().runVoxelPreview({
+      configId: config.id,
+      request: prepared.request,
+      fmax: config.settings.fmax,
+      ppw: config.settings.ppw,
+      meshSettings: simulationMeshSettings,
+      signature: prepared.signature,
+    });
+  }, [buildVoxelPreviewArgs, simulationMeshSettings]);
 
   /**
    * Run Pyroomacoustics simulation via Speckle
@@ -994,13 +860,27 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     const config = simulationConfigs[index];
     if (!config) return;
 
-    if (config.type === 'choras' || config.type === 'pyroomacoustics') logSimulationLaunch(index, config);
-    if (config.type === 'choras') {
-      await runChorasSimulation(index);
-    } else if (config.type === 'pyroomacoustics') {
+    if (config.type === 'pyroomacoustics' || config.type === 'pffdtd') logSimulationLaunch(index, config);
+    if (config.type === 'pyroomacoustics') {
       await runPyroomSimulation(index);
+    } else if (config.type === 'pffdtd') {
+      const built = buildCardRequest(config);
+      if (!built.ok) {
+        handleUpdateConfig(index, { error: built.error });
+        return;
+      }
+      await runPffdtdSimulation({
+        index,
+        config,
+        request: built.request,
+        update: handleUpdateConfig,
+        pollIntervals: pollIntervalsRef.current,
+        receivers: allReceivers,
+        gridListenerSnapshot: buildGridListenerSnapshot(gridListeners),
+        onIRImported,
+      });
     }
-  }, [simulationConfigs, runChorasSimulation, runPyroomSimulation]);
+  }, [simulationConfigs, runPyroomSimulation, buildCardRequest, handleUpdateConfig, allReceivers, gridListeners, onIRImported]);
 
   /**
    * Run simulation for the given config index.
@@ -1016,7 +896,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     if (!config) return;
     setPreflightBlockedIndex((cur) => (cur === index ? null : cur));
 
-    if (config.type === 'choras' || config.type === 'pyroomacoustics') {
+    if (config.type === 'pyroomacoustics') {
       const prepared = buildPreflightArgs(config);
       if (prepared.ok) {
         const store = useSimulationPreflightStore.getState();
@@ -1066,8 +946,8 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       removeInflightJob(config.currentSimulationRunId);
       if (config.type === 'pyroomacoustics') {
         apiService.cancelPyroomacousticsSimulation(config.currentSimulationRunId).catch(console.error);
-      } else {
-        apiService.cancelChorasSimulation(config.currentSimulationRunId).catch(console.error);
+      } else if (config.type === 'pffdtd') {
+        apiService.cancelPffdtdSimulation(config.currentSimulationRunId).catch(console.error);
       }
     }
 
@@ -1111,7 +991,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       return;
     }
 
-    const simConfig = config as ChorasSimulationConfig | PyroomAcousticsSimulationConfig;
+    const simConfig = config as PyroomAcousticsSimulationConfig;
     const isCompleted = config.state === 'completed';
 
     // Speckle material data that should always be preserved
@@ -1344,7 +1224,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   // The powered-on card takes priority over the expanded one.
   const isAutoHideCandidate = (config: SimulationConfig | undefined): config is SimulationConfig =>
     !!config
-    && (config.type === 'pyroomacoustics' || config.type === 'choras')
+    && (config.type === 'pyroomacoustics' || config.type === 'pffdtd')
     && config.state === 'completed'
     && !(config as { isRunning?: boolean }).isRunning
     && !editingCardIds.has(config.id);
@@ -1469,7 +1349,8 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   useEffect(() => {
     if (!revealSimulation || revealSimulation.seq === lastRevealSeqRef.current) return;
     lastRevealSeqRef.current = revealSimulation.seq;
-    const isGeometryCard = (c: SimulationConfig | undefined) => c?.type === 'pyroomacoustics' || c?.type === 'choras';
+    const isGeometryCard = (c: SimulationConfig | undefined) =>
+      c?.type === 'pyroomacoustics' || c?.type === 'pffdtd';
     let index = revealSimulation.configId
       ? simulationConfigs.findIndex((c) => c.id === revealSimulation.configId)
       : -1;
@@ -1551,6 +1432,14 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       enabled: !isSandbox,
       disabledTooltip: 'Ray-tracing simulation needs a loaded model. Load one from the Home stage first.',
     },
+    {
+      type: 'pffdtd',
+      label: CARD_TYPE_LABELS['pffdtd'],
+      enabled: !isSandbox && pffdtdStatus.available,
+      disabledTooltip: isSandbox
+        ? 'Wave-based simulation needs a loaded model. Load one from the Home stage first.'
+        : pffdtdStatus.reason ?? undefined,
+    },
     { type: 'import-irs', label: CARD_TYPE_LABELS['import-irs'], enabled: true },
   ];
 
@@ -1588,11 +1477,14 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     const singleIRMode = config.type === 'import-irs' && (config as any).irImportMode === 'single';
 
     // Simulation action button state
-    const isSimulationType = config.type === 'choras' || config.type === 'pyroomacoustics';
+    const isSimulationType = config.type === 'pyroomacoustics' || config.type === 'pffdtd';
     const hasReceivers = allReceivers.length > 0;
     const hasSounds = activeSoundscapeData.length > 0;
-    const actionButtonDisabled = isSimulationType && (!hasValidGeometry || !hasReceivers || !hasSounds);
-    const actionButtonDisabledReason = !hasValidGeometry
+    const solverUnavailable = config.type === 'pffdtd' && !pffdtdStatus.available;
+    const actionButtonDisabled = isSimulationType && (!hasValidGeometry || !hasReceivers || !hasSounds || solverUnavailable);
+    const actionButtonDisabledReason = solverUnavailable
+      ? pffdtdStatus.reason ?? 'Wave solver unavailable'
+      : !hasValidGeometry
       ? 'No geometry loaded'
       : !hasReceivers
         ? 'No listeners configured (all hidden)'
@@ -1601,17 +1493,20 @@ export function AcousticsSection(props: AcousticsSectionProps) {
           : undefined;
 
     // Choose Materials based on Type
-    const currentMaterials = config.type === 'choras'
-        ? chorasMaterials
-        : config.type === 'pyroomacoustics'
+    const currentMaterials = config.type === 'pyroomacoustics' || config.type === 'pffdtd'
         ? pyroomMaterials
         : config.type === 'import-irs'
         ? pyroomMaterials
         : [];
 
-    // Input signature of this card right now (marks an older preflight as outdated)
+    // Input signature of this card right now (marks an older preflight / voxel preview as outdated)
+    const hasGeometryCheck = config.type === 'pyroomacoustics';
     const preflightSignature = (() => {
-      if (!isSimulationType) return null;
+      if (config.type === 'pffdtd') {
+        const prepared = buildVoxelPreviewArgs(config);
+        return prepared.ok ? prepared.signature ?? null : null;
+      }
+      if (!hasGeometryCheck) return null;
       const prepared = buildPreflightArgs(config);
       return prepared.ok ? prepared.args.signature : null;
     })();
@@ -1632,7 +1527,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             }
             onUpdateConfig={(updates) => handleUpdateConfig(index, updates)}
             onIsolationChange={(ids) => handleUpdateConfig(index, { speckleIsolatedObjectIds: ids } as any)}
-            preflight={isSimulationType ? {
+            preflight={hasGeometryCheck ? {
               currentSignature: preflightSignature,
               onRun: () => runPreflightForCard(config),
               runBlocked: preflightBlockedIndex === index,
@@ -1642,6 +1537,12 @@ export function AcousticsSection(props: AcousticsSectionProps) {
               },
               onDismissBlocked: () => setPreflightBlockedIndex(null),
               disabled: isRunning,
+            } : undefined}
+            voxelPreview={config.type === 'pffdtd' ? {
+              currentSignature: preflightSignature,
+              onRun: () => runVoxelPreviewForCard(config),
+              // a running simulation unlocks the preview once its own voxelisation is done
+              disabled: (isRunning && !config.runVoxelised) || solverUnavailable,
             } : undefined}
         />
     ) : null;
@@ -1926,7 +1827,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     const handleIRPeaksForCard = (peaks: Record<string, number>) => handleIRPeaksChange(index, peaks);
 
     // Shared SimulationResultContent element — used by both the read-only result list
-    // (choras/pyroomacoustics, and completed import-irs) and the import-irs body.
+    // (pyroomacoustics/pffdtd, and completed import-irs) and the import-irs body.
     const simResultContent = (
       <SimulationResultContent
           config={config}
@@ -2134,11 +2035,16 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       </>
     ) : null;
 
+    // Wave-based runs: grid problems reported after voxelising (during polling, then with the result)
+    const runProblems = config.type === 'pffdtd' && config.runProblems?.length
+      ? <PffdtdRunProblems problems={config.runProblems} />
+      : null;
+
     const beforeContent = config.type === 'resonance'
       ? resonanceContent
       : config.type === 'import-irs'
         ? (!isCompleted ? <>{soundSectionMismatchWarning}{importIrsContent}</> : undefined)
-        : (!isCompleted ? simulationSetup : undefined);
+        : (!isCompleted ? <>{simulationSetup}{runProblems}</> : undefined);
 
     // Collapsed header summary for the import-irs card: awaiting vs x/N assigned.
     const importIrsCollapsedInfo = (() => {
@@ -2167,9 +2073,10 @@ export function AcousticsSection(props: AcousticsSectionProps) {
           )}
           {soundSectionMismatchWarning}
           {/* Simulated on another model version: outdated above tolerance (still playable) */}
-          {(config.type === 'pyroomacoustics' || config.type === 'choras') && (
+          {(config.type === 'pyroomacoustics' || config.type === 'pffdtd') && (
             <SimulationOutdatedNotice config={config} onRerun={() => void runSimulation(index)} />
           )}
+          {runProblems}
           {/* FPS mode warning: shown when this card is active, audio is actually playing, and user is not in listener view */}
           {/* {index === activeSimulationIndex && isExpanded && isAudioActuallyPlaying && !isFPSModeActive && (
             <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-error/10 border border-error/40 text-error text-xs">
@@ -2214,15 +2121,9 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       } else if (config.type === 'pyroomacoustics') {
         const v = serviceVersions.pyroomacoustics;
         versionLine = `${v.name} ${v.version}`;
-      } else if (config.type === 'choras') {
-        const method = (config as any).settings?.simulation_method;
-        if (method === 'DG') {
-          const v = serviceVersions.edg_acoustics;
-          versionLine = `${v.name} ${v.version}`;
-        } else {
-          const v = serviceVersions.acousticDE;
-          versionLine = `${v.name} ${v.version}`;
-        }
+      } else if (config.type === 'pffdtd') {
+        const v = serviceVersions.pffdtd;
+        versionLine = v ? `${v.name} ${v.version}` : undefined;
       }
       return versionLine;
     })();
@@ -2273,7 +2174,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             closeButtonTitle="Remove simulation"
             removeConfirmMessage={isCompleted ? 'Remove this simulation and its results?' : 'Remove this simulation?'}
             customButtons={customButtons.length > 0 ? customButtons : undefined}
-            // Simulation action button props (for choras/pyroomacoustics)
+            // Simulation action button props (for pyroomacoustics/pffdtd)
             onRun={isSimulationType ? async () => await runSimulation(index) : undefined}
             onCancel={isSimulationType ? () => cancelSimulation(index) : undefined}
             footerPrefix={isSimulationType ? <SimulationSummaryBar /> : undefined}
@@ -2283,7 +2184,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             actionButtonColor='primary'
             color="primary"
             version={cardVersion}
-            headerBadge={(config.type === 'pyroomacoustics' || config.type === 'choras') && isCompleted
+            headerBadge={(config.type === 'pyroomacoustics' || config.type === 'pffdtd') && isCompleted
               ? <SimulationVersionBadge config={config} />
               : undefined}
             collapsedInfo={importIrsCollapsedInfo}
@@ -2300,12 +2201,12 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     const reducedActiveMaterials = expandedCardIndex === null
       && activeSimulationIndex !== null
       && activeConfig
-      && (activeConfig.type === 'pyroomacoustics' || activeConfig.type === 'choras') ? (
+      && (activeConfig.type === 'pyroomacoustics' || activeConfig.type === 'pffdtd') ? (
         <SpeckleSurfaceMaterialsSection
           key={activeConfig.id ?? activeSimulationIndex}
           viewerRef={viewerRef}
           worldTree={localWorldTree}
-          availableMaterials={activeConfig.type === 'choras' ? chorasMaterials : pyroomMaterials}
+          availableMaterials={pyroomMaterials}
           cardType={activeConfig.type}
           filteringEnabled={filteringEnabled}
           isReadOnly
@@ -2404,7 +2305,7 @@ interface AcousticsBubblesProps {
   ) => React.ReactNode;
 }
 
-/** Runtime execution fields shared by choras / pyroom / import cards (absent on resonance). */
+/** Runtime execution fields shared by pyroom / pffdtd / import cards (absent on resonance). */
 function simRuntime(config: SimulationConfig): { isRunning: boolean; progress: number; status?: string; error?: string | null } {
   const c = config as Partial<{ isRunning: boolean; progress: number; status: string; error: string | null }>;
   return {

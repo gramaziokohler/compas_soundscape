@@ -48,6 +48,8 @@ struct SimData {
    uint8_t *bn_mask; //bit mask for bounday nodes
    int8_t *mat_bnl; //material indices for lossy boundary nodes
    int8_t *K_bn; //number of adjacent neighbours, boundary nodesa
+   Real *wgt_bn; // compas: cut cells, link weights beta/vol [Nb*NN] (NULL: binary links)
+   Real *W_bn; // compas: cut cells, sum of wgt_bn per boundary node
    double *in_sigs; //input signals
    double *u_out; //for output signals
    int64_t Ns; //number of input grid points
@@ -78,6 +80,11 @@ struct SimData {
    double *u_ic_curr; //u^{0}  on full (engine-layout) grid, NULL if absent
    int64_t Nsnap; //number of field snapshots requested
    int64_t *snap_steps; //time-step indices n at which u^n is dumped (0..Nt)
+   // compas: optional output plane (snapshots of these nodes only + band-passed p^2 accumulation)
+   int64_t Nplane; //number of plane nodes (0 if absent)
+   int64_t *plane_ixyz; //engine-layout indices of the plane nodes
+   int64_t Nsos; //second-order sections applied before squaring (0: no accumulation)
+   double *acc_sos; //[Nsos,6] b0 b1 b2 a0 a1 a2 (a0 == 1)
 };
 
 //see python code and 2016 ISMRA paper
@@ -100,6 +107,7 @@ void scale_input(struct SimData *sd);
 void rescale_output(struct SimData *sd);
 void write_outputs(struct SimData *sd);
 void write_snapshot(int64_t k, int64_t n, const double *u, int64_t Npts);
+void write_plane_accum(const double *p2, int64_t Nplane);
 
 //load the sim data from Python-written HDF5 files
 void load_sim_data(struct SimData *sd) {
@@ -286,14 +294,47 @@ void load_sim_data(struct SimData *sd) {
    read_h5_dataset(file, dset_str, expected_ndims, dims,(void **)&saf_bn,PF_FLOAT64);
    assert((int64_t)dims[0]==Nb);
 
+   // compas: optional cut-cell data (open face fractions beta_bn [Nb,NN], volume fractions vol_bn [Nb])
+   Real *wgt_bn = NULL;
+   Real *W_bn = NULL;
+   double *vol_bn = NULL;
+   if (H5Lexists(file, "vol_bn", H5P_DEFAULT) > 0) {
+      double *beta_bn;
+      assert(fcc_flag==0); //cut cells are Cartesian-only
+      strcpy(dset_str, "vol_bn");expected_ndims=1;
+      read_h5_dataset(file, dset_str, expected_ndims, dims,(void **)&vol_bn,PF_FLOAT64);
+      assert((int64_t)dims[0]==Nb);
+      strcpy(dset_str, "beta_bn");expected_ndims=2;
+      read_h5_dataset(file, dset_str, expected_ndims, dims,(void **)&beta_bn,PF_FLOAT64);
+      assert((int64_t)dims[0]==Nb);
+      assert(dims[1]==(hsize_t)NN);
+      mymalloc((void **)&wgt_bn, Nb*NN*sizeof(Real));
+      mymalloc((void **)&W_bn, Nb*sizeof(Real));
+      for (int64_t i=0; i<Nb; i++) {
+         assert(vol_bn[i]>0.0 && vol_bn[i]<=1.0);
+         double W = 0.0;
+         for (int8_t j=0; j<NN; j++) {
+            double w = beta_bn[i*NN+j]/vol_bn[i];
+            wgt_bn[i*NN+j] = (Real)w;
+            W += w;
+         }
+         W_bn[i] = (Real)W;
+      }
+      free(beta_bn);
+      printf("cut cells: loaded beta_bn and vol_bn\n");
+   }
+
    mymalloc((void **)&ssaf_bn, Nb*sizeof(Real));
    for (int64_t i=0; i<Nb; i++) {
-      if (fcc_flag>0) 
+      if (fcc_flag>0)
          ssaf_bn[i] = (Real)(0.5/sqrt(2.0))*saf_bn[i]; //rescale for S*h/V and cast
+      else if (vol_bn != NULL)
+         ssaf_bn[i] = (Real)(saf_bn[i]/vol_bn[i]); // compas: wall area per unit cut-cell volume
       else
          ssaf_bn[i] = (Real)saf_bn[i]; //just cast
    }
    free(saf_bn);
+   free(vol_bn);
 
    //printf("saf=");
    //for (int64_t i=0; i<Nb; i++) {
@@ -527,7 +568,7 @@ void load_sim_data(struct SimData *sd) {
          at_least_one_not_adj |= !adj;
          all_not_adj &= !adj;
       }
-      assert(at_least_one_not_adj);
+      assert(at_least_one_not_adj || (wgt_bn != NULL)); // compas: a cut cell can have all faces partly open
       if (all_not_adj) assert(mat_bn[i]==-1);
    }
    printf("checked adj_bn against mat_bn.\n");
@@ -685,6 +726,10 @@ void load_sim_data(struct SimData *sd) {
    sd->u_ic_curr = NULL;
    sd->Nsnap = 0;
    sd->snap_steps = NULL;
+   sd->Nplane = 0;
+   sd->plane_ixyz = NULL;
+   sd->Nsos = 0;
+   sd->acc_sos = NULL;
    strcpy(filename, "compas_extra.h5");
    {
       struct stat st_extra;
@@ -707,6 +752,22 @@ void load_sim_data(struct SimData *sd) {
                assert(sd->snap_steps[k]>=0 && sd->snap_steps[k]<=Nt);
             }
             printf("Nsnap=%lld\n",sd->Nsnap);
+         }
+         if (H5Lexists(file, "plane_ixyz", H5P_DEFAULT) > 0) {
+            strcpy(dset_str, "plane_ixyz");expected_ndims=1;
+            read_h5_dataset(file, dset_str, expected_ndims, dims,(void **)&(sd->plane_ixyz),PF_INT64);
+            sd->Nplane = (int64_t)dims[0];
+            for (int64_t k=0; k<sd->Nplane; k++) {
+               assert(sd->plane_ixyz[k]>=0 && sd->plane_ixyz[k]<Npts);
+            }
+            printf("Nplane=%lld\n",sd->Nplane);
+            if (H5Lexists(file, "acc_sos", H5P_DEFAULT) > 0) {
+               strcpy(dset_str, "acc_sos");expected_ndims=2;
+               read_h5_dataset(file, dset_str, expected_ndims, dims,(void **)&(sd->acc_sos),PF_FLOAT64);
+               assert((int64_t)dims[1]==6);
+               sd->Nsos = (int64_t)dims[0];
+               printf("Nsos=%lld\n",sd->Nsos);
+            }
          }
          H5Fclose(file);
       }
@@ -746,6 +807,8 @@ void load_sim_data(struct SimData *sd) {
    sd->bn_mask   = bn_mask;
    sd->mat_bnl   = mat_bnl;
    sd->K_bn      = K_bn;
+   sd->wgt_bn    = wgt_bn; // compas
+   sd->W_bn      = W_bn;
    sd->out_ixyz  = out_ixyz;
    sd->out_reorder  = out_reorder;
    sd->in_ixyz   = in_ixyz;
@@ -769,6 +832,8 @@ void free_sim_data(struct SimData *sd) {
    free(sd->bn_mask);
    free(sd->ssaf_bnl);
    free(sd->K_bn);
+   free(sd->wgt_bn); // compas
+   free(sd->W_bn);
    free(sd->in_ixyz);
    free(sd->out_ixyz);
    free(sd->out_reorder);
@@ -780,6 +845,8 @@ void free_sim_data(struct SimData *sd) {
    free(sd->u_ic_prev); // compas
    free(sd->u_ic_curr);
    free(sd->snap_steps);
+   free(sd->plane_ixyz);
+   free(sd->acc_sos);
    printf("sim data freed\n");
 }
 
@@ -1010,6 +1077,24 @@ void write_snapshot(int64_t k, int64_t n, const double *u, int64_t Npts) {
    H5Sclose(space);
    H5Fclose(file);
    printf("wrote snapshot %lld at n=%lld\n", (long long)k, (long long)n);
+}
+
+// compas: write the accumulated band-passed p^2 of the plane nodes (already rescaled) to plane_out.h5
+void write_plane_accum(const double *p2, int64_t Nplane) {
+   hsize_t dims[1];
+   hid_t file, space, dset;
+   herr_t status;
+   file = H5Fcreate("plane_out.h5", H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
+   assert(file>=0);
+   dims[0] = Nplane;
+   space = H5Screate_simple(1, dims, NULL);
+   dset = H5Dcreate(file, "p2_acc", H5T_NATIVE_DOUBLE, space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+   status = H5Dwrite(dset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, p2);
+   assert(status==0);
+   H5Dclose(dset);
+   H5Sclose(space);
+   H5Fclose(file);
+   printf("wrote plane accumulation (%lld nodes)\n", (long long)Nplane);
 }
 
 //save outputs in HDF5 (to processed subsequently with Python script)

@@ -1,6 +1,6 @@
 """
 CPU worker runner — N-slot child-process-per-job for pyroomacoustics
-(simulation + geometry preflight)/SED/loop.
+(simulation + geometry preflight)/PFFDTD voxel preview/SED/loop.
 
 All three job families already have a top-level subprocess worker function
 that follows the same progress_file/result_file JSON contract (see
@@ -18,6 +18,7 @@ os.environ.setdefault("CUDA_VISIBLE_DEVICES", "-1")
 
 from services.job_store import Job
 from services.loop_worker import run_loop_analysis
+from services.pffdtd_preview_job import run_pffdtd_voxel_preview
 from services.pyroomacoustics_worker import (
     run_pyroomacoustics_simulation,
     run_pyroomacoustics_simulation_from_geometry,
@@ -31,6 +32,7 @@ _TARGET_FNS = {
     "pyroomacoustics_speckle": run_pyroomacoustics_simulation,
     "pyroomacoustics_geometry": run_pyroomacoustics_simulation_from_geometry,
     "pyroomacoustics_preflight": run_simulation_preflight,
+    "pffdtd_voxel_preview": run_pffdtd_voxel_preview,  # voxelise only (compas-pffdtd subprocess)
     "sed": run_sed_analysis,
     "loop": run_loop_analysis,
 }

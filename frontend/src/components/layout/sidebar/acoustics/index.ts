@@ -8,6 +8,5 @@ export { AcousticsSection } from '../AcousticsSection';
 export { ResonanceContent } from './ResonanceContent';
 export { SimulationResultContent } from './SimulationResultContent';
 export { SimulationSetupContent } from './SimulationSetupContent';
-export { ChorasSimulationSettings } from './ChorasSimulationSettings';
 export { PyroomAcousticsSimulationSettings } from './PyroomAcousticsSimulationSettings';
 export { SimulationSummaryBar } from './SimulationSummaryBar';

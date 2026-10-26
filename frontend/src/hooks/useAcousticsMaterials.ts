@@ -10,12 +10,6 @@
  *   fetchMaterials: () => apiService.getPyroomacousticsMaterials(),
  *   idPrefix: 'pyroom'
  * });
- *
- * // For Choras
- * const { materials, isLoading } = useAcousticsMaterials({
- *   fetchMaterials: () => apiService.getChorasMaterials(),
- *   idPrefix: 'choras'
- * });
  */
 
 import { useState, useEffect, useMemo } from 'react';
@@ -24,7 +18,7 @@ import type { AcousticMaterial } from '@/types/materials';
 interface UseAcousticsMaterialsProps {
   /** Function that fetches materials from API */
   fetchMaterials: () => Promise<any[]>;
-  /** Prefix to add to material IDs (e.g., 'pyroom', 'choras') */
+  /** Prefix to add to material IDs (e.g., 'pyroom') */
   idPrefix: string;
   /** Default absorption value if not provided by API */
   defaultAbsorption?: number;

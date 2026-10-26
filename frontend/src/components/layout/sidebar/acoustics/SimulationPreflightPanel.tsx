@@ -42,8 +42,6 @@ interface SimulationPreflightPanelProps extends PreflightPanelControl {
 const ENGINE_NOTE: Record<SimulationEngine, string> = {
   pyroomacoustics:
     'Open edges and thin surfaces are allowed; leaks, outside sources and blocked paths are flagged.',
-  choras:
-    'Choras meshes a closed air volume: every hole, open edge or zero-thickness surface is an error.',
 };
 
 function statsLine(stats: PreflightStats): string {

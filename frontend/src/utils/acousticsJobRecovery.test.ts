@@ -21,7 +21,7 @@ describe('latestAcousticsJobPerCard', () => {
 
   it('keeps one job per card across cards and engines', () => {
     const a = job('a', 1000, 'pyroom', 'sim_1');
-    const b = job('b', 500, 'choras', 'sim_2');
+    const b = job('b', 500, 'pffdtd', 'sim_2');
     expect(latestAcousticsJobPerCard([a, b])).toEqual({ keep: [a, b], superseded: [] });
   });
 

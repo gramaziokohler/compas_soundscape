@@ -30,6 +30,7 @@ TESTS = {
     "A4": "pffdtd_backend.validation.test_a4_rotated",
     "B2": "pffdtd_backend.validation.test_b2_absorption",
     "B3": "pffdtd_backend.validation.test_b3_energy",
+    "C1": "pffdtd_backend.validation.test_c1_reciprocity",
 }
 
 

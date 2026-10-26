@@ -153,7 +153,8 @@ def aligned_h(extents, h_target: float) -> float:
 
 # ─── plots ───────────────────────────────────────────────────────────────────
 
-def plot_voxels(prep, src, rcv, out: Path, show: bool) -> None:
+def plot_voxels(prep, src, rcv, out: Path, show: bool, mat_names: list) -> None:
+    """3D scatter of boundary nodes per material (mat_names in PFFDTD's alphabetical index order)."""
     import matplotlib.pyplot as plt
 
     with h5py.File(prep.setup_dir / "vox_out.h5", "r") as f:
@@ -166,16 +167,24 @@ def plot_voxels(prep, src, rcv, out: Path, show: bool) -> None:
         sel = np.random.default_rng(0).choice(bn.size, MAX_SCATTER_POINTS, replace=False)
     fig = plt.figure(figsize=(9, 7))
     ax = fig.add_subplot(projection="3d")
-    sc = ax.scatter(prep.xv[ix[sel]], prep.yv[iy[sel]], prep.zv[iz[sel]], c=mat[sel], s=1, cmap="tab10")
-    ax.scatter(*src, c="red", s=60, label="source")
-    ax.scatter(*rcv, c="blue", s=60, label="receiver")
+    ax.computed_zorder = False  # otherwise the markers end up behind the dense wall points
+    cmap = matplotlib.colormaps["tab10"]
+    for k in np.unique(mat[sel]):
+        m = sel[mat[sel] == k]
+        name = mat_names[k] if 0 <= k < len(mat_names) else "rigid"
+        ax.scatter(prep.xv[ix[m]], prep.yv[iy[m]], prep.zv[iz[m]], s=0.5, alpha=0.25, color=cmap(int(k) % 10),
+                   depthshade=False, label=f"{name} ({m.size})", zorder=1)
+    ax.scatter(*src, c="red", s=150, marker="*", edgecolors="k", label="source", zorder=3)
+    ax.scatter(*rcv, c="blue", s=90, edgecolors="k", label="receiver", zorder=3)
     ax.set_title(f"Voxelised boundary nodes ({bn.size} nodes, h = {prep.h * 100:.2f} cm)")
     ax.set_xlabel("x (m)")
     ax.set_ylabel("y (m)")
     ax.set_zlabel("z (m)")
     ax.set_box_aspect(np.ptp(np.c_[prep.xv[[0, -1]], prep.yv[[0, -1]], prep.zv[[0, -1]]], axis=0))
-    fig.colorbar(sc, ax=ax, shrink=0.6, label="material index (-1 = rigid)")
-    ax.legend()
+    leg = ax.legend(loc="upper left")
+    for handle in leg.legend_handles[:-2]:  # material swatches only (not source/receiver)
+        handle.set_sizes([30])
+        handle.set_alpha(1.0)
     fig.savefig(out / "voxels.png", dpi=140)
     if show:
         plt.show()
@@ -267,7 +276,8 @@ def main() -> int:
         matplotlib.use("Agg")
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
-    mats = json.loads(Path(args.materials).read_text()) if Path(args.materials).is_file() else json.loads(args.materials)
+    # utf-8-sig: editors / PowerShell often write a BOM
+    mats = json.loads(Path(args.materials).read_text(encoding="utf-8-sig")) if Path(args.materials).is_file() else json.loads(args.materials)
 
     v, tris, groups = load_obj(args.obj, args.up, args.scale)
     h = aligned_h(np.ptp(v, axis=0), C_SOUND / (args.fmax * args.ppw))
@@ -280,7 +290,7 @@ def main() -> int:
 
     # 1) impulse run -> IR
     prep = prepare(SimSpec(sim_dir=out / "ir_run", scene=scene, duration=args.duration, h=h, mat_files=mat_files, Tc=TC, rh=RH))
-    plot_voxels(prep, src, rcv, out, args.show)
+    plot_voxels(prep, src, rcv, out, args.show, sorted(k for k in scene["mats_hash"] if k != "_RIGID"))
     run_engine(prep.gpu_dir, "double", on_progress=lambda p, e, r: print(f"\rIR run {p:5.1f}%", end=""))
     r_out, Ts = read_receivers(prep.gpu_dir)
     ir = to_ir(r_out[:1], Ts, args.fmax, OUT_FS, args.duration, 10.0, 4, 4, True, TC, RH)[0]

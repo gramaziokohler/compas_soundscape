@@ -11,19 +11,11 @@
 
 import * as THREE from 'three';
 import type { GradientMapState } from '@/store/uiStore';
+import { SEQUENTIAL_CSS_GRADIENT, valueToRGB } from './colormaps';
 
 const GRADIENT_SEGMENTS = 80; // vertices per side — good balance of smoothness vs. cost
 const Z_OFFSET = 0.03;        // push plane slightly above surface to avoid z-fighting
 const OPACITY = 0.82;
-
-/** Maps a normalised value [0,1] → RGB tuple [0,1] using blue→cyan→green→yellow→red. */
-function valueToRGB(t: number): [number, number, number] {
-  const c = Math.max(0, Math.min(1, t));
-  if (c < 0.25) { const u = c / 0.25;        return [0,     u,     1    ]; }
-  if (c < 0.5)  { const u = (c-0.25) / 0.25; return [0,     1,     1-u  ]; }
-  if (c < 0.75) { const u = (c-0.5)  / 0.25; return [u,     1,     0    ]; }
-  /*    c <= 1 */ const u = (c-0.75) / 0.25; return [1,     1-u,   0    ];
-}
 
 export class GradientMapManager {
   private scene: THREE.Scene;
@@ -151,6 +143,5 @@ export class GradientMapManager {
   }
 
   /** Returns the gradient color CSS string matching valueToRGB */
-  static readonly CSS_GRADIENT =
-    'linear-gradient(to right, #0000ff, #00ffff, #00ff00, #ffff00, #ff0000)';
+  static readonly CSS_GRADIENT = SEQUENTIAL_CSS_GRADIENT;
 }

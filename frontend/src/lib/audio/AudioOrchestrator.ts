@@ -636,6 +636,11 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   /**
    * Get current audio mode
    */
+  /** Receiver whose IRs are applied (null before a mapping is set). */
+  getActiveReceiverId(): string | null {
+    return this.activeReceiverId;
+  }
+
   getCurrentMode(): AudioMode {
     return this.currentMode;
   }
@@ -665,7 +670,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
    * Set source-receiver IR mapping for simulation-based acoustics
    * Enables per-source IR assignment based on active receiver
    * @param mapping - Source-receiver IR mapping
-   * @param simulationMode - Type of simulation (pyroomacoustics, choras)
+   * @param simulationMode - Type of simulation (pyroomacoustics, pffdtd)
    * @param initialReceiverId - Initial receiver to activate (optional)
    */
   async setSourceReceiverIRMapping(
@@ -873,7 +878,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
    * Only updates the mapping and per-source IRs — no mode switch, no source re-creation,
    * no timeline reset. Used when switching between completed simulations while audio is playing.
    * @param mapping - New source-receiver IR mapping
-   * @param simulationMode - Type of simulation (pyroomacoustics, choras)
+   * @param simulationMode - Type of simulation (pyroomacoustics, pffdtd)
    * @param activeReceiverId - Receiver to use for IR selection
    */
   async hotSwapSourceReceiverIRMapping(

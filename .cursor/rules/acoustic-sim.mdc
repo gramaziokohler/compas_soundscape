@@ -1,6 +1,6 @@
 ---
-description: Room acoustics simulation — pyroomacoustics, Choras FEM/DG and PFFDTD GPU FDTD solvers, plus applying simulation results to sounds (IR matching, muting, IR panel, mismatch coloring)
-globs: backend/services/pyroomacoustics_service.py,backend/services/pyroomacoustics_room_builder.py,backend/services/simulation_mesh_service.py,backend/services/simulation_preflight_service.py,backend/services/simulation_preflight_worker.py,backend/services/simulation_geometry_loader.py,backend/utils/mesh_*.py,backend/utils/air_visibility.py,backend/utils/preflight_payload.py,backend/routers/simulation_preflight.py,frontend/src/components/layout/sidebar/acoustics/SimulationPreflightPanel.tsx,frontend/src/lib/three/simulation-mesh-*.ts,frontend/src/store/simulationPreflightStore.ts,frontend/src/utils/simulationRequest.ts,backend/services/pffdtd_job.py,backend/services/pffdtd_scene_export.py,backend/routers/pffdtd.py,backend/utils/pffdtd_grid.py,backend/pffdtd_backend/*.py,backend/services/choras_service.py,backend/services/choras_job.py,backend/choras_backend/**,backend/routers/pyroomacoustics.py,backend/routers/choras.py,backend/workers/**,backend/routers/jobs.py,backend/utils/acoustic_measurement.py,backend/utils/speckle_geometry_mapper.py,backend/services/pyroomacoustics_worker.py,frontend/src/lib/audio/AudioOrchestrator.ts,frontend/src/lib/audio/modes/AmbisonicIRMode.ts,frontend/src/components/layout/sidebar/AcousticsSection.tsx,frontend/src/components/audio/ImpulseResponseUpload.tsx,frontend/src/components/scene/hooks/useSpeckleSimulationMismatch.ts,frontend/src/components/scene/hooks/useSpeckleSoundHighlight.ts
+description: Room acoustics simulation — pyroomacoustics and PFFDTD GPU FDTD solvers, plus applying simulation results to sounds (IR matching, muting, IR panel, mismatch coloring)
+globs: backend/services/pyroomacoustics_service.py,backend/services/pyroomacoustics_room_builder.py,backend/services/simulation_mesh_service.py,backend/services/simulation_preflight_service.py,backend/services/simulation_preflight_worker.py,backend/services/simulation_geometry_loader.py,backend/utils/mesh_*.py,backend/utils/air_visibility.py,backend/utils/preflight_payload.py,backend/routers/simulation_preflight.py,frontend/src/components/layout/sidebar/acoustics/SimulationPreflightPanel.tsx,frontend/src/lib/three/simulation-mesh-*.ts,frontend/src/store/simulationPreflightStore.ts,frontend/src/utils/simulationRequest.ts,backend/services/pffdtd_job.py,backend/services/pffdtd_scene_export.py,backend/routers/pffdtd.py,backend/utils/pffdtd_grid.py,backend/pffdtd_backend/*.py,backend/routers/pyroomacoustics.py,backend/workers/**,backend/routers/jobs.py,backend/utils/acoustic_measurement.py,backend/services/pyroomacoustics_worker.py,frontend/src/lib/audio/AudioOrchestrator.ts,frontend/src/lib/audio/modes/AmbisonicIRMode.ts,frontend/src/components/layout/sidebar/AcousticsSection.tsx,frontend/src/components/audio/ImpulseResponseUpload.tsx,frontend/src/components/scene/hooks/useSpeckleSimulationMismatch.ts,frontend/src/components/scene/hooks/useSpeckleSoundHighlight.ts
 ---
 
 # Acoustic Simulation Rules
@@ -72,7 +72,7 @@ architectural meshes from Rhino/Revit via Speckle.
 ### Simulation Mesh Preparation (replaces weld_mesh + fix_outward_winding)
 
 `SimulationMeshService.prepare()` is the **only** way geometry reaches an engine. The
-pyroomacoustics worker (Speckle and Grasshopper), the Choras job and the geometry preflight all
+pyroomacoustics worker (Speckle and Grasshopper), the PFFDTD job and the geometry preflight all
 call it with identical inputs. **Invariant: what the preflight shows is what is simulated.** It is
 deterministic (`SIM_MESH_RAY_SEED`).
 
@@ -96,8 +96,8 @@ deterministic (`SIM_MESH_RAY_SEED`).
    Double-sidedness is a separate flag: a two-sided surface counts as shell when sound escapes
    the model from one of its sides, otherwise as inside. Then compute the **air
    volume** as mean free path × S / 4.
-5. **Merge coplanar triangles** into simple polygon walls (pyroomacoustics only). Never merge for
-   Choras: gmsh needs conforming triangle edges.
+5. **Merge coplanar triangles** into simple polygon walls (pyroomacoustics only). PFFDTD voxelises the
+   triangles as-is, so it never merges.
 
 ### pyroomacoustics Fork Requirements (`../pyroomacoustics`)
 
@@ -114,11 +114,10 @@ deterministic (`SIM_MESH_RAY_SEED`).
 
 ### Geometry Preflight (pre-simulation check)
 
-- `POST /api/simulation/preflight-speckle` (`engine` = `pyroomacoustics` | `choras` | `pffdtd`) is a CPU job
+- `POST /api/simulation/preflight-speckle` (`engine` = `pyroomacoustics` | `pffdtd`) is a CPU job
   (variant `pyroomacoustics_preflight`). It writes `temp/simulations/preflight/<workspace>/preflight_<id>.json`,
   served by `GET /api/simulation/preflight/{id}`.
-- Issues come from `SimulationPreflightService.analyze` with **per-engine severities**. For Choras,
-  holes, open edges, non-manifold edges and two-sided surfaces are errors.
+- Issues come from `SimulationPreflightService.analyze` with **per-engine severities**.
   For PFFDTD (extra `fmax`/`ppw`/`duration` form fields), the grid must fit `PFFDTD_GPU_MEMORY_GB` and
   sources/receivers need 3 cells of clearance (errors); oblique walls and the band limit are infos.
 - The frontend builds the run request and the preflight request with the same helper
@@ -156,117 +155,6 @@ Computed from the WAV IR after `compute_rir()`, reported in the result JSON.
 
 ---
 
-## Choras (DE / DG) Pipeline
-
-### End-to-End Flow
-
-```
-POST /api/choras/run-simulation-speckle
-  └─ router: validate params → job_store.enqueue("choras", ...) → {job_id, position, total}
-     (fail fast only — no geometry work in the router)
-
-  Choras worker: python -m workers.worker_main --role choras  leases queue:choras
-    └─ spawns a child process running services/choras_job.run_choras_job()
-       (Speckle fetch + .geo write + solve moved out of the router) — hard-killable on cancel
-       1. load_speckle_simulation_geometry()    # same loader as pyroomacoustics / preflight
-          SimulationMeshService.prepare()       # weld, drop unassigned, orient; NO coplanar merge
-       2. build_choras_temp_dir(simulation_id)  # temp/choras_sims/<simulation_id>/
-       3. write_geo_from_mesh(...)              # prepared triangles regrouped per object → room.geo
-       4. build_material_absorption_dict()      # object_id → per-frequency absorption coefficients
-       5. DE method (per source-receiver pair) / DG method (per unique source) — see below
-
-  The child writes a local progress JSON; workers/_subprocess_common.py polls it
-  and forwards progress/heartbeat to Redis (job:<id> hash).
-
-GET /api/jobs/{job_id}   # unified poll (progress / status_text / result)
-POST /api/jobs/{job_id}/cancel   # kills the child process
-```
-
-### Method Execution (inside the child process)
-
-    DE method (per source-receiver pair):
-      pair_dir = sim_dir / pair_<src>_<rcv>/
-      copy room.geo → pair_dir/room.geo
-      build_de_json_input() → pair_dir/input_de.json
-      ChorasService.run_de_simulation()  # de_method(json_path) via DEinterface.py
-        → gmsh generates MSH from GEO, FVM solver runs, writes *_pressure.csv
-      ChorasService.de_results_to_wav()  # synthesizes stochastic IR from energy-decay envelopes
-
-    DG method (per unique source, all receivers together):
-      source_dir = sim_dir / src_<source_id>/
-      copy room.geo → source_dir/room.geo
-      build_dg_json_input() → source_dir/input_dg.json
-      ChorasService.run_dg_simulation()  # dg_method(json_path) via DGinterface.py
-        → gmsh meshes from GEO, time-domain DG solver runs, outputs IR WAV
-```
-
-### Method Choice
-
-| Method | Interface | Best for |
-| ------ | --------- | -------- |
-| DE (Diffusion Equation FVM) | `DEinterface.de_method()` | Statistical energy diffusion, per-octave-band decay, large rooms |
-| DG (Discontinuous Galerkin) | `DGinterface.dg_method()` | Wave-accurate time-domain simulation, smaller rooms, higher fidelity |
-
-### The .geo File
-
-The `.geo` file is a **Gmsh geometry description** of the architectural room. It is created inside
-the Choras worker **child process** (`services/choras_job.py`, via
-`utils/speckle_geometry_mapper.write_geo_from_mesh()`), then copied to each pair/source
-subdirectory before the solver runs.
-
-Created by `write_geo_from_mesh()`:
-1. Deduplicate vertices (6 decimal place tolerance)
-2. BFS re-orient triangles for consistent winding — **required** for Gmsh to form a valid
-   Surface Loop from which it generates interior tetrahedra
-3. Build unique undirected edges → assign Gmsh `Line(id)` IDs with signed direction
-4. Per face: `Line Loop(s_id) = {±l0, ±l1, ±l2}; Plane Surface(s_id) = {s_id};`
-5. Group surfaces by Speckle object ID → `Physical Surface("speckleObjectId") = {s1, s2, ...};`
-   This is how Choras maps absorption coefficients back to surfaces: **the Physical Surface
-   name must match the key in `absorption_coefficients`.**
-6. `Surface Loop(1) = {all surface IDs};  Volume(1) = {1};  Physical Volume("RoomVolume") = {1};`
-7. Append Gmsh mesh algorithm settings
-
-Do not modify the Physical Surface naming convention without also updating
-`build_material_absorption_dict()`.
-
-### Choras JSON Input (`build_de_json_input` / `build_dg_json_input`)
-
-The JSON payload consumed by `de_method()` / `dg_method()`:
-
-```json
-{
-  "geo_path": "/abs/path/to/room.geo",
-  "source_position": [x, y, z],
-  "receiver_position": [x, y, z],
-  "absorption_coefficients": {
-    "speckleObjectId_1": [0.1, 0.1, 0.15, 0.2, 0.25, 0.3],
-    "speckleObjectId_2": [0.8, 0.8, 0.7, 0.65, 0.6, 0.55]
-  },
-  "frequencies": [125, 250, 500, 1000, 2000, 4000]
-}
-```
-
-### Choras Progress — stdout Capture feeds the progress JSON
-
-Each Choras simulation now owns its whole child OS process (`services/choras_job.py`). A
-`_ProgressCapture`-style `sys.stdout` wrapper inside that child parses the solver output and calls
-`_write_progress(...)` on the atomic progress file; the parent runner (`workers/choras_runner.py` →
-`workers/_subprocess_common.py`) polls that file and forwards progress to Redis:
-- Gmsh meshing lines → `"Meshing: N pts, M elements..."`
-- DE: `"40% of main calculation completed"` → maps to progress
-- DG: `"Current/Total step N/M"` and `"Percentage done: P %"` → progress
-
-**Do not add `print()` calls inside the Choras solve code** — they will be parsed as progress
-events and may confuse the frontend progress bar.
-
-### Output Paths
-
-- Choras temp dir: `backend/temp/choras_sims/<simulation_id>/`
-- IR WAVs: `backend/temp/choras_rirs/<simulation_id>_<pair_key>.wav`
-- Dispatched via the **Choras worker child process** (`workers/choras_runner.py`) — gmsh
-  `initialize()`/`finalize()` run in the child's main thread; `_gmsh_initialize()` in
-  `choras_service.py` handles SIGINT safety for non-main threads.
-
 ## PFFDTD (GPU FDTD wave solver) Pipeline
 
 Vendored PFFDTD (Brian Hamilton, MIT) in `backend/pffdtd_backend/` — local patches are marked
@@ -292,16 +180,34 @@ Rules:
   `python/` (modules `common`, `fdtd`, `voxelizer`, `materials`) on `sys.path`. compas-toy only
   launches `pipeline.py` with `PFFDTD_PYTHON`; the subprocess env must have the env's `Library/bin`
   on PATH (numpy/BLAS and hdf5 DLLs), see `_pipeline_env()`.
-- **Cartesian grid + double precision only.** The FCC grid is first-order at any wall (its cells
-  cannot follow axis-aligned planes) and single precision fails the long rigid-room test (A3).
+- **Cartesian grid + double precision only.** The FCC grid is first-order at any wall (it always
+  staircases) and single precision fails the long rigid-room test (A3).
 - **Grid alignment:** cell faces start at the bbox minimum (CartGrid 3.5-cell offset); `plan_grid`
   picks h so the bbox extents are whole cells → axis-aligned walls exact (A3 passes from PPW ≈ 28).
-  **Oblique walls are staircased** and converge only at first order (modes ~0.2–0.4 h low; A4 −8.6 dB
-  at PPW 82). The preflight reports this as `pffdtd_oblique_walls` (info). Conformal (cut-cell)
-  boundaries are the planned fix — do not try to "correct" it by shifting geometry.
-- **IR scale:** unit-sample source convention → in-band direct path |H| = 1/(4πr), like
-  pyroomacoustics (resampling multiplies by fs_sim/48000). The uniform-pressure mode (a ramp in a
-  rigid room) is removed by the 10 Hz low-cut. IRs carry nothing above `fmax` (`band_limited: true`).
+- **Oblique walls use conformal cut cells** (`SimSpec.conformal`, default on, Cartesian only;
+  `python/voxelizer/cut_cells.py` + `cut_cell_geom.py`). Each cut cell gets its air volume fraction
+  `vol_bn` and its open face fractions `beta_bn`; the engines use weights `beta/vol`. That makes them
+  2nd order and rotation-invariant: A4 (30°/20° rotated room) passes from PPW ≈ 34, within 0.2 dB
+  of A3. Rules:
+  - Small cells must be stabilised by **volume lending** (`_lend_volume`). Shrinking their faces
+    or merging cells moves the wall by O(h) and makes the scheme 1st order again (measured).
+  - Keep `beta_bn` symmetric. `vol_bn` and `beta_bn` must travel with `bn_ixyz` through every
+    sort; `rotate_sim_data` refuses them and FCC folding refuses them.
+  - The air is the source's flood-fill component. `derive()` re-uses source 1's voxelisation, so
+    all sources must be in the same room.
+  - Two-sided surfaces and mixed convex/reflex cells fall back to the staircase locally.
+  - Do not "correct" geometry by shifting walls.
+- **IR scale:** the solver's unit-sample source gives the Green's function: in-band direct path
+  |H| = 1/(4πr). Resampling multiplies by fs_sim/48000.
+  - The pyroomacoustics code uses 1/r, re the free field at 1 m (`simulation/ism.py`: `att / dist`;
+    its paper writes 1/(4πr)). Its ray tracing matches its ISM at that scale.
+  - `pffdtd_job` therefore multiplies the WAVs by `PFFDTD_IR_REFERENCE_GAIN` = 4π
+    (`ir_reference` in the results). Both engines are then re 1 m, the right scale for convolving
+    dry sources recorded at about 1 m.
+  - Strength-G maps are ratios and unaffected; `energy_level_db` shifts with the scale.
+  - The uniform-pressure mode (a ramp in a rigid room) is removed by the 10 Hz low-cut.
+  - IRs carry nothing above `fmax` (`band_limited: true`), so their peak and energy stay well
+    below a broadband IR: about −34 dB on the direct peak at fmax 500 Hz.
 - **FOA:** 6 pressure probes at ±1 cell around each receiver; X/Y/Z = c·∫∂p/∂axis dt → ACN W,Y,Z,X,
   SN3D (`encoding_method: "pressure_gradient"`). Sources/receivers need
   `PFFDTD_SEED_CLEARANCE_CELLS` (3) cells of clearance from any surface (`pffdtd_seed_clearance` error).
@@ -310,6 +216,103 @@ Rules:
 - **Voxeliser adjacency must stay symmetric** (`count_asymmetric_links` runs on every prepare). An
   isolated "near boundary" node with one-sided links acts as a pressure-release point — upstream's
   check was a no-op (`assert ~(a ^ b)`), fixed here.
+- **Voxelise once per job.** Source 1 is `prepare()`d. Sources 2…N and the animation runs use
+  `sim_prepare.derive()`, which rebuilds only the comms and hard-links the setup files. Never call
+  `prepare()` per source again; a test checks that derived IRs match a fresh prepare.
+- **Field outputs (strength-G volume every run; wave animation on demand afterwards):**
+  - The engine accumulates band-passed p² on any node list (`plane_ixyz` + `acc_sos` in
+    `compas_extra.h5`). The band is the IR chain: 10 Hz low-cut, low-pass at fmax. The same list
+    is also the snapshot gather, so the IR runs get the **lattice** and the animation runs the
+    **plane** (`derive(..., plane_ixyz=plane.ixyz, acc_sos=None)`). Never give both one list.
+  - `lattice_nodes()` takes every `PFFDTD_SPL_VOLUME_STRIDE`-th node (4: +7 % GPU time on a
+    23.7 M-node model; 3: +15 %, 2: +52 %), one node per block centre. The stride is raised until
+    the lattice has ≤ `PFFDTD_SPL_VOLUME_MAX_NODES` nodes.
+  - `fields.strength_g` turns the p² into **strength G** (dB re the same source in free field at
+    10 m; no air absorption): float32 `[nz, ny, nx]` per source.
+  - Volume mask per lattice cell: wall = a boundary node in the block; outside = p² below
+    `OUTSIDE_P2_RATIO` × max for every source (G is NaN there). The plane mask uses its own
+    walls and the outside of the nearest lattice node.
+  - **Wave animation is on demand, never part of a run.** At the end of a run the pipeline moves
+    the voxelisation + pickled `PreparedSim` + lattice "outside" into
+    `<work>/PFFDTD_ANIM_BASE_DIR_NAME` (`animation.save_base`); `pffdtd_job.prune_work_dir`
+    deletes the rest of the work folder. The base lives as long as the results (temp janitor,
+    24 h). `POST /api/pffdtd/animation {simulation_id, plane_z, animation_ms}` enqueues job type
+    `pffdtd_animation` on the pffdtd queue (`services/pffdtd_animation_job.py`, pipeline mode
+    `animation`): per source, one derived run with a one-cycle sine pulse (period 1.5/fmax)
+    snapshotting only the plane (`plane_nodes()`, ≤ `PFFDTD_FIELD_MAX_PX`) every k steps; frames
+    are int8 with `vmax`. It rewrites the results JSON `field` top level to that plane, under
+    fresh file names (no stale browser cache), and deletes the previous animation's files. The
+    run's own plane (mask only) sits at the mean listener height (`field_plane_z` overrides).
+  - The worker moves the binaries to `PFFDTD_FIELD_DIR` and describes them in the results JSON
+    `field` block: the top level is the animation plane, `field.volume` the lattice
+    (`x0..dz, nx..nz, stride, mask_file, sources[].spl_volume_file`). `sources[].spl_file` (a
+    plane map) exists only in older results; the frontend still draws those. Files are served by
+    `get-result-file/{sim}/field?name=`. `field.animation_on_demand` marks runs that kept a base.
+  - Frontend: `lib/acoustics/pffdtd-volume.ts` slices the volume (horizontal, or vertical at a
+    fixed x / y; linear in energy between lattice layers) into a `PffdtdTexelGrid`, which
+    `PffdtdFieldPlane` draws as an oriented plane. The slice is part of the card's field view in
+    `pffdtdVisualsStore`. "Wave animation" picks its height with the same (horizontal) slice: off
+    the recorded plane the viewer previews strength G there; `PffdtdAnimationGenerator` +
+    `pffdtdAnimationStore` generate, poll and reload the field.
+- **Voxel preview** (`POST /api/pffdtd/voxel-preview`, CPU queue variant `pffdtd_voxel_preview`,
+  `services/pffdtd_preview_job.py`) runs the pipeline in `voxel_preview` mode, with no materials
+  fit and no GPU. It returns:
+  - subsampled boundary nodes plus a material legend
+  - seed clearance / boundary-clash errors
+  - leaks and unreachable listeners: `ndimage.label` on non-boundary nodes; removing boundary
+    nodes separates every cut link; skipped above `PFFDTD_PREVIEW_MAX_LABEL_NODES`
+  - materials lost to thin geometry
+  - voxeliser asymmetry
+
+  The payload is workspace-scoped, next to the preflight payloads.
+- **Voxel preview during a run:** right after its (only) voxelisation the pipeline prints
+  `COMPAS_STAGE voxelised`. `pffdtd_job._run_pipeline` keeps the stages in the progress file's
+  `partial`, and `_subprocess_common` publishes it as the job's `partial`. The card polls it
+  into `runVoxelised` and unlocks "Preview voxels" (a CPU job, alongside the GPU solve).
+- **Voxelisation cache** (`sim_prepare._voxelise` / `_apply_cut_cells`, `PFFDTD_VOXEL_CACHE_DIR`,
+  `SimSpec.vox_cache_dir`): the preview, the runs and the free-positioning runs all go through
+  it, so a preview followed by a run (or a run followed by a preview) voxelises once. Two kinds
+  of entry:
+  - the voxelisation: key = triangles (`mats_hash`) + h + lattice; holds
+    `bn_ixyz/adj_bn/mat_bn/saf_bn/tidx_bn` as they leave `calc_adj`;
+  - the cut cells: key = voxelisation + l2 + the flood-fill labelling of the source's air
+    component (not the seed itself). The preview warms it for its first source
+    (`voxelise_only(warm_seed_xyz=…)`), so the run that follows starts straight at the GPU data
+    (a cut-cell pass costs about as much as the voxelisation on large grids).
+
+  Keep anything material-fit- or duration-dependent out of the cached parts. Newest
+  `VOX_CACHE_MAX_ENTRIES` files are kept; an unreadable entry is recomputed.
+- **Free positioning** (card toggle; `free_mode` off | listener | source, `free_grid_spacing`):
+  after the run a moved listener / source plays the IR of the nearest grid point, no new GPU run.
+  - Why a grid: the engine keeps only what it records (receivers, plane snapshots, p² lattice); an
+    IR needs a node's full time series, so candidate nodes are recorded as **node receivers**
+    (`SimSpec.node_receivers`: exact nodes, one row each, no trilinear) chosen before the run
+    (`free_grid.candidate_grid`: every round(spacing/h) nodes, ≥ seed clearance (+1 cell with
+    gradient probes) from boundary nodes, in the fixed seeds' air component; the stride grows
+    until host RAM per run ≤ `PFFDTD_FREE_MAX_RECORD_BYTES` and the float32 store ≤ `…_DISK_BYTES`).
+  - **listener** (forward): runs per source as usual + the grid (1 probe, or 7 for FOA →
+    `foa_channels`). GPU time is ~unchanged: the readout scatter overlaps the air kernel.
+  - **source** (reciprocal): runs per listener — a monopole ("W") and, for an FOA listener, a ±
+    monopole pair per axis (`SimSpec.source_points`, `free_ir.dipole_points`; X/Y/Z =
+    c·Ts·cumsum / 2·offset after the run). The real sources are receivers, so the pairs' IRs come out
+    by reciprocity. No strength-G volume / animation. Sources are omni in the UI; `free_ir.directional`
+    (a·W + (1−a)·n·[X,Y,Z] from 7 probes, max along n) is validated but not exposed.
+  - Validation C1 (`validation/test_c1_reciprocity.py`): monopole, FOA-listener and source-dipole
+    reciprocity agree to ~1e-14; cardioid front/back 18 dB.
+  - Raw store `PFFDTD_FREE_DIR/<sim>/` (`free_ir` docstring): float32 sim-rate signals, never
+    post-processed up front; expires with the temp janitor (→ "re-run"). A re-run resets it.
+  - `POST /api/pffdtd/free-ir` (`routers/pffdtd_free.py`) is a **direct request**, not a job: nearest
+    valid point within `PFFDTD_FREE_SNAP_RADIUS_M` (else 409 `outside_grid`), WAVs rendered by the
+    resident `ir_server.py` (compas-pffdtd, started lazily by `services/pffdtd_ir_server.py`, warm
+    numba; ~45 ms mono / ~130 ms FOA per fixed object for a 1 s IR) or returned cached. Latest
+    request per object wins (409 `superseded`). The API never imports `pffdtd_backend`.
+  - `postprocess.to_ir` uses `air_absorption.apply_visco_filter` (numba, bit-identical to upstream's
+    Python loop, which was ~0.5 s of the 0.6 s per IR).
+  - Frontend: `hooks/usePffdtdFreeMovement.ts` (mounted in page.tsx) debounces moves
+    (`PFFDTD.FREE_DEBOUNCE_MS`), aborts superseded requests and patches the card's
+    `sourceReceiverIRMapping` + `simulationPositions` (`lib/acoustics/pffdtd-free.ts`); page.tsx
+    hot-swaps, keeping the active receiver. Grid overlay: `useSpecklePffdtdFreeGrid` +
+    `lib/three/pffdtd-free-grid-overlay.ts`; status: `PffdtdFreePositioningResults`.
 
 ---
 
@@ -335,7 +338,7 @@ in `frontend/src/utils/constants.ts`.
 
 ### Results are bound to the model version they ran on
 
-A completed pyroomacoustics / Choras card stores `simulatedVersionId` (live-only run field, listed in
+A completed pyroomacoustics / PFFDTD card stores `simulatedVersionId` (live-only run field, listed in
 `SIM_RUN_KEYS`; also tagged on job-recovered results via the in-flight record's `meta.versionId`). When the
 loaded version differs, `SimulationOutdatedNotice` asks `/api/speckle/version-impact` (card region:
 `speckleAcousticSelection` + material-assignment keys) and marks the card **outdated only when the region
@@ -347,7 +350,7 @@ Never invalidate on a bare version-id change, and never block auralization of an
 All variants of a sound source (same `prompt_index`, different `copy_index`) are a SINGLE simulated
 source: one source position, one sound sphere, one IR per receiver. Enforced by `collapseVariantsToOne()`
 (`frontend/src/utils/positionKey.ts`), applied wherever the simulation source set is built from
-`soundscapeData` — `pyroomAcousticsStore.ts`, `chorasStore.ts`, and `AcousticsSection.tsx` (source pairs,
+`soundscapeData` — `pyroomAcousticsStore.ts`, and `AcousticsSection.tsx` (source pairs,
 `availableSourceCount`, and saved `simulationPositions.sources`). It keeps the currently selected variant
 (`useAudioControlsStore.selectedVariants`) as the representative. New variants also inherit the prompt's
 existing position at store merge (`soundscapeStore.ts` handleGenerateInternal / handleRegenerateSingle) so

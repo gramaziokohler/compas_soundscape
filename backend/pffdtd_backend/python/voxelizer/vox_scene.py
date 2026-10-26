@@ -450,6 +450,9 @@ class VoxScene:
         self.adj_bn  = adj_bn
         self.mat_bn  = mat_bn
         self.saf_bn  = saf_bn
+        self.tidx_bn = tidx_bn # compas: kept for apply_cut_cells (staircase surface-area factors)
+        self.beta_bn = None # compas: cut-cell open face fractions [Nb,6] (None = binary links)
+        self.vol_bn  = None # compas: cut-cell volume fractions [Nb]
 
         self.print(self.timer.ftoc('calc_adj total'))
 
@@ -492,6 +495,9 @@ class VoxScene:
         h5f.create_dataset('adj_bn', data=adj_bn, **kw)
         h5f.create_dataset('mat_bn', data=mat_bn, **kw)
         h5f.create_dataset('saf_bn', data=saf_bn, **kw)
+        if self.beta_bn is not None: # compas: cut cells (see cut_cells.py)
+            h5f.create_dataset('beta_bn', data=self.beta_bn, **kw)
+            h5f.create_dataset('vol_bn', data=self.vol_bn, **kw)
         h5f.create_dataset('xv', data=xv, **kw) #also in cart_grid, but this one can get transformed
         h5f.create_dataset('yv', data=yv, **kw)
         h5f.create_dataset('zv', data=zv, **kw)
@@ -506,6 +512,13 @@ class VoxScene:
         #h5f = h5py.File(save_folder / Path('adj_bn.h5'),'w')
         #h5f.create_dataset('adj_bn', data=adj_bn.astype(np.int8), **kw)
         #h5f.close()
+
+    def apply_cut_cells(self,seed_ixyz,l2,flood=None):
+        # compas: conformal boundaries (Cartesian), replaces the binary links of boundary cells
+        from voxelizer.cut_cells import apply_cut_cells
+        self.timer.tic('cut cells')
+        apply_cut_cells(self,seed_ixyz,l2,flood)
+        self.print(self.timer.ftoc('cut cells'))
 
     def check_adj_full(self):
         #check full adjacency map (pre-req for stability)

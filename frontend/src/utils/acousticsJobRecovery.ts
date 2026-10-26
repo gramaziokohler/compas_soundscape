@@ -2,7 +2,7 @@ import type { JobRecord } from '@/types';
 
 /**
  * Split recovered job records so each simulation card gets at most one
- * pyroom/choras job: the newest (by `timestamp`) per `meta.configId`.
+ * pyroom/pffdtd job: the newest (by `timestamp`) per `meta.configId`.
  *
  * The backend lists finished jobs for an hour, so a card re-run within that
  * hour has two completed jobs. Recovering both re-imports the older run's IRs
@@ -38,6 +38,6 @@ export function latestAcousticsJobPerCard(records: JobRecord[]): {
 }
 
 function acousticsConfigId(record: JobRecord): string | undefined {
-  if (record.jobType !== 'pyroom' && record.jobType !== 'choras') return undefined;
+  if (record.jobType !== 'pyroom' && record.jobType !== 'pffdtd') return undefined;
   return record.meta?.configId;
 }

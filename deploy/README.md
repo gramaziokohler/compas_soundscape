@@ -10,7 +10,7 @@ nginx/nssm deployment assets are intentionally **not** covered here — this run
 everything in plain terminals on one machine.
 
 > TL;DR — terminals: **Redis** → **backend (uvicorn)** → **workers**
-> (gpu/cpu/choras, plus **sa3** for the default Stable Audio 3 model — see §0.1)
+> (gpu/cpu/pffdtd, plus **sa3** for the default Stable Audio 3 model — see §0.1)
 > → **frontend (pnpm dev)**. Then open `http://localhost:3000`.
 
 ---
@@ -19,7 +19,7 @@ everything in plain terminals on one machine.
 
 | Tool | Notes |
 | ---- | ----- |
-| Conda / Mamba env **`compas-toy`** | `mamba activate compas-toy` — used for backend + gpu/cpu/choras workers (dev-machine name; the production host uses `compas-soundscape`) |
+| Conda / Mamba env **`compas-toy`** | `mamba activate compas-toy` — used for backend + gpu/cpu workers (dev-machine name; the production host uses `compas-soundscape`) |
 | Conda / Mamba env **`compas-sa3`** | Isolated Python 3.10 / torch 2.7.1 env for **Stable Audio 3** (the default text-to-audio model) — see §0.1 |
 | **Redis** (Memurai or redis-windows) | See §2. Nothing runs jobs without it |
 | **Node / pnpm** | Frontend; `pnpm --version` |
@@ -156,7 +156,7 @@ repo root. Create/keep them there. Recognized keys (values never printed here):
 | `PFFDTD_GPU_MEMORY_GB` (8) | GPU memory budget used by the PFFDTD preflight grid check | optional |
 | `STABLE_AUDIO_LOCAL_DIR` | Mirror Stable Audio 3 weights to a plain local dir on Windows | optional |
 | `REDIS_URL` | Default `redis://127.0.0.1:6379/0` | optional override |
-| `GPU_WORKER_SLOTS`, `CPU_WORKER_SLOTS`, `CHORAS_WORKER_SLOTS`, `SA3_WORKER_SLOTS`, `PFFDTD_WORKER_SLOTS` | Slot counts read by `--slots` defaults / docs | optional |
+| `GPU_WORKER_SLOTS`, `CPU_WORKER_SLOTS`, `SA3_WORKER_SLOTS`, `PFFDTD_WORKER_SLOTS` | Slot counts read by `--slots` defaults / docs | optional |
 | `LLM_MAX_CONCURRENT` (8), `TTS_MAX_CONCURRENT` (2), `GPU_QUEUE_PER_SESSION_MAX` (3) | Concurrency tuning | optional |
 | `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD` | Cloudflare Access team domain + app Audience tag. When set, the verified Access email is the user identity (multi-user mode). | for multi-user behind Cloudflare |
 | `LOADTEST_SERVICE_TOKEN_IDS` | Comma-separated Cloudflare service-token client ids allowed to act as synthetic load-test users (`X-Loadtest-User` header). Unset = disabled. See `scripts/loadtest/README.md`. | only while load testing |
@@ -226,8 +226,7 @@ uvicorn main:app --reload --log-config log_config.json
 - Interactive docs: `http://localhost:8000/docs`
 - Smoke check: `http://localhost:8000/api/versions` (needs the backend running;
   the `[env] .env*` lines at startup tell you which env file was found)
-- Check `http://localhost:8000/api/queue/status` → `{"gpu":0,"sa3":0,"cpu":0,"choras":0,"pffdtd":0}`
-
+- Check `http://localhost:8000/api/queue/status` → `{"gpu":0,"sa3":0,"cpu":0,"pffdtd":0}`
 ---
 
 ## 4. Workers (one terminal per process)
@@ -246,9 +245,6 @@ python -m workers.worker_main --role gpu --slots 1 --worker-id gpu-1
 
 # CPU worker — runs pyroomacoustics / SED / loop. 4 child slots.
 python -m workers.worker_main --role cpu --slots 4 --worker-id cpu-1
-
-# Choras worker — FEM/DG acoustics. 1 slot.
-python -m workers.worker_main --role choras --slots 1 --worker-id choras-1
 
 # PFFDTD worker — GPU wave solver (needs the compas-pffdtd env + built engine, §0.2). 1 slot per GPU.
 python -m workers.worker_main --role pffdtd --slots 1 --worker-id pffdtd-1
@@ -304,7 +300,7 @@ Local networking note: on `localhost` the frontend calls the API at
 | ----- | ------------- | -------- |
 | Redis | `redis-cli ping` | `PONG` |
 | API up | `http://localhost:8000/api/versions` | JSON of service versions |
-| Queue depths | `http://localhost:8000/api/queue/status` | `{"gpu":0,"sa3":0,"cpu":0,"choras":0}` |
+| Queue depths | `http://localhost:8000/api/queue/status` | `{"gpu":0,"sa3":0,"cpu":0,"pffdtd":0}` |
 | Workers | worker terminals | `ready, leasing from queue:*` |
 | GPU worker warm-up | gpu terminal | `warm-up generation done in …s` |
 | SA3 worker ready | sa3 terminal | `[sa3:sa3-1] model ready … ready, leasing from queue:sa3` |

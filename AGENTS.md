@@ -3,7 +3,7 @@
 ## Project
 
 Acoustic soundscape design tool for architectural spaces. A 3D Speckle model viewer connects AI audio
-generation (TangoFlux / AudioLDM2), spatial room acoustics simulation (pyroomacoustics, Choras),
+generation (TangoFlux / AudioLDM2), spatial room acoustics simulation (pyroomacoustics, PFFDTD),
 sound library search (Freesound / BBC), LLM-driven workflow orchestration (Gemini), and
 ambisonic / binaural spatial audio rendering.
 
@@ -39,11 +39,10 @@ redis-cli ping   # → PONG
 mamba activate compas-toy
 cd backend && uvicorn main:app --reload --log-config log_config.json
 
-# Worker processes (one terminal each; required for GPU/CPU/Choras/SA3 job queues)
+# Worker processes (one terminal each; required for GPU/CPU/SA3/PFFDTD job queues)
 cd backend
 python -m workers.worker_main --role gpu --slots 1 --worker-id gpu-1     # ×2 for two GPU lanes
 python -m workers.worker_main --role cpu --slots 4 --worker-id cpu-1
-python -m workers.worker_main --role choras --slots 1 --worker-id choras-1
 # PFFDTD GPU wave solver: worker runs in compas-toy and calls the isolated compas-pffdtd
 # env + CUDA engine (setup and build: deploy/README.md §0.2)
 python -m workers.worker_main --role pffdtd --slots 1 --worker-id pffdtd-1
@@ -74,11 +73,10 @@ backend/
     job_store.py           # Redis-backed job store (AsyncJobStore + WorkerJobStore)
     io_jobs.py             # LLM/model-analysis/TTS asyncio jobs + SSE keepalive helper
     runtime_config.py      # Redis-persisted runtime config (e.g. Speckle token)
-  workers/                 # Resident worker processes (GPU / CPU / Choras / SA3 / PFFDTD)
-    worker_main.py         # python -m workers.worker_main --role gpu|cpu|choras|sa3|pffdtd
+  workers/                 # Resident worker processes (GPU / CPU / SA3 / PFFDTD)
+    worker_main.py         # python -m workers.worker_main --role gpu|cpu|sa3|pffdtd
   middleware/session.py    # UUID cookie injection → request.state.session_id
   utils/                   # Stateless helpers (audio_processing, file_operations, etc.)
-  choras_backend/          # Choras FEM/DG acoustic solver interfaces
   pffdtd_backend/          # Vendored PFFDTD (GPU FDTD) + compas driver; runs in the compas-pffdtd env only
   temp/                    # All generated/transient files (gitignored)
     static/sounds/generated/<session_id>/
@@ -107,7 +105,7 @@ frontend/src/
    (transient) and `backend/data/` (saved). Redis is a job store / ephemeral state, not a database.
 2. **Never block the request thread.** Heavy jobs (ML, acoustics) go through the Redis job store
    (`services/job_store.py.enqueue()`) and run in resident worker processes
-   (`workers/worker_main.py --role gpu|cpu|choras`); LLM/TTS/model-analysis run as in-process
+   (`workers/worker_main.py --role gpu|cpu|sa3|pffdtd`); LLM/TTS/model-analysis run as in-process
    asyncio tasks (`services/io_jobs.py`). Always return `{job_id, position, total}` immediately.
 3. **Scope all file writes to a workspace.** `request.state.session_id` is set by
    `middleware/session.py` to the **workspace id** (identity comes from the Cloudflare Access JWT
@@ -149,7 +147,7 @@ touch matching files (Cursor by glob, Opencode via `opencode.json`, Claude Code 
 | `global.mdc`          | Always loaded                 | All files                                                             |
 | `run-app-when-debugging.mdc` | Start the app only when debugging needs a live instance | Always loaded — do not run/browser-verify after routine UI edits |
 | `persistence.mdc`     | Refresh survival, save/load   | `page.tsx`, `soundscape-serializer.ts`, `soundscape.py`, stores with persist |
-| `acoustic-sim.mdc`    | Room acoustics simulation     | `backend/services/pyroomacoustics_service.py`, `choras_backend/**`    |
+| `acoustic-sim.mdc`    | Room acoustics simulation     | `backend/services/pyroomacoustics_service.py`, `backend/pffdtd_backend/**`    |
 | `zustand-stores.mdc`  | State management              | `frontend/src/store/**`                                               |
 | `task-queue.mdc`      | Background job system         | `backend/services/job_store.py`, `backend/services/io_jobs.py`, `backend/workers/**`, `backend/routers/jobs.py` |
 | `ui-conventions.mdc`  | UI styling & components       | `frontend/src/components/**`, `globals.css`                           |

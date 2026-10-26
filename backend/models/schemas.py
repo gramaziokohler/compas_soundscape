@@ -105,7 +105,6 @@ class QueueStatusResponse(BaseModel):
     gpu: int
     sa3: int = 0
     cpu: int
-    choras: int
 
 
 # ─── Loop Analysis Schemas ────────────────────────────────────────────────────
@@ -583,13 +582,45 @@ class SoundscapeIRMetadata(BaseModel):
 
 
 class SoundscapeSimulationSettings(BaseModel):
-    """Serializable pyroomacoustics simulation settings"""
+    """Serializable simulation settings (pyroomacoustics; the optional fields are PFFDTD's)"""
     max_order: int = 3
     ray_tracing: bool = False
     air_absorption: bool = True
     n_rays: int = 10000
     simulation_mode: str = "foa"
     enable_grid: bool = False
+    fmax: Optional[float] = None
+    ppw: Optional[float] = None
+    duration: Optional[float] = None
+    record_animation: Optional[bool] = None
+    animation_ms: Optional[float] = None
+    field_plane_z: Optional[float] = None
+    free_mode: Optional[str] = None            # "off" | "listener" | "source"
+    free_grid_spacing: Optional[float] = None  # m
+
+
+class PffdtdFreeIRRequest(BaseModel):
+    """A moved free listener / source of a free-positioning PFFDTD run (routers/pffdtd_free.py)."""
+    simulation_id: str
+    object_id: str                       # the moved receiver id / source position key (latest request wins)
+    position: list[float] = Field(..., min_length=3, max_length=3)
+
+
+class PffdtdFreeIRFile(BaseModel):
+    fixed_id: str                        # the fixed source (free listener) or listener (free source)
+    ir_file: str                         # GET /api/pffdtd/get-result-file/{simulation_id}/wav?ir_filename=
+    acoustic_parameters: Optional[dict] = None  # RT60 / EDT / D50 / C50 / energy of this IR (same method as the run's)
+
+
+class PffdtdFreeIRResponse(BaseModel):
+    point_index: int
+    snapped_position: list[float]
+    distance_m: float
+    num_channels: int
+    sample_rate: int
+    duration_s: float
+    irs: list[PffdtdFreeIRFile]
+    render_ms: float = 0.0               # 0 when every WAV was cached
 
 
 class SoundscapeAcousticSelection(BaseModel):
@@ -605,7 +636,7 @@ class SoundscapeSimulationConfig(BaseModel):
     """Serializable simulation configuration"""
     id: str
     display_name: str
-    type: str  # "pyroomacoustics", "choras", "resonance"
+    type: str  # "pyroomacoustics", "pffdtd", "resonance"
     state: str = "completed"
     simulation_instance_id: Optional[str] = None
     settings: Optional[SoundscapeSimulationSettings] = None
@@ -620,6 +651,8 @@ class SoundscapeSimulationConfig(BaseModel):
     simulation_results: Optional[str] = None
     current_simulation_id: Optional[str] = None
     current_simulation_run_id: Optional[str] = None
+    # PFFDTD: grid problems the run reported after voxelising (e.g. the model leaks)
+    run_problems: Optional[list[dict]] = None
     imported_ir_ids: Optional[list[str]] = None
     source_receiver_ir_mapping: Optional[dict[str, dict[str, SoundscapeIRMetadata]]] = None
     receiver_positions: Optional[dict[str, list[float]]] = None  # receiverId -> [x, y, z]
@@ -708,28 +741,6 @@ class SendScenesResponse(BaseModel):
     audio_files_copied: int
     missing_audio_filenames: list[str] = []
     revision: int
-
-
-# ============================================================================
-# Choras (DE/DG Wave Simulation) Schemas
-# ============================================================================
-
-class ChorasDESettings(BaseModel):
-    """Settings for DE (Diffusion Equation / FVM) simulation."""
-    de_c0: float = 343.0
-    de_lc: float = 1.5
-    frequencies: list[int] = [125, 250, 500, 1000, 2000]
-
-
-class ChorasDGSettings(BaseModel):
-    """Settings for DG (Discontinuous Galerkin) simulation."""
-    dg_freq_upper_limit: float = 200.0
-    dg_c0: float = 343.0
-    dg_rho0: float = 1.213
-    dg_poly_order: int = 4
-    dg_ppw: float = 2.0
-    dg_cfl: float = 1.0
-    frequencies: list[int] = [125, 250, 500, 1000, 2000]
 
 
 class PyroomacousticsGeometryMaterial(BaseModel):
@@ -1120,7 +1131,6 @@ class UserPreferences(BaseModel):
     ground_grid_color: Optional[str] = None
     # Acoustic
     global_sound_speed: Optional[float] = None
-    global_mesh_lc: Optional[float] = None
     # Models
     llm_model: Optional[str] = None
     tts_model: Optional[str] = None
@@ -1181,7 +1191,7 @@ class PreflightIssue(BaseModel):
 
 class PreflightSummary(BaseModel):
     preflight_id: str
-    engine: Literal["pyroomacoustics", "choras", "pffdtd"]
+    engine: Literal["pyroomacoustics", "pffdtd"]
     n_errors: int
     n_warnings: int
     n_infos: int

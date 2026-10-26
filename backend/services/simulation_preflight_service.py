@@ -2,9 +2,8 @@
 # Turn a prepared SimulationMesh into user-facing preflight issues.
 #
 # Severities depend on the engine: pyroomacoustics tolerates open edges and
-# thin surfaces (rays/ISM handle them, two-sided walls are supported), while
-# Choras meshes a watertight air volume with gmsh, so any opening, non-manifold
-# edge or zero-thickness surface is fatal there.
+# thin surfaces (rays/ISM handle them, two-sided walls are supported), and
+# PFFDTD voxelises the triangles as-is.
 
 from __future__ import annotations
 
@@ -35,7 +34,6 @@ from config.constants import (
 from models.schemas import PreflightIssue
 from services.simulation_mesh_service import (
     FACE_CLASS_SKIPPED,
-    FACE_CLASS_INTERIOR,
     SimulationMesh,
 )
 from utils.air_visibility import SEED_LEAKY, SEED_OUTSIDE
@@ -43,9 +41,8 @@ from utils.mesh_raycast import TriangleSet, point_triangle_distances, segment_cr
 from utils.pffdtd_grid import oblique_area_fraction, plan_grid
 
 ENGINE_PYROOMACOUSTICS = "pyroomacoustics"
-ENGINE_CHORAS = "choras"
 ENGINE_PFFDTD = "pffdtd"
-ENGINES = (ENGINE_PYROOMACOUSTICS, ENGINE_CHORAS, ENGINE_PFFDTD)
+ENGINES = (ENGINE_PYROOMACOUSTICS, ENGINE_PFFDTD)
 
 
 @dataclass
@@ -127,7 +124,6 @@ class SimulationPreflightService:
     @staticmethod
     def analyze(mesh: SimulationMesh, ctx: PreflightContext) -> PreflightAnalysis:
         out = _Issues()
-        choras = ctx.engine == ENGINE_CHORAS
         tris = TriangleSet(mesh.vertices, mesh.faces)
         vis = mesh.visibility
         enclosure = _enclosures(mesh)
@@ -197,8 +193,8 @@ class SimulationPreflightService:
         # ── Leaks and holes ──────────────────────────────────────────────────
         loop_leaking = SimulationPreflightService._attribute_leaks(mesh)
         leak = vis.leak_fraction
-        if leak > 0 and (choras or leak >= PREFLIGHT_LEAK_WARNING_FRACTION):
-            severity = "error" if choras or leak >= PREFLIGHT_LEAK_ERROR_FRACTION else "warning"
+        if leak >= PREFLIGHT_LEAK_WARNING_FRACTION:
+            severity = "error" if leak >= PREFLIGHT_LEAK_ERROR_FRACTION else "warning"
             out.add(severity, "sound_leak", f"{leak:.1%} of reflected sound escapes the model",
                     "Rays leave through openings: the reverberation will be too short. "
                     "Close the room or assign materials to the missing surfaces.")
@@ -209,26 +205,20 @@ class SimulationPreflightService:
                         position=[float(x) for x in loop.centroid], loop_ids=[k])
         silent = [k for k, l in enumerate(loop_leaking) if not l]
         if silent:
-            out.add("error" if choras else "info", "open_edges", f"{len(silent)} open edge loop(s)",
-                    ("gmsh needs a watertight volume: every edge must be shared by two faces "
-                     "(weld vertices, avoid T-junctions)." if choras else
-                     "Edges used by a single face. No sound escapes through them (seams, panel edges)."),
+            out.add("info", "open_edges", f"{len(silent)} open edge loop(s)",
+                    "Edges used by a single face. No sound escapes through them (seams, panel edges).",
                     loop_ids=silent)
 
         # ── Topology / auto-fixes ────────────────────────────────────────────
         st = mesh.stats
         if st["non_manifold_edges"]:
-            out.add("error" if choras else "info", "non_manifold", f"{st['non_manifold_edges']} non-manifold edge(s)",
+            out.add("info", "non_manifold", f"{st['non_manifold_edges']} non-manifold edge(s)",
                     "Edges shared by three or more faces (T-junctions, touching solids). "
-                    + ("Not supported by gmsh." if choras else "Kept as is: no geometry is removed."))
+                    "Kept as is: no geometry is removed.")
         n2 = int(mesh.two_sided.sum())
         if n2:
             ids = np.flatnonzero(mesh.two_sided).tolist()
-            if choras:
-                out.add("error", "two_sided_surfaces", f"{n2} zero-thickness surface(s) in the air",
-                        "Choras meshes a closed volume and cannot model thin free-standing surfaces. "
-                        "Give them a thickness or remove them.", face_ids=ids, object_ids=_object_list(mesh, ids))
-            elif not ctx.two_sided_supported:
+            if not ctx.two_sided_supported:
                 out.add("error", "two_sided_unsupported", "pyroomacoustics build lacks two-sided walls",
                         f"{n2} surface(s) need to reflect on both sides. Rebuild the local pyroomacoustics "
                         "fork (python setup.py build_ext --inplace).", face_ids=ids)
@@ -251,12 +241,6 @@ class SimulationPreflightService:
             out.add("info", "closed_not_welded", f"'{mesh.objects[obj]}' is closed but not welded",
                     "Its faces do not share vertices. It was treated as a closed solid; raise the "
                     "weld tolerance if the gaps are modelling noise.", object_ids=[mesh.objects[obj]])
-        if choras:
-            interior = np.flatnonzero(mesh.face_class == FACE_CLASS_INTERIOR).tolist()
-            if interior:
-                out.add("warning", "interior_objects", f"{len(_object_list(mesh, interior))} object(s) inside the room",
-                        "They become extra cavities in the gmsh volume and increase meshing time.",
-                        face_ids=interior, object_ids=_object_list(mesh, interior))
 
         # ── Materials, cost, units ───────────────────────────────────────────
         if st["dropped_unassigned_objects"]:
@@ -332,9 +316,9 @@ def _pffdtd_checks(mesh: SimulationMesh, ctx: PreflightContext, out: _Issues, di
     oblique = oblique_area_fraction(mesh.normals, mesh.areas)
     if oblique > 0:
         out.add("info", "pffdtd_oblique_walls", f"{oblique:.0%} of the surface is oblique to the grid",
-                "Walls not parallel to the x/y/z axes are staircased on the grid: their modes come out "
-                "slightly low (first-order error, ~0.2-0.4 grid cells of effective wall offset). "
-                "Axis-aligned walls are exact.")
+                "Walls not parallel to the x/y/z axes are modelled with conformal cut cells "
+                "(second-order accurate, like axis-aligned walls). Zero-thickness two-sided "
+                "surfaces are still staircased.")
     out.add("info", "pffdtd_band_limited", f"Impulse response is band-limited to {ctx.pffdtd_fmax:.0f} Hz",
             f"The wave solver resolves frequencies up to the max frequency at "
             f"{plan.ppw_effective:.1f} points per wavelength; phase-accurate long IRs need about "

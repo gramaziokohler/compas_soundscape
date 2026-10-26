@@ -21,7 +21,6 @@ from services.pyroomacoustics_worker import _write_progress, _write_result
 from services.simulation_geometry_loader import load_speckle_simulation_geometry
 from services.simulation_mesh_service import MeshPrepOptions, SimulationMeshService
 from services.simulation_preflight_service import (
-    ENGINE_CHORAS,
     ENGINE_PFFDTD,
     ENGINE_PYROOMACOUSTICS,
     PreflightContext,
@@ -64,8 +63,8 @@ def run_simulation_preflight(
         )
 
         settings = MeshPrepSettings(**(mesh_settings or {}))
-        if engine in (ENGINE_CHORAS, ENGINE_PFFDTD):
-            # same as the run: gmsh needs conforming edges; PFFDTD voxelises the triangles as-is
+        if engine == ENGINE_PFFDTD:
+            # same as the run: PFFDTD voxelises the triangles as-is
             settings = settings.model_copy(update={"merge_coplanar": False})
         seed_meta = seeds_from_pairs(pairs_data)
 

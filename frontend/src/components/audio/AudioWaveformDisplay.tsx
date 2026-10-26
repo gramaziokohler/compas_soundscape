@@ -10,6 +10,7 @@ import {
 import { AUDIO_VISUALIZATION } from '@/utils/constants';
 import { useResolvedColorTheme } from '@/hooks/useResolvedColorTheme';
 import { useWaveformInteraction } from '@/hooks/useWaveformInteraction';
+import { useElementSize } from '@/hooks/useElementSize';
 import type { SEDAudioInfo } from '@/types';
 
 interface AudioWaveformDisplayProps {
@@ -33,6 +34,16 @@ interface AudioWaveformDisplayProps {
   amplitudeScale?: number;
   /** Optional: Draw against a fixed full-scale 1.0 reference and show clip/mute state. */
   fullScale?: boolean;
+  /** Optional: Fill the parent (which must have a definite size) instead of using the fixed preview size. */
+  fill?: boolean;
+}
+
+/** Default waveform canvas height (CSS px) for a given channel count. */
+export function getDefaultWaveformHeight(numChannels: number, compact = false): number {
+  if (compact) return numChannels === 4 ? 112 : numChannels >= 8 ? 144 : 70;
+  if (numChannels === 4) return Math.min(480, AUDIO_VISUALIZATION.WAVEFORM_HEIGHT * 1.6);
+  if (numChannels >= 8) return Math.min(640, AUDIO_VISUALIZATION.WAVEFORM_HEIGHT * 2.2);
+  return AUDIO_VISUALIZATION.WAVEFORM_HEIGHT;
 }
 
 function DownloadIcon() {
@@ -60,10 +71,12 @@ export function AudioWaveformDisplay({
   onDownload,
   amplitudeScale,
   fullScale,
+  fill = false,
 }: AudioWaveformDisplayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const colorTheme = useResolvedColorTheme();
+  const fillSize = useElementSize(containerRef, fill);
 
   const resolvedChannelLabels = channelLabels ?? getChannelNames(audioBuffer.numberOfChannels);
   const { viewport, isDragging, resetViewport } = useWaveformInteraction({ canvasRef });
@@ -74,22 +87,16 @@ export function AudioWaveformDisplay({
     const canvas = canvasRef.current;
     const container = containerRef.current;
 
-    const containerWidth = container.clientWidth;
-    const width = Math.min(containerWidth, AUDIO_VISUALIZATION.WAVEFORM_WIDTH);
-
-    const numChannels = audioBuffer.numberOfChannels;
+    let width: number;
     let height: number;
-
-    if (compact) {
-      height = numChannels === 4 ? 112 : numChannels >= 8 ? 144 : 70;
-    } else if (numChannels === 4) {
-      height = Math.min(480, AUDIO_VISUALIZATION.WAVEFORM_HEIGHT * 1.6);
-    } else if (numChannels >= 8) {
-      height = Math.min(640, AUDIO_VISUALIZATION.WAVEFORM_HEIGHT * 2.2);
+    if (fill) {
+      if (fillSize.width <= 0 || fillSize.height <= 0) return;
+      width = fillSize.width;
+      height = fillSize.height;
     } else {
-      height = AUDIO_VISUALIZATION.WAVEFORM_HEIGHT;
+      width = Math.min(container.clientWidth, AUDIO_VISUALIZATION.WAVEFORM_WIDTH);
+      height = getDefaultWaveformHeight(audioBuffer.numberOfChannels, compact);
     }
-
     const dpr = window.devicePixelRatio || 1;
     canvas.width = width * dpr;
     canvas.height = height * dpr;
@@ -111,7 +118,7 @@ export function AudioWaveformDisplay({
       amplitudeScale: amplitudeScale ?? 1,
       fullScale: fullScale ?? false,
     });
-  }, [audioBuffer, enableWaveform, resolvedChannelLabels, viewport, compact, colorTheme, amplitudeScale, fullScale]);
+  }, [audioBuffer, enableWaveform, resolvedChannelLabels, viewport, compact, colorTheme, amplitudeScale, fullScale, fill, fillSize]);
 
   if (!enableWaveform) {
     return (
@@ -153,8 +160,8 @@ export function AudioWaveformDisplay({
   return (
     <div
       ref={containerRef}
-      className="relative overflow-hidden"
-      style={{ width: AUDIO_VISUALIZATION.WAVEFORM_WIDTH }}
+      className={fill ? 'relative overflow-hidden w-full h-full' : 'relative overflow-hidden'}
+      style={fill ? undefined : { width: AUDIO_VISUALIZATION.WAVEFORM_WIDTH }}
       title={hoverTitle}
     >
       {!hideTextInfo && (
@@ -192,7 +199,7 @@ export function AudioWaveformDisplay({
         </div>
       )}
 
-      <div className="relative">
+      <div className={fill ? 'absolute inset-0' : 'relative'}>
         <canvas
           ref={canvasRef}
           className="block w-full"

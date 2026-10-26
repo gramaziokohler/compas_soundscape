@@ -31,8 +31,8 @@ Mode enum and type definitions: `frontend/src/types/audio.ts`
   44100/48000 — fallbacks use the constant too.
 - Backend: `AUDIO_SAMPLE_RATE` in `backend/config/constants.py` (same value). Every written file is
   converted with `backend/utils/resampling.py` (`resample_to` / `resample_tensor_to`) — the only
-  resampler; model/solver-native rates (TangoFlux, AudioLDM2, SA3, TTS, Choras DE) stay as named
-  "native" constants. Choras DG passes the rate to `edg_acoustics.Monopole_postprocessor(sampling_freq=…)`.
+  resampler; model/solver-native rates (TangoFlux, AudioLDM2, SA3, TTS) stay as named
+  "native" constants.
 - Keep the two constants equal. Files at other rates still play (decodeAudioData resamples).
 
 ## Mode Auto-Selection

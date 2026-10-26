@@ -52,6 +52,41 @@ function calculateAverage(allParams: any[], key: string): number | null {
 }
 
 /**
+ * Average the scalar per-pair `acoustic_parameters` of a results JSON
+ * (pyroomacoustics and PFFDTD share the same measurement method).
+ */
+function aggregateScalarMetrics(results: unknown): AcousticParameters | null {
+  if (!Array.isArray(results) || results.length === 0) return null;
+  return aggregateParamList(results.filter((r: any) => r.acoustic_parameters).map((r: any) => r.acoustic_parameters));
+}
+
+/** Average a list of per-pair acoustic parameters (null when empty). */
+function aggregateParamList(allParams: any[]): AcousticParameters | null {
+  if (allParams.length === 0) return null;
+
+  // A pair contributes to the average only when its metric is a real number.
+  const contributing = (key: string) => allParams.filter((p: any) => typeof p[key] === 'number' && !isNaN(p[key]));
+  // Reliability: true when every contributing pair measured an adequate decay
+  // range (missing backend flag on legacy data is treated as reliable).
+  const allReliable = (key: string) =>
+    contributing(key).length > 0 &&
+    contributing(key).every((p: any) => p[`${key}_reliable`] === undefined || p[`${key}_reliable`] === true);
+
+  return {
+    rt60: calculateAverage(allParams, 'rt60'),
+    edt: calculateAverage(allParams, 'edt'),
+    d50: calculateAverage(allParams, 'd50'),
+    c50: calculateAverage(allParams, 'c50'),
+    spl: calculateAverage(allParams, 'spl'),
+    drr: calculateAverage(allParams, 'drr'),
+    rt60Reliable: allReliable('rt60'),
+    edtReliable: allReliable('edt'),
+    rt60IsEstimate: allParams.some((p: any) => p.rt60_is_estimate === true),
+    splIsRelative: true,
+  };
+}
+
+/**
  * Fetch acoustic metrics from Pyroomacoustics simulation results
  * 
  * @param simulationId - The simulation ID to fetch results for
@@ -69,42 +104,7 @@ export async function fetchPyroomAcousticMetrics(simulationId: string): Promise<
     }
     
     const jsonData = await jsonResponse.json();
-    
-    if (!jsonData.results || !Array.isArray(jsonData.results) || jsonData.results.length === 0) {
-      return null;
-    }
-    
-    // Calculate average acoustic parameters across all source-receiver pairs
-const allParams = jsonData.results
-      .filter((r: any) => r.acoustic_parameters)
-      .map((r: any) => r.acoustic_parameters);
-
-    if (allParams.length === 0) {
-      return null;
-    }
-
-    console.log('[acousticMetrics] Acoustic parameters found:', allParams);
-
-    // A pair contributes to the average only when its metric is a real number.
-    const contributing = (key: string) => allParams.filter((p: any) => typeof p[key] === 'number' && !isNaN(p[key]));
-    // Reliability: true when every contributing pair measured an adequate decay
-    // range (missing backend flag on legacy data is treated as reliable).
-    const allReliable = (key: string) =>
-      contributing(key).length > 0 &&
-      contributing(key).every((p: any) => p[`${key}_reliable`] === undefined || p[`${key}_reliable`] === true);
-
-    return {
-      rt60: calculateAverage(allParams, 'rt60'),
-      edt: calculateAverage(allParams, 'edt'),
-      d50: calculateAverage(allParams, 'd50'),
-      c50: calculateAverage(allParams, 'c50'),
-      spl: calculateAverage(allParams, 'spl'),
-      drr: calculateAverage(allParams, 'drr'),
-      rt60Reliable: allReliable('rt60'),
-      edtReliable: allReliable('edt'),
-      rt60IsEstimate: allParams.some((p: any) => p.rt60_is_estimate === true),
-      splIsRelative: true,
-    };
+    return aggregateScalarMetrics(jsonData.results);
   } catch (error) {
     console.error('[acousticMetrics] Failed to fetch acoustic metrics:', error);
     return null;
@@ -297,12 +297,12 @@ export interface PerReceiverMetrics {
  */
 export async function fetchPerReceiverMetrics(
   simulationId: string,
-  type: 'pyroomacoustics' | 'choras',
+  type: 'pyroomacoustics' | 'pffdtd',
 ): Promise<PerReceiverMetrics> {
   try {
     const url =
-      type === 'choras'
-        ? `${API_BASE_URL}/api/choras/get-result-file/${simulationId}/json`
+      type === 'pffdtd'
+        ? `${API_BASE_URL}/api/pffdtd/get-result-file/${simulationId}/json`
         : `${API_BASE_URL}/api/pyroomacoustics/get-result-file/${simulationId}/json`;
 
     const response = await fetch(url);
@@ -320,10 +320,8 @@ export async function fetchPerReceiverMetrics(
 
       if (!sums[receiverId]) sums[receiverId] = { rt60: [], edt: [], d50: [], c50: [], spl: [] };
 
-      // Handle both scalar values (Pyroom) and per-frequency arrays (Choras)
       const extract = (key: string): number | null => {
         const v = params[key];
-        if (Array.isArray(v) && v.length > 0) return typeof v[0] === 'number' ? v[0] : null;
         return typeof v === 'number' && !isNaN(v) ? v : null;
       };
 
@@ -347,13 +345,13 @@ export async function fetchPerReceiverMetrics(
   }
 }
 
-// ─── Choras (DE/DG) helpers ─────────────────────────────────────────────────
+// ─── PFFDTD (wave-based) helpers ───────────────────────────────────────────────
 
 /**
- * Import all IR files from a Choras simulation to the library.
- * Thin wrapper over ``importPyroomIRFiles`` using the Choras file endpoint.
+ * Import all IR files from a wave-based (PFFDTD) simulation to the library.
+ * Thin wrapper over ``importPyroomIRFiles`` using the PFFDTD file endpoint.
  */
-export async function importChorasIRFiles(
+export async function importPffdtdIRFiles(
   simulationId: string,
   irFiles: string[],
   sourceDisplayNames?: Record<string, string>,
@@ -362,72 +360,62 @@ export async function importChorasIRFiles(
   return importPyroomIRFiles(
     simulationId,
     irFiles,
-    (simId, fn) => apiService.getChorasIRFile(simId, fn),
+    (simId, fn) => apiService.getPffdtdIRFile(simId, fn),
     sourceDisplayNames,
     receiverDisplayNames,
   );
 }
 
-/**
- * Fetch acoustic metrics from a Choras DE simulation results JSON.
- *
- * DE results contain per-frequency arrays (t20, t30, c80, d50) rather than
- * scalar values; we use the average across frequency bands for display.
- */
-export async function fetchChorasAcousticMetrics(
-  simulationId: string,
-): Promise<AcousticParameters | null> {
+/** Aggregate acoustic metrics of a wave-based simulation (same per-pair shape as pyroomacoustics). */
+export async function fetchPffdtdAcousticMetrics(simulationId: string): Promise<AcousticParameters | null> {
   try {
-    const response = await fetch(
-      `${API_BASE_URL}/api/choras/get-result-file/${simulationId}/json`,
-    );
-    if (!response.ok) return null;
+    const data = await apiService.getPffdtdResults(simulationId);
+    return data ? aggregateScalarMetrics(data.results) : null;
+  } catch {
+    return null;
+  }
+}
 
-    const data = await response.json();
-    if (!data.results || data.results.length === 0) return null;
+/** Per-pair metrics of a run's results JSON, keyed by `pairMetricsKey(source_id, receiver_id)`. */
+export type PairMetrics = Record<string, Record<string, number | boolean | null>>;
 
-    // Average acoustic parameters across all source-receiver pairs
-    const allParams = data.results
-      .filter((r: any) => r.acoustic_parameters)
-      .map((r: any) => r.acoustic_parameters);
+export const pairMetricsKey = (sourceId: string, receiverId: string) => `${sourceId}::${receiverId}`;
 
-    if (allParams.length === 0) return null;
-
-    /** Average the first element of each per-frequency array, or null if absent */
-    const avgFirst = (key: string): number | null => {
-      const values = allParams
-        .map((p: any) => {
-          const v = p[key];
-          return Array.isArray(v) && v.length > 0 ? v[0] : typeof v === 'number' ? v : null;
-        })
-        .filter((v: any) => v !== null && !isNaN(v));
-      return values.length > 0
-        ? (values as number[]).reduce((a, b) => a + b, 0) / values.length
-        : null;
-    };
-
-    return {
-      rt60: avgFirst('rt60'),
-      edt:  avgFirst('edt'),
-      d50:  avgFirst('d50'),
-      c50:  avgFirst('c50'),
-      spl:  avgFirst('spl'),
-      drr:  avgFirst('drr'),
-      // Choras DE/DG overrides 'spl' with a physically-correct SPL.
-      splIsRelative: false,
-    };
+/** Fetch a wave-based run's per-pair metrics once; free-positioning updates then need no refetch. */
+export async function fetchPffdtdPairMetrics(simulationId: string): Promise<PairMetrics | null> {
+  try {
+    const data = await apiService.getPffdtdResults(simulationId);
+    if (!data) return null;
+    const out: PairMetrics = {};
+    for (const r of data.results) {
+      if (r.acoustic_parameters) out[pairMetricsKey(r.source_id, r.receiver_id)] = r.acoustic_parameters;
+    }
+    return out;
   } catch {
     return null;
   }
 }
 
 /**
- * Build simulation results text for a Choras simulation.
+ * Aggregate metrics of the IRs a card currently plays: each mapped pair uses the
+ * parameters measured for its IR (a free-positioning IR carries its own) and falls back
+ * to the run's per-pair result. O(pairs), so it can follow every move.
  */
-export async function buildChorasSimulationResultsText(
-  simulationId: string,
-  _irImportResult: IRImportResult,
-): Promise<string> {
-  const metrics = await fetchChorasAcousticMetrics(simulationId);
-  return formatAcousticMetrics(metrics);
+export function aggregateMappedPairMetrics(
+  mapping: SourceReceiverIRMapping | undefined,
+  base: PairMetrics | null,
+): AcousticParameters | null {
+  const params: unknown[] = [];
+  for (const [sourceId, receivers] of Object.entries(mapping ?? {})) {
+    for (const [receiverId, meta] of Object.entries(receivers)) {
+      const p = meta.acoustic_parameters ?? meta.acousticParameters ?? base?.[pairMetricsKey(sourceId, receiverId)];
+      if (p) params.push(p);
+    }
+  }
+  return aggregateParamList(params);
+}
+
+/** Build simulation results text for a wave-based simulation. */
+export async function buildPffdtdSimulationResultsText(simulationId: string): Promise<string> {
+  return formatAcousticMetrics(await fetchPffdtdAcousticMetrics(simulationId));
 }
