@@ -126,6 +126,12 @@ cd backend
 python -m pffdtd_backend.validation.run_validation --work-dir D:/pffdtd_val
 ```
 
+CUDA 12 and 13 both work. Without a system toolkit, `nvcc` can come from conda instead (`conda create -n
+compas-cuda -c nvidia cuda-nvcc=<ver> cuda-cudart-dev=<ver> cuda-crt=<ver>`); put its `Library\bin`
+on PATH. With VS 2026 (v18), also put `%ProgramFiles(x86)%\Microsoft Visual Studio\Installer` on PATH,
+because its `vcvars64.bat` calls `vswhere.exe` from there. The production host does both
+automatically (`compas pffdtd-setup`, see `PRODUCTION.md`).
+
 `PFFDTD_PYTHON` defaults to `~/.local/share/mamba/envs/compas-pffdtd/python.exe`; set
 it in `.env` if the env lives elsewhere. `GET /api/pffdtd/status` reports whether the
 env and the engine are found.

@@ -17,6 +17,7 @@ Every local change is marked with a `compas:` comment.
 | `fdtd_data.h`, `gpu_engine.h` | `%ld` to `%lld` for `int64_t` (Windows `long` is 32-bit). |
 | `fdtd_data.h` | Optional `compas_extra.h5`: initial conditions `u_ic_prev` (u^-1) and `u_ic_curr` (u^0), plus snapshot steps `snap_steps`. The ICs share the input scaling. New `write_snapshot()` writes `snap_out.h5`. |
 | `fdtd_data.h`, `gpu_engine.h` | Cut cells: optional `beta_bn`/`vol_bn` in `vox_out.h5` become link weights `wgt_bn = beta/vol` (+ their sum `W_bn`), and `ssaf_bnl` is divided by `vol`. New `KernelBoundaryCutCart` replaces `KernelBoundaryRigidCart` when they are present. `cpu_engine.h` refuses them. |
+| `gpu_engine.h` | `print_gpu_details` reads the memory clock with `cudaDeviceGetAttribute(cudaDevAttrMemoryClockRate)` (`cudaDeviceProp::memoryClockRate` was removed in CUDA 13). |
 | `gpu_engine.h` | VLA `Nxcc[ngpus]` changed to malloc. IC upload to `u0`/`u1`. Full-field snapshots of u^n at the requested steps (single GPU only; n = Nt is supported). |
 | `fdtd_data.h` | Optional output plane in `compas_extra.h5`: `plane_ixyz` (engine-layout node indices) and `acc_sos` (`[S, 6]` band-pass cascade). New `write_plane_accum()` writes `plane_out.h5:p2_acc`. |
 | `gpu_engine.h` | With `plane_ixyz`, snapshots gather only the plane nodes. New `KernelAccumPlane` runs each step next to the readouts. It band-passes u^n per plane node (DF2T biquads, double state on the device) and accumulates y², rescaled by infac² at the end. Single GPU, Cartesian only. |

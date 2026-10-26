@@ -214,7 +214,10 @@ uint64_t print_gpu_details(int i) {
    cudaGetDeviceProperties(&prop, i);
    printf("\nDevice Number: %d [%s]\n", i, prop.name);
    printf("  Compute: %d.%d\n",prop.major,prop.minor);
-   printf("  Peak Memory Bandwidth: %.3f GB/s\n", 2.0*prop.memoryClockRate*(prop.memoryBusWidth/8)/1.0e6);
+   // compas: CUDA 13 removed cudaDeviceProp::memoryClockRate; query the attribute instead.
+   int memClockKHz = 0;
+   cudaDeviceGetAttribute(&memClockKHz, cudaDevAttrMemoryClockRate, i);
+   printf("  Peak Memory Bandwidth: %.3f GB/s\n", 2.0*memClockKHz*(prop.memoryBusWidth/8)/1.0e6);
    printf("  Total global memory: [ %.3f GB | %.3f GiB | %llu MiB ]\n", (double)prop.totalGlobalMem/(1e9), (double)prop.totalGlobalMem/1073741824ULL, (unsigned long long)(prop.totalGlobalMem>>20));
    printf("  Registers per block: %d\n", prop.regsPerBlock);
    printf("  Concurrent Kernels: %d\n", prop.concurrentKernels);
