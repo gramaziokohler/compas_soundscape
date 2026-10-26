@@ -47,6 +47,13 @@ let _viewerRef: Viewer | null = null;
 
 /** Same-render access to objectSoundLinks without stale closure issues */
 let _objectSoundLinksRef: Map<string, number> = new Map();
+/**
+ * EVERY card linked to each object. objectSoundLinks keeps one card per object
+ * (the last one linked), but several cards can link the same object — on load
+ * all cards re-link in order, so the last card would win and the object would
+ * not be colored when an earlier card's parent is the active one.
+ */
+let _objectLinkCardsRef: Map<string, Set<number>> = new Map();
 let _generatedSoundObjectIdsRef: Set<string> = new Set();
 let _materialColorsRef: ColorGroup[] = [];
 let _analysisObjectGroupsRef: ColorGroup[] = [];
@@ -245,6 +252,10 @@ export interface SpeckleStoreState {
   // Actions — link management
   linkObjectToSound: (objectId: string, soundTabIndex: number, hasGeneratedSound?: boolean) => void;
   unlinkObjectFromSound: (objectId: string) => void;
+  /** Drop one card's link; the object stays linked while another card links it. */
+  unlinkObjectFromCard: (objectId: string, cardIndex: number) => void;
+  /** Every card index linked to each object (objectSoundLinks keeps only one). */
+  getObjectLinkCards: () => ReadonlyMap<string, ReadonlySet<number>>;
 
   // Actions — entity selection
   setSelectedEntity: (entity: SelectedEntityInfo | null) => void;
@@ -443,6 +454,13 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
           applyFilterColors,
         } = get();
 
+        if (!_objectLinkCardsRef.get(objectId)?.has(soundTabIndex)) {
+          const nextCards = new Map(_objectLinkCardsRef);
+          nextCards.set(objectId, new Set(nextCards.get(objectId)).add(soundTabIndex));
+          _objectLinkCardsRef = nextCards;
+          scheduleApplyColors(applyFilterColors);
+        }
+
         // Skip no-op
         if (objectSoundLinks.get(objectId) === soundTabIndex && !hasGeneratedSound) return;
 
@@ -479,6 +497,10 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
         nextLinks.delete(objectId);
         _objectSoundLinksRef = nextLinks;
 
+        const nextCards = new Map(_objectLinkCardsRef);
+        nextCards.delete(objectId);
+        _objectLinkCardsRef = nextCards;
+
         const nextGenerated = new Set(generatedSoundObjectIds);
         nextGenerated.delete(objectId);
         _generatedSoundObjectIdsRef = nextGenerated;
@@ -495,6 +517,37 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
         );
         scheduleApplyColors(applyFilterColors);
       },
+
+      unlinkObjectFromCard: (objectId, cardIndex) => {
+        const cards = _objectLinkCardsRef.get(objectId);
+        if (!cards?.has(cardIndex)) return;
+        const remaining = new Set(cards);
+        remaining.delete(cardIndex);
+        if (remaining.size === 0) {
+          get().unlinkObjectFromSound(objectId);
+          return;
+        }
+
+        const nextCards = new Map(_objectLinkCardsRef);
+        nextCards.set(objectId, remaining);
+        _objectLinkCardsRef = nextCards;
+
+        // objectSoundLinks must keep pointing at a card that still links the object.
+        const { objectSoundLinks, linkVersion, applyFilterColors } = get();
+        if (objectSoundLinks.get(objectId) === cardIndex) {
+          const nextLinks = new Map(objectSoundLinks);
+          nextLinks.set(objectId, Array.from(remaining).pop() as number);
+          _objectSoundLinksRef = nextLinks;
+          set(
+            { objectSoundLinks: nextLinks, linkVersion: linkVersion + 1 },
+            false,
+            'speckle/unlinkObjectFromCard',
+          );
+        }
+        scheduleApplyColors(applyFilterColors);
+      },
+
+      getObjectLinkCards: () => _objectLinkCardsRef,
 
       // ── Entity ────────────────────────────────────────────────────────────
       setSelectedEntity: (entity) =>
@@ -605,8 +658,10 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
             }, []),
           );
 
-          // Only include links whose promptIndex is in the active parent's set.
+          // Only include objects linked from at least one card of the active parent.
           const isActiveLink = (id: string) => {
+            const cards = _objectLinkCardsRef.get(id);
+            if (cards) return Array.from(cards).some((card) => activePromptIndices.has(card));
             const promptIndex = currentLinks.get(id);
             return promptIndex !== undefined && activePromptIndices.has(promptIndex);
           };

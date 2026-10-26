@@ -60,6 +60,11 @@ for the full contract. The parts the audio engine owns:
 - **No receiver-position muting.** `receiverOutOfPosition` / `setActiveReceiverOutOfPosition()` were
   **removed** — dragging the receiver does not mute anything. IRs recorded for a receiver stay applied
   wherever the receiver is dragged.
+- **The listener being heard is `orchestrator.getActiveReceiverId()`, and nothing resets it.**
+  `updateActiveReceiver()` records it even before a mapping exists, `clearSourceReceiverIRMapping()`
+  keeps it, and page.tsx passes it (if it still exists, else `receivers[0]`) to BOTH
+  `setSourceReceiverIRMapping` and `hotSwapSourceReceiverIRMapping`. Passing `receivers[0]` on
+  activation made every sound play another listener's IRs until the user changed listeners.
 - The orchestrator tracks `sourceIRSeq` (per-source monotonic seq, guards stale async IR downloads) and
   `sourceIRAppliedKey` (which posKey's IR is currently applied per source) — never bypass them.
 

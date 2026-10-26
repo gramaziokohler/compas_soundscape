@@ -71,8 +71,6 @@ function buildNow(): string | null {
   if (!json) return null;
   const hash = `${cyrb53(json)}${json.length.toString(16)}`;
   const ms = Math.round(performance.now() - started);
-  // [dbg:study] R2 risk test — remove once the gate is decided.
-  console.log(`[dbg:study] snapshot built in ${ms} ms, ${json.length} chars`);
   _lastParts = parts;
   _lastHash = hash;
   _lastBuildAt = Date.now();
@@ -97,8 +95,6 @@ export function captureStudySnapshot(): Promise<string | null> {
   if (!isStudyFeatureEnabled('snapshots') || !_builder || !_fingerprint) return Promise.resolve(null);
   try {
     if (_lastHash && _lastParts && sameRefs(_fingerprint(), _lastParts)) {
-      // [dbg:study] R2 risk test — remove once the gate is decided.
-      console.log('[dbg:study] snapshot unchanged — reused, no build');
       return Promise.resolve(_lastHash);
     }
   } catch {

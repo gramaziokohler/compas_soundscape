@@ -1209,7 +1209,14 @@ function HomeContent() {
 
         // If simulation has source-receiver IR mapping, pass it to AudioOrchestrator
         if (simConfig.sourceReceiverIRMapping) {
-          const initialReceiverId = receivers.receivers.length > 0 ? receivers.receivers[0].id : undefined;
+          // Keep the listener being heard (chosen before or after activation, or a
+          // moved receiver re-pushing the mapping). Falling back to receivers[0]
+          // only when none is chosen — otherwise activation would silently switch
+          // listeners and play the wrong IRs until the user picked one again.
+          const heardReceiverId = audioOrchestrator.orchestrator.getActiveReceiverId();
+          const listenerReceiverId = heardReceiverId && receivers.receivers.some((r) => r.id === heardReceiverId)
+            ? heardReceiverId
+            : receivers.receivers[0]?.id;
           // Actual simulation-time source coordinates — lets the orchestrator resolve a
           // new sound's IR by distance to the recorded position, not grid-cell equality.
           const simulationSourcePositions = simConfig.simulationPositions?.sources;
@@ -1224,16 +1231,10 @@ function HomeContent() {
               simulationId: activeConfig.id,
               sourceCount: Object.keys(simConfig.sourceReceiverIRMapping).length
             });
-            // Keep the listener being heard (a moved receiver or a free-positioning IR swap
-            // re-pushes the mapping; falling back to receivers[0] would switch listeners).
-            const activeReceiverId = audioOrchestrator.orchestrator.getActiveReceiverId();
-            const keepReceiverId = activeReceiverId && receivers.receivers.some((r) => r.id === activeReceiverId)
-              ? activeReceiverId
-              : initialReceiverId;
             audioOrchestrator.orchestrator.hotSwapSourceReceiverIRMapping(
               simConfig.sourceReceiverIRMapping,
               simulationMode,
-              keepReceiverId,
+              listenerReceiverId,
               simulationSourcePositions
             ).then(() => {
               console.log('[Page] ✅ IR mapping hot-swapped successfully');
@@ -1249,7 +1250,7 @@ function HomeContent() {
             audioOrchestrator.orchestrator.setSourceReceiverIRMapping(
               simConfig.sourceReceiverIRMapping,
               simulationMode,
-              initialReceiverId,
+              listenerReceiverId,
               simulationSourcePositions
             ).then(() => {
               console.log('[Page] ✅ Source-receiver IR mapping applied successfully');
@@ -1470,19 +1471,22 @@ function HomeContent() {
   // entity link is reverted or the card itself disappears.
   // ============================================================================
   useEffect(() => {
-    const currentObjectSoundLinks = useSpeckleStore.getState().objectSoundLinks;
-    currentObjectSoundLinks.forEach((tabIndex, objectId) => {
-      const config = soundGen.soundConfigs[tabIndex];
-      // Check if any entity in config.entities matches this objectId
-      const hasMatchingEntity = config?.entities?.some((ent: any) => {
-        return resolveEntityObjectId(ent) === objectId;
+    // Check every card linked to each object (several cards can link one object):
+    // a card whose config is gone or no longer has the entity drops its link; the
+    // object is unlinked once no card links it.
+    const { getObjectLinkCards, unlinkObjectFromCard } = useSpeckleStore.getState();
+    getObjectLinkCards().forEach((cards, objectId) => {
+      cards.forEach((tabIndex) => {
+        const config = soundGen.soundConfigs[tabIndex];
+        const hasMatchingEntity = config?.entities?.some((ent: any) => {
+          return resolveEntityObjectId(ent) === objectId;
+        });
+        if (!config || !hasMatchingEntity) {
+          unlinkObjectFromCard(objectId, tabIndex);
+        }
       });
-      // If the config is gone or no entity matches, unlink
-      if (!config || !hasMatchingEntity) {
-        unlinkObjectFromSound(objectId);
-      }
     });
-  }, [soundGen.soundConfigs, unlinkObjectFromSound, resolveEntityObjectId]);
+  }, [soundGen.soundConfigs, resolveEntityObjectId]);
 
   // Handler: Reset bounding box to its original model-derived size
   const handleRefreshBoundingBox = useCallback(() => {

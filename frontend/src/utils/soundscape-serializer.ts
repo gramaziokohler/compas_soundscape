@@ -133,6 +133,38 @@ function deserializeAcousticSelection(
  * Get a list of sound events that have blob URLs (need server upload before save).
  * These are library downloads and user-uploaded audio that only exist in browser memory.
  */
+/**
+ * Earlier saves dropped a card's entities on load whenever the entity id started
+ * with a letter (see the entities restore in restoreSoundscapeState), while its
+ * sound events kept entity_index — the card still shows as linked but has no
+ * object, so nothing is colored or followed. A real detach clears entity_index
+ * (handleDetachSoundFromEntity), so a card with entity-linked sounds and no
+ * entities lost them: restore them from the scenario object ids it was built
+ * with. Returns the number of repaired cards.
+ */
+function repairDroppedEntityLinks(configs: SoundGenerationConfig[], events: SoundEvent[]): number {
+  const linkedCards = new Set<number>();
+  for (const event of events) {
+    if (event.entity_index === undefined || event.prompt_index === undefined) continue;
+    linkedCards.add(event.prompt_index >= 10000 ? Math.floor(event.prompt_index / 10000) : event.prompt_index);
+  }
+  let repaired = 0;
+  linkedCards.forEach((cardIndex) => {
+    const config = configs[cardIndex];
+    if (!config || config.entities?.length) return;
+    const objectIds = config.orchestrateMeta?.allObjectIds?.length
+      ? config.orchestrateMeta.allObjectIds
+      : config.scenarioSource?.objectsInvolved;
+    if (!objectIds?.length) return;
+    configs[cardIndex] = {
+      ...config,
+      entities: objectIds.map((id, index) => ({ id, nodeId: id, index })),
+    };
+    repaired++;
+  });
+  return repaired;
+}
+
 export function getBlobUrlSounds(soundEvents: SoundEvent[]): SoundEvent[] {
   return soundEvents.filter(
     (event) => event.url && event.url.startsWith('blob:')
@@ -636,7 +668,22 @@ export function restoreSoundscapeState(
         : undefined,
       entity: undefined, // deprecated — use entities[] below
       entities: (() => {
-        // New multi-entity format: entity_indices[] array
+        // entity_node_ids is the link's identity. Restore from it first: the saved
+        // entity_indices are parseInt(id) with NaN dropped, so they are empty (or
+        // misaligned) for any id that starts with a letter, and the link was lost.
+        const nodeIds = (saved.entity_node_ids ?? []).filter(Boolean);
+        if (nodeIds.length) {
+          const indicesAligned = saved.entity_indices?.length === nodeIds.length;
+          return nodeIds.map((nodeId: string, i: number) => ({
+            id: nodeId,
+            nodeId,
+            applicationId: nodeId,
+            index: indicesAligned ? saved.entity_indices![i] : i,
+            name: saved.entity_meta?.[i]?.name,
+            layer: saved.entity_meta?.[i]?.layer,
+          }));
+        }
+        // Older multi-entity saves without node ids: entity_indices[] array
         if (saved.entity_indices?.length) {
           return saved.entity_indices.map((idx: number, i: number) => ({
             id: saved.entity_node_ids?.[i] || String(idx),
@@ -769,6 +816,11 @@ export function restoreSoundscapeState(
   });
   if (healedEventCount > 0) {
     console.warn(`[soundscape-load] re-linked ${healedEventCount} sound event(s) with a stale prompt_index to their card`);
+  }
+
+  const repairedEntityCards = repairDroppedEntityLinks(soundConfigs, soundEvents);
+  if (repairedEntityCards > 0) {
+    console.warn(`[soundscape-load] restored the linked objects of ${repairedEntityCards} card(s) from their scenario object ids`);
   }
 
   // ── Re-attach source clips for generated upload cards ─────────────────────

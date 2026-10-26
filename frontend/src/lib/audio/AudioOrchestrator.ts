@@ -636,7 +636,11 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   /**
    * Get current audio mode
    */
-  /** Receiver whose IRs are applied (null before a mapping is set). */
+  /**
+   * Listener being heard: the last receiver chosen via updateActiveReceiver or a
+   * mapping call. Recorded even while no mapping is set, so activating a
+   * simulation keeps the listener the user picked (null until one is chosen).
+   */
   getActiveReceiverId(): string | null {
     return this.activeReceiverId;
   }
@@ -671,7 +675,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
    * Enables per-source IR assignment based on active receiver
    * @param mapping - Source-receiver IR mapping
    * @param simulationMode - Type of simulation (pyroomacoustics, pffdtd)
-   * @param initialReceiverId - Initial receiver to activate (optional)
+   * @param initialReceiverId - Receiver to activate; omitted = keep the current listener
    */
   async setSourceReceiverIRMapping(
     mapping: SourceReceiverIRMapping,
@@ -681,7 +685,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   ): Promise<void> {
     this.sourceReceiverIRMapping = mapping;
     this.simulationMode = simulationMode;
-    this.activeReceiverId = initialReceiverId || null;
+    this.activeReceiverId = initialReceiverId || this.activeReceiverId;
     this.simulationSourcePositions = simulationSourcePositions || {};
     this.clearSimulationGlobalIR();
 
@@ -740,19 +744,16 @@ export class AudioOrchestrator implements IAudioOrchestrator {
    */
   async updateActiveReceiver(receiverId: string): Promise<void> {
     console.log('[AudioOrchestrator] 🎯 updateActiveReceiver called:', receiverId);
-    
-    if (!this.sourceReceiverIRMapping) {
-      console.warn('[AudioOrchestrator] ❌ No source-receiver mapping available');
-      return;
-    }
 
-    console.log('[AudioOrchestrator] Source-receiver mapping exists:', {
-      sourceCount: Object.keys(this.sourceReceiverIRMapping).length,
-      sources: Object.keys(this.sourceReceiverIRMapping)
-    });
-
+    // Record the choice even without a mapping: a listener picked before a
+    // simulation is activated must be the one heard once it is.
     this.activeReceiverId = receiverId;
     console.log('[AudioOrchestrator] 📍 Set active receiver to:', receiverId);
+
+    if (!this.sourceReceiverIRMapping) {
+      console.log('[AudioOrchestrator] No source-receiver mapping yet — IRs load on activation');
+      return;
+    }
 
     await this.updateSourceIRsForReceiver(receiverId);
   }
@@ -923,7 +924,8 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   clearSourceReceiverIRMapping(): void {
     this.sourceReceiverIRMapping = null;
     this.simulationMode = 'none';
-    this.activeReceiverId = null;
+    // activeReceiverId is kept: the listener choice outlives the simulation, so
+    // re-activating one (or another) plays the same listener.
     this.simulationSourcePositions = {};
     this.clearIRCache();
 

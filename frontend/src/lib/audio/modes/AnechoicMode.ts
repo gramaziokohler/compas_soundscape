@@ -242,8 +242,6 @@ export class AnechoicMode implements IAudioMode {
    * Update listener position and orientation
    * Called every frame for camera movement
    */
-  private _dbgFrame = 0;
-
   updateListener(position: Position, orientation: Orientation): void {
     const positionChanged =
       position.x !== this.listenerPosition.x ||
@@ -253,8 +251,6 @@ export class AnechoicMode implements IAudioMode {
     // Store plain-object snapshots — caller passes a live THREE.Vector3 mutated each frame
     this.listenerPosition = { x: position.x, y: position.y, z: position.z } as Position;
     this.listenerOrientation = orientation;
-
-    this._dbgFrame++;
 
     // Re-encode only when listener moves; orientation is handled by OmnitoneDecoder.setRotationMatrix3
     if (positionChanged) {

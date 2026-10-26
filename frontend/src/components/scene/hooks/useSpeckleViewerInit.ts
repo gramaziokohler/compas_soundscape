@@ -16,6 +16,7 @@ import {
 import { SpeckleAudioCoordinator } from '@/lib/three/speckle-audio-coordinator';
 import { BoundingBoxManager } from '@/lib/three/BoundingBoxManager';
 import { AreaDrawingManager } from '@/lib/three/area-drawing-manager';
+import { HoverOutline } from '@/lib/three/speckle-hover-outline';
 import { PlaybackSchedulerService } from '@/lib/audio/playback-scheduler-service';
 import { useSpeckleStore, useModelVersionStore, findModelVersion } from '@/store';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
@@ -208,29 +209,21 @@ export function useSpeckleViewerInit({
           return isHidden || isExcludedByIsolation;
         };
 
-        const origApplyHover = (selectionExtension as any).applyHover.bind(selectionExtension);
+        // Hover draws a border overlay only — Speckle's own hover swaps the object's
+        // material, which escapes the viewport render styles (speckle-hover-outline.ts).
+        const hoverOutline = new HoverOutline(viewer.getRenderer());
 
         const applyOutlineHover = (rv: any) => {
-          if (!rv) { origApplyHover(null); return; }
-          origApplyHover(rv);
-          const savedOrig: any = (selectionExtension as any).hoverMaterial;
-          if (!savedOrig) return;
-          const clone = savedOrig.clone();
-          clone.stencilWrite = true;
-          clone.stencilWriteMask = 255;
-          clone.stencilRef = 0;
-          clone.stencilFunc = THREE.AlwaysStencilFunc;
-          clone.stencilZPass = THREE.ReplaceStencilOp;
-          clone.stencilFail = THREE.ReplaceStencilOp;
-          clone.stencilZFail = THREE.ReplaceStencilOp;
-          clone.needsUpdate = true;
-          viewer.getRenderer().setMaterial([rv], clone);
+          // Selected objects already carry the selection outline.
+          const isSelected = !!rv && !!(selectionExtension as any).selectionRvs?.[rv.guid];
+          hoverOutline.show(isSelected ? null : rv);
+          viewer.requestRender();
         };
 
         (selectionExtension as any).applyHover = function (renderView: any) {
           // Disable hover in dark mode, acoustic mode, or when toggled off
           if (isDarkModeRef.current || isAcousticModeRef.current || !showHoveringHighlightRef.current) {
-            origApplyHover(null);
+            applyOutlineHover(null);
             return;
           }
           if (renderView && isFilteredOut(renderView.renderData?.id)) {

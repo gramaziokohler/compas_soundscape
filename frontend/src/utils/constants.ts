@@ -2604,6 +2604,19 @@ export const RENDER_STYLE = {
   SOUNDS_MODE_NOTE: 'Sounds view uses its own lighting — styles apply in Default & Acoustics.',
 } as const;
 
+/** Viewport hover highlight — a screen-space border only (lib/three/speckle-hover-outline.ts). */
+export const HOVER_OUTLINE = {
+  /** Same blue as primary blue, so hover and selection borders match. */
+  COLOR: 0x002aff,
+  WIDTH_PX: 1, // CSS px
+  /** Directions the silhouette is shifted in to draw the border (evenly spaced). */
+  DIRECTIONS: 8,
+  /** Stencil value marking the hovered silhouette (Speckle's own outline uses 0 / 255). */
+  STENCIL_REF: 1,
+  /** Drawn after every other overlay object. */
+  RENDER_ORDER: 10000,
+} as const;
+
 export const RENDER_STYLE_OPTIONS: ReadonlyArray<{ value: RenderStyle; label: string; description: string }> = [
   { value: 'rendered', label: 'Rendered', description: 'Shaded with ambient light and edges' },
   { value: 'ghosted', label: 'Ghosted', description: 'See-through surfaces with crisp edges' },
