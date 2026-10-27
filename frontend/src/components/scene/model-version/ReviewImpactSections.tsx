@@ -121,6 +121,7 @@ function MaterialControl({
           materialColors={materials.colors}
           placeholder={placeholder}
           showSearch
+          allowCustom
           variant="explorer"
           alignRight
         />

@@ -31,9 +31,11 @@ export interface UseWorkspaceModelEntriesResult {
  * Usage:
  * ```tsx
  * const { entries, projectId, authToken, isLoading } = useWorkspaceModelEntries(true);
+ * // scene-send targets of a shared workspace: the caller's own workspace
+ * const own = useWorkspaceModelEntries(true, true);
  * ```
  */
-export function useWorkspaceModelEntries(includeHomeProjects: boolean): UseWorkspaceModelEntriesResult {
+export function useWorkspaceModelEntries(includeHomeProjects: boolean, ownWorkspace = false): UseWorkspaceModelEntriesResult {
   const [models, setModels] = useState<SpeckleModelDetail[]>([]);
   const [projectId, setProjectId] = useState<string>('');
   const [authToken, setAuthToken] = useState<string | undefined>(undefined);
@@ -45,17 +47,17 @@ export function useWorkspaceModelEntries(includeHomeProjects: boolean): UseWorks
     if (!includeHomeProjects) return;
     let cancelled = false;
     apiService
-      .listHomeProjects()
+      .listHomeProjects(ownWorkspace)
       .then((data) => { if (!cancelled) setHomeProjects(data.projects ?? []); })
       .catch(() => { if (!cancelled) setHomeProjects([]); });
     return () => { cancelled = true; };
-  }, [includeHomeProjects]);
+  }, [includeHomeProjects, ownWorkspace]);
 
   const refetchModels = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     try {
-      const data: SpeckleProjectModelsResponse = await apiService.getSpeckleModels();
+      const data: SpeckleProjectModelsResponse = await apiService.getSpeckleModels(ownWorkspace);
       setModels(data.models);
       setProjectId(data.project_id);
       setAuthToken(data.auth_token ?? undefined);
@@ -64,7 +66,7 @@ export function useWorkspaceModelEntries(includeHomeProjects: boolean): UseWorks
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [ownWorkspace]);
 
   useEffect(() => {
     void refetchModels();

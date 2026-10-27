@@ -16,6 +16,7 @@ import os
 # CPU worker never touches the GPU — keep TensorFlow/YAMNet off CUDA.
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "-1")
 
+from services.directivity_import_worker import run_directivity_import, run_directivity_preset_build
 from services.job_store import Job
 from services.loop_worker import run_loop_analysis
 from services.pffdtd_preview_job import run_pffdtd_voxel_preview
@@ -35,6 +36,8 @@ _TARGET_FNS = {
     "pffdtd_voxel_preview": run_pffdtd_voxel_preview,  # voxelise only (compas-pffdtd subprocess)
     "sed": run_sed_analysis,
     "loop": run_loop_analysis,
+    "directivity_import": run_directivity_import,  # SOFA / BRAS balloon -> library .npz
+    "directivity_preset_build": run_directivity_preset_build,
 }
 
 

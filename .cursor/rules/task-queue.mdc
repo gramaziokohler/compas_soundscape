@@ -161,3 +161,8 @@ through `job_store.enqueue`.
 - The old `services/task_queue.py` threadpool system was deleted — do not reintroduce
   `GPU_POOL` / `IO_POOL` / `CPU_POOL` / `unified_queue` / `make_subprocess_runner`.
 - Never block the request thread (see AGENTS.md Hard Rule 2).
+- Workers do not read SQLite, with one exception: the `directivity_import` child
+  (`services/directivity_import_worker.py`) inserts the finished `user_directivities` row itself
+  (its own `MetadataStore()`, WAL mode, idempotent `init_db`), because the import result must
+  exist even when the client that started it is gone. Keep any new worker-side write to that
+  pattern: one insert at the end, never reads the API process depends on.

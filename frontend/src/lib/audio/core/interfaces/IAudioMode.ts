@@ -8,6 +8,7 @@
 
 import type { Position, Orientation, AudioMode, AmbisonicSendTap } from '@/types/audio';
 import type { FadeOptions } from '@/lib/audio/utils/fade-envelope';
+import type { RealtimeDirectivity } from '@/lib/audio/utils/source-directivity';
 
 export interface IAudioMode {
   /**
@@ -163,6 +164,15 @@ export interface IAudioMode {
    * @param isGlobal - Whether the source plays as a global bed
    */
   setSourceGlobal(sourceId: string, isGlobal: boolean): void;
+
+  /**
+   * Apply a source's radiation pattern live (dry 6-DoF modes only; IR modes bake
+   * it into the simulated impulse responses and leave this unimplemented). The
+   * setting outlives the source chain and may precede createSource.
+   * @param sourceId - Source identifier
+   * @param resolved - Pattern to apply, or null for omnidirectional
+   */
+  setSourceDirectivity?(sourceId: string, resolved: RealtimeDirectivity | null): void;
 
   /**
    * Set master/global volume for the entire mode (0.0 to 1.0)

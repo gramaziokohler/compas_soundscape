@@ -26,6 +26,7 @@ from config.constants import (
     PFFDTD_DEFAULT_DURATION,
     PFFDTD_DEFAULT_FMAX,
     PFFDTD_DEFAULT_PPW,
+    PFFDTD_DIRECTIONAL_MAX_RUNS,
     PFFDTD_PHASE_ACCURATE_PPW,
     PFFDTD_SEED_CLEARANCE_CELLS,
     PYROOMACOUSTICS_RAY_TRACING_RECEIVER_RADIUS,
@@ -63,6 +64,10 @@ class PreflightContext:
     pffdtd_fmax: float = PFFDTD_DEFAULT_FMAX
     pffdtd_ppw: float = PFFDTD_DEFAULT_PPW
     pffdtd_duration: float = PFFDTD_DEFAULT_DURATION
+    # Directional sources: reciprocal GPU runs (listeners x 4 for FOA); 0 = forward runs per source.
+    pffdtd_runs: float = 0.0
+    # Free-listener mode cannot radiate directional sources (1.0 = requested anyway).
+    pffdtd_directional_free_listener: float = 0.0
 
 
 @dataclass
@@ -298,14 +303,25 @@ def _pffdtd_checks(mesh: SimulationMesh, ctx: PreflightContext, out: _Issues, di
     """Grid cost, stencil clearance, staircasing and band limit for the PFFDTD engine."""
     pts = mesh.vertices[mesh.faces.ravel()]
     plan = plan_grid(pts.max(axis=0) - pts.min(axis=0), ctx.pffdtd_fmax, ctx.pffdtd_ppw, ctx.pffdtd_duration)
+    runs = int(round(ctx.pffdtd_runs))
+    per_run = (f"~{plan.est_runtime_s:.0f} s per run, {runs} runs (~{plan.est_runtime_s * runs:.0f} s total)"
+               if runs else f"~{plan.est_runtime_s:.0f} s per source")
     cost = (f"{plan.nodes / 1e6:.1f} M grid points (h = {plan.h * 100:.2f} cm), {plan.gpu_bytes / 1e9:.2f} GB "
-            f"of {plan.gpu_budget_bytes / 1e9:.1f} GB GPU memory, ~{plan.est_runtime_s:.0f} s per source")
+            f"of {plan.gpu_budget_bytes / 1e9:.1f} GB GPU memory, {per_run}")
     if not plan.fits_gpu:
         out.add("error", "pffdtd_grid_too_large", "Grid does not fit in GPU memory",
                 f"{cost}. Lower the max frequency or the points per wavelength (memory depends on "
                 "the grid size, not on the IR length).")
     else:
         out.add("info", "pffdtd_grid", "Wave simulation grid", cost + ".")
+    if runs > PFFDTD_DIRECTIONAL_MAX_RUNS:
+        out.add("error", "pffdtd_directional_too_many_runs", "Too many GPU runs for directional sources",
+                f"Directional sources need one run per listener (x4 for FOA): {runs} runs here, limit "
+                f"{PFFDTD_DIRECTIONAL_MAX_RUNS}. Use fewer listeners, mono output, or omnidirectional sources.")
+    if ctx.pffdtd_directional_free_listener:
+        out.add("error", "pffdtd_directional_free_listener", "Free listener cannot radiate directional sources",
+                "Free listener positioning runs forward from each source. Switch to Free source, or set the "
+                "sources to omnidirectional.")
     clearance = PFFDTD_SEED_CLEARANCE_CELLS * plan.h
     for meta, d in zip(ctx.seeds, dists):
         if d < clearance:

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import type { SoundEvent } from '@/types';
 import { DEFAULT_DBFS } from '@/utils/constants';
 import { useAudioControlsStore } from '@/store';
+import { useSoundscapeStore } from '@/store/soundscapeStore';
 import { SoundCardWaveSurfer } from '@/components/audio/SoundCardWaveSurfer';
 import { SoundCardBody } from './SoundCardBody';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
@@ -105,6 +106,8 @@ export function SoundResultContent({
   // relative to it so the card preview matches timeline playback / export.
   const globalBaseDbfs = useAudioControlsStore((s) => s.globalBaseDbfs);
   const baseVolumeDbfs = globalBaseDbfs;
+  // Directivity is card-level state (shared by the variants), written straight to the store.
+  const updateSoundDirectivity = useSoundscapeStore((s) => s.updateSoundDirectivity);
 
   // When showing the pending variant (regenerating), render a progress placeholder
   if (isShowingPending) {
@@ -159,6 +162,8 @@ export function SoundResultContent({
       volumeDbfs={currentVolumeDbfs}
       position={generatedSound.position}
       entityIndex={generatedSound.entity_index}
+      directivity={generatedSound.directivity}
+      onUpdateDirectivity={onUpdatePosition ? (d) => updateSoundDirectivity(generatedSound.id, d) : undefined}
       onVolumeChange={onVolumeChange ? (dbfs) => onVolumeChange(volumeKey, dbfs) : undefined}
       onUpdatePosition={onUpdatePosition ? (pos) => onUpdatePosition(generatedSound.id, pos) : undefined}
       onUnlinkEntity={onUnlinkEntity ? () => setShowUnlinkConfirm(true) : undefined}

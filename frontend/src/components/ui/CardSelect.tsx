@@ -43,6 +43,8 @@ export interface CardSelectProps {
   fitContent?: boolean;
   alignMenu?: "left" | "right";
   menuHeader?: ReactNode;
+  /** Sticky row below the options (e.g. "New …" actions); receives a callback that closes the menu. */
+  menuFooter?: (close: () => void) => ReactNode;
   onOpenChange?: (open: boolean) => void;
   onOptionMouseEnter?: (option: CardSelectOption, e: React.MouseEvent<HTMLDivElement>) => void;
   onOptionMouseLeave?: () => void;
@@ -98,6 +100,7 @@ export function CardSelect({
   fitContent = false,
   alignMenu = "left",
   menuHeader,
+  menuFooter,
   onOpenChange,
   onOptionMouseEnter,
   onOptionMouseLeave,
@@ -318,6 +321,15 @@ export function CardSelect({
                 </div>
               );
             })}
+            {menuFooter && (
+              <div
+                className="sticky -bottom-1 -mx-1 -mb-1 mt-0.5 px-1 pb-1 pt-0.5 border-t border-secondary-light"
+                style={{ background: "var(--color-surface-2)" }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                {menuFooter(() => setOpen(false))}
+              </div>
+            )}
           </div>,
           document.body
         )}

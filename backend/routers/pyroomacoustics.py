@@ -42,10 +42,13 @@ from fastapi.responses import FileResponse
 from models.schemas import PyroomacousticsGeometryRequest
 from models.schemas import JobEnqueueResponse
 from models.schemas import MeshPrepSettings
+from models.schemas import SourceReceiverPair
 from pydantic import BaseModel
+from services.custom_materials_service import inline_custom_materials
+from services.directivity_service import attach_directivity_specs
 from services.job_store import job_store
 from services.pyroomacoustics_service import PyroomacousticsService
-from utils.request_parsing import parse_mesh_settings
+from utils.request_parsing import parse_mesh_settings, parse_source_receiver_pairs
 
 router = APIRouter(prefix="/api")
 
@@ -62,13 +65,6 @@ class SimulationSettings(BaseModel):
     max_order: int = PYROOMACOUSTICS_DEFAULT_MAX_ORDER
     ray_tracing: bool = PYROOMACOUSTICS_DEFAULT_RAY_TRACING
     air_absorption: bool = PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION
-
-
-class SourceReceiverPair(BaseModel):
-    source_position: List[float]
-    receiver_position: List[float]
-    source_id: str
-    receiver_id: str
 
 
 class RunSimulationRequest(BaseModel):
@@ -154,6 +150,7 @@ async def run_simulation_speckle(
     speckle_project_id: str = Form(...),
     speckle_version_id: str = Form(...),
     object_materials: str = Form(...),
+    custom_materials: str = Form("{}"),
     layer_name: str = Form("Acoustics"),
     geometry_object_ids: Optional[str] = Form(None),
     max_order: int = Form(PYROOMACOUSTICS_DEFAULT_MAX_ORDER),
@@ -165,6 +162,7 @@ async def run_simulation_speckle(
     sound_speed: float = Form(DEFAULT_SPEED_OF_SOUND),
     source_receiver_pairs: str = Form(...),
     mesh_settings: Optional[str] = Form(None),
+    model_id: Optional[str] = Form(None),  # resolves shared-soundscape directivity copies
 ):
     """
     Validate basic params and enqueue the simulation.  Returns {job_id,
@@ -173,19 +171,18 @@ async def run_simulation_speckle(
     """
     simulation_id = str(uuid.uuid4())
     session_id = getattr(getattr(req, "state", None), "session_id", None)
+    user_hash = getattr(getattr(req, "state", None), "user_hash", None)
 
     try:
-        pairs_data = json.loads(source_receiver_pairs)
-        object_materials_dict = json.loads(object_materials)
+        pairs = parse_source_receiver_pairs(source_receiver_pairs)
+        pairs_data = attach_directivity_specs(pairs, user_hash, session_id, model_id)
+        object_materials_dict = inline_custom_materials(json.loads(object_materials), custom_materials)
         object_ids_filter = json.loads(geometry_object_ids) if geometry_object_ids else None
         object_scattering_dict: dict[str, float] = json.loads(object_scattering) if object_scattering else {}
         mesh_prep = parse_mesh_settings(mesh_settings)
 
         if simulation_mode not in (PYROOMACOUSTICS_SIMULATION_MODE_MONO, PYROOMACOUSTICS_SIMULATION_MODE_FOA):
             raise HTTPException(status_code=400, detail=f"Invalid simulation mode: {simulation_mode}")
-
-        if not pairs_data:
-            raise HTTPException(status_code=400, detail="No source-receiver pairs provided")
 
         unique_sources: dict[str, list] = {}
         unique_receivers: dict[str, list] = {}

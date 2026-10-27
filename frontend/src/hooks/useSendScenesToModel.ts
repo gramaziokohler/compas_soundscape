@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import { apiService } from '@/services/api';
-import { useWorkspaceStore, notifyError } from '@/store';
+import { useWorkspaceStore, selectIsReadOnlyWorkspace, notifyError } from '@/store';
 import { SCENE_TRANSFER } from '@/utils/constants';
 import type { SendScenesResponse, SendTargetEntry } from '@/types/sceneTransfer';
 
@@ -22,10 +22,11 @@ export interface UseSendScenesToModelResult {
 }
 
 /**
- * Copies sound scenes from the open model into another model of the same
- * workspace: saves the open model, posts the send, then re-baselines the
- * workspace revision (the source itself did not change, so the next autosave
- * must not 409 and "Load latest" must not light up).
+ * Copies sound scenes from the open model into another model: of the same
+ * workspace for its owner, of the user's own workspace otherwise. The open
+ * model is saved first (owners), the send is posted, then the workspace
+ * revision is re-baselined (the source itself did not change, so the next
+ * autosave must not 409 and "Load latest" must not light up).
  *
  * Usage:
  * ```tsx
@@ -43,7 +44,10 @@ export function useSendScenesToModel({ sourceModelId, flushSave }: UseSendScenes
       setIsSending(true);
       setError(null);
       try {
-        if (!(await flushSave())) {
+        // A non-owner cannot save the open (someone else's) workspace: the
+        // owner's saved copy is the source.
+        const readOnly = selectIsReadOnlyWorkspace(useWorkspaceStore.getState());
+        if (!readOnly && !(await flushSave())) {
           setError(SCENE_TRANSFER.SAVE_FAILED);
           return null;
         }
@@ -57,7 +61,8 @@ export function useSendScenesToModel({ sourceModelId, flushSave }: UseSendScenes
           target_model_name: target.isHome ? target.name : undefined,
           base_revision: useWorkspaceStore.getState().revision,
         });
-        useWorkspaceStore.getState().setLoadedRevision(result.revision);
+        // Into the caller's own workspace the open workspace did not change.
+        if (!result.cross_workspace) useWorkspaceStore.getState().setLoadedRevision(result.revision);
         return result;
       } catch (err) {
         const conflictRevision = (err as { conflictRevision?: number }).conflictRevision;

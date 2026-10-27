@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, type RefObject } from 'react';
-import { useModelVersionStore, useAcousticsSimulationStore, useWorkspaceStore, selectIsReadOnlyWorkspace } from '@/store';
+import { useModelVersionStore, useAcousticsSimulationStore } from '@/store';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { formatRelativeTime } from '@/components/scene/modelBrowserShared';
 import { Spinner } from '@/components/ui/Spinner';
@@ -60,7 +60,6 @@ export function ModelVersionMenu({
   const loadedVersionId = useSpeckleEngineStore((s) => s.loadedModelVersionId);
   const simulationConfigs = useAcousticsSimulationStore((s) => s.simulationConfigs);
   const info = useModelPillInfo();
-  const isReadOnly = useWorkspaceStore(selectIsReadOnlyWorkspace);
   const sceneCount = useSoundScenes().length;
 
   useEffect(() => {
@@ -97,8 +96,8 @@ export function ModelVersionMenu({
     ? `${MODEL_VERSION.SPECKLE_APP_URL}/projects/${info.projectId}/models/${useModelVersionStore.getState().modelId}${loadedVersionId ? `@${loadedVersionId}` : ''}`
     : null;
 
-  // Owner-only (it writes another model's soundscape); hidden for viewers.
-  const sendScenesRow = !isReadOnly && (
+  // Shown to everyone: a non-owner sends into the workspace they own.
+  const sendScenesRow = (
     <button
       type="button"
       role="menuitem"

@@ -14,7 +14,7 @@ import { logSimulationResult } from '@/lib/study/simulationEvents';
 import { importPffdtdIRFiles, buildPffdtdSimulationResultsText } from '@/utils/acousticMetrics';
 import { captureGenerationSignature } from '@/utils/generationSignature';
 import { SIMULATION_STATUS_MISS_TOLERANCE, PFFDTD } from '@/utils/constants';
-import type { SimulationGeometryRequest } from '@/utils/simulationRequest';
+import { simulationSourceSnapshot, type SimulationGeometryRequest } from '@/utils/simulationRequest';
 import type { GridListenerSnapshot, PffdtdSimulationConfig, SimulationConfig } from '@/types/acoustics';
 
 export interface RunPffdtdSimulationDeps {
@@ -38,7 +38,7 @@ export async function runPffdtdSimulation(deps: RunPffdtdSimulationDeps): Promis
   const update = (patch: PffdtdPatch) => deps.update(index, patch as Partial<SimulationConfig>);
   // Inputs this run is made of — stored on completion as the Regenerate baseline.
   const runSignature = captureGenerationSignature(config);
-  const { versionId, uniqueSourcePositions, sourceSoundToPosKey } = request;
+  const { versionId } = request;
 
   update({ isRunning: true, progress: 0, status: 'Submitting...', error: null, runVoxelised: false, runProblems: undefined });
 
@@ -132,9 +132,8 @@ export async function runPffdtdSimulation(deps: RunPffdtdSimulationDeps): Promis
         currentSimulationRunId: null,
         currentSimulationId: result.simulation_id,
         simulationPositions: {
-          sources: Object.fromEntries(uniqueSourcePositions.entries()),
+          ...simulationSourceSnapshot(request),
           receivers: Object.fromEntries(receivers.map((r) => [r.id, r.position])),
-          soundToPosKey: Object.fromEntries(sourceSoundToPosKey.entries()),
           gridListeners: gridListenerSnapshot,
         },
       });

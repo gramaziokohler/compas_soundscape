@@ -78,6 +78,7 @@ backend/
   middleware/session.py    # UUID cookie injection → request.state.session_id
   utils/                   # Stateless helpers (audio_processing, file_operations, etc.)
   pffdtd_backend/          # Vendored PFFDTD (GPU FDTD) + compas driver; runs in the compas-pffdtd env only
+  data/                    # Durable: app.db (metadata), soundscapes/, directivities/<user_hash>/*.npz (+ presets/)
   temp/                    # All generated/transient files (gitignored)
     static/sounds/generated/<session_id>/
     static/impulse_responses/

@@ -28,6 +28,7 @@ import { Notice } from '@/components/ui/Notice';
 import { AcousticMaterialsSummary } from './AcousticMaterialsSummary';
 import { PffdtdFreePositioningSettings } from './PffdtdFreePositioningSettings';
 import { ModifiedMark, useIsFieldModified } from '@/components/ui/ModifiedMark';
+import { useDirectionalSources } from '@/hooks/useDirectionalSources';
 
 interface PffdtdSimulationSettingsProps {
   config: PffdtdSimulationConfig;
@@ -49,9 +50,24 @@ export function PffdtdSimulationSettings({ config, onUpdateConfig }: PffdtdSimul
 
   const h = pffdtdGridSpacing(s.fmax, s.ppw);
   const clearance = pffdtdSeedClearance(s.fmax, s.ppw);
+  // Directional sources: the solver runs reciprocally (one run per listener, x4 in FOA)
+  // and composes a first-order pattern per octave band; no SPL map / animation then.
+  const { directionalCount, listenerCount, runs } = useDirectionalSources();
+  const directionalRuns = runs(s.simulation_mode);
 
   return (
     <div className="card-stack">
+      {directionalCount > 0 && (
+        <Notice
+          type={directionalRuns > PFFDTD.DIRECTIONAL_MAX_RUNS ? 'error' : 'info'}
+          message={
+            `${directionalCount} directional source${directionalCount === 1 ? '' : 's'}: ${directionalRuns} GPU run${directionalRuns === 1 ? '' : 's'} ` +
+            `(one per listener${s.simulation_mode === PYROOMACOUSTICS_SIMULATION_MODE_FOA ? ', ×4 for FOA' : ''}, ${listenerCount} listener${listenerCount === 1 ? '' : 's'}); ` +
+            `first-order pattern per octave band; no SPL map or wave animation.` +
+            (directionalRuns > PFFDTD.DIRECTIONAL_MAX_RUNS ? ` Limit is ${PFFDTD.DIRECTIONAL_MAX_RUNS} runs.` : '')
+          }
+        />
+      )}
       <div>
         <label className="text-xxs card-label text-secondary-hover">
           Simulation Mode{isSettingModified('simulation_mode') && <ModifiedMark />}

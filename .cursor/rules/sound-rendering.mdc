@@ -88,6 +88,25 @@ which also hides those spheres (`SoundSphereManager.setHiddenSounds`). Helpers i
   (`ensureOrder`, IR order change, Resonance speed-of-sound rebuild) keep it.
 - `SoundscapeExporter` mirrors this via `config.globalSoundIds` (from `orchestrator.isSourceGlobal`).
 
+## Source Directivity in the Dry Modes
+
+`orchestrator.setSourceDirectivity(id, SoundDirectivity | undefined)` keeps a source's radiation
+pattern (the sphere manager pushes it on every sync; the call is idempotent) and hands the
+resolved form (`resolveRealtimeDirectivity`, `lib/audio/utils/source-directivity.ts`) to the
+optional `IAudioMode.setSourceDirectivity`. Only AnechoicMode and ResonanceMode implement it —
+the IR modes play simulated IRs that already contain the pattern.
+
+- Both modes insert one `SourceDirectivityStage` per source (`… → stage.input`, `stage.output →
+  encoder.in` / Resonance `source.input`) and call `stage.update(sourcePos, listenerPos)` from
+  `updateSourcePosition` and `updateListener` (cheap when nothing moved).
+- Analytical patterns are a smoothed `output.gain` (`p + (1−p)·cos θ`, θ against the source's
+  forward vector; figure-eight goes negative behind); measured balloons switch a convolver to the
+  nearest balloon direction's IR with a `DIRECTIVITY_REALTIME.CROSSFADE_S` crossfade between two
+  convolvers (`normalize = false`). Balloons come from `GET /api/directivities/{id}/balloon`
+  (cached per id; `evictBalloon` after a re-import) and are resampled to the context rate.
+- Like `globalSourceIds`, the resolved pattern lives in a per-mode `sourceDirectivities` map so
+  chain rebuilds keep it, and global sources bypass the stage (`setBypass`) without losing it.
+
 ## Ambisonic Signal Chain
 
 ```

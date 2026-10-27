@@ -9,6 +9,7 @@ import type { ImpulseResponseMetadata, SourceReceiverIRMapping } from './audio';
 import type { AcousticMaterial } from './materials';
 import type { CardBaseConfig, CardType, CardExecutionState } from './card';
 import type { PffdtdSettings, PffdtdVoxelProblem } from './pffdtd';
+import type { SoundDirectivity } from './directivity';
 
 /**
  * Snapshot of a grid listener's configuration captured at simulation time.
@@ -111,6 +112,8 @@ export interface PyroomAcousticsSimulationConfig extends BaseSimulationConfig, C
     sources: Record<string, [number, number, number]>;
     receivers: Record<string, [number, number, number]>;
     soundToPosKey?: Record<string, string>;
+    /** Directivity of each directional source key at simulation time. */
+    sourceDirectivities?: Record<string, SoundDirectivity>;
     /** Grid listener configs at simulation time (for drift detection + reset) */
     gridListeners?: GridListenerSnapshot[];
   };
@@ -153,6 +156,8 @@ export interface PffdtdSimulationConfig extends BaseSimulationConfig, CardExecut
     sources: Record<string, [number, number, number]>;
     receivers: Record<string, [number, number, number]>;
     soundToPosKey?: Record<string, string>;
+    /** Directivity of each directional source key at simulation time. */
+    sourceDirectivities?: Record<string, SoundDirectivity>;
     gridListeners?: GridListenerSnapshot[];
   };
 }
@@ -175,6 +180,8 @@ export interface ImportIRsSimulationConfig extends BaseSimulationConfig {
     sources: Record<string, [number, number, number]>;
     receivers: Record<string, [number, number, number]>;
     soundToPosKey?: Record<string, string>;
+    /** Directivity of each directional source key at simulation time. */
+    sourceDirectivities?: Record<string, SoundDirectivity>;
     /** Grid listener configs at simulation time (for drift detection + reset) */
     gridListeners?: GridListenerSnapshot[];
   };

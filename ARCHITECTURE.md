@@ -23,7 +23,7 @@ compas_soundscape/
 │   │   ├── free_grid.py free_ir.py free_runs.py  # Free positioning: candidate grid, raw store, reciprocal runs
 │   │   ├── ir_server.py             # Resident IR server (free positioning), started by services/pffdtd_ir_server.py
 │   │   ├── air_absorption.py        # numba build of upstream's visco air-absorption filter (bit-identical, ~80x faster)
-│   │   └── validation/              # A1–A4, B1–B3 tests + REPORT.md
+│   │   └── validation/              # A1–A4, B1–B3 tests + REPORT.md (measured benchmark: backend/tests/benchmarks/bras/, scenes.py)
 │   ├── models/
 │   │   └── schemas.py               # Pydantic request/response models
 │   ├── routers/

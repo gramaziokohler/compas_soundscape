@@ -18,6 +18,7 @@ import { buildAbsorptionHistogramSVG, buildMiniHistogramSVG } from '@/lib/audio/
 import { getScale } from '@/utils/scale';
 import { SearchBar } from '@/components/ui/SearchBar';
 import { CardSelect, type CardSelectOption } from '@/components/ui/CardSelect';
+import { MaterialSelectFooter } from '@/components/ui/MaterialSelectFooter';
 
 export interface MaterialOption {
   id: string;
@@ -25,6 +26,10 @@ export interface MaterialOption {
   absorption: number;
   coeffs?: number[];
   center_freqs?: number[];
+  /** User-defined material (labelled "mine"). */
+  isCustom?: boolean;
+  /** Custom material from a shared soundscape, not in my library (labelled "shared"). */
+  isShared?: boolean;
 }
 
 export type MaterialSelectVariant = 'explorer' | 'resonance';
@@ -45,6 +50,11 @@ interface MaterialSelectProps {
   allowClear?: boolean;
   fitContent?: boolean;
   alignRight?: boolean;
+  /**
+   * Show the "+ New material… / My materials" footer. A material created from
+   * it is passed to `onChange`, i.e. assigned to this picker's target.
+   */
+  allowCustom?: boolean;
 }
 
 /** Full histogram popup dimensions (75 % of old 260×156). */
@@ -77,7 +87,10 @@ const VARIANT_DEFAULTS: Record<MaterialSelectVariant, {
 };
 
 function materialLabel(mat: MaterialOption): string {
-  return `${mat.name} (${(mat.absorption * 100).toFixed(0)}%)`;
+  const base = `${mat.name} (${(mat.absorption * 100).toFixed(0)}%)`;
+  if (mat.isShared) return `${base} · ${MATERIAL_SELECT.SHARED_TAG}`;
+  if (mat.isCustom) return `${base} · ${MATERIAL_SELECT.CUSTOM_TAG}`;
+  return base;
 }
 
 function isPointerOverHistogramUi(x: number, y: number): boolean {
@@ -99,6 +112,7 @@ export function MaterialSelect({
   allowClear = true,
   fitContent: fitContentProp,
   alignRight: alignRightProp,
+  allowCustom = false,
 }: MaterialSelectProps) {
   const variantDefaults = VARIANT_DEFAULTS[variant];
   const fitContent = fitContentProp ?? variantDefaults.fitContent;
@@ -346,6 +360,9 @@ export function MaterialSelect({
               className="w-full"
             />
           ) : undefined}
+          menuFooter={allowCustom
+            ? (close) => <MaterialSelectFooter close={close} onCreated={onChange} />
+            : undefined}
           onOpenChange={(open) => {
             if (!open) {
               setSearchQuery('');

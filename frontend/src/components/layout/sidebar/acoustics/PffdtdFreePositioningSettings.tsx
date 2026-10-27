@@ -16,8 +16,12 @@ import type { PffdtdFreeMode, PffdtdSettings } from '@/types/pffdtd';
 import { ToggleField } from '@/components/ui/ToggleField';
 import { OptionToggle } from '@/components/ui/OptionToggle';
 import { RangeSlider } from '@/components/ui/RangeSlider';
+import { useDirectionalSources } from '@/hooks/useDirectionalSources';
 
 type FreeSide = Exclude<PffdtdFreeMode, 'off'>;
+
+const DIRECTIONAL_LISTENER_TITLE =
+  'Free listener runs forward from each source and cannot radiate a directional source — set the sources to omnidirectional or use Free source.';
 
 interface PffdtdFreePositioningSettingsProps {
   settings: PffdtdSettings;
@@ -41,12 +45,15 @@ export function PffdtdFreePositioningSettings({
 }: PffdtdFreePositioningSettingsProps) {
   const enabled = s.free_mode !== 'off';
   const side: FreeSide = s.free_mode === 'source' ? 'source' : 'listener';
+  // Directional sources run reciprocally (from the listeners): Free listener is unavailable.
+  const { directionalCount } = useDirectionalSources();
+  const listenerBlocked = directionalCount > 0;
 
   return (
     <div className="card-stack--tight">
       <ToggleField
         checked={enabled}
-        onChange={(checked) => onChange('free_mode', checked ? side : 'off')}
+        onChange={(checked) => onChange('free_mode', checked ? (listenerBlocked ? 'source' : side) : 'off')}
         label="Free positioning"
         modified={isSettingModified('free_mode')}
         disabled={disabled}
@@ -57,10 +64,18 @@ export function PffdtdFreePositioningSettings({
             value={side}
             onChange={(v) => onChange('free_mode', v)}
             options={[
-              { value: 'listener', label: 'Free listener', title: SIDE_HELP.listener, disabled },
+              {
+                value: 'listener',
+                label: 'Free listener',
+                title: listenerBlocked ? DIRECTIONAL_LISTENER_TITLE : SIDE_HELP.listener,
+                disabled: disabled || listenerBlocked,
+              },
               { value: 'source', label: 'Free source', title: SIDE_HELP.source, disabled },
             ]}
           />
+          {listenerBlocked && side === 'listener' && (
+            <span className="text-xxs" style={{ color: 'var(--color-error)' }}>{DIRECTIONAL_LISTENER_TITLE}</span>
+          )}
           <RangeSlider
             label="Grid spacing"
             unit="m"

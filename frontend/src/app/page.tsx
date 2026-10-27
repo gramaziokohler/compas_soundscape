@@ -12,6 +12,8 @@ import type { SidebarProps } from "@/types/components";
 import { AdvancedSettingsPanel } from "@/components/scene/AdvancedSettingsPanel";
 import { SoundEditorWindow } from "@/components/audio/fx/SoundEditorWindow";
 import { ErrorToast } from "@/components/ui/ErrorToast";
+import { CustomMaterialDialogsHost } from "@/components/acoustics/CustomMaterialDialogsHost";
+import { DirectivityDialogsHost } from "@/components/acoustics/DirectivityDialogsHost";
 import { useApiErrorHandler } from "@/hooks/useApiErrorHandler";
 import { useObjectSelectionPhase } from "@/hooks/useObjectSelectionPhase";
 import { buildEntityFromObjectId, resolveStableEntityId, resolveEntityByNameLayer } from "@/lib/three/speckle-entity-utils";
@@ -1235,7 +1237,8 @@ function HomeContent() {
               simConfig.sourceReceiverIRMapping,
               simulationMode,
               listenerReceiverId,
-              simulationSourcePositions
+              simulationSourcePositions,
+              simConfig.simulationPositions?.soundToPosKey
             ).then(() => {
               console.log('[Page] ✅ IR mapping hot-swapped successfully');
             }).catch(error => {
@@ -1251,7 +1254,8 @@ function HomeContent() {
               simConfig.sourceReceiverIRMapping,
               simulationMode,
               listenerReceiverId,
-              simulationSourcePositions
+              simulationSourcePositions,
+              simConfig.simulationPositions?.soundToPosKey
             ).then(() => {
               console.log('[Page] ✅ Source-receiver IR mapping applied successfully');
             }).catch(error => {
@@ -4181,6 +4185,8 @@ export default function Home() {
       <Suspense fallback={null}>
         <HomeContent />
       </Suspense>
+      <CustomMaterialDialogsHost />
+      <DirectivityDialogsHost />
     </>
   );
 }

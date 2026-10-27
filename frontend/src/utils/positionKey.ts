@@ -1,4 +1,5 @@
-import { SIMULATION_POSITION_MATCH_THRESHOLD } from './constants';
+import { DIRECTIVITY, SIMULATION_POSITION_MATCH_THRESHOLD } from './constants';
+import type { SoundDirectivity } from '@/types/directivity';
 
 /**
  * Compute a deterministic position key by quantizing coordinates to the given precision.
@@ -15,16 +16,69 @@ export function computePositionKey(
 }
 
 /**
- * Parse a position key (e.g. "pos_1100.00_850.00_250.00") back into its quantized
- * [x, y, z] coordinates. Returns null when the string isn't a valid position key
- * (e.g. a real sound/receiver UUID passed through a manual-upload pairing context).
+ * Source keys: omnidirectional sources keep the bare position key; a directional
+ * source appends `~d<hash8>` (hash of directivity id + quantised orientation) so
+ * co-located sounds with different patterns become separate simulated sources
+ * (`pos_1.00_2.00_3.00~d1a2b3c4d`). The backend embeds the key verbatim as
+ * `source_id` in IR filenames; `~` is filename- and URL-safe.
+ */
+const POSITION_KEY_RE = /^pos_(-?\d+(?:\.\d+)?)_(-?\d+(?:\.\d+)?)_(-?\d+(?:\.\d+)?)(?:~d[0-9a-f]{8})?$/;
+
+/** True when the directivity is absent or the omni preset (no key suffix, no pattern). */
+export function isOmniDirectivity(directivity?: SoundDirectivity | null): boolean {
+  return !directivity || !directivity.id || directivity.id === DIRECTIVITY.OMNI_ID;
+}
+
+/** FNV-1a 32-bit hash as 8 hex chars (stable across platforms, no dependency). */
+function fnv1a32(text: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, '0');
+}
+
+/** `~d<hash8>` of a directional source, '' for omni. */
+export function directivityKeySuffix(directivity?: SoundDirectivity | null): string {
+  if (isOmniDirectivity(directivity)) return '';
+  const d = directivity as SoundDirectivity;
+  const q = (v: number | undefined) => Math.round((v ?? 0) / DIRECTIVITY.ORIENTATION_QUANT_RAD);
+  return `${DIRECTIVITY.KEY_SUFFIX_PREFIX}${fnv1a32(`${d.id}|${q(d.yaw)}|${q(d.pitch)}|${q(d.roll)}`)}`;
+}
+
+/** Simulation source key of a sound: position key plus the directivity suffix. */
+export function computeSourceKey(
+  position: [number, number, number],
+  directivity?: SoundDirectivity | null,
+  precision: number = SIMULATION_POSITION_MATCH_THRESHOLD
+): string {
+  return computePositionKey(position, precision) + directivityKeySuffix(directivity);
+}
+
+/** The bare position key of a source key (strips a `~d…` suffix). */
+export function positionKeyBase(key: string): string {
+  const i = key.indexOf(DIRECTIVITY.KEY_SUFFIX_PREFIX);
+  return i === -1 ? key : key.slice(0, i);
+}
+
+/** True when the source key carries a directivity suffix. */
+export function isDirectionalSourceKey(key: string): boolean {
+  return key.includes(DIRECTIVITY.KEY_SUFFIX_PREFIX);
+}
+
+/**
+ * Parse a position key (e.g. "pos_1100.00_850.00_250.00", with or without a
+ * `~d…` directivity suffix) back into its quantized [x, y, z] coordinates.
+ * Returns null when the string isn't a valid position key (e.g. a real
+ * sound/receiver UUID passed through a manual-upload pairing context).
  *
  * These are the exact values the backend embeds as `source_id` in generated IR
- * filenames (`sim_{simId}_src_{posKey}_rcv_{receiverId}.wav`), since `computePositionKey()`'s
- * output is sent verbatim as `source_id` in `source_receiver_pairs`.
+ * filenames (`sim_{simId}_src_{posKey}_rcv_{receiverId}.wav`), since the source
+ * key is sent verbatim as `source_id` in `source_receiver_pairs`.
  */
 export function parsePositionKey(posKey: string): [number, number, number] | null {
-  const match = posKey.match(/^pos_(-?\d+(?:\.\d+)?)_(-?\d+(?:\.\d+)?)_(-?\d+(?:\.\d+)?)$/);
+  const match = posKey.match(POSITION_KEY_RE);
   if (!match) return null;
   return [parseFloat(match[1]), parseFloat(match[2]), parseFloat(match[3])];
 }
@@ -40,32 +94,44 @@ export function positionsMatch(
   return computePositionKey(pos1, precision) === computePositionKey(pos2, precision);
 }
 
+/** Sound-like input of the grouping helpers (directivity optional). */
+export interface GroupableSound {
+  id: string;
+  position: [number, number, number];
+  directivity?: SoundDirectivity | null;
+}
+
 /**
- * Group a list of sound-like objects by their spatial position.
- * Returns the set of unique position keys and a mapping from each sound's id to its key.
+ * Group a list of sound-like objects into simulated sources: by spatial position
+ * and, when a sound is directional, by its directivity + orientation.
+ * Returns the unique source keys with their positions and directivities, and a
+ * mapping from each sound's id to its key.
  */
 export function groupSoundsByPosition(
-  sounds: Array<{ id: string; position: [number, number, number] }>,
+  sounds: GroupableSound[],
   precision: number = SIMULATION_POSITION_MATCH_THRESHOLD
 ): {
   uniquePositions: Map<string, [number, number, number]>;
   soundToPosKey: Map<string, string>;
+  sourceDirectivities: Map<string, SoundDirectivity | undefined>;
 } {
   const uniquePositions = new Map<string, [number, number, number]>();
   const soundToPosKey = new Map<string, string>();
+  const sourceDirectivities = new Map<string, SoundDirectivity | undefined>();
 
   for (const sound of sounds) {
     if (!sound.position || sound.position.length !== 3) continue;
-    const key = computePositionKey(sound.position, precision);
+    const key = computeSourceKey(sound.position, sound.directivity, precision);
     if (!uniquePositions.has(key)) {
       uniquePositions.set(key, sound.position);
+      sourceDirectivities.set(key, isOmniDirectivity(sound.directivity) ? undefined : (sound.directivity as SoundDirectivity));
     }
     if (!soundToPosKey.has(sound.id)) {
       soundToPosKey.set(sound.id, key);
     }
   }
 
-  return { uniquePositions, soundToPosKey };
+  return { uniquePositions, soundToPosKey, sourceDirectivities };
 }
 
 /**

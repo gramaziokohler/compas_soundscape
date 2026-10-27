@@ -28,6 +28,7 @@ import {
 import { groupSoundsByPosition, collapseVariantsToOne } from '@/utils/positionKey';
 import { notifyError } from './errorsStore';
 import { resolveSimulationLayerName, resolveSimulationGeometryObjectIds } from './acousticLayerStore';
+import { customMaterialDefinitions } from './customMaterialStore';
 import { resolveSimulationVersionId } from '@/utils/simulationRequest';
 import { useUIStore } from './uiStore';
 import { useAudioControlsStore } from './audioControlsStore';
@@ -389,6 +390,9 @@ export const usePyroomAcousticsStore = create<PyroomAcousticsStoreState>()(
               },
               sourceReceiverPairs,
               resolveSimulationGeometryObjectIds(),
+              undefined,
+              undefined,
+              customMaterialDefinitions(Object.values(objectMaterials)),
             );
 
             patchInstance(set, instanceId, { currentSimulationId: simulation_id, status: 'Queued...' }, 'pyroom/queued');

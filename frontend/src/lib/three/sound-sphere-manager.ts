@@ -12,6 +12,7 @@ import type { AuralizationConfig, SoundMetadata } from "@/types/audio";
 import type { AudioOrchestrator } from "@/lib/audio/AudioOrchestrator";
 import { useAudioControlsStore } from "@/store/audioControlsStore";
 import { resolveSoundAudioUrl } from "@/lib/audio/utils/resolve-sound-url";
+import { syncDirectionIndicator } from "@/lib/three/sound-direction-indicator";
 // import type { BoundingBoxBounds } from "@/lib/three/BoundingBoxManager"; // Bounding-box placement removed
 
 /**
@@ -313,7 +314,10 @@ export class SoundSphereManager {
       // Sounds unchanged — still refresh mesh userData and sync labels in case display_name changed
       visibleSounds.forEach(soundEvent => {
         const mesh = this.soundMeshes.find(m => m.userData.soundEvent?.id === soundEvent.id);
-        if (mesh) mesh.userData.soundEvent = soundEvent;
+        if (mesh) {
+          mesh.userData.soundEvent = soundEvent;
+          this.syncSphereDirectionIndicator(mesh, soundEvent);
+        }
         const promptIdx = (soundEvent as any).prompt_index ?? 0;
 
         // Sync position for ALL sounds in case an undo/redo changed stored positions.
@@ -557,7 +561,10 @@ export class SoundSphereManager {
     const meshById = new Map(result.meshes.map(m => [m.userData.soundEvent?.id as string, m]));
     for (const data of meshSoundData) {
       const mesh = meshById.get(data.id);
-      if (mesh) mesh.userData.soundEvent = data.soundEvent;
+      if (mesh) {
+        mesh.userData.soundEvent = data.soundEvent;
+        this.syncSphereDirectionIndicator(mesh, data.soundEvent);
+      }
     }
 
     // Sync label sprites with the current mesh set
@@ -878,6 +885,7 @@ export class SoundSphereManager {
       const sphereRadius = 0.3 * this.scaleForSounds;
       sphereGeom = new THREE.SphereGeometry(sphereRadius, 32, 32);
     }
+    sphereGeom.computeBoundingSphere();
 
     // Pending (pre-generation) placeholders share the generated sphere's primary
     // look but render slightly dimmer (PENDING_OPACITY vs BASE_OPACITY).
@@ -914,6 +922,10 @@ export class SoundSphereManager {
     sphereMesh.userData.promptKey = promptKey;
     sphereMesh.userData.positionKey = soundEvent.id;
     sphereMesh.userData.customObjectType = 'sound'; // CRITICAL: Required for drag handler and event bridge
+    sphereMesh.userData.baseRadius = sphereGeom.boundingSphere?.radius ?? 0.3 * this.scaleForSounds;
+
+    // Directional sources carry a cone pointing along their forward vector.
+    this.syncSphereDirectionIndicator(sphereMesh, soundEvent);
 
     // Force matrix update
     sphereMesh.updateMatrix();
@@ -925,6 +937,14 @@ export class SoundSphereManager {
 
     // Note: Scene.add() is handled by updateDraggableMeshes utility
     return sphereMesh;
+  }
+
+  /** Create / update / remove the direction cone of a sphere from its event's directivity. */
+  private syncSphereDirectionIndicator(mesh: THREE.Mesh, soundEvent: SoundEvent): void {
+    const baseRadius = (mesh.userData.baseRadius as number | undefined) ?? 0.3 * this.scaleForSounds;
+    syncDirectionIndicator(mesh, soundEvent, baseRadius, getCssColorHex('--color-primary'), this.darkModeEnabled);
+    // The dry playback modes apply the same pattern live (idempotent on the orchestrator side).
+    this.audioOrchestrator?.setSourceDirectivity(soundEvent.id, soundEvent.directivity);
   }
 
   /**

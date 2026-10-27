@@ -59,7 +59,7 @@ class PyroomacousticsService:
             - FOA mode: MicrophoneArray with 4 coincident directivity mics (W=omni, Y/Z/X=fig-8)
                        AmbiX format: ACN channel ordering (W, Y, Z, X) with SN3D normalization.
                        Mic orientations aligned to the listener frame (-Y=Forward, +X=Left, +Z=Up).
-                       Directivity is applied to ISM; ray tracing uses omnidirectional fallback.
+                       The local fork applies directivity to ISM and ray tracing alike.
         """
 
         # Default to mono if not specified

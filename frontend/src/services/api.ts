@@ -3,6 +3,15 @@ import type { CompasGeometry, SoundEvent, SoundGenerationConfig, FileUploadRespo
 import { recordFailedRequest } from '@/lib/diagnostics/diagnosticsBuffer';
 import type { TtsCustomVoice, TtsCustomVoiceCreateRequest, TtsDialectsResponse, TtsLanguageMatch } from '@/types/ttsLanguage';
 import type { ImpulseResponseMetadata } from '@/types/audio';
+import type { CustomMaterialCoefficients, CustomMaterialInput, CustomMaterialRecord } from '@/types/materials';
+import type {
+  AnalyticalDirectivityPreview,
+  DirectivityImportStatus,
+  DirectivityInspectResult,
+  DirectivityPreview,
+  DirectivityRecord,
+  SoundDirectivity,
+} from '@/types/directivity';
 import type { ModalAnalysisRequest, ModalAnalysisResult } from '@/types/modal';
 import type {
   SpeckleProjectModelsResponse,
@@ -277,13 +286,23 @@ function pffdtdGeometryForm(request: SimulationGeometryRequest, meshSettings?: S
   formData.append('speckle_project_id', request.projectId);
   formData.append('speckle_version_id', request.versionId);
   formData.append('object_materials', JSON.stringify(request.objectMaterials));
+  formData.append('custom_materials', JSON.stringify(request.customMaterials));
   formData.append('layer_name', request.layerName);
   if (request.geometryObjectIds?.length) {
     formData.append('geometry_object_ids', JSON.stringify(request.geometryObjectIds));
   }
   formData.append('source_receiver_pairs', JSON.stringify(request.sourceReceiverPairs));
+  formData.append('model_id', request.modelId);  // resolves shared-soundscape directivity copies
   if (meshSettings) formData.append('mesh_settings', JSON.stringify(meshSettings));
   return formData;
+}
+
+/** Error detail of a failed JSON API response (FastAPI `detail`, string or validation list). */
+async function responseErrorDetail(response: Response, fallback: string): Promise<string> {
+  const err = await response.json().catch(() => ({ detail: fallback }));
+  if (typeof err.detail === 'string') return err.detail;
+  if (Array.isArray(err.detail) && err.detail[0]?.msg) return String(err.detail[0].msg);
+  return fallback;
 }
 
 export interface ServiceVersionInfo {
@@ -1420,6 +1439,137 @@ export const apiService = {
     }
   },
 
+  // ─── Custom (per-user) acoustic materials ──────────────────────────────────
+
+  /** The current user's custom materials (empty when the session has no identity). */
+  async listCustomMaterials(): Promise<CustomMaterialRecord[]> {
+    const response = await fetchWithErrorHandling(`${API_BASE_URL}/api/me/materials`, undefined, 'Custom materials');
+    if (!response.ok) throw new Error(await responseErrorDetail(response, 'Failed to load custom materials'));
+    return response.json();
+  },
+
+  async createCustomMaterial(input: CustomMaterialInput): Promise<CustomMaterialRecord> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/me/materials`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) },
+      'Create custom material'
+    );
+    if (!response.ok) throw new Error(await responseErrorDetail(response, 'Failed to create material'));
+    return response.json();
+  },
+
+  async updateCustomMaterial(materialId: string, input: CustomMaterialInput): Promise<CustomMaterialRecord> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/me/materials/${encodeURIComponent(materialId)}`,
+      { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) },
+      'Update custom material'
+    );
+    if (!response.ok) throw new Error(await responseErrorDetail(response, 'Failed to update material'));
+    return response.json();
+  },
+
+  async deleteCustomMaterial(materialId: string): Promise<void> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/me/materials/${encodeURIComponent(materialId)}`,
+      { method: 'DELETE' },
+      'Delete custom material'
+    );
+    if (!response.ok) throw new Error(await responseErrorDetail(response, 'Failed to delete material'));
+  },
+
+  // ─── Source directivities (presets + per-user library) ─────────────────────
+
+  /** Built-in presets plus the current user's imported directivities. */
+  async listDirectivities(): Promise<DirectivityRecord[]> {
+    const response = await fetchWithErrorHandling(`${API_BASE_URL}/api/me/directivities`, undefined, 'Directivities');
+    if (!response.ok) throw new Error(await responseErrorDetail(response, 'Failed to load directivities'));
+    return response.json();
+  },
+
+  /** Quick look at a SOFA / BRAS CSV file (format, selectable sources) before importing. */
+  async inspectDirectivityFile(file: File): Promise<DirectivityInspectResult> {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/me/directivities/inspect`,
+      { method: 'POST', body: formData },
+      'Inspect directivity file'
+    );
+    if (!response.ok) throw new Error(await responseErrorDetail(response, 'Could not read the file'));
+    return response.json();
+  },
+
+  /** Upload a directivity file and enqueue its import job (poll with getDirectivityImportStatus). */
+  async importDirectivity(file: File, name: string, sofaSource?: string): Promise<{ job_id: string }> {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('name', name);
+    if (sofaSource) formData.append('sofa_source', sofaSource);
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/me/directivities/import`,
+      { method: 'POST', body: formData },
+      'Import directivity'
+    );
+    if (!response.ok) throw new Error(await responseErrorDetail(response, 'Import failed'));
+    return response.json();
+  },
+
+  /** Poll a directivity import job (unified GET /api/jobs/{id}). */
+  async getDirectivityImportStatus(jobId: string): Promise<DirectivityImportStatus> {
+    const job = await getUnifiedJobStatus(jobId);
+    const completed = job.status === 'completed' || job.status === 'error' || job.status === 'cancelled';
+    return {
+      progress: job.progress,
+      statusText: job.status_text,
+      completed,
+      error: job.status === 'error' ? (job.error || 'Import failed') : job.status === 'cancelled' ? 'Import cancelled' : undefined,
+      directivity: job.status === 'completed' ? (job.result?.directivity as DirectivityRecord | undefined) : undefined,
+    };
+  },
+
+  async renameDirectivity(directivityId: string, name: string): Promise<DirectivityRecord> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/me/directivities/${encodeURIComponent(directivityId)}`,
+      { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) },
+      'Rename directivity'
+    );
+    if (!response.ok) throw new Error(await responseErrorDetail(response, 'Failed to rename directivity'));
+    return response.json();
+  },
+
+  async deleteDirectivity(directivityId: string): Promise<void> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/me/directivities/${encodeURIComponent(directivityId)}`,
+      { method: 'DELETE' },
+      'Delete directivity'
+    );
+    if (!response.ok) throw new Error(await responseErrorDetail(response, 'Failed to delete directivity'));
+  },
+
+  /** Binary balloon of a measured directivity for real-time playback (lib/audio/utils/source-directivity.ts). */
+  async fetchDirectivityBalloon(directivityId: string, modelId?: string): Promise<ArrayBuffer> {
+    const query = modelId ? `?model_id=${encodeURIComponent(modelId)}` : '';
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/directivities/${encodeURIComponent(directivityId)}/balloon${query}`,
+      undefined,
+      'Directivity balloon'
+    );
+    if (!response.ok) throw new Error(await responseErrorDetail(response, 'Failed to load the directivity balloon'));
+    return response.arrayBuffer();
+  },
+
+  /** Polar preview of a measured directivity (`{analytical, p}` for analytical presets). */
+  async getDirectivityPreview(directivityId: string, modelId?: string): Promise<DirectivityPreview | AnalyticalDirectivityPreview> {
+    const query = modelId ? `?model_id=${encodeURIComponent(modelId)}` : '';
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/directivities/${encodeURIComponent(directivityId)}/preview${query}`,
+      undefined,
+      'Directivity preview'
+    );
+    if (!response.ok) throw new Error(await responseErrorDetail(response, 'Failed to load the preview'));
+    return response.json();
+  },
+
   /**
    * Run Pyroomacoustics simulation
    * 
@@ -1527,10 +1677,14 @@ export const apiService = {
       receiver_position: number[];
       source_id: string;
       receiver_id: string;
+      source_directivity?: SoundDirectivity;
     }>,
     geometryObjectIds?: string[],
     objectScattering?: Record<string, number>,
     meshSettings?: SimulationMeshSettings,
+    customMaterials?: Record<string, CustomMaterialCoefficients>,
+    /** Speckle model id — resolves shared-soundscape directivity copies on the backend. */
+    modelId?: string,
   ): Promise<{ simulation_id: string } & { job_id: string }> {
     try {
       const formData = new FormData();
@@ -1538,7 +1692,9 @@ export const apiService = {
       formData.append('speckle_project_id', speckleProjectId);
       formData.append('speckle_version_id', speckleVersionId);
       formData.append('object_materials', JSON.stringify(objectMaterials));
+      formData.append('custom_materials', JSON.stringify(customMaterials ?? {}));
       formData.append('layer_name', layerName);
+      if (modelId) formData.append('model_id', modelId);
       formData.append('max_order', settings.max_order.toString());
       formData.append('ray_tracing', settings.ray_tracing.toString());
       formData.append('air_absorption', settings.air_absorption.toString());
@@ -1626,6 +1782,7 @@ export const apiService = {
     /** Loaded Speckle version id (a bare model id resolves to the latest version). */
     versionId: string;
     objectMaterials: Record<string, string>;
+    customMaterials: Record<string, CustomMaterialCoefficients>;
     layerName: string;
     geometryObjectIds?: string[];
     objectScattering?: Record<string, number>;
@@ -1634,17 +1791,27 @@ export const apiService = {
       receiver_position: number[];
       source_id: string;
       receiver_id: string;
+      source_directivity?: SoundDirectivity;
     }>;
     maxOrder?: number;
     rayTracing?: boolean;
     meshSettings: SimulationMeshSettings;
+    /** Speckle model id — resolves shared-soundscape directivity copies on the backend. */
+    modelId?: string;
+    /** PFFDTD: output mode and free-positioning mode (run count / refusal of directional sources). */
+    simulationMode?: string;
+    freeMode?: string;
   }): Promise<{ job_id: string }> {
     const formData = new FormData();
     formData.append('engine', params.engine);
     formData.append('speckle_project_id', params.projectId);
     formData.append('speckle_version_id', params.versionId);
     formData.append('object_materials', JSON.stringify(params.objectMaterials));
+    formData.append('custom_materials', JSON.stringify(params.customMaterials));
     formData.append('layer_name', params.layerName);
+    if (params.modelId) formData.append('model_id', params.modelId);
+    if (params.simulationMode) formData.append('simulation_mode', params.simulationMode);
+    if (params.freeMode) formData.append('free_mode', params.freeMode);
     if (params.geometryObjectIds?.length) {
       formData.append('geometry_object_ids', JSON.stringify(params.geometryObjectIds));
     }
@@ -2003,10 +2170,10 @@ export const apiService = {
    * Get all Speckle models with detailed metadata.
    * Returns the full response envelope including project_id, models, and auth_token.
    */
-  async getSpeckleModels(): Promise<SpeckleProjectModelsResponse> {
+  async getSpeckleModels(ownWorkspace = false): Promise<SpeckleProjectModelsResponse> {
     try {
       const response = await fetchWithErrorHandling(
-        `${API_BASE_URL}/api/speckle/models`,
+        `${API_BASE_URL}/api/speckle/models${ownWorkspace ? '?own_workspace=true' : ''}`,
         undefined,
         'Get Speckle models'
       );
@@ -2290,13 +2457,14 @@ export const apiService = {
   },
 
   /**
-   * List locally saved Home (sandbox) projects for this workspace.
+   * List locally saved Home (sandbox) projects for this workspace
+   * (`ownWorkspace`: the caller's own workspace, for scene-send targets).
    */
-  async listHomeProjects(): Promise<{
+  async listHomeProjects(ownWorkspace = false): Promise<{
     projects: Array<{ model_id: string; name: string; saved_at: string }>;
   }> {
     const response = await fetchWithErrorHandling(
-      `${API_BASE_URL}/api/speckle/soundscape/home-projects`,
+      `${API_BASE_URL}/api/speckle/soundscape/home-projects${ownWorkspace ? '?own_workspace=true' : ''}`,
       undefined,
       'List home projects'
     );

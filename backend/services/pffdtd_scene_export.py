@@ -49,7 +49,8 @@ def scene_material_ids(mesh: SimulationMesh) -> dict[str, str]:
     for value in mesh.face_material:
         key = json.dumps(value, sort_keys=True, default=str)
         if key not in keys:
-            keys[key] = str(value) if not isinstance(value, dict) else key
+            # Inlined user materials carry their id so the legend can name them.
+            keys[key] = str(value) if not isinstance(value, dict) else str(value.get("id", key))
     return {f"m{i:03d}": material_id for i, material_id in enumerate(keys.values())}
 
 

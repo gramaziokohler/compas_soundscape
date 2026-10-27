@@ -18,6 +18,7 @@
  */
 
 import type { CardType } from '@/types/card';
+import { customMaterialDefinitions } from '@/store/customMaterialStore';
 
 /** Minimal shape every signable config shares. Fields are read defensively per type. */
 interface SignableConfig {
@@ -30,6 +31,12 @@ type SignatureInputs = Record<string, unknown>;
 
 /** Virtual input key: TTS speech lines live in orchestrateMeta / scenarioSource. */
 const SPEECH_LINES_KEY = 'speechLines';
+/**
+ * Virtual input key: coefficients of the custom materials assigned on the card
+ * (they live in the user's library, so editing one must mark the card modified).
+ * Omitted when no custom material is assigned so older signatures stay valid.
+ */
+const CUSTOM_MATERIALS_KEY = 'customMaterials';
 
 interface SignatureSpec {
   /** Top-level config fields that shape the result (restored verbatim on revert). */
@@ -38,6 +45,8 @@ interface SignatureSpec {
   nested?: string[];
   /** Include the TTS speech lines (virtual `speechLines` input). */
   speechLines?: boolean;
+  /** Include the assigned custom materials' coefficients (virtual `customMaterials` input; not revertible). */
+  customMaterials?: boolean;
   /**
    * Inputs shared by every variant of the card (variant count, speech-line
    * list). Kept as-is when a variant's settings are loaded into the card.
@@ -53,9 +62,13 @@ const SIGNATURE_SPECS: Partial<Record<CardType, SignatureSpec>> = {
   'text-to-speech': { fields: ['prompt', 'voice_name', 'seed_copies'], speechLines: true, cardLevel: ['seed_copies'] },
   library: { fields: ['selectedLibrarySound'] },
   catalog: { fields: ['selectedCatalogSound'] },
-  pyroomacoustics: { fields: ['settings', 'speckleMaterialAssignments', 'speckleScatteringAssignments'], nested: ['settings'] },
+  pyroomacoustics: {
+    fields: ['settings', 'speckleMaterialAssignments', 'speckleScatteringAssignments'],
+    nested: ['settings'],
+    customMaterials: true,
+  },
   // Wave-based: no scattering (the FDTD grid models diffraction itself).
-  pffdtd: { fields: ['settings', 'speckleMaterialAssignments'], nested: ['settings'] },
+  pffdtd: { fields: ['settings', 'speckleMaterialAssignments'], nested: ['settings'], customMaterials: true },
   text: { fields: ['textInput', 'numSounds', 'useAnalysisResult', 'drawnArea'] },
   scenario: { fields: ['userContext', 'peopleCount', 'likeliness', 'timelineDurationMs', 'useAnalysisResult'] },
 };
@@ -68,6 +81,7 @@ const MARK_KEY_ALIASES: Record<string, string> = {
   [SPEECH_LINES_KEY]: 'prompt',
   speckleMaterialAssignments: 'materials',
   speckleScatteringAssignments: 'materials',
+  [CUSTOM_MATERIALS_KEY]: 'materials',
   selectedLibrarySound: 'sound',
   selectedCatalogSound: 'sound',
 };
@@ -105,6 +119,11 @@ function getSignatureInputs(config: SignableConfig, spec: SignatureSpec): Signat
   const inputs: SignatureInputs = {};
   for (const field of spec.fields) inputs[field] = config[field];
   if (spec.speechLines) inputs[SPEECH_LINES_KEY] = getSpeechLines(config);
+  if (spec.customMaterials) {
+    const assignments = (config.speckleMaterialAssignments ?? {}) as Record<string, string>;
+    const defs = customMaterialDefinitions(Object.values(assignments));
+    inputs[CUSTOM_MATERIALS_KEY] = Object.keys(defs).length > 0 ? defs : undefined;
+  }
   return inputs;
 }
 

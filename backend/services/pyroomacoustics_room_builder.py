@@ -54,6 +54,9 @@ def _absorption_bands(material, n_bands: int) -> tuple[list[float], list[float]]
     if isinstance(value, str) and value in PYROOMACOUSTICS_CUSTOM_MATERIALS:
         custom = PYROOMACOUSTICS_CUSTOM_MATERIALS[value]
         value = {"coeffs": custom["coeffs"], "center_freqs": custom["center_freqs"]}
+    elif isinstance(value, dict):
+        # User materials arrive inlined as {"id", "coeffs", "center_freqs"}; pra takes only the bands.
+        value = {"coeffs": value["coeffs"], "center_freqs": value["center_freqs"]}
     mat = pra.Material(energy_absorption=value)
     return (
         _fit_bands(mat.energy_absorption["coeffs"], n_bands),

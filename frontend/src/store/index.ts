@@ -218,5 +218,27 @@ export {
 } from './undoRedoRegistry';
 export type { UndoRedoOverride, RegisterTemporalStoreOptions, UndoStepNotice } from './undoRedoRegistry';
 
+export {
+  useCustomMaterialStore,
+  isCustomMaterialId,
+  customRecordToMaterial,
+  findCustomMaterial,
+  customMaterialRecordsFor,
+  customMaterialDefinitions,
+} from './customMaterialStore';
+export type { CustomMaterialStoreState, CustomMaterialDialog } from './customMaterialStore';
+
+export {
+  useDirectivityStore,
+  isLibraryDirectivityId,
+  isAnalyticalDirectivityId,
+  omniDirectivity,
+  findDirectivity,
+  isResolvableDirectivityId,
+  directivityLabel,
+  directivityRecordsFor,
+} from './directivityStore';
+export type { DirectivityStoreState, DirectivityDialog } from './directivityStore';
+
 export { useStudyStore } from './studyStore';
 export type { StudyStoreState } from './studyStore';

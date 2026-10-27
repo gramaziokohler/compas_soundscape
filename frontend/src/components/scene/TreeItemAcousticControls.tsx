@@ -108,6 +108,7 @@ export function TreeItemAcousticControls({
             : MATERIAL_SELECT.PLACEHOLDER_LABEL}
           isMixed={isMixed}
           showSearch
+          allowCustom
           variant="explorer"
         />
       </div>

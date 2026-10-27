@@ -1,5 +1,6 @@
 /**
- * Send sound scenes from the open model to another model of the same workspace.
+ * Send sound scenes from the open model to another model: of the same workspace
+ * for its owner, of the caller's own workspace for any other member.
  * Mirrors backend `SendScenesRequest` / `SendScenesResponse` (models/schemas.py).
  */
 
@@ -27,6 +28,8 @@ export interface SendScenesResponse {
   audio_files_copied: number;
   missing_audio_filenames: string[];
   revision: number;
+  /** True when the target is in the caller's own workspace, not the open one. */
+  cross_workspace?: boolean;
 }
 
 /** A model the scenes can be sent to (Speckle model or Homepage project). */

@@ -67,7 +67,7 @@ from pffdtd_backend.outputs import (  # noqa: E402
     read_receivers,
 )
 from pffdtd_backend.postprocess import foa_channels, probe_positions, to_ir  # noqa: E402
-from pffdtd_backend.sim_prepare import SimSpec, derive, prepare, with_extras  # noqa: E402
+from pffdtd_backend.sim_prepare import SimSpec, derive, job_domain_bounds, prepare, with_extras  # noqa: E402
 
 PARENT_POLL_S = 1.0
 # share of each source's progress span: setup/voxelisation, IR solve, post-processing
@@ -173,7 +173,8 @@ def run_job(job: dict, watch: ParentWatch) -> dict:
         for name, m in job["materials"].items()
     }
     free = job.get("free")  # free positioning (free_runs.py); the reciprocal mode has its own loop
-    if free and free["mode"] == "source":
+    # Free source and directional sources (job["reciprocal"]) both run from the listeners.
+    if (free and free["mode"] == "source") or job.get("reciprocal"):
         return run_reciprocal(job, watch, emit, emit_voxelised, _voxel_check, _quiet, mat_files)
 
     receivers = np.asarray(job["receivers"], np.float64)
@@ -201,6 +202,7 @@ def run_job(job: dict, watch: ParentWatch) -> dict:
                 Tc=float(job["Tc"]),
                 rh=float(job["rh"]),
                 vox_cache_dir=_vox_cache_dir(job),
+                **job_domain_bounds(job),
             )
             prep = _voxel_check(prepare, spec)
             emit_voxelised(prep)  # the only voxelisation of the job: sources 2..N derive from it

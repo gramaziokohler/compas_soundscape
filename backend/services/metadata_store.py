@@ -168,6 +168,38 @@ CREATE TABLE IF NOT EXISTS custom_voices (
     created_at      TEXT NOT NULL
 );
 
+-- Per-user acoustic materials (routers/materials.py). Keyed by user_hash so a
+-- user's library follows their identity across workspaces; band coefficients
+-- are JSON arrays aligned with center_freqs.
+CREATE TABLE IF NOT EXISTS user_materials (
+    id                TEXT PRIMARY KEY,
+    user_hash         TEXT NOT NULL,
+    name              TEXT NOT NULL,
+    description       TEXT NOT NULL DEFAULT '',
+    coeffs_json       TEXT NOT NULL,
+    center_freqs_json TEXT NOT NULL,
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL
+);
+
+-- Per-user source directivities (routers/directivities.py). Metadata only: the
+-- processed balloon lives at data/directivities/<user_hash>/<id>.npz; fit_json /
+-- preview_json are small summaries served to the client without opening the file.
+CREATE TABLE IF NOT EXISTS user_directivities (
+    id            TEXT PRIMARY KEY,
+    user_hash     TEXT NOT NULL,
+    name          TEXT NOT NULL,
+    format        TEXT NOT NULL,
+    source_label  TEXT NOT NULL DEFAULT '',
+    fs            INTEGER NOT NULL,
+    n_points      INTEGER NOT NULL,
+    taps          INTEGER NOT NULL,
+    fit_json      TEXT NOT NULL,
+    preview_json  TEXT NOT NULL,
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+);
+
 -- In-app bug reports (routers/bug_reports.py). Screenshot media lives on disk
 -- under data/bug_reports/<id>/; `context` is the client diagnostics JSON.
 CREATE TABLE IF NOT EXISTS bug_reports (
@@ -190,6 +222,8 @@ CREATE TABLE IF NOT EXISTS bug_reports (
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_hash);
 CREATE INDEX IF NOT EXISTS idx_bug_reports_created ON bug_reports(created_at);
 CREATE INDEX IF NOT EXISTS idx_custom_voices_user ON custom_voices(user_hash);
+CREATE INDEX IF NOT EXISTS idx_user_materials_user ON user_materials(user_hash);
+CREATE INDEX IF NOT EXISTS idx_user_directivities_user ON user_directivities(user_hash);
 CREATE INDEX IF NOT EXISTS idx_members_user ON workspace_members(user_hash);
 CREATE INDEX IF NOT EXISTS idx_model_workspace ON model_workspace(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_model_workspaces_ws ON model_workspaces(workspace_id);
@@ -404,6 +438,131 @@ class MetadataStore:
             return None
         self._execute("DELETE FROM custom_voices WHERE id = ?", (voice_id,))
         return dict(rows[0])
+
+    # ── custom acoustic materials ────────────────────────────────────────
+    def list_user_materials(self, user_hash: str) -> list[dict]:
+        if not user_hash:
+            return []
+        rows = self._query(
+            "SELECT * FROM user_materials WHERE user_hash = ? ORDER BY lower(name)", (user_hash,)
+        )
+        return [dict(r) for r in rows]
+
+    def count_user_materials(self, user_hash: str) -> int:
+        rows = self._query("SELECT COUNT(*) AS n FROM user_materials WHERE user_hash = ?", (user_hash,))
+        return int(rows[0]["n"])
+
+    def get_user_material(self, user_hash: str, material_id: str) -> Optional[dict]:
+        rows = self._query(
+            "SELECT * FROM user_materials WHERE id = ? AND user_hash = ?", (material_id, user_hash)
+        )
+        return dict(rows[0]) if rows else None
+
+    def create_user_material(
+        self,
+        user_hash: str,
+        material_id: str,
+        name: str,
+        description: str,
+        coeffs_json: str,
+        center_freqs_json: str,
+    ) -> dict:
+        now = _now()
+        self._execute(
+            "INSERT INTO user_materials (id, user_hash, name, description, coeffs_json, "
+            "center_freqs_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (material_id, user_hash, name, description, coeffs_json, center_freqs_json, now, now),
+        )
+        return self.get_user_material(user_hash, material_id) or {}
+
+    def update_user_material(
+        self,
+        user_hash: str,
+        material_id: str,
+        name: str,
+        description: str,
+        coeffs_json: str,
+    ) -> Optional[dict]:
+        """Update one of the user's materials; None when it is not theirs."""
+        if self.get_user_material(user_hash, material_id) is None:
+            return None
+        self._execute(
+            "UPDATE user_materials SET name = ?, description = ?, coeffs_json = ?, updated_at = ? "
+            "WHERE id = ? AND user_hash = ?",
+            (name, description, coeffs_json, _now(), material_id, user_hash),
+        )
+        return self.get_user_material(user_hash, material_id)
+
+    def delete_user_material(self, user_hash: str, material_id: str) -> Optional[dict]:
+        """Delete one of the user's materials; returns the deleted row."""
+        row = self.get_user_material(user_hash, material_id)
+        if row is None:
+            return None
+        self._execute(
+            "DELETE FROM user_materials WHERE id = ? AND user_hash = ?", (material_id, user_hash)
+        )
+        return row
+
+    # ── source directivities ─────────────────────────────────────────────
+    def list_user_directivities(self, user_hash: str) -> list[dict]:
+        if not user_hash:
+            return []
+        rows = self._query(
+            "SELECT * FROM user_directivities WHERE user_hash = ? ORDER BY lower(name)", (user_hash,)
+        )
+        return [dict(r) for r in rows]
+
+    def count_user_directivities(self, user_hash: str) -> int:
+        rows = self._query("SELECT COUNT(*) AS n FROM user_directivities WHERE user_hash = ?", (user_hash,))
+        return int(rows[0]["n"])
+
+    def get_user_directivity(self, user_hash: str, directivity_id: str) -> Optional[dict]:
+        rows = self._query(
+            "SELECT * FROM user_directivities WHERE id = ? AND user_hash = ?", (directivity_id, user_hash)
+        )
+        return dict(rows[0]) if rows else None
+
+    def create_user_directivity(
+        self,
+        user_hash: str,
+        directivity_id: str,
+        name: str,
+        fmt: str,
+        source_label: str,
+        fs: int,
+        n_points: int,
+        taps: int,
+        fit_json: str,
+        preview_json: str,
+    ) -> dict:
+        now = _now()
+        self._execute(
+            "INSERT INTO user_directivities (id, user_hash, name, format, source_label, fs, n_points, "
+            "taps, fit_json, preview_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (directivity_id, user_hash, name, fmt, source_label, int(fs), int(n_points), int(taps),
+             fit_json, preview_json, now, now),
+        )
+        return self.get_user_directivity(user_hash, directivity_id) or {}
+
+    def rename_user_directivity(self, user_hash: str, directivity_id: str, name: str) -> Optional[dict]:
+        """Rename one of the user's directivities; None when it is not theirs."""
+        if self.get_user_directivity(user_hash, directivity_id) is None:
+            return None
+        self._execute(
+            "UPDATE user_directivities SET name = ?, updated_at = ? WHERE id = ? AND user_hash = ?",
+            (name, _now(), directivity_id, user_hash),
+        )
+        return self.get_user_directivity(user_hash, directivity_id)
+
+    def delete_user_directivity(self, user_hash: str, directivity_id: str) -> Optional[dict]:
+        """Delete one of the user's directivities; returns the deleted row."""
+        row = self.get_user_directivity(user_hash, directivity_id)
+        if row is None:
+            return None
+        self._execute(
+            "DELETE FROM user_directivities WHERE id = ? AND user_hash = ?", (directivity_id, user_hash)
+        )
+        return row
 
     # ── workspaces ───────────────────────────────────────────────────────
     def create_workspace(self, owner_hash: str, name: str, workspace_id: Optional[str] = None) -> dict:

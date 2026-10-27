@@ -3,8 +3,10 @@
 import { useState, useEffect, type ReactNode } from 'react';
 import { VerticalVolumeSlider } from '@/components/ui/VerticalVolumeSlider';
 import { PositionWidget } from '@/components/ui/PositionWidget';
+import { SoundDirectivityRow } from './SoundDirectivityRow';
 import { UI_VOLUME_SLIDER, DEFAULT_DBFS } from '@/utils/constants';
 import { useBatchedSlider } from '@/hooks/useBatchedSlider';
+import type { SoundDirectivity } from '@/types/directivity';
 
 /**
  * SoundCardBody
@@ -40,6 +42,11 @@ export interface SoundCardBodyProps {
   isMuted?: boolean;
   onMuteChange?: (muted: boolean) => void;
 
+  // ── Directivity (radiation pattern + orientation of the source) ───────────
+  directivity?: SoundDirectivity;
+  /** When provided, the directivity picker renders under the position widget. */
+  onUpdateDirectivity?: (next: SoundDirectivity | undefined) => void;
+
   // ── Callbacks ─────────────────────────────────────────────────────────────
   onVolumeChange?: (dbfs: number) => void;
   onUpdatePosition?: (pos: [number, number, number]) => void;
@@ -57,6 +64,8 @@ export function SoundCardBody({
   volumeDbfs,
   position,
   entityIndex,
+  directivity,
+  onUpdateDirectivity,
   isMuted = false,
   onMuteChange,
   onVolumeChange,
@@ -113,6 +122,15 @@ export function SoundCardBody({
             />
 
           </div>
+        )}
+
+        {/* 3. Directivity — pattern picker (+ orientation when directional) */}
+        {onUpdateDirectivity && (
+          <SoundDirectivityRow
+            directivity={directivity}
+            onChange={onUpdateDirectivity}
+            onBlueBackground={onBlueBackground}
+          />
         )}
       </div>
 
