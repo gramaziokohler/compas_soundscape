@@ -468,6 +468,14 @@ PYROOMACOUSTICS_RAY_TRACING_ENERGY_THRES = 1e-7  # Threshold for ray termination
 PYROOMACOUSTICS_RAY_TRACING_TIME_THRES = 10.0  # Maximum ray flight time (seconds)
 PYROOMACOUSTICS_RAY_TRACING_HIST_BIN_SIZE = 0.004  # Time granularity of energy bins (seconds)
 PYROOMACOUSTICS_RAY_TRACING_RECOMMENDED_MAX_ORDER = 3  # Recommended max_order for hybrid simulator
+# Processes one parallel simulation job may use: rooms (emitter + some of its listeners)
+# run one per process, leftover processes split the rays of each room (fork's
+# multi-process ray tracer). Capped by the machine's CPU count. Each running CPU job
+# (CPU_WORKER_SLOTS) uses up to this many.
+PYROOMACOUSTICS_MAX_PROCESSES = max(1, min(int(os.environ.get("PYROOMACOUSTICS_MAX_PROCESSES", "8")), os.cpu_count() or 1))
+PYROOMACOUSTICS_DEFAULT_PARALLEL = True  # "Parallel" toggle of the simulation card
+# Swap sources and listeners when that needs fewer emitter runs (see utils/reciprocity.py)
+PYROOMACOUSTICS_RECIPROCITY_ENABLED = os.environ.get("PYROOMACOUSTICS_RECIPROCITY", "1") != "0"
 PYROOMACOUSTICS_DEFAULT_SCATTERING = 0.05  # Default scattering coefficient (0-1)
 PYROOMACOUSTICS_SCATTERING_MIN = 0.0  # Minimum scattering coefficient (specular reflection)
 PYROOMACOUSTICS_SCATTERING_MAX = 1.0  # Maximum scattering coefficient (diffuse reflection)
@@ -1183,6 +1191,21 @@ SESSION_TOKEN_BYTES = 32
 INVITE_DEFAULT_TTL_S = int(os.environ.get("INVITE_DEFAULT_TTL_S", str(7 * 24 * 3600)))
 INVITE_MAX_USES_DEFAULT = int(os.environ.get("INVITE_MAX_USES_DEFAULT", "0"))  # 0 = unlimited
 INVITE_MAX_USES_HARD_CAP = 100
+
+# ============================================================================
+# Public read-only share links (/share/<share_id>)
+# ============================================================================
+# Anonymous viewers never get the server SPECKLE_TOKEN. They load the model with
+# this separate read-only Speckle personal access token (scope: streams:read).
+# When unset, the public share endpoint answers 503.
+SPECKLE_SHARE_TOKEN = os.environ.get("SPECKLE_SHARE_TOKEN", "").strip()
+SHARE_ID_BYTES = 16  # secrets.token_urlsafe(16) -> 22-char unguessable id
+# Unauthenticated API prefix: the session middleware skips identity + cookies
+# here, and Cloudflare Access needs a Bypass application for it.
+PUBLIC_API_PREFIX = "/api/public"
+PUBLIC_SHARE_PREFIX = f"{PUBLIC_API_PREFIX}/share"
+# Analysis-config types that are sound scenes (frontend SoundScene / scene_id).
+SHARE_SCENE_CONFIG_TYPES = ("scenario", "text", "freeform")
 
 # ============================================================================
 # SQLite metadata store (workspaces/users/membership/blob refs)

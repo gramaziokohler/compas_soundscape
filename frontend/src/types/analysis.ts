@@ -9,7 +9,7 @@
 
 import type { SEDAudioInfo, SEDAnalysisOptions } from './sed';
 import type { DrawnArea } from './area-drawing';
-import type { CardBaseConfig, CardType } from './card';
+import type { CardBaseConfig, CardType, SavedObjectVisibility } from './card';
 
 // ============================================================================
 // Analysis Config Types
@@ -26,6 +26,12 @@ export interface AnalysisBaseConfig extends CardBaseConfig {
   error?: string | null;
   /** LLM override for this card's agent calls (Simple-mode composer). Undefined = app default. */
   llmModel?: string;
+  /** Stable scene identity (scene cards only; assigned by `utils/scene-id.ts`). */
+  scene_id?: string;
+  /** Object Explorer hide / isolate state saved on this scene; restored when it is powered on. */
+  savedObjectVisibility?: SavedObjectVisibility;
+  /** Public share view: a non-shared scene redacted to a stub by the backend. Never shown. */
+  share_hidden?: boolean;
 }
 
 /**

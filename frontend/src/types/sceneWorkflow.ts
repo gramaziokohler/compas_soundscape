@@ -86,6 +86,8 @@ export interface SceneProgress {
 /** One sound scene (a usage card with its sound children) shown as a bubble. */
 export interface SoundScene {
   usageIndex: number;
+  /** Stable id (`AnalysisBaseConfig.scene_id`); empty until assigned. */
+  sceneId: string;
   contextIndex: number | null;
   title: string;
   /** Untrimmed title (the full prompt when the scene was created from one). */

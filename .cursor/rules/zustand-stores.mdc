@@ -161,7 +161,7 @@ commitStore('myDomain') // one step — nothing if the state ended unchanged
 | `soundscapeStore` | cards, generated events, global generation settings (`soundscape`) | generation progress, card library-search results, card errors |
 | `analysisStore` | analysis cards + results / prompt selection (`analysis`) | active tab, streaming text, live screenshots, errors |
 | `audioControlsStore` | volumes, trims, timestamps, iteration links / trims, variants, mute / solo, timeline length, base dBFS, TTS language, foley max, IR normalize (`audioControls`) | play state, buffers, output device; the bake runs untracked |
-| `acousticsSimulationStore` | simulation cards + settings, room scale (`acousticsSimulation`) | runs / results, active & expanded card, view fields |
+| `acousticsSimulationStore` | simulation cards + settings, per-card Resonance room bounds/materials (`acousticsSimulation`) | runs / results, active IR card, `activeResonanceIds`, expanded card, hidden boxes |
 | `acousticMaterialStore` | material + scattering assignments of the active card (`acousticMaterial`; history reset on card switch) | layer data |
 | `acousticLayerStore` | acoustic region selection (`acousticLayer`) | resolved geometry ids, face counts; auto-detect is a load |
 | `receiversStore` | receivers (`receivers`) | selection |
@@ -169,7 +169,6 @@ commitStore('myDomain') // one step — nothing if the state ended unchanged
 | `areaDrawingStore` | drawn polygons (`areaDrawing`) | drawing mode, visual states |
 | `soundFxStore` | FX chains (`soundFx`) | expanded editor; editor hydration is a load |
 | `cardFlowStore` | card lineage maps (`cardFlow`) | active context / usage card |
-| `roomMaterialsStore` | ShoeBox materials + dimensions (`roomMaterials`) | — |
 | `sedStore` | detected sounds, options, loaded file info (`sed`) | progress, errors |
 | `uiStore` | global sound speed, mesh size, mesh settings (`ui`) | everything else (navigation / display) |
 | `speckleStore` | hide / isolate / exclude-from-acoustic intent (`speckle`) | selection, hover, colors, view mode |

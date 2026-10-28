@@ -16,7 +16,6 @@ import { useAcousticMaterialStore, acousticMaterialUndo } from './acousticMateri
 import { useGridListenersStore, gridListenersUndo } from './gridListenersStore';
 import { useAudioControlsStore, audioControlsUndo } from './audioControlsStore';
 import { useReceiversStore, receiversUndo } from './receiversStore';
-import { useRoomMaterialsStore, roomMaterialsUndo } from './roomMaterialsStore';
 import {
   useAcousticsSimulationStore,
   acousticsSimulationUndo,
@@ -39,7 +38,6 @@ import { registerTemporalStore } from './undoRedoRegistry';
 registerTemporalStore('acousticMaterial', useAcousticMaterialStore, acousticMaterialUndo);
 registerTemporalStore('audioControls', useAudioControlsStore, audioControlsUndo);
 registerTemporalStore('receivers', useReceiversStore, receiversUndo);
-registerTemporalStore('roomMaterials', useRoomMaterialsStore, roomMaterialsUndo);
 registerTemporalStore('acousticsSimulation', useAcousticsSimulationStore, acousticsSimulationUndo);
 registerTemporalStore('soundscape', useSoundscapeStore, soundscapeUndo);
 registerTemporalStore('analysis', useAnalysisStore, analysisUndo);
@@ -60,6 +58,11 @@ export { useAudioControlsStore };
 export type { AudioControlsStoreState } from './audioControlsStore';
 
 // Non-temporal stores
+export { useShareConfigStore, selectShareConfig, pruneShareConfig, linkKey, linkMemberCount, EMPTY_SHARE_CONFIG } from './shareConfigStore';
+export type { ShareConfigStoreState } from './shareConfigStore';
+export { useShareViewStore, selectIsShareView } from './shareViewStore';
+export type { ShareViewStoreState } from './shareViewStore';
+
 export { usePositionClipboardStore } from './positionClipboardStore';
 export type { PositionClipboardState } from './positionClipboardStore';
 
@@ -122,9 +125,6 @@ export { computeGridPoints } from './gridListenersStore';
 // Temporal stores
 export { useReceiversStore };
 export type { ReceiversStoreState } from './receiversStore';
-
-export { useRoomMaterialsStore };
-export type { RoomMaterialsStoreState } from './roomMaterialsStore';
 
 export { useAcousticsSimulationStore };
 export type { AcousticsSimulationStoreState } from './acousticsSimulationStore';

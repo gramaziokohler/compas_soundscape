@@ -1,7 +1,9 @@
 'use client';
 
 import React, { useMemo, useCallback, useEffect, useRef, useState } from 'react';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, Eye } from 'lucide-react';
+import { useCanEdit } from '@/hooks/useCanEdit';
+import { buildSavedVisibilityRows } from '@/utils/savedObjectVisibility';
 import type {
   AnalysisConfig,
   AnalysisResult,
@@ -12,7 +14,7 @@ import type {
 } from '@/types/analysis';
 import type { CardTypeOption } from '@/components/ui/CardSection';
 import { CARD_TYPE_LABELS } from '@/types/card';
-import type { CardType } from '@/types/card';
+import type { CardType, CustomMenuItem } from '@/types/card';
 import { CardSection } from '@/components/ui/CardSection';
 import { Card } from '@/components/ui/Card';
 import { TextContextContent } from '@/components/layout/sidebar/analysis/TextContextContent';
@@ -113,6 +115,7 @@ export function UsageSection({
   onExpandedOriginalIndexChange,
   activeContextOriginalIndex,
 }: UsageSectionProps) {
+  const canEdit = useCanEdit();
   // Controlled expansion state: filtered index within usageConfigs
   const [filteredExpandedIndex, setFilteredExpandedIndex] = useState<number | null>(null);
   const serviceVersions = useServiceVersions();
@@ -181,6 +184,23 @@ export function UsageSection({
       }
     },
     [],
+  );
+
+  // Kebab rows: save / clear the Object Explorer hide-isolate view of this scene.
+  const buildVisibilityMenu = useCallback(
+    (config: AnalysisConfig, originalIndex: number): CustomMenuItem[] =>
+      buildSavedVisibilityRows({
+        saved: config.savedObjectVisibility,
+        onSave: (snapshot) => onUpdateConfig(originalIndex, { savedObjectVisibility: snapshot }),
+        onClear: () => onUpdateConfig(originalIndex, { savedObjectVisibility: undefined }),
+      }).map((row): CustomMenuItem => ({
+        key: row.key,
+        icon: <Eye className="h-3 w-3" />,
+        label: row.label,
+        isActive: row.isActive,
+        onClick: (e) => { e.stopPropagation(); row.onClick(); },
+      })),
+    [onUpdateConfig],
   );
 
   // Restore the inputs of the last generation. A reverted drawn area is mirrored
@@ -567,6 +587,7 @@ export function UsageSection({
           onToggleExpand={(i) => onToggleExpand(i)}
           onUpdateConfig={(i, updates) => onUpdateConfig(originalIndex, updates)}
           onRemove={() => onRemoveConfig(originalIndex)}
+          customButtons={canEdit ? buildVisibilityMenu(config, originalIndex) : undefined}
           error={config.error || null}
           onDismissError={() => onUpdateConfig(originalIndex, { error: null })}
           beforeContent={getBeforeContent(config, originalIndex)}

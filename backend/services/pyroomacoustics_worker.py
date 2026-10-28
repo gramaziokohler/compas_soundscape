@@ -16,16 +16,20 @@ Result file  (temp_dir/result_{simulation_id}.json):
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import time
 import traceback
-from collections import defaultdict
+from concurrent.futures import FIRST_COMPLETED, wait
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import numpy as np
+import config.constants as constants
+from config.constants import PYROOMACOUSTICS_DEFAULT_PARALLEL
 from config.constants import PYROOMACOUSTICS_IR_TRIM_THRESHOLD
+from config.constants import PYROOMACOUSTICS_RECIPROCITY_ENABLED
 from config.constants import PYROOMACOUSTICS_SAMPLE_RATE
 from config.constants import PYROOMACOUSTICS_SIMULATION_MODE_FOA
 from config.constants import PYROOMACOUSTICS_SIMULATION_MODE_MONO
@@ -45,7 +49,9 @@ from services.simulation_preflight_service import (
 )
 from utils.acoustic_measurement import AcousticMeasurement
 from utils.audio_processing import trim_ir
+from utils.child_pool import child_pool
 from utils.geometry import seeds_from_pairs
+from utils.reciprocity import decide_reciprocity, group_pairs_by_emitter
 
 
 def _atomic_replace(src: str, dst: str) -> None:
@@ -76,6 +82,198 @@ def _write_result(result_file: str, payload: dict) -> None:
     _atomic_replace(tmp, result_file)
 
 
+def split_processes(max_processes: int, n_emitters: int) -> tuple[int, int]:
+    """(emitter rooms simulated at once, processes splitting the rays of each room)."""
+    at_once = max(1, min(max_processes, n_emitters))
+    return at_once, max(1, max_processes // at_once)
+
+
+def _simulate_emitter(ctx: dict, task: dict, progress: Callable[[float, str], None]) -> list[tuple[int, str, dict]]:
+    """
+    One room: the emitter, and every counterpart of its pairs as a microphone.
+    Writes the IR WAVs and returns ``(pair index, IR file name, result entry)``
+    per pair. ``progress(fraction of this room in [0, 1], status text)``.
+    """
+    mesh, offset = ctx["mesh"], ctx["offset"]
+    simulation_mode = ctx["simulation_mode"]
+    ray_tracing = ctx["ray_tracing"]
+    num_channels = 1 if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_MONO else 4
+    channel_names_list = ["W", "Y", "Z", "X"]
+    label = task["label"]
+    directivity_spec = task["directivity_spec"]
+    source_note = f" ({directivity_spec['label']} source)" if directivity_spec else ""
+    if ctx["flipped"]:
+        source_note = " (listener emits)"
+    progress(0.0, f"{label}: Building room{source_note}...")
+
+    # Fresh room per emitter from the prepared walls
+    room = build_room(mesh, offset, ctx["max_order"], ray_tracing, ctx["air_absorption"], ctx["sound_speed"])
+
+    # Single emitter per room, with its directivity pattern when it has one
+    add_source_with_directivity(
+        room, (np.asarray(task["emitter_position"], dtype=float) - offset).tolist(), directivity_spec,
+    )
+
+    # Add every unique counterpart (the listeners, or the sources when swapped) as a microphone
+    receiver_local_indices: dict[str, int] = {}
+    for _, pair_dict in task["pairs"]:
+        r_id = pair_dict[ctx["mic_id_key"]]
+        if r_id not in receiver_local_indices:
+            receiver_local_indices[r_id] = len(receiver_local_indices)
+            PyroomacousticsService.add_receiver_to_room(
+                room,
+                (np.asarray(pair_dict[ctx["mic_pos_key"]], dtype=float) - offset).tolist(),
+                simulation_mode,
+            )
+
+    if ray_tracing:
+        PyroomacousticsService.enable_ray_tracing(room, n_rays=ctx["n_rays"], n_processes=task["ray_processes"])
+
+    # The first 80% of the room is compute (reported from inside compute_rir:
+    # image sources -> chunked ray tracing -> RIR synthesis), the last 20% IR export.
+    progress(0.0, f"{label}: Computing RIR...")
+    room.compute_rir(progress_callback=lambda fraction, text: progress(0.8 * fraction, f"{label}: {text}"))
+
+    # ── Extract and export RIRs for each pair with this emitter ───────────
+    outputs = []
+    n_pairs = len(task["pairs"])
+    for local_pair_idx, (index, pair_dict) in enumerate(task["pairs"]):
+        source_id = pair_dict["source_id"]
+        receiver_id = pair_dict["receiver_id"]
+
+        mic_start_idx = receiver_local_indices[pair_dict[ctx["mic_id_key"]]] * num_channels
+        source_in_room = 0  # only one emitter per room
+
+        if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_MONO:
+            rir = room.rir[mic_start_idx][source_in_room]
+            if rir is None or len(rir) == 0:
+                raise ValueError(f"Empty RIR for '{source_id}' -> '{receiver_id}'")
+            if not np.any(rir):
+                raise ValueError(
+                    f"No sound path from '{source_id}' to '{receiver_id}': the direct path and every "
+                    "reflection are blocked (a point inside a closed object, or outside the model?)"
+                )
+            rir_data = trim_ir(rir, threshold_fraction=PYROOMACOUSTICS_IR_TRIM_THRESHOLD)
+        else:
+            rir_channels = []
+            for ch in range(num_channels):
+                mic_idx = mic_start_idx + ch
+                if mic_idx >= len(room.rir):
+                    raise ValueError(f"Microphone index {mic_idx} out of range")
+                ch_rir = room.rir[mic_idx][source_in_room]
+                if ch_rir is None or len(ch_rir) == 0:
+                    ch_name = channel_names_list[ch] if ch < len(channel_names_list) else f"Channel {ch}"
+                    raise ValueError(f"Empty RIR for {ch_name} channel")
+                rir_channels.append(ch_rir)
+            max_length = max(len(r) for r in rir_channels)
+            padded = [
+                np.pad(r, (0, max_length - len(r)), mode="constant") if len(r) < max_length else r
+                for r in rir_channels
+            ]
+            rir_data = trim_ir(np.column_stack(padded), threshold_fraction=PYROOMACOUSTICS_IR_TRIM_THRESHOLD)
+
+        # Metrics are computed on the TRIMMED signal that is written to
+        # disk, so RT60/EDT/DRR/C50/D50 describe the exact exported IR.
+        # FOA metrics use the W (omni) channel — rir_data[:, 0].
+        acoustic_params = None
+        try:
+            metric_rir = rir_data if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_MONO else rir_data[:, 0]
+            acoustic_params = AcousticMeasurement.calculate_acoustic_parameters_from_rir(
+                metric_rir, PYROOMACOUSTICS_SAMPLE_RATE
+            )
+            if acoustic_params and not ray_tracing:
+                # Pure ISM has no diffuse late field; its decay estimate is
+                # inherently less trustworthy than the hybrid ray-traced one.
+                acoustic_params["rt60_is_estimate"] = True
+        except Exception as ap_err:
+            print(f"  Warning: acoustic params failed for {source_id}->{receiver_id}: {ap_err}")
+
+        progress(
+            0.8 + 0.2 * (local_pair_idx + 1) / n_pairs,
+            f"Pair {index + 1}/{ctx['total_pairs']}: Exporting IR...",
+        )
+
+        ir_filename = f"sim_{ctx['simulation_id']}_src_{source_id}_rcv_{receiver_id}.wav"
+        rir_int16 = np.int16(rir_data * 32767)
+        wavfile.write(str(Path(ctx["rir_dir"]) / ir_filename), PYROOMACOUSTICS_SAMPLE_RATE, rir_int16)
+        print(f"  Exported {num_channels}-channel IR: {ir_filename}")
+
+        result_entry: dict = {
+            "source_id": source_id,
+            "receiver_id": receiver_id,
+            "source_position": pair_dict["source_position"],
+            "receiver_position": pair_dict["receiver_position"],
+            "ir_file": ir_filename,
+            "sample_rate": PYROOMACOUSTICS_SAMPLE_RATE,
+            "max_order": ctx["max_order"],
+            "ray_tracing": ray_tracing,
+            "air_absorption": ctx["air_absorption"],
+            "simulation_mode": simulation_mode,
+            "num_channels": num_channels,
+        }
+        result_entry.update(ctx["entry_meta"])
+        if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_FOA:
+            result_entry["channel_ordering"] = "ACN"
+            result_entry["normalization_convention"] = "SN3D"
+            result_entry["format"] = "AmbiX"
+            result_entry["encoding_method"] = "directivity"
+        if ray_tracing and ctx["ray_tracing_entry_meta"]:
+            result_entry.update(ctx["ray_tracing_entry_meta"])
+        if directivity_spec:
+            result_entry["source_directivity"] = directivity_result_entry(directivity_spec)
+        if acoustic_params:
+            result_entry["acoustic_parameters"] = acoustic_params
+        outputs.append((index, ir_filename, result_entry))
+    return outputs
+
+
+def _simulate_emitter_in_pool(ctx: dict, task: dict, progress_path: str) -> list[tuple[int, str, dict]]:
+    """Pool entry point: progress goes to a per-room file (value = fraction in per mille)."""
+    def progress(fraction: float, text: str) -> None:
+        _write_progress(progress_path, int(1000 * fraction), text)
+
+    return _simulate_emitter(ctx, task, progress)
+
+
+def _simulate_emitters_in_parallel(
+    ctx: dict, tasks: list[dict], n_workers: int, progress_file: str
+) -> list[tuple[int, str, dict]]:
+    """Every emitter room in a pool of ``n_workers`` processes; the first failure aborts the rest."""
+    paths = [f"{progress_file}.emitter{i}" for i in range(len(tasks))]
+    outputs: list[tuple[int, str, dict]] = []
+    try:
+        with child_pool(n_workers) as pool:
+            futures = {pool.submit(_simulate_emitter_in_pool, ctx, task, path): i
+                       for i, (task, path) in enumerate(zip(tasks, paths))}
+            pending = set(futures)
+            while pending:
+                done, pending = wait(pending, timeout=0.5, return_when=FIRST_COMPLETED)
+                for future in done:
+                    outputs += future.result()
+                fractions = []
+                for future, i in futures.items():
+                    if future.done():
+                        fractions.append(1.0)
+                        continue
+                    try:
+                        with open(paths[i]) as f:
+                            fractions.append(json.load(f)["value"] / 1000.0)
+                    except (OSError, ValueError, KeyError):
+                        fractions.append(0.0)
+                value = int(20 + 70.0 * sum(fractions) / len(tasks))
+                _write_progress(
+                    progress_file,
+                    min(value, 90),
+                    f"Simulating {len(tasks)} emitters, {n_workers} at once: "
+                    f"{len(tasks) - len(pending)}/{len(tasks)} done",
+                )
+    finally:
+        for path in paths:
+            for p in (path, path + ".tmp"):
+                Path(p).unlink(missing_ok=True)
+    return outputs
+
+
 def _run_pyroomacoustics_compute_loop(
     simulation_id: str,
     progress_file: str,
@@ -99,10 +297,12 @@ def _run_pyroomacoustics_compute_loop(
     entry_meta: dict,
     ray_tracing_entry_meta: Optional[dict] = None,
     header_meta: Optional[dict] = None,
+    parallel: bool = PYROOMACOUSTICS_DEFAULT_PARALLEL,
 ) -> None:
     """
     Shared per-source compute pipeline used by both the Speckle worker and the
-    direct-geometry worker.
+    direct-geometry worker. With ``parallel``, the emitter rooms run in up to
+    PYROOMACOUSTICS_MAX_PROCESSES processes, and processes left over split the rays.
 
     Prepares the simulation mesh ONCE (weld, air-side orientation, two-sided
     detection, coplanar merge — identical to the geometry preflight), then
@@ -147,188 +347,92 @@ def _run_pyroomacoustics_compute_loop(
     # pra walls are float32: build around the model centre, shift positions too.
     offset = room_offset(mesh)
 
-    # ── Group pairs by source ───────────────────────────────────────────────
-    num_channels = 1 if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_MONO else 4
-    channel_names_list = ["W", "Y", "Z", "X"]
+    # ── Group pairs by emitter ──────────────────────────────────────────────
+    # Normally every source is an emitter and the listeners are its microphones.
+    # With more sources than listeners the roles are swapped (acoustic
+    # reciprocity): a room costs about the same whatever its microphone count,
+    # so fewer emitters means fewer rooms.
+    reciprocity = decide_reciprocity(pairs_data, simulation_mode, PYROOMACOUSTICS_RECIPROCITY_ENABLED)
+    flipped = reciprocity.flipped
+    emitter_pos_key, mic_pos_key, mic_id_key = (
+        ("receiver_position", "source_position", "source_id")
+        if flipped
+        else ("source_position", "receiver_position", "receiver_id")
+    )
+    print(f"[{simulation_id[:8]}] Reciprocity: {reciprocity.reason}")
 
-    pairs_by_source: dict[str, list] = defaultdict(list)
-    for pair_dict in pairs_data:
-        pairs_by_source[pair_dict["source_id"]].append(pair_dict)
-
-    unique_source_ids = list(pairs_by_source.keys())
-    n_sources = len(unique_source_ids)
-
-    ir_files: list[str] = []
-    results_data: list[dict] = []
+    pairs_by_source = group_pairs_by_emitter(pairs_data, flipped)  # emitter id -> its pairs
+    n_sources = len(pairs_by_source)
     total_pairs = len(pairs_data)
-    pair_counter = 0  # cumulative pairs completed so far
+    pair_index = {id(p): i for i, p in enumerate(pairs_data)}
 
-    # ── Per-source compute_rir loop ─────────────────────────────────────────
-    # Progress spread: 20% → 90% across all sources
-    for src_idx, source_id in enumerate(unique_source_ids):
-        source_pairs = pairs_by_source[source_id]
-        source_position = source_pairs[0]["source_position"]
-        n_pairs_this_source = len(source_pairs)
-        pair_label_start = pair_counter + 1
-        pair_label_end = pair_counter + n_pairs_this_source
+    tasks: list[dict] = []
+    pair_counter = 0
+    for emitter_id, source_pairs in pairs_by_source.items():
+        n_pairs = len(source_pairs)
         # Prefix every status line with the pair range so overall progress is
         # always visible, e.g. "Pair 2/14: Ray tracing source 1/1 ..."
-        if n_pairs_this_source == 1:
-            pair_label = f"Pair {pair_label_start}/{total_pairs}"
+        if n_pairs == 1:
+            label = f"Pair {pair_counter + 1}/{total_pairs}"
         else:
-            pair_label = f"Pairs {pair_label_start}-{pair_label_end}/{total_pairs}"
+            label = f"Pairs {pair_counter + 1}-{pair_counter + n_pairs}/{total_pairs}"
+        pair_counter += n_pairs
+        tasks.append({
+            "label": label,
+            "emitter_position": source_pairs[0][emitter_pos_key],
+            # Directivity + orientation of this source (None = omnidirectional); resolved
+            # by the router from the pair's `source_directivity` (services/directivity_service.py).
+            # Never set when the roles are swapped (see utils/reciprocity.py).
+            "directivity_spec": None if flipped else source_pairs[0].get("source_directivity_spec"),
+            "pairs": [(pair_index[id(p)], p) for p in source_pairs],
+        })
 
-        prog_build = 20 + src_idx * 70 // n_sources
-        # Directivity + orientation of this source (None = omnidirectional); resolved
-        # by the router from the pair's `source_directivity` (services/directivity_service.py).
-        directivity_spec = source_pairs[0].get("source_directivity_spec")
-        source_note = f" ({directivity_spec['label']} source)" if directivity_spec else ""
-        _write_progress(
-            progress_file,
-            prog_build,
-            f"{pair_label}: Building room{source_note}...",
-        )
+    # ── One room per emitter, in parallel processes ─────────────────────────
+    max_processes = constants.PYROOMACOUSTICS_MAX_PROCESSES if parallel else 1
+    at_once, ray_processes = split_processes(max_processes, n_sources)
+    for task in tasks:
+        task["ray_processes"] = ray_processes if ray_tracing else 1
+    print(
+        f"[{simulation_id[:8]}] {n_sources} emitter(s): {at_once} at once, "
+        f"rays over {ray_processes if ray_tracing else 0} process(es) each"
+    )
 
-        # Fresh room per source from the prepared walls
-        room = build_room(mesh, offset, max_order, ray_tracing, air_absorption, sound_speed)
+    ctx = {
+        # build_room needs the walls and materials, not the air-visibility data
+        "mesh": dataclasses.replace(mesh, visibility=None),
+        "offset": offset,
+        "simulation_id": simulation_id,
+        "simulation_mode": simulation_mode,
+        "max_order": max_order,
+        "ray_tracing": ray_tracing,
+        "air_absorption": air_absorption,
+        "n_rays": n_rays,
+        "sound_speed": sound_speed,
+        "rir_dir": str(rir_dir),
+        "mic_id_key": mic_id_key,
+        "mic_pos_key": mic_pos_key,
+        "flipped": flipped,
+        "total_pairs": total_pairs,
+        "entry_meta": entry_meta,
+        "ray_tracing_entry_meta": ray_tracing_entry_meta,
+    }
 
-        # Single source per room, with its directivity pattern when it has one
-        add_source_with_directivity(
-            room, (np.asarray(source_position, dtype=float) - offset).tolist(), directivity_spec,
-        )
+    # Progress spread: 20% → 90% across all emitters
+    if at_once == 1:
+        outputs = []
+        for i, task in enumerate(tasks):
+            def _progress(fraction, text, _i=i):
+                value = int(20 + 70.0 * (_i + fraction) / n_sources)
+                _write_progress(progress_file, min(value, 90), text)
 
-        # Add all unique receivers for this source
-        receiver_local_indices: dict[str, int] = {}
-        for pair_dict in source_pairs:
-            r_id = pair_dict["receiver_id"]
-            if r_id not in receiver_local_indices:
-                receiver_local_indices[r_id] = len(receiver_local_indices)
-                PyroomacousticsService.add_receiver_to_room(
-                    room,
-                    (np.asarray(pair_dict["receiver_position"], dtype=float) - offset).tolist(),
-                    simulation_mode,
-                )
+            # Blocking — subprocess is hard-killed here if cancelled
+            outputs += _simulate_emitter(ctx, task, _progress)
+    else:
+        outputs = _simulate_emitters_in_parallel(ctx, tasks, at_once, progress_file)
 
-        if ray_tracing:
-            PyroomacousticsService.enable_ray_tracing(room, n_rays=n_rays)
-
-        # Each source owns a slice of the 20% -> 90% band; the first 80% of the
-        # slice is compute (reported from inside compute_rir) and the last 20%
-        # is IR export, so progress never goes backwards between sources.
-        prog_rir = prog_build
-        _write_progress(progress_file, prog_rir, f"{pair_label}: Computing RIR...")
-
-        # Realtime progress from inside compute_rir(): the library reports a
-        # fraction in [0, 1] within THIS source (image sources -> chunked ray
-        # tracing -> RIR synthesis). Map it into the first 80% of this source's
-        # slice of the worker's 20% -> 90% band (the tail is reserved for export).
-        def _progress_callback(fraction, text):
-            value = int(20 + 70.0 * (src_idx + 0.8 * fraction) / max(1, n_sources))
-            _write_progress(progress_file, min(value, 90), f"{pair_label}: {text}")
-
-        # Blocking — subprocess is hard-killed here if cancelled
-        room.compute_rir(progress_callback=_progress_callback)
-
-        # ── Extract and export RIRs for each pair with this source ────────
-        for local_pair_idx, pair_dict in enumerate(source_pairs):
-            receiver_id = pair_dict["receiver_id"]
-            source_pos = pair_dict["source_position"]
-            receiver_pos = pair_dict["receiver_position"]
-
-            local_rcv_idx = receiver_local_indices[receiver_id]
-            mic_start_idx = local_rcv_idx * num_channels
-            source_in_room = 0  # only one source per room
-
-            if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_MONO:
-                rir = room.rir[mic_start_idx][source_in_room]
-                if rir is None or len(rir) == 0:
-                    raise ValueError(f"Empty RIR for '{source_id}' -> '{receiver_id}'")
-                rir_data = trim_ir(
-                    rir, threshold_fraction=PYROOMACOUSTICS_IR_TRIM_THRESHOLD
-                )
-            else:
-                rir_channels = []
-                for ch in range(num_channels):
-                    mic_idx = mic_start_idx + ch
-                    if mic_idx >= len(room.rir):
-                        raise ValueError(f"Microphone index {mic_idx} out of range")
-                    ch_rir = room.rir[mic_idx][source_in_room]
-                    if ch_rir is None or len(ch_rir) == 0:
-                        ch_name = channel_names_list[ch] if ch < len(channel_names_list) else f"Channel {ch}"
-                        raise ValueError(f"Empty RIR for {ch_name} channel")
-                    rir_channels.append(ch_rir)
-                max_length = max(len(r) for r in rir_channels)
-                padded = [
-                    np.pad(r, (0, max_length - len(r)), mode="constant") if len(r) < max_length else r
-                    for r in rir_channels
-                ]
-                rir_data = trim_ir(
-                    np.column_stack(padded),
-                    threshold_fraction=PYROOMACOUSTICS_IR_TRIM_THRESHOLD,
-                )
-
-            # Metrics are computed on the TRIMMED signal that is written to
-            # disk, so RT60/EDT/DRR/C50/D50 describe the exact exported IR.
-            # FOA metrics use the W (omni) channel — rir_data[:, 0].
-            acoustic_params = None
-            try:
-                metric_rir = rir_data if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_MONO else rir_data[:, 0]
-                acoustic_params = AcousticMeasurement.calculate_acoustic_parameters_from_rir(
-                    metric_rir, PYROOMACOUSTICS_SAMPLE_RATE
-                )
-                if acoustic_params and not ray_tracing:
-                    # Pure ISM has no diffuse late field; its decay estimate is
-                    # inherently less trustworthy than the hybrid ray-traced one.
-                    acoustic_params["rt60_is_estimate"] = True
-            except Exception as ap_err:
-                print(f"  Warning: acoustic params failed for {source_id}->{receiver_id}: {ap_err}")
-
-            current_pair = pair_counter + local_pair_idx + 1
-            pair_frac = (local_pair_idx + 1) / n_pairs_this_source
-            export_value = int(
-                20 + 70.0 * (src_idx + 0.8 + 0.2 * pair_frac) / max(1, n_sources)
-            )
-            _write_progress(
-                progress_file,
-                min(export_value, 90),
-                f"Pair {current_pair}/{total_pairs}: Exporting IR...",
-            )
-
-            ir_filename = f"sim_{simulation_id}_src_{source_id}_rcv_{receiver_id}.wav"
-            ir_path = rir_dir / ir_filename
-            rir_int16 = np.int16(rir_data * 32767)
-            wavfile.write(str(ir_path), PYROOMACOUSTICS_SAMPLE_RATE, rir_int16)
-            print(f"  Exported {num_channels}-channel IR: {ir_filename}")
-            ir_files.append(ir_filename)
-
-            result_entry: dict = {
-                "source_id": source_id,
-                "receiver_id": receiver_id,
-                "source_position": source_pos,
-                "receiver_position": receiver_pos,
-                "ir_file": ir_filename,
-                "sample_rate": PYROOMACOUSTICS_SAMPLE_RATE,
-                "max_order": max_order,
-                "ray_tracing": ray_tracing,
-                "air_absorption": air_absorption,
-                "simulation_mode": simulation_mode,
-                "num_channels": num_channels,
-            }
-            result_entry.update(entry_meta)
-            if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_FOA:
-                result_entry["channel_ordering"] = "ACN"
-                result_entry["normalization_convention"] = "SN3D"
-                result_entry["format"] = "AmbiX"
-                result_entry["encoding_method"] = "directivity"
-            if ray_tracing and ray_tracing_entry_meta:
-                result_entry.update(ray_tracing_entry_meta)
-            if directivity_spec:
-                result_entry["source_directivity"] = directivity_result_entry(directivity_spec)
-            if acoustic_params:
-                result_entry["acoustic_parameters"] = acoustic_params
-            results_data.append(result_entry)
-
-        pair_counter += n_pairs_this_source
+    outputs.sort(key=lambda out: out[0])
+    ir_files = [out[1] for out in outputs]
+    results_data = [out[2] for out in outputs]
 
     # ── Write results JSON ──────────────────────────────────────────────────
     _write_progress(progress_file, 95, "Saving results...")
@@ -341,6 +445,7 @@ def _run_pyroomacoustics_compute_loop(
     if header_meta:
         results_json.update(header_meta)
     results_json["geometry_diagnostics"] = geometry_diagnostics
+    results_json["reciprocity"] = reciprocity.as_dict()
     with open(tmp_dir / results_filename, "w") as f:
         json.dump(results_json, f, indent=2)
 
@@ -381,6 +486,7 @@ def run_pyroomacoustics_simulation(
     rir_output_dir: str = "",
     temp_dir: str = "",
     mesh_settings: Optional[dict] = None,
+    parallel: bool = PYROOMACOUSTICS_DEFAULT_PARALLEL,
 ) -> None:
     """
     Full pyroomacoustics simulation pipeline, runs in a subprocess.
@@ -443,6 +549,7 @@ def run_pyroomacoustics_simulation(
                     "layer_name": layer_name,
                 },
             },
+            parallel=parallel,
         )
 
     except Exception as exc:
@@ -466,6 +573,7 @@ def run_pyroomacoustics_simulation_from_geometry(
     rir_output_dir: str = "",
     temp_dir: str = "",
     mesh_settings: Optional[dict] = None,
+    parallel: bool = PYROOMACOUSTICS_DEFAULT_PARALLEL,
 ) -> None:
     """
     Direct-geometry pyroomacoustics pipeline, runs in a subprocess.
@@ -584,6 +692,7 @@ def run_pyroomacoustics_simulation_from_geometry(
             header_meta={
                 "geometry_source": {"format": "geometry-json", "units": "m"},
             },
+            parallel=parallel,
         )
 
     except Exception as exc:

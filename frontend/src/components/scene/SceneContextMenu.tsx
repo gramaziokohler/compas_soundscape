@@ -3,11 +3,11 @@
 import { useMemo } from 'react';
 import * as THREE from 'three';
 import {
-  Copy, Ear, EyeOff, Focus, Funnel, FunnelX, Headphones, ListTree,
+  CircleCheck, CircleOff, Copy, Ear, EyeOff, Focus, Funnel, FunnelX, Headphones, ListTree,
   PanelLeft, PanelRight, Volume2, VolumeX, X,
 } from 'lucide-react';
 import { ActionMenu, type ActionMenuItem } from '@/components/ui/ActionMenu';
-import { useAudioControlsStore, useSpeckleStore } from '@/store';
+import { useAudioControlsStore, useReceiversStore, useSpeckleStore } from '@/store';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { notifyError } from '@/store/errorsStore';
 import { KEYBOARD_SHORTCUTS } from '@/utils/constants';
@@ -73,7 +73,8 @@ const CLEAR_ITEM: ActionMenuItem = {
  * on that selection:
  *  - Model objects: Hide · Isolate · Reveal in explorer · Fit to view · Copy application ID
  *  - Sound spheres: Mute · Solo · Reveal in sidebar · Fit to view · Copy sound ID
- *  - Listeners:     Listen from here · Reveal in sidebar · Fit to view · Copy listener ID
+ *  - Listeners:     Listen from here · Exclude from / Include in simulation · Reveal in sidebar ·
+ *                   Fit to view · Copy listener ID
  * followed by Clear selection.
  */
 export function SceneContextMenu({
@@ -88,6 +89,7 @@ export function SceneContextMenu({
 }: SceneContextMenuProps) {
   const mutedSounds = useAudioControlsStore((s) => s.mutedSounds);
   const soloedSounds = useAudioControlsStore((s) => s.soloedSounds);
+  const receivers = useReceiversStore((s) => s.receivers);
 
   const items = useMemo<ActionMenuItem[]>(() => {
     if (hit.kind === 'speckle') {
@@ -163,11 +165,21 @@ export function SceneContextMenu({
     }
 
     const receiverId = object.userData.receiverId as string | undefined;
+    const receiver = receiverId ? receivers.find((r) => r.id === receiverId) : undefined;
+    const excluded = !!receiver?.hiddenForSimulation;
     return [
       {
         kind: 'action', key: 'listen', label: 'Listen from here', icon: Ear,
         disabled: !receiverId || !onEnterListener,
         onSelect: () => { if (receiverId) onEnterListener?.(receiverId); },
+      },
+      {
+        kind: 'action', key: 'simulation',
+        label: excluded ? 'Include in simulation' : 'Exclude from simulation',
+        icon: excluded ? CircleCheck : CircleOff, disabled: !receiver,
+        onSelect: () => {
+          if (receiverId) useReceiversStore.getState().toggleReceiverHiddenForSimulation(receiverId);
+        },
       },
       {
         kind: 'action', key: 'reveal', label: 'Reveal in sidebar', icon: PanelRight,
@@ -182,7 +194,7 @@ export function SceneContextMenu({
       SEPARATOR,
       CLEAR_ITEM,
     ];
-  }, [hit, mutedSounds, soloedSounds, onOpenExplorer, onRevealSound, onRevealListener, onEnterListener]);
+  }, [hit, mutedSounds, soloedSounds, receivers, onOpenExplorer, onRevealSound, onRevealListener, onEnterListener]);
 
   return <ActionMenu x={x} y={y} items={items} onClose={onClose} />;
 }

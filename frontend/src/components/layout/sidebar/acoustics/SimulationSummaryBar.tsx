@@ -6,8 +6,8 @@
  * showing only the number; hovering (or keyboard-focusing) expands that dot
  * into the full `{count} {label}` chip.
  *
- * - **sources**  : unique sound-source positions actually simulated (muted sounds
- *   are excluded, sounds sharing a position count as one, and multi-variant
+ * - **sources**  : unique sound-source positions actually simulated (muted sounds,
+ *   and non-soloed sounds while a solo is active, are excluded, sounds sharing a position count as one, and multi-variant
  *   sources collapse to one). Replicates the sim's `activeSoundscapeData`.
  * - **listeners** : total individual listener points (single listeners + grid
  *   listener points), excluding listeners hidden for simulation.
@@ -40,6 +40,7 @@ import {
   useUIStore,
 } from '@/store';
 import { collapseVariantsToOne, groupSoundsByPosition } from '@/utils/positionKey';
+import { isSoundSilenced } from '@/lib/audio/utils/mute-solo';
 import { SectionHighlight } from '@/components/ui/SectionHighlight';
 import { SCENE_BOTTOM_BAR, SIMPLE_MODE } from '@/utils/constants';
 import { OBJECT_EXPLORER_PANEL_ID, openMaterialsExplorer } from './openMaterialsExplorer';
@@ -63,6 +64,7 @@ export function SimulationSummaryBar() {
   const soundscapeData = useSoundscapeStore((s) => s.soundscapeData);
   const soundConfigs = useSoundscapeStore((s) => s.soundConfigs);
   const mutedSounds = useAudioControlsStore((s) => s.mutedSounds);
+  const soloedSounds = useAudioControlsStore((s) => s.soloedSounds);
   const selectedVariants = useAudioControlsStore((s) => s.selectedVariants);
   const activeSoundParentIndex = useUIStore((s) => s.activeSoundParentIndex);
   const isInSoundsStep = useUIStore((s) => s.isInSoundsStep);
@@ -75,7 +77,7 @@ export function SimulationSummaryBar() {
 
   // Mirrors AcousticsSection.activeSoundscapeData so the count matches the sim.
   const activeSoundscapeData = useMemo(() => {
-    const unmuted = (soundscapeData ?? []).filter((s) => !mutedSounds.has(s.id));
+    const unmuted = (soundscapeData ?? []).filter((s) => !isSoundSilenced(s.id, mutedSounds, soloedSounds));
     if (activeSoundParentIndex === null || activeSoundParentIndex === undefined) {
       return unmuted;
     }
@@ -88,7 +90,7 @@ export function SimulationSummaryBar() {
     return unmuted.filter(
       (s) => s.prompt_index !== undefined && matchingPromptIndices.has(s.prompt_index),
     );
-  }, [soundscapeData, mutedSounds, activeSoundParentIndex, isInSoundsStep, soundConfigs]);
+  }, [soundscapeData, mutedSounds, soloedSounds, activeSoundParentIndex, isInSoundsStep, soundConfigs]);
 
   const sourceCount = useMemo(() => {
     const { uniquePositions } = groupSoundsByPosition(

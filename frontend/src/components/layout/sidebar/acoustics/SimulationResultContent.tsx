@@ -10,6 +10,7 @@
 
 'use client';
 
+import { useCanEdit } from '@/hooks/useCanEdit';
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { ImpulseResponseUpload } from '@/components/audio/ImpulseResponseUpload';
 import type { SimulationConfig } from '@/types/acoustics';
@@ -290,6 +291,7 @@ export function SimulationResultContent({
   irNormalizeEnabled = false,
   onIRPeaksChange,
 }: SimulationResultContentProps) {
+  const canEdit = useCanEdit();
   const simulationConfig = config as any;
 
   const sourceReceiverIRMapping: SourceReceiverIRMapping | undefined = simulationConfig.sourceReceiverIRMapping;
@@ -564,7 +566,7 @@ export function SimulationResultContent({
               <strong>{mismatchedNames.join(', ')}</strong>{' '}
               {mismatchedNames.length === 1 ? 'is' : 'are'} not at simulation position — results may not match the current layout.
             </span>
-            {onResetPositions && (
+            {onResetPositions && canEdit && (
               <button
                 onClick={() => onResetPositions(mismatchInfo.sourceIds, mismatchInfo.receiverIds)}
                 className="self-start px-2 py-0.5 rounded border border-error bg-white/80 hover:bg-white/95 text-error hover:text-error-hover transition-colors"
@@ -664,7 +666,8 @@ export function SimulationResultContent({
         />
       )}
 
-      {/* IR Library */}
+      {/* IR Library — uploads / assignments are edits (and need an identity). */}
+      {canEdit && (
       <ImpulseResponseUpload
         onClearIR={onClearIR}
         refreshTrigger={irRefreshTrigger}
@@ -693,6 +696,7 @@ export function SimulationResultContent({
         irNormalizeEnabled={irNormalizeEnabled}
         onIRPeaksChange={onIRPeaksChange}
       />
+      )}
     </div>
   );
 }

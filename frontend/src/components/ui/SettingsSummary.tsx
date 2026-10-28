@@ -273,6 +273,7 @@ export function getSettingsRows(config: CardBaseConfig): SettingsRow[] {
       rows.push({ label: 'Rays', value: s.n_rays.toLocaleString() });
     }
     if (s.air_absorption) rows.push({ label: 'Air Absorption', value: 'Yes' });
+    rows.push({ label: 'Parallel', value: s.parallel === false ? 'No' : 'Yes' });
     return rows;
   }
 

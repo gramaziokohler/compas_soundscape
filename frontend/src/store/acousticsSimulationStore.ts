@@ -19,10 +19,13 @@ import type {
   AcousticSimulationMode,
   SimulationConfig,
   ResonanceSimulationConfig,
+  ResonanceRoom,
+  ResonanceRoomBounds,
   PyroomAcousticsSimulationConfig,
   PffdtdSimulationConfig,
   ImportIRsSimulationConfig,
 } from '@/types/acoustics';
+import type { ResonanceRoomMaterial } from '@/types/audio';
 import { CARD_TYPE_LABELS } from '@/types/card';
 import {
   PYROOMACOUSTICS_DEFAULT_MAX_ORDER,
@@ -31,9 +34,14 @@ import {
   PYROOMACOUSTICS_RAY_TRACING_N_RAYS,
   PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE,
   PYROOMACOUSTICS_DEFAULT_ENABLE_GRID,
+  PYROOMACOUSTICS_DEFAULT_PARALLEL,
   PFFDTD,
+  RESONANCE_AUDIO,
 } from '@/utils/constants';
 import { UNDO_HISTORY_LIMIT, undoEquality, type RegisterTemporalStoreOptions } from './undoRedoRegistry';
+import { notifyError } from './errorsStore';
+import { useUIStore } from './uiStore';
+import { clampRoomBounds, defaultResonanceMaterials } from '@/lib/audio/utils/resonance-rooms';
 
 // ─── Undo ─────────────────────────────────────────────────────────────────────
 //
@@ -75,15 +83,34 @@ function editableProjection(config: SimulationConfig): Record<string, unknown> {
 
 export const acousticsSimulationPartialize = (state: AcousticsSimulationStoreState) => ({
   simulationConfigs: state.simulationConfigs,
-  roomScale: state.roomScale,
 });
 
 type AcousticsSimulationSnapshot = ReturnType<typeof acousticsSimulationPartialize>;
 
 const acousticsSimulationEquality = (a: AcousticsSimulationSnapshot, b: AcousticsSimulationSnapshot) =>
-  undoEquality(a.roomScale, b.roomScale) &&
   a.simulationConfigs.length === b.simulationConfigs.length &&
   a.simulationConfigs.every((c, i) => undoEquality(editableProjection(c), editableProjection(b.simulationConfigs[i])));
+
+function defaultResonanceRoom(): ResonanceRoom {
+  const bounds = useUIStore.getState().speckleBounds;
+  return {
+    bounds: bounds
+      ? { min: [...bounds.min] as [number, number, number], max: [...bounds.max] as [number, number, number] }
+      : null,
+    materials: defaultResonanceMaterials(),
+  };
+}
+
+function patchResonanceRoom(
+  configs: SimulationConfig[],
+  id: string,
+  patch: Partial<ResonanceRoom>,
+): SimulationConfig[] {
+  return configs.map((c) => {
+    if (c.id !== id || c.type !== 'resonance') return c;
+    return { ...c, room: { ...c.room, ...patch } };
+  });
+}
 
 export const acousticsSimulationUndo: RegisterTemporalStoreOptions<
   AcousticsSimulationStoreState,
@@ -115,11 +142,13 @@ export const acousticsSimulationUndo: RegisterTemporalStoreOptions<
       const idx = configs.findIndex((c) => c.id === id);
       return idx >= 0 ? idx : null;
     };
+    const existingIds = new Set(configs.map((c) => c.id));
     useAcousticsSimulationStore.setState({
       simulationConfigs: configs,
-      roomScale: snapshot.roomScale,
       activeSimulationIndex: indexOf(idAt(live.activeSimulationIndex)),
       expandedTabIndex: indexOf(idAt(live.expandedTabIndex)),
+      activeResonanceIds: live.activeResonanceIds.filter((id) => existingIds.has(id)),
+      hiddenResonanceBoxIds: live.hiddenResonanceBoxIds.filter((id) => existingIds.has(id)),
     });
   },
 };
@@ -131,7 +160,10 @@ export interface AcousticsSimulationStoreState {
   activeSimulationIndex: number | null;
   expandedTabIndex: number | null;
   simulationCounter: number;
-  roomScale: { x: number; y: number; z: number };
+  /** Powered Resonance cards, keyed by card id. Not undoable. */
+  activeResonanceIds: string[];
+  /** Cards whose "Show box" toggle is off. Not undoable, not persisted. */
+  hiddenResonanceBoxIds: string[];
   /**
    * Bumped by `restoreSimulationState`. Consumers (AcousticsSection) watch it to
    * know a bulk payload restore just happened and must NOT auto-expand or
@@ -149,7 +181,12 @@ export interface AcousticsSimulationStoreState {
   handleSetActiveSimulation: (index: number | null) => void;
   handleUpdateSimulationName: (index: number, name: string) => void;
   handleToggleExpand: (index: number) => void;
-  setRoomScale: (scale: { x: number; y: number; z: number }) => void;
+  toggleResonanceActive: (id: string) => boolean;
+  setResonanceRoomBounds: (id: string, bounds: ResonanceRoomBounds) => void;
+  setResonanceRoomMaterials: (id: string, materials: ResonanceRoomMaterial) => void;
+  resetResonanceRoom: (id: string, bounds: ResonanceRoomBounds) => void;
+  fillNullResonanceBounds: (bounds: ResonanceRoomBounds) => void;
+  toggleResonanceBoxHidden: (id: string) => void;
   restoreSimulationState: (
     savedConfigs: SimulationConfig[],
     savedActiveIndex: number | null,
@@ -166,11 +203,9 @@ export const useAcousticsSimulationStore = create<AcousticsSimulationStoreState>
         activeSimulationIndex: null,
         expandedTabIndex: null,
         simulationCounter: 1,
-        roomScale: { x: 1, y: 1, z: 1 },
+        activeResonanceIds: [],
+        hiddenResonanceBoxIds: [],
         restoreNonce: 0,
-
-        setRoomScale: (scale) =>
-          set({ roomScale: scale }, false, 'acousticsSim/setRoomScale'),
 
         handleAddConfig: (mode) => {
           const { simulationConfigs, simulationCounter } = get();
@@ -188,7 +223,8 @@ export const useAcousticsSimulationStore = create<AcousticsSimulationStoreState>
                 type: 'resonance',
                 state: 'idle',
                 createdAt: timestamp,
-              } as ResonanceSimulationConfig;
+                room: defaultResonanceRoom(),
+              } satisfies ResonanceSimulationConfig;
               break;
 
             case 'pyroomacoustics':
@@ -204,6 +240,7 @@ export const useAcousticsSimulationStore = create<AcousticsSimulationStoreState>
                   ray_tracing: PYROOMACOUSTICS_DEFAULT_RAY_TRACING,
                   air_absorption: PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION,
                   n_rays: PYROOMACOUSTICS_RAY_TRACING_N_RAYS,
+                  parallel: PYROOMACOUSTICS_DEFAULT_PARALLEL,
                   simulation_mode: PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE,
                   enable_grid: PYROOMACOUSTICS_DEFAULT_ENABLE_GRID,
                 },
@@ -353,7 +390,8 @@ export const useAcousticsSimulationStore = create<AcousticsSimulationStoreState>
         },
 
         handleRemoveConfig: (index) => {
-          const { simulationConfigs, activeSimulationIndex, expandedTabIndex } = get();
+          const { simulationConfigs, activeSimulationIndex, expandedTabIndex, activeResonanceIds, hiddenResonanceBoxIds } = get();
+          const removedId = simulationConfigs[index]?.id;
           const nextConfigs = simulationConfigs.filter((_, i) => i !== index);
 
           let nextActive = activeSimulationIndex;
@@ -371,6 +409,12 @@ export const useAcousticsSimulationStore = create<AcousticsSimulationStoreState>
               simulationConfigs: nextConfigs,
               activeSimulationIndex: nextActive,
               expandedTabIndex: nextExpanded,
+              activeResonanceIds: removedId
+                ? activeResonanceIds.filter((id) => id !== removedId)
+                : activeResonanceIds,
+              hiddenResonanceBoxIds: removedId
+                ? hiddenResonanceBoxIds.filter((id) => id !== removedId)
+                : hiddenResonanceBoxIds,
             },
             false,
             'acousticsSim/removeConfig',
@@ -403,11 +447,105 @@ export const useAcousticsSimulationStore = create<AcousticsSimulationStoreState>
           );
         },
 
-        handleSetActiveSimulation: (index) =>
+        handleSetActiveSimulation: (index) => {
+          if (index === null) {
+            set({ activeSimulationIndex: null }, false, 'acousticsSim/setActive');
+            return;
+          }
+          const cfg = get().simulationConfigs[index];
+          if (cfg?.type === 'resonance') {
+            // Resonance power is membership in activeResonanceIds; this path
+            // only ensures the card is on (expand). Toggle off via toggleResonanceActive.
+            if (!get().activeResonanceIds.includes(cfg.id)) {
+              get().toggleResonanceActive(cfg.id);
+            }
+            return;
+          }
           set(
-            { activeSimulationIndex: index, ...(index !== null ? { expandedTabIndex: index } : {}) },
+            {
+              activeSimulationIndex: index,
+              expandedTabIndex: index,
+              activeResonanceIds: [],
+            },
             false,
             'acousticsSim/setActive',
+          );
+        },
+
+        toggleResonanceActive: (id) => {
+          const { activeResonanceIds, simulationConfigs } = get();
+          const config = simulationConfigs.find((c) => c.id === id);
+          if (!config || config.type !== 'resonance') return false;
+          if (activeResonanceIds.includes(id)) {
+            set(
+              { activeResonanceIds: activeResonanceIds.filter((x) => x !== id) },
+              false,
+              'acousticsSim/toggleResonanceOff',
+            );
+            return true;
+          }
+          if (activeResonanceIds.length >= RESONANCE_AUDIO.MAX_ACTIVE_ROOMS) {
+            notifyError(
+              `At most ${RESONANCE_AUDIO.MAX_ACTIVE_ROOMS} ShoeBox rooms can be powered at once`,
+              'warning',
+            );
+            return false;
+          }
+          set(
+            { activeResonanceIds: [...activeResonanceIds, id], activeSimulationIndex: null },
+            false,
+            'acousticsSim/toggleResonanceOn',
+          );
+          return true;
+        },
+
+        setResonanceRoomBounds: (id, bounds) =>
+          set(
+            (s) => ({ simulationConfigs: patchResonanceRoom(s.simulationConfigs, id, { bounds: clampRoomBounds(bounds) }) }),
+            false,
+            'acousticsSim/setResonanceBounds',
+          ),
+
+        setResonanceRoomMaterials: (id, materials) =>
+          set(
+            (s) => ({ simulationConfigs: patchResonanceRoom(s.simulationConfigs, id, { materials: { ...materials } }) }),
+            false,
+            'acousticsSim/setResonanceMaterials',
+          ),
+
+        resetResonanceRoom: (id, bounds) =>
+          set(
+            (s) => ({ simulationConfigs: patchResonanceRoom(s.simulationConfigs, id, { bounds: clampRoomBounds(bounds) }) }),
+            false,
+            'acousticsSim/resetResonanceRoom',
+          ),
+
+        fillNullResonanceBounds: (bounds) =>
+          set(
+            (s) => {
+              if (!s.simulationConfigs.some((c) => c.type === 'resonance' && !c.room.bounds)) return s;
+              const clamped = clampRoomBounds(bounds);
+              return {
+                simulationConfigs: s.simulationConfigs.map((c) => {
+                  if (c.type !== 'resonance' || c.room.bounds) return c;
+                  return { ...c, room: { ...c.room, bounds: clamped } };
+                }),
+              };
+            },
+            false,
+            'acousticsSim/fillNullResonanceBounds',
+          ),
+
+        toggleResonanceBoxHidden: (id) =>
+          set(
+            (s) => {
+              const hidden = s.hiddenResonanceBoxIds.includes(id)
+                ? s.hiddenResonanceBoxIds.filter((x) => x !== id)
+                : [...s.hiddenResonanceBoxIds, id];
+              return { hiddenResonanceBoxIds: hidden };
+            },
+            false,
+            'acousticsSim/toggleResonanceBoxHidden',
           ),
 
         handleUpdateSimulationName: (index, name) =>
@@ -438,6 +576,8 @@ export const useAcousticsSimulationStore = create<AcousticsSimulationStoreState>
               // exact effect of manually collapsing an acoustic card. The user
               // re-activates via the card's power button.
               activeSimulationIndex: null,
+              activeResonanceIds: [],
+              hiddenResonanceBoxIds: [],
               expandedTabIndex: null,
               simulationCounter: Math.max(s.simulationCounter, savedConfigs.length + 1),
               restoreNonce: s.restoreNonce + 1,

@@ -24,6 +24,7 @@ from config.constants import DEFAULT_SPEED_OF_SOUND
 from config.constants import PYROOMACOUSTICS_DEFAULT_ABSORPTION
 from config.constants import PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION
 from config.constants import PYROOMACOUSTICS_DEFAULT_MAX_ORDER
+from config.constants import PYROOMACOUSTICS_DEFAULT_PARALLEL
 from config.constants import PYROOMACOUSTICS_DEFAULT_RAY_TRACING
 from config.constants import PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE
 from config.constants import PYROOMACOUSTICS_MAX_ORDER_MAX
@@ -157,6 +158,7 @@ async def run_simulation_speckle(
     ray_tracing: bool = Form(PYROOMACOUSTICS_DEFAULT_RAY_TRACING),
     air_absorption: bool = Form(PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION),
     n_rays: int = Form(PYROOMACOUSTICS_RAY_TRACING_N_RAYS),
+    parallel: bool = Form(PYROOMACOUSTICS_DEFAULT_PARALLEL),
     object_scattering: str = Form("{}"),
     simulation_mode: str = Form(PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE),
     sound_speed: float = Form(DEFAULT_SPEED_OF_SOUND),
@@ -220,6 +222,7 @@ async def run_simulation_speckle(
                 ray_tracing=ray_tracing,
                 air_absorption=air_absorption,
                 n_rays=n_rays,
+                parallel=parallel,
                 sound_speed=sound_speed,
                 pairs_data=pairs_data,
                 simulation_name=simulation_name,
@@ -379,6 +382,7 @@ async def run_simulation_geometry(body: PyroomacousticsGeometryRequest, http_req
                 ray_tracing=settings.ray_tracing,
                 air_absorption=settings.air_absorption,
                 n_rays=settings.n_rays,
+                parallel=settings.parallel,
                 sound_speed=settings.sound_speed,
                 simulation_name=req.simulation_name,
                 rir_output_dir=str(RIR_OUTPUT_DIR),

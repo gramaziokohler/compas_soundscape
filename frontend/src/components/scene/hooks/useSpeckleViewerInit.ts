@@ -14,7 +14,7 @@ import {
   StencilOutlineType,
 } from '@speckle/viewer';
 import { SpeckleAudioCoordinator } from '@/lib/three/speckle-audio-coordinator';
-import { BoundingBoxManager } from '@/lib/three/BoundingBoxManager';
+import { ResonanceRoomBoxes } from '@/lib/three/ResonanceRoomBoxes';
 import { AreaDrawingManager } from '@/lib/three/area-drawing-manager';
 import { HoverOutline } from '@/lib/three/speckle-hover-outline';
 import { PlaybackSchedulerService } from '@/lib/audio/playback-scheduler-service';
@@ -71,7 +71,7 @@ export function useSpeckleViewerInit({
     setCoordinator,
     setSelectionExtension,
     setFilteringExtension,
-    setBoundingBoxManager,
+    setResonanceRoomBoxes,
     setCameraController,
     setAreaDrawingManager,
     setPlaybackScheduler,
@@ -281,8 +281,8 @@ export function useSpeckleViewerInit({
           const renderer = viewer.getRenderer();
           const scene = renderer.scene;
           if (scene) {
-            const boundingBoxManager = new BoundingBoxManager(scene);
-            setBoundingBoxManager(boundingBoxManager);
+            const resonanceRoomBoxes = new ResonanceRoomBoxes(scene);
+            setResonanceRoomBoxes(resonanceRoomBoxes);
           } else {
             console.error('[useSpeckleViewerInit] Failed to get scene from renderer!');
           }
@@ -398,8 +398,12 @@ export function useSpeckleViewerInit({
 
     return () => {
       // Cleanup
-      const { areaDrawingManager, coordinator, viewer: v, playbackScheduler } =
+      const { areaDrawingManager, coordinator, viewer: v, playbackScheduler, resonanceRoomBoxes } =
         useSpeckleEngineStore.getState();
+      if (resonanceRoomBoxes) {
+        resonanceRoomBoxes.dispose();
+        setResonanceRoomBoxes(null);
+      }
 
       if (areaDrawingManager) {
         areaDrawingManager.dispose();

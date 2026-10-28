@@ -12,6 +12,7 @@ import type { FoleySoundDetail } from './analysis';
 import type { PffdtdVoxelProblem } from './pffdtd';
 import type { CustomMaterialRecord } from './materials';
 import type { DirectivityRecord, SoundDirectivity } from './directivity';
+import type { ShareConfig } from './share';
 
 /** Global generation settings for a soundscape session */
 export interface SoundscapeGlobalSettings {
@@ -180,6 +181,7 @@ export interface SoundscapeSimulationSettings {
   ray_tracing?: boolean;
   air_absorption: boolean;
   n_rays?: number;
+  parallel?: boolean;
   simulation_mode: string;
   enable_grid?: boolean;
   // PFFDTD (wave-based) only
@@ -203,6 +205,13 @@ export interface SoundscapeAcousticSelection {
   auto_detected: boolean;
 }
 
+/** Object Explorer hide / isolate / exclude view saved on a scene or simulation card. */
+export interface SoundscapeObjectVisibility {
+  hidden_ids: string[];
+  isolated_ids: string[];
+  excluded_ids: string[];
+}
+
 /** Serializable simulation configuration */
 export interface SoundscapeSimulationConfig {
   id: string;
@@ -217,6 +226,8 @@ export interface SoundscapeSimulationConfig {
   speckle_scattering_assignments?: Record<string, number>;
   /** Acoustic region this card was simulated with (see SoundscapeAcousticSelection). */
   speckle_acoustic_selection?: SoundscapeAcousticSelection;
+  /** Saved Object Explorer view, restored when the card is powered on. */
+  saved_object_visibility?: SoundscapeObjectVisibility;
   /** Speckle version the completed result was simulated on. */
   simulated_version_id?: string;
   simulation_results?: string;
@@ -248,9 +259,17 @@ export interface SoundscapeSimulationConfig {
   ir_normalize_enabled?: boolean;
   material_assignments_enabled?: boolean;
   ir_import_mode?: 'single' | 'per-pair';
+  /** Per-card ShoeBox room (bounds + face materials). */
+  resonance_room?: SoundscapeResonanceRoom;
 }
 
-/** ShoeBox Acoustics room configuration (global) */
+/** Per-card Resonance (ShoeBox) room persisted with a simulation card. */
+export interface SoundscapeResonanceRoom {
+  bounds: { min: number[]; max: number[] } | null;
+  materials: { left: string; right: string; front: string; back: string; down: string; up: string };
+}
+
+/** ShoeBox Acoustics room configuration (global, legacy — read on load, no longer written) */
 export interface SoundscapeResonanceAudioConfig {
   enabled: boolean;
   ambisonic_order?: number;
@@ -300,6 +319,8 @@ export interface SoundscapeData {
   excluded_iterations?: Record<string, number[]>;
   /** Reason per excluded iteration, keyed `${soundId}-${iterationIndex}`. */
   exclusion_reasons?: Record<string, string>;
+  /** Public share selection (types/share.ts); filtered server-side for viewers. */
+  share_config?: ShareConfig;
 }
 
 /** Request payload for POST /api/speckle/soundscape/save */
@@ -373,6 +394,12 @@ export interface SoundscapeStats {
 export interface SerializedAnalysisConfig {
   type: string;
   display_name?: string;
+  /** Stable scene identity (scene cards only) — referenced by `share_config`. */
+  scene_id?: string;
+  /** Saved Object Explorer view, restored when the scene is powered on. */
+  saved_object_visibility?: SoundscapeObjectVisibility;
+  /** Set by the public share endpoint on redacted, non-shared scenes. */
+  share_hidden?: boolean;
   parentContextOriginalIndex?: number;
   numSounds?: number;
   textInput?: string;

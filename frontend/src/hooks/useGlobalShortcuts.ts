@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { isShareViewActive } from '@/store/shareViewStore';
 import { getShortcutTarget, resolvePlaybackTarget } from '@/lib/shortcuts/shortcut-targets';
 import {
   hasModKey,
@@ -123,7 +124,7 @@ function route(e: KeyboardEvent): boolean {
     return true;
   }
 
-  if ((e.key === 'Delete' || e.key === 'Backspace') && !e.shiftKey && !e.altKey && !isFirstPerson) {
+  if ((e.key === 'Delete' || e.key === 'Backspace') && !e.shiftKey && !e.altKey && !isFirstPerson && !isShareViewActive()) {
     // Backspace only when nothing is focused — it's too easy to hit by accident elsewhere.
     if (e.key === 'Backspace' && e.target !== document.body) return false;
     return getShortcutTarget('soundCards')?.removeExpanded() ?? false;

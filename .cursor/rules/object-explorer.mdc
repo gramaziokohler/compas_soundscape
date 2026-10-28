@@ -59,6 +59,30 @@ The app no longer fights this with two stateKeys + a rAF re-apply loop. Instead:
   - It runs inside `runWithoutUndo` (not undoable).
   - Edit mode comes from `Card`'s `onSettingsExpandedChange`.
 
+## Saved Object Visibility (per scene / simulation card)
+
+A scene (usage card) or simulation card can save the current hide / isolate / exclude intent and
+get it back when it is powered on.
+
+- **Data:** `savedObjectVisibility?: SavedObjectVisibility { hiddenIds, isolatedIds, excludedIds }`
+  (`types/card.ts`) on `AnalysisBaseConfig` and `BaseSimulationConfig`. It is project content: undoable
+  with the config, never a `SIM_RUN_KEYS` run field, copied by scene/simulation duplicate.
+- **Store:** `speckleStore.getVisibilitySnapshot()` (subtracts `_autoHiddenIds`, so a card's auto-hides
+  never become manual) and `applyVisibilitySnapshot()` (replaces the three intent sets, keeps live
+  auto-hides, then `applyVisibility()`). The view mode is not part of it.
+- **Menus** (rows from `utils/savedObjectVisibility.ts` `buildSavedVisibilityRows`, gated by `useCanEdit`):
+  Simple scene bubble (`useSceneBubbleMenu`), Simple simulation bubble (`AcousticsBubbles` right-click),
+  Expert simulation card and Expert usage card (`customButtons`). "Clear saved visibility" shows only
+  when a view exists.
+- **Restore:** `useApplySavedObjectVisibility` (mounted in `page.tsx`, ready = `domainRestored &&
+  worldTreeVersion > 0`). Cards are tracked by identity (`scene_id` / config `id`), never by index. It
+  applies only on a transition to a powered card that has a saved view (powering off or a card with none
+  does nothing; most recently powered wins). The first run after ready re-applies the already-powered
+  card's view inside `runWithoutUndo`. A new viewer resets the intent, so never apply before ready.
+- **Persistence:** `saved_object_visibility` (snake_case) in `analysis_state.configs[]` and
+  `SoundscapeSimulationConfig` (`SoundscapeObjectVisibility` in `schemas.py`). Ids belong to one model
+  version; ids missing from another version are ignored.
+
 ## View Modes
 
 | Mode      | Behavior |

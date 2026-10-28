@@ -28,6 +28,7 @@ import { useServiceVersions } from "@/hooks/useServiceVersions";
 import { useAudioControlsStore } from "@/store/audioControlsStore";
 import { useUIStore, selectHasSaveTarget, type AdvancedSettingsFocusTarget } from "@/store/uiStore";
 import { CollaborationPanel } from "@/components/layout/CollaborationPanel";
+import { ShareSettingsSection } from "@/components/layout/sidebar/settings/ShareSettingsSection";
 import { SimulationGeometrySettings } from "@/components/layout/sidebar/advanced/SimulationGeometrySettings";
 import { OutputDeviceSelector } from "@/components/audio/OutputDeviceSelector";
 import { AmbisonicSendControls } from "@/components/audio/AmbisonicSendControls";
@@ -56,6 +57,7 @@ import {
   DEFAULT_DIFFUSION_STEPS,
   SANDBOX_MODEL_ID,
   WORKSPACE_MESSAGES,
+  SHARE_SETTINGS,
 } from "@/utils/constants";
 
 function isProviderInstalled(modelKey: string, llmProviders: LLMProviders | null): boolean {
@@ -108,7 +110,7 @@ export interface AdvancedSettingsSectionProps {
 
 // ── Section key type ──────────────────────────────────────────────────────────
 
-type SectionKey = 'display' | 'acoustic' | 'tokens' | 'llm' | 'rendering' | 'workspaces' | 'history';
+type SectionKey = 'display' | 'acoustic' | 'tokens' | 'llm' | 'rendering' | 'workspaces' | 'share' | 'history';
 
 const SECTION_LABELS: Record<SectionKey, string> = {
   display: 'Display',
@@ -117,11 +119,12 @@ const SECTION_LABELS: Record<SectionKey, string> = {
   llm: 'Models',
   rendering: 'Audio settings',
   workspaces: 'Workspaces',
+  share: SHARE_SETTINGS.SECTION_LABEL,
   history: 'History',
 };
 
 // 'tokens' is temporarily hidden from the nav (TokensSection code is kept for re-enabling).
-const SECTION_KEYS: SectionKey[] = ['display', 'acoustic', 'llm', 'rendering', 'workspaces', 'history'];
+const SECTION_KEYS: SectionKey[] = ['display', 'acoustic', 'llm', 'rendering', 'workspaces', 'share', 'history'];
 
 // OpenAI (ChatGPT) and Anthropic (Claude) are temporarily hidden from the LLM picker.
 const LLM_MODEL_OPTIONS = [LLM_MODEL_GEMINI_FLASH, LLM_MODEL_GEMINI_PRO];
@@ -137,6 +140,7 @@ type SettingKey =
   | 'listener-orientation' | 'spectrograms'
   | 'base-spl' | 'output-device' | 'ambisonic-send'
   | 'collaboration'
+  | 'share-link'
   | 'auto-save' | 'delete-history';
 
 interface SettingEntry {
@@ -179,6 +183,8 @@ const SETTINGS: SettingEntry[] = [
   { section: 'rendering', key: 'base-spl', terms: ['base level', 'base spl', 'spl', 'volume', 'db', 'decibel'] },
 
   { section: 'workspaces', key: 'collaboration', terms: ['workspaces', 'workspace', 'members', 'collaboration', 'collaborators', 'invite', 'sharing', 'share', 'link', 'owner', 'transfer', 'viewer', 'view only', 'leave'] },
+
+  { section: 'share', key: 'share-link', terms: ['share', 'public link', 'embed', 'iframe', 'publish', 'read-only', 'link', 'viewer'] },
 
   { section: 'history', key: 'auto-save', terms: ['autosave', 'auto-save', 'soundscape', 'auto save', 'persist'] },
   { section: 'history', key: 'delete-history', terms: ['delete history', 'clear history', 'delete', 'history', 'reset project'] },
@@ -998,6 +1004,10 @@ export function AdvancedSettingsSection({
 
           {activeSection === 'workspaces' && (
             <CollaborationPanel />
+          )}
+
+          {activeSection === 'share' && (
+            <ShareSettingsSection />
           )}
 
           {activeSection === 'history' && (

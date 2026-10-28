@@ -29,7 +29,7 @@ export function useSoundScenes(): SoundScene[] {
         config.type === 'scenario' ||
         config.type === 'text' ||
         (config.type === 'freeform' && parent !== undefined);
-      if (!isUsage) return;
+      if (!isUsage || config.share_hidden) return;
 
       const indices = getSceneSoundIndices(soundConfigs, usageIndex);
       const isScenario = config.type === 'scenario';
@@ -38,6 +38,7 @@ export function useSoundScenes(): SoundScene[] {
       const fallback = `Scene ${scenes.length + 1}`;
       scenes.push({
         usageIndex,
+        sceneId: config.scene_id ?? '',
         contextIndex: parent ?? null,
         title: getSceneTitle(config, fallback),
         fullTitle: getSceneFullTitle(config, fallback),

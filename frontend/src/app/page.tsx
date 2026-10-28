@@ -28,9 +28,12 @@ import {
   useAcousticsSimulationStore,
   usePyroomAcousticsStore,
   useSEDStore,
-  useRoomMaterialsStore,
   useRightSidebarStore,
   useAcousticLayerStore,
+  useShareConfigStore,
+  useShareViewStore,
+  selectShareConfig,
+  pruneShareConfig,
   getAcousticSelectionForSave,
   restoreAcousticSelection,
   useUIStore,
@@ -65,21 +68,23 @@ import { useUndoRedo } from "@/hooks/useUndoRedo";
 import { scheduleUndoSafeDeletion } from "@/lib/undo-safe-deletion";
 import { useGlobalShortcuts } from "@/hooks/useGlobalShortcuts";
 import { useJobRecovery, discoverRunningWorkspaceJobs } from "@/hooks/useJobRecovery";
+import { useApplySavedObjectVisibility } from "@/hooks/useApplySavedObjectVisibility";
 import { useModelVersionSession } from "@/hooks/useModelVersionSession";
 import { useListenerOrientationAutosave } from "@/hooks/useListenerOrientationAutosave";
 import { useStudyLogging } from "@/hooks/useStudyLogging";
 import { logStudyEvent } from "@/lib/study/studyLogger";
 import { apiService } from "@/services/api";
-import { API_BASE_URL, DEFAULT_BACKGROUND_DURATION_SECONDS, DEFAULT_DBFS, DEFAULT_NUM_SOUNDS, RECEIVER_CONFIG, SPIRAL_PLACEMENT, DEFAULT_LISTENER_ORIENTATION, TTS_DEFAULT_LANGUAGE, SANDBOX_MODEL_ID, WORKSPACE_MESSAGES, STUDY_LOG, SCENE_TRANSFER } from "@/utils/constants";
+import { API_BASE_URL, DEFAULT_BACKGROUND_DURATION_SECONDS, DEFAULT_DBFS, DEFAULT_NUM_SOUNDS, RECEIVER_CONFIG, SPIRAL_PLACEMENT, DEFAULT_LISTENER_ORIENTATION, TTS_DEFAULT_LANGUAGE, SANDBOX_MODEL_ID, WORKSPACE_MESSAGES, STUDY_LOG, SCENE_TRANSFER, SHARE_VIEW } from "@/utils/constants";
 import { notifyPrivateWorkspaceModel } from "@/utils/workspaceNotifications";
 import { parseAuthoredSeconds } from "@/lib/audio/utils/timeline-utils";
 import { getCameraFrontSpiralPosition } from "@/lib/three/spiral-placement";
 import type { LoadTab, SoundGenerationConfig, SoundEvent } from "@/types";
 import type { SoundscapeData } from "@/types/soundscape";
+import { useShareLinkActivation } from "@/hooks/useShareLinkActivation";
 import type { ListenerExpandRequest } from "@/types/receiver";
 import { parseGridPointId } from "@/utils/gridListenerPoints";
 import { captureHomeElements, mergeHomeElements, type HomeElementsSnapshot } from "@/utils/home-elements-import";
-import type { AcousticSimulationMode } from "@/types/audio";
+import type { AcousticSimulationMode, ResonanceRoomSpec } from "@/types/audio";
 import type { AudioAnalysisConfig, AnalysisConfig } from "@/types/analysis";
 import { CARD_TYPE_LABELS } from "@/types/card";
 import type { SelectedGeometry, AcousticMaterial } from "@/types/materials";
@@ -173,6 +178,23 @@ function markSoundscapeLoaded(revision: number | undefined) {
   if (typeof revision === 'number') useWorkspaceStore.getState().setLoadedRevision(revision);
 }
 
+/** Point the viewer at the Speckle model a saved soundscape was made on. */
+function applySavedSpeckleModel(data: SoundscapeData, setModelName: (name: string) => void) {
+  if (!data.project_id) return;
+  const speckleData = {
+    model_id: data.model_id,
+    version_id: data.version_id || '',
+    file_id: '',
+    url: `https://app.speckle.systems/projects/${data.project_id}/models/${data.model_id}`,
+    object_id: '',
+    display_name: data.model_name || data.model_id,
+    auth_token: data.auth_token || undefined,
+  };
+  useUIStore.getState().setGlobalSpeckleData(speckleData);
+  useUIStore.getState().setSpeckleModelUrl(speckleData.url);
+  if (speckleData.display_name) setModelName(speckleData.display_name);
+}
+
 function applyRestoredSoundscapePayload(
   data: SoundscapeData,
   audioBaseUrl: string,
@@ -180,6 +202,7 @@ function applyRestoredSoundscapePayload(
   suppressOrchestrateBakeRef: { current: boolean },
 ) {
   const restored = restoreSoundscapeState(data, audioBaseUrl, irBaseUrl);
+  useShareConfigStore.getState().restore(data.share_config);
   const soundGen = useSoundscapeStore.getState();
   if (restored.soundEvents.length > 0) {
     suppressOrchestrateBakeRef.current = true;
@@ -259,13 +282,6 @@ function applyRestoredSoundscapePayload(
         useUIStore.getState().setActiveSoundParentIndex(cf.usageAdvanced[0]);
       }
     }
-  }
-  if (restored.resonanceAudioConfig) {
-    const rcfg = restored.resonanceAudioConfig;
-    useRoomMaterialsStore.setState({
-      roomDimensions: rcfg.roomDimensions,
-      roomMaterials: rcfg.roomMaterials,
-    });
   }
   // The domain was reset before this load — re-apply the model's saved region.
   restoreAcousticSelection(restored.acousticRegion);
@@ -396,6 +412,34 @@ function HomeContent() {
       return;
     }
 
+    // Public share view: anonymous, read-only — only /api/public + Speckle.
+    const shareId = useShareViewStore.getState().shareId;
+    if (shareId) {
+      bootstrappedRef.current = true;
+      collapseFloatingPanels();
+      setIsBootstrappingModel(true);
+      resetDomainForFreshModel();
+      apiService.loadSharedSoundscape(shareId).then((res) => {
+        const data = res.soundscape_data;
+        useShareViewStore.getState().setLinks(res.share_config?.links ?? []);
+        applySavedSpeckleModel(data, setModelFileName);
+        applyRestoredSoundscapePayload(
+          data,
+          `${API_BASE_URL}${res.audio_base_url}`,
+          res.ir_base_url || undefined,
+          suppressOrchestrateBakeRef,
+        );
+        console.log('[page:bootstrap] Shared soundscape restored:', shareId);
+      }).catch((err) => {
+        console.error('[page:bootstrap] Failed to load shared soundscape:', err);
+        notifyError(err instanceof Error ? err.message : SHARE_VIEW.LOAD_FAILED, 'warning');
+      }).finally(() => {
+        setIsBootstrappingModel(false);
+        setDomainRestored(true);
+      });
+      return;
+    }
+
     // An invite token with a model means the invite flow owns navigation: it
     // joins the workspace, then reloads to this model. Don't pre-load here —
     // it would race the join and may show a spurious "requires invite".
@@ -476,22 +520,7 @@ function HomeContent() {
       }
 
       // Reconstruct SpeckleData from the saved fields so the viewer can load geometry
-      if (data.project_id) {
-        const speckleData = {
-          model_id: data.model_id,
-          version_id: data.version_id || '',
-          file_id: '',
-          url: `https://app.speckle.systems/projects/${data.project_id}/models/${data.model_id}`,
-          object_id: '',
-          display_name: data.model_name || data.model_id,
-          auth_token: data.auth_token || undefined,
-        };
-        useUIStore.getState().setGlobalSpeckleData(speckleData);
-        useUIStore.getState().setSpeckleModelUrl(speckleData.url);
-        if (speckleData.display_name) {
-          setModelFileName(speckleData.display_name);
-        }
-      }
+      applySavedSpeckleModel(data, setModelFileName);
 
       if (data.model_id) useModelVersionStore.getState().setSessionBaseVersion(data.model_id, data.version_id || null);
       applyRestoredSoundscapePayload(data, audioBaseUrl, irBaseUrl, suppressOrchestrateBakeRef);
@@ -541,6 +570,8 @@ function HomeContent() {
       // (the backend would reject the save). The owner autosaves even while
       // others are present — viewers never write, so nothing can collide.
       if (selectIsReadOnlyWorkspace(useWorkspaceStore.getState())) return;
+      // The public share view never saves (it has no identity).
+      if (useShareViewStore.getState().isShareView) return;
       if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
       autosaveTimerRef.current = setTimeout(() => {
         // Only save when the persisted content actually changed since the last
@@ -563,6 +594,7 @@ function HomeContent() {
     const unsubAnalysis = useAnalysisStore.subscribe(() => scheduleAutosave('analysisStore'));
     // Region edits are saved too; derived ticks (face counts) are no-ops via the signature.
     const unsubAcousticLayer = useAcousticLayerStore.subscribe(() => scheduleAutosave('acousticLayerStore'));
+    const unsubShare = useShareConfigStore.subscribe(() => scheduleAutosave('shareConfigStore'));
     return () => {
       unsubUI();
       unsubSoundscape();
@@ -572,6 +604,7 @@ function HomeContent() {
       unsubSim();
       unsubAnalysis();
       unsubAcousticLayer();
+      unsubShare();
       if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -586,6 +619,7 @@ function HomeContent() {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
     if (params.get("invite")) return;
+    if (useShareViewStore.getState().isShareView) return;
     void useWorkspaceStore.getState().init({ preferOwn: !params.get("model_id") });
   }, []);
 
@@ -966,6 +1000,11 @@ function HomeContent() {
     runWithoutUndo(refreshEntityLinksAndPositions);
   }, [worldTreeReady, worldTreeVersion, refreshEntityLinksAndPositions]);
 
+  // Restore the Object Explorer view saved on a scene / simulation when it is powered on.
+  // Ready = domain restored AND the viewer's world tree loaded (a new viewer resets
+  // the visibility intent, so applying earlier would be wiped).
+  useApplySavedObjectVisibility(domainRestored && worldTreeVersion > 0);
+
   const sed = useSEDStore();
 
   // MAIN AUDIO SYSTEM: Handles all 6 audio modes (Flat Anechoic, ShoeBox Acoustics, Spatial Anechoic, Mono IR, Stereo IR, Ambisonic IR)
@@ -995,7 +1034,6 @@ function HomeContent() {
 
   // Audio feature hooks (modular, integrate with orchestrator)
   const audioNormalization = useAudioNormalization(audioOrchestrator.orchestrator);
-  const roomMaterials = useRoomMaterialsStore();
 
   const receivers = useReceiversStore();
   const gridListeners = useGridListenersStore();
@@ -1018,8 +1056,6 @@ function HomeContent() {
     selectedIRId, setSelectedIRId,
     selectedIRMetadata, setSelectedIRMetadata,
     irRefreshTrigger, triggerIRRefresh,
-    showBoundingBox, setShowBoundingBox,
-    refreshBoundingBoxTrigger, triggerBoundingBoxRefresh,
     audioRenderingMode, setAudioRenderingMode,
     useSpeckleViewer,
     speckleModelUrl, setSpeckleModelUrl,
@@ -1044,9 +1080,6 @@ function HomeContent() {
     setGlobalSoundSpeed,
     listenerOrientation, setListenerOrientation,
   } = useUIStore();
-  // roomScale lives in acousticsSimulationStore so undo/redo works for Resonance Audio
-  const roomScale = useAcousticsSimulationStore((s) => s.roomScale);
-  const setRoomScale = useAcousticsSimulationStore((s) => s.setRoomScale);
   const { isExpanded: isRightSidebarExpanded } = useRightSidebarStore();
   // Simple (bubbles) vs Expert (sidebars). In Simple mode no sidebar occupies the edges.
   const uiMode = useUIStore((s) => s.uiMode);
@@ -1073,36 +1106,36 @@ function HomeContent() {
   // Model pill "Send scenes to another model…" dialog.
   const [showSendScenesModal, setShowSendScenesModal] = useState(false);
 
-  // Sync model bounding box → Resonance Audio room bounds
+  // Fill Resonance cards that were restored without bounds once the model AABB is known.
   useEffect(() => {
-    if (!speckleBounds || !audioOrchestrator.orchestrator) return;
-    audioOrchestrator.orchestrator.updateResonanceRoomBounds(
-      speckleBounds.min,
-      speckleBounds.max
-    );
-  }, [speckleBounds, audioOrchestrator.orchestrator]);
+    if (!speckleBounds) return;
+    runWithoutUndo(() => {
+      useAcousticsSimulationStore.getState().fillNullResonanceBounds(speckleBounds);
+    });
+  }, [speckleBounds]);
 
-  // Sync room materials → Resonance Audio engine.
-  // Re-runs on material edits, undo/redo, soundscape restore, and mode entry into
-  // resonance so the ShoeBox acoustics always match the persisted store value.
+  // Sync powered Resonance rooms → audio engine (rAF-coalesced during gumball drags).
   useEffect(() => {
-    if (!audioOrchestrator.orchestrator) return;
-    audioOrchestrator.orchestrator.updateResonanceRoomMaterials(roomMaterials.roomMaterials);
-  }, [audioOrchestrator.orchestrator, audioOrchestrator.status?.currentMode, roomMaterials.roomMaterials]);
-
-  // Sync room dimensions → Resonance Audio engine (same trigger surface as above).
-  useEffect(() => {
-    if (!audioOrchestrator.orchestrator) return;
-    audioOrchestrator.orchestrator.updateResonanceRoomDimensions(roomMaterials.roomDimensions);
-  }, [audioOrchestrator.orchestrator, audioOrchestrator.status?.currentMode, roomMaterials.roomDimensions]);
-
-  // When roomScale changes (including after undo/redo), trigger a bounding box re-render
-  useEffect(() => {
-    if (showBoundingBox) {
-      triggerBoundingBoxRefresh();
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomScale]);
+    const orch = audioOrchestrator.orchestrator;
+    if (!orch) return;
+    const frame = requestAnimationFrame(() => {
+      const { simulationConfigs, activeResonanceIds } = useAcousticsSimulationStore.getState();
+      const specs: ResonanceRoomSpec[] = [];
+      for (const config of simulationConfigs) {
+        if (config.type !== 'resonance' || !activeResonanceIds.includes(config.id) || !config.room.bounds) continue;
+        specs.push({
+          id: config.id,
+          bounds: {
+            min: [...config.room.bounds.min] as [number, number, number],
+            max: [...config.room.bounds.max] as [number, number, number],
+          },
+          materials: { ...config.room.materials },
+        });
+      }
+      orch.setResonanceRooms(specs);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [acousticsSimulation.simulationConfigs, acousticsSimulation.activeResonanceIds, audioOrchestrator.orchestrator]);
 
   // IR hover handler
   const handleIRHover = useCallback((sourceId: string | null, receiverId: string | null) => {
@@ -1165,25 +1198,6 @@ function HomeContent() {
     // Note: Don't override user's selection of 'precise' when no IR is loaded
     // They may be about to upload an IR
   }, [audioOrchestrator.status?.isIRActive]);
-
-  const prevOrchestratorModeRef = useRef<string | undefined>(undefined);
-
-  // Auto-show/hide bounding box on ResonanceMode transitions only
-  useEffect(() => {
-    if (!audioOrchestrator.status) return;
-
-    const currentMode = audioOrchestrator.status.currentMode;
-    const prevMode = prevOrchestratorModeRef.current;
-    prevOrchestratorModeRef.current = currentMode;
-
-    if (prevMode === currentMode) return;
-
-    if (currentMode === 'no_ir_resonance') {
-      setShowBoundingBox(true);
-    } else if (prevMode === 'no_ir_resonance') {
-      setShowBoundingBox(false);
-    }
-  }, [audioOrchestrator.status?.currentMode]);
 
   // Helper: check if a simulation config has a source-receiver IR mapping (completed simulation)
   const getSimIRMapping = useCallback((index: number | null) => {
@@ -1491,12 +1505,6 @@ function HomeContent() {
       });
     });
   }, [soundGen.soundConfigs, resolveEntityObjectId]);
-
-  // Handler: Reset bounding box to its original model-derived size
-  const handleRefreshBoundingBox = useCallback(() => {
-    setRoomScale({ x: 1, y: 1, z: 1 });
-    triggerBoundingBoxRefresh();
-  }, [setRoomScale, triggerBoundingBoxRefresh]);
 
   // Active parent filter from UIStore (set by Sidebar when Sounds step is active)
   const activeSoundParentIndex = useUIStore((s) => s.activeSoundParentIndex);
@@ -2165,6 +2173,7 @@ function HomeContent() {
         const irBaseUrl = loadResponse.ir_base_url || undefined;
         useModelVersionStore.getState().setSessionBaseVersion(speckleData.model_id, loadResponse.soundscape_data.version_id || null);
         const restored = restoreSoundscapeState(loadResponse.soundscape_data, audioBaseUrl, irBaseUrl);
+        useShareConfigStore.getState().restore(loadResponse.soundscape_data.share_config);
         if (loadResponse.missing_audio_filenames?.length) {
           notifyError(
             `${loadResponse.missing_audio_filenames.length} saved sound file(s) could not be found on the server and were skipped.`,
@@ -2287,18 +2296,11 @@ function HomeContent() {
           );
         }
 
-        // Restore resonance audio config (room materials, dimensions, ambisonic order)
-        if (restored.resonanceAudioConfig) {
-          const rac = restored.resonanceAudioConfig;
-          useRoomMaterialsStore.getState().updateRoomMaterials(rac.roomMaterials);
-          useRoomMaterialsStore.getState().updateRoomDimensions(rac.roomDimensions);
-          if (rac.ambisonicOrder) {
-            await audioOrchestrator.setAmbisonicOrder(rac.ambisonicOrder as 1 | 2 | 3);
-          }
-          if (rac.enabled) {
-            audioOrchestrator.setNoIRPreference('resonance');
-          }
-          console.log('[page.tsx] Restored resonance audio config');
+        // Legacy resonance_audio_config may still carry ambisonic order.
+        if (restored.resonanceAudioConfig?.ambisonicOrder) {
+          await audioOrchestrator.setAmbisonicOrder(
+            restored.resonanceAudioConfig.ambisonicOrder as 1 | 2 | 3,
+          );
         }
 
         // Restore the acoustic region (reset with the domain above)
@@ -2461,19 +2463,6 @@ function HomeContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingModelSwitch, handleSpeckleModelSelect]);
 
-  // Memoized resonance audio config (used by save/restore, derived from multiple stores)
-  const resonanceAudioConfig = useMemo(() => ({
-    enabled: audioOrchestrator.status?.currentMode === 'no_ir_resonance',
-    ambisonicOrder: audioOrchestrator.status?.ambisonicOrder || 1,
-    roomDimensions: roomMaterials.roomDimensions,
-    roomMaterials: roomMaterials.roomMaterials,
-  }), [
-    audioOrchestrator.status?.currentMode,
-    audioOrchestrator.status?.ambisonicOrder,
-    roomMaterials.roomDimensions,
-    roomMaterials.roomMaterials,
-  ]);
-
   // Resolve the target model for a save from live store state. Autosave calls
   // this without overrides; manual/Home-project saves pass an override.
   const resolveSaveTarget = useCallback((overrides?: { modelId?: string; modelName?: string }) => {
@@ -2491,10 +2480,6 @@ function HomeContent() {
       hasTarget: !!overrideModelId || !!uiState.globalSpeckleData,
     };
   }, []);
-
-  // Mirrored so the save builder reads the latest value without a render closure.
-  const resonanceAudioConfigRef = useRef(resonanceAudioConfig);
-  resonanceAudioConfigRef.current = resonanceAudioConfig;
 
   // Build the full save payload. Shared by the real save and by the change
   // detector so the fingerprint covers exactly what gets persisted. Reads LIVE
@@ -2540,7 +2525,7 @@ function HomeContent() {
         liveReceivers.selectedReceiverId,
         liveSims.simulationConfigs,
         liveSims.activeSimulationIndex,
-        resonanceAudioConfigRef.current,
+        undefined,
         useAudioControlsStore.getState().soundTimestamps,
         useAudioControlsStore.getState().iterationLinks,
         [...useAudioControlsStore.getState().mutedSounds],
@@ -2553,6 +2538,20 @@ function HomeContent() {
 
       // Embed analysis state in the soundscape data
       payload.soundscape_data.analysis_state = analysisStateData.analysis_state;
+
+      // Public share selection, pruned of deleted scenes / simulations / listeners.
+      const shareConfig = pruneShareConfig(selectShareConfig(useShareConfigStore.getState()), {
+        scene: new Set(liveAnalysis.analysisConfigs.map((c) => c.scene_id).filter((id): id is string => !!id)),
+        simulation: new Set(liveSims.simulationConfigs.map((c) => c.id)),
+        listener: new Set([
+          ...liveReceivers.receivers.map((r) => r.id),
+          ...useGridListenersStore.getState().gridListeners.map((g) => g.id),
+        ]),
+      });
+      const hasShareSelection =
+        shareConfig.sceneIds.length + shareConfig.simulationIds.length + shareConfig.listenerIds.length > 0 ||
+        shareConfig.links.length > 0;
+      if (hasShareSelection) payload.soundscape_data.share_config = shareConfig;
 
       // Persist project_id and version_id so the URL bootstrap can reconstruct the viewer
       const speckle = useUIStore.getState().globalSpeckleData;
@@ -2603,6 +2602,8 @@ function HomeContent() {
     const { modelId, modelName, hasTarget } = resolveSaveTarget(overrides);
     // Nothing to save on the fresh Home sandbox (no model, no No-model project).
     if (!hasTarget) return;
+    // The public share view never saves.
+    if (useShareViewStore.getState().isShareView) return;
     // View-only member of someone else's workspace: never save (manual or shortcut).
     if (selectIsReadOnlyWorkspace(useWorkspaceStore.getState())) return;
     const saveSource = lastSaveSourceRef.current;
@@ -3390,11 +3391,6 @@ function HomeContent() {
     normalize: audioNormalization.normalize
   };
 
-  // Handler: Room materials update
-  const handleUpdateRoomMaterials = useCallback((materials: any) => {
-    roomMaterials.updateRoomMaterials(materials);
-  }, [roomMaterials]);
-
   // Handler: Receiver Mode Change (from ThreeScene)
   const handleReceiverModeChange = useCallback((isActive: boolean, receiverId: string | null) => {
     const hasReceivers = receivers.receivers.length > 0;
@@ -3491,6 +3487,26 @@ function HomeContent() {
     handleGoToReceiver(receiverId);
     if (uiMode === 'expert') requestListenerCardExpand(receiverId);
   }, [handleGoToReceiver, requestListenerCardExpand, uiMode]);
+
+  // Share view: activating one item of a link group activates the others.
+  const isShareView = useShareViewStore((s) => s.isShareView);
+  const shareActiveListenerId = activeIRGroupId
+    ? receivers.receivers.some((r) => r.id === activeIRGroupId)
+      ? activeIRGroupId
+      : parseGridPointId(activeIRGroupId)?.gridId ?? null
+    : activeGridListenerId;
+  const activateShareListener = useCallback((listenerId: string) => {
+    if (receivers.receivers.some((r) => r.id === listenerId)) {
+      if (activeIRGroupId !== listenerId) handleGoToReceiver(listenerId);
+    } else if (activeGridListenerId !== listenerId) {
+      handleToggleGridListenerPower(listenerId);
+    }
+  }, [receivers.receivers, activeIRGroupId, activeGridListenerId, handleGoToReceiver, handleToggleGridListenerPower]);
+  useShareLinkActivation({
+    enabled: isShareView,
+    activeListenerId: shareActiveListenerId,
+    activateListener: activateShareListener,
+  });
 
   // Handler: Acoustics IR group "go to listener" → power on (FPS) + expand its card
   const handleAcousticsGoToReceiver = useCallback((receiverId: string) => {
@@ -3968,11 +3984,6 @@ function HomeContent() {
             // Entity linking (sound-to-Speckle-object linking)
             isLinkingEntity={isLinkingEntity}
             linkingConfigIndex={linkingConfigIndex}
-            // Resonance Audio (ShoeBox Acoustics)
-            resonanceAudioConfig={resonanceAudioConfig}
-            showBoundingBox={showBoundingBox}
-            refreshBoundingBoxTrigger={refreshBoundingBoxTrigger}
-            roomScale={roomScale}
             // Callback when Speckle viewer computes model bounds (for sound sphere placement)
             onBoundsComputed={setSpeckleBounds}
             // Sidebar states for control button and timeline positioning
@@ -4028,7 +4039,7 @@ function HomeContent() {
           <SimpleSoundscapes sidebarProps={sidebarProps} />
         )}
         {/* Home new-scene panel — stays open across a Simple ↔ Expert switch */}
-        <HomeSceneComposer />
+        {!isShareView && <HomeSceneComposer />}
 
       {/* Advanced Settings floating panel */}
       <AdvancedSettingsPanel
@@ -4107,16 +4118,6 @@ function HomeContent() {
         onComputeBounds={computeBoundsForObjectIds}
         activeGridListenerId={activeGridListenerId}
         onToggleGridListenerPower={handleToggleGridListenerPower}
-        // ShoeBox Acoustics props
-        resonanceAudioConfig={resonanceAudioConfig}
-        onToggleResonanceAudio={() => {}}
-        onUpdateRoomMaterials={handleUpdateRoomMaterials}
-        hasGeometry={fileUpload.geometryData !== null}
-        showBoundingBox={showBoundingBox}
-        onToggleBoundingBox={setShowBoundingBox}
-        onRefreshBoundingBox={handleRefreshBoundingBox}
-        roomScale={roomScale}
-        onRoomScaleChange={setRoomScale}
         // Audio Orchestrator props
         audioRenderingMode={audioRenderingMode}
         onAudioRenderingModeChange={handleAudioRenderingModeChange}
@@ -4172,6 +4173,8 @@ export default function Home() {
     // always starts with Settings, Object Explorer, and the DAW timeline
     // reduced — regardless of what was persisted.
     collapseFloatingPanels();
+    // The share view is always the Simple (scene bubbles) player.
+    if (useShareViewStore.getState().isShareView) useUIStore.getState().setUIMode('simple');
   }, []);
 
   // Per-user Advanced Settings preferences — fetch + apply after local

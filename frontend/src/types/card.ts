@@ -150,6 +150,18 @@ export interface CardExecutionState {
 }
 
 /**
+ * Object Explorer hide / isolate / exclude state saved on a scene or simulation
+ * card. Restored when the card is powered on. Ids are geometry-leaf hashes of the
+ * model version it was saved on (ids missing from another version are ignored).
+ */
+export interface SavedObjectVisibility {
+  hiddenIds: string[];
+  isolatedIds: string[];
+  /** Objects excluded from the acoustic layer (`acousticExplorerHiddenIds`). */
+  excludedIds: string[];
+}
+
+/**
  * Base configuration shared by all cards
  */
 export interface CardBaseConfig {
@@ -207,6 +219,11 @@ export interface CustomMenuItem {
 export interface CardProps<TConfig extends CardBaseConfig = CardBaseConfig, TResult = unknown> extends Partial<CardExecutionState> {
   /** Card configuration data */
   config: TConfig;
+  /**
+   * Not editable or deletable: no remove, rename, run, regenerate or settings.
+   * Expand, power and custom buttons stay. Defaults to the share view state.
+   */
+  readOnly?: boolean;
   /** Index in the parent list */
   index: number;
   /** Whether the card is expanded */

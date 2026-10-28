@@ -28,6 +28,7 @@ import type {
   CardAnalysisStatus,
 } from '@/types/analysis';
 import type { CardType } from '@/types/card';
+import { withSceneIds } from '@/utils/scene-id';
 import {
   API_BASE_URL,
   DEFAULT_DBFS,
@@ -2539,6 +2540,18 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
     { partialize: analysisPartialize, equality: analysisEquality, limit: UNDO_HISTORY_LIMIT },
   ),
 );
+
+// Stable scene ids (share links reference them). Assigned outside undo history
+// so an id write never becomes its own undo step or clears the redo stack.
+useAnalysisStore.subscribe((state) => {
+  const next = withSceneIds(state.analysisConfigs);
+  if (next === state.analysisConfigs) return;
+  const temporalState = useAnalysisStore.temporal.getState();
+  const wasTracking = temporalState.isTracking;
+  if (wasTracking) temporalState.pause();
+  useAnalysisStore.setState({ analysisConfigs: next });
+  if (wasTracking) useAnalysisStore.temporal.getState().resume();
+});
 
 export function applyRecoveredLlmResult(kind: string, configIndex: number, result: any): void {
   const { handleUpdateConfig, analysisConfigs } = useAnalysisStore.getState();

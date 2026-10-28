@@ -1,5 +1,6 @@
 'use client';
 
+import { useCanEdit } from '@/hooks/useCanEdit';
 import { useState, useCallback, useEffect, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { BarButton } from '@/components/ui/BarButton';
@@ -70,6 +71,8 @@ export function DAWBarControls({
     return () => window.removeEventListener('pointerdown', close);
   }, [menuOpen]);
 
+  // Share view: zoom only — no snap (edits clips) and no export.
+  const canEdit = useCanEdit();
   const zoomPercent = Math.round((pxPerSecond / DAW.FALLBACK_PX_PER_SECOND) * 100);
   const irChannels = originalIRChannelCount ?? 0;
   const maxOrder = irChannels > 0 ? Math.floor(Math.sqrt(irChannels)) - 1 : 3;
@@ -77,6 +80,7 @@ export function DAWBarControls({
   return (
     <>
       <div className="scene-bottom-bar__sep" />
+      {canEdit && (
       <BarButton
         onClick={() => onSnapModeChange(snapMode === 'on' ? 'off' : 'on')}
         active={snapMode === 'on'}
@@ -89,6 +93,7 @@ export function DAWBarControls({
           </Icon>
         }
       />
+      )}
       <BarButton
         onClick={() => onZoomChange((p) => p * DAW.WHEEL_ZOOM_OUT)}
         title="Zoom out (horizontal)"
@@ -100,7 +105,7 @@ export function DAWBarControls({
         title="Zoom in (horizontal)"
         icon={<Icon><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></Icon>}
       />
-      {onDownload && (
+      {canEdit && onDownload && (
         <span ref={anchorRef} className="flex items-center">
           <BarButton
             onClick={() => setMenuOpen((o) => !o)}

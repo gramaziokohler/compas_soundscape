@@ -11,12 +11,11 @@ import { useViewportScale } from '@/hooks/useViewportScale';
 import { AcousticsSection } from '@/components/layout/sidebar/AcousticsSection';
 import { ListenersSection } from '@/components/layout/sidebar/ListenersSection';
 import type { ReceiverData, GridListenerData, ListenerExpandRequest } from '@/types/receiver';
-import type { ImpulseResponseMetadata, ResonanceAudioConfig, AuralizationConfig } from '@/types/audio';
+import type { ImpulseResponseMetadata, AuralizationConfig } from '@/types/audio';
 import type { SelectedGeometry, AcousticMaterial } from '@/types/materials';
 import type { CompasGeometry, EntityData, SoundEvent } from '@/types';
 import type { SimulationConfig, AcousticSimulationMode } from '@/types/acoustics';
 import type { AudioRenderingMode } from '@/components/audio/AudioRenderingModeSelector';
-import type { RoomScale } from '@/components/layout/sidebar/acoustics/ResonanceAudioControls';
 import type { UIMode } from '@/types/sceneWorkflow';
 
 /**
@@ -44,15 +43,6 @@ interface RightSidebarProps {
   onClearIR: () => void;
   selectedIRId: string | null;
   auralizationConfig: AuralizationConfig;
-  resonanceAudioConfig: ResonanceAudioConfig;
-  onToggleResonanceAudio: (enabled: boolean) => void;
-  onUpdateRoomMaterials: (materials: any) => void;
-  hasGeometry: boolean;
-  showBoundingBox: boolean;
-  onToggleBoundingBox: (show: boolean) => void;
-  onRefreshBoundingBox?: () => void;
-  roomScale?: RoomScale;
-  onRoomScaleChange?: (scale: RoomScale) => void;
   audioRenderingMode?: AudioRenderingMode;
   onAudioRenderingModeChange?: (mode: AudioRenderingMode) => void;
   modelEntities?: EntityData[];
@@ -114,15 +104,6 @@ export function RightSidebar({
   onClearIR,
   selectedIRId,
   auralizationConfig,
-  resonanceAudioConfig,
-  onToggleResonanceAudio,
-  onUpdateRoomMaterials,
-  hasGeometry,
-  showBoundingBox,
-  onToggleBoundingBox,
-  onRefreshBoundingBox,
-  roomScale,
-  onRoomScaleChange,
   audioRenderingMode,
   onAudioRenderingModeChange,
   modelEntities,
@@ -367,15 +348,6 @@ export function RightSidebar({
             onClearIR={onClearIR}
             selectedIRId={selectedIRId}
             auralizationConfig={auralizationConfig}
-            resonanceAudioConfig={resonanceAudioConfig}
-            onToggleResonanceAudio={onToggleResonanceAudio}
-            onUpdateRoomMaterials={onUpdateRoomMaterials}
-            hasGeometry={hasGeometry}
-            showBoundingBox={showBoundingBox}
-            onToggleBoundingBox={onToggleBoundingBox}
-            onRefreshBoundingBox={onRefreshBoundingBox}
-            roomScale={roomScale}
-            onRoomScaleChange={onRoomScaleChange}
             audioRenderingMode={audioRenderingMode}
             onAudioRenderingModeChange={onAudioRenderingModeChange}
             modelEntities={modelEntities}

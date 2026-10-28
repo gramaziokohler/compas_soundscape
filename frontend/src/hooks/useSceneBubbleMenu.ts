@@ -6,6 +6,7 @@ import { useAnalysisStore } from '@/store';
 import type { SceneProgress, SoundScene } from '@/types/sceneWorkflow';
 import { duplicateSoundScene } from '@/utils/duplicateSoundScene';
 import { SIMPLE_MODE } from '@/utils/constants';
+import { buildSavedVisibilityRows } from '@/utils/savedObjectVisibility';
 
 interface SceneMenuState {
   scene: SoundScene;
@@ -91,6 +92,17 @@ export function useSceneBubbleMenu({ openPanel, panelKindFor }: UseSceneBubbleMe
         },
       });
     }
+    // Read the live scene config: `state.scene` is a snapshot from the right-click.
+    const saved = useAnalysisStore.getState().analysisConfigs[scene.usageIndex]?.savedObjectVisibility;
+    rows.push(
+      ...buildSavedVisibilityRows({
+        saved,
+        onSave: (snapshot) =>
+          useAnalysisStore.getState().handleUpdateConfig(scene.usageIndex, { savedObjectVisibility: snapshot }),
+        onClear: () =>
+          useAnalysisStore.getState().handleUpdateConfig(scene.usageIndex, { savedObjectVisibility: undefined }),
+      }),
+    );
     return rows;
   }, [state, openPanel, panelKindFor]);
 

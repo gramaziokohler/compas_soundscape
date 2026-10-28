@@ -138,6 +138,11 @@ frontend/src/
    (two-finger tap, Ctrl+click, pinch = Ctrl+wheel). Checklist: `ui-conventions.mdc` §
    Cross-Platform Input.
 
+10. **The public share view is read-only and anonymous.** `/share/<id>` (Cloudflare Access
+    bypassed) may only call `/api/public/*` and Speckle. Gate every new editing control with
+    `useCanEdit()`. Never expose `SPECKLE_TOKEN` or `/soundscapes/<ws>/…` paths to it. See
+    ARCHITECTURE.md § Public Share Links.
+
 ## Scoped Rules
 
 Detailed rules for each domain live in `.cursor/rules/` and are loaded automatically when you

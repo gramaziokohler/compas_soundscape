@@ -404,6 +404,11 @@ export const ACTION_MENU = {
   Z_INDEX: 9999,              // body-portaled popup, same layer as the other context menus
 } as const;
 
+// Self-positioned right-click menus (Card, DAWClipMenu) — see hooks/useViewportClampedPosition.ts.
+export const POPUP_MENU = {
+  VIEWPORT_MARGIN: 8,         // px — minimum distance from viewport edges after clamping
+} as const;
+
 // Card info ("i") popover — click-to-open explanation panel on every card
 // (bottom-right corner). Sizing/placement tokens for `components/ui/InfoPopover.tsx`.
 export const CARD_INFO_POPOVER = {
@@ -429,6 +434,53 @@ export const NOTIFICATIONS = {
   PANEL_WIDTH: 340,                     // notification dropdown width (px)
   PANEL_MAX_HEIGHT: "min(420px, 60dvh)",// clamped-fluid scroll height
   BADGE_MAX: 9,                         // counts above this render as "9+"
+} as const;
+
+// Public read-only share view (/share/<share_id>) — backend routers/share.py.
+export const SHARE_VIEW = {
+  /** Route segment of the share page (app/share/[shareId]). */
+  ROUTE_PREFIX: '/share',
+  /** Unauthenticated backend prefix (backend PUBLIC_API_PREFIX); Cloudflare Access bypasses it. */
+  PUBLIC_API_PREFIX: '/api/public',
+  HINT: 'Double click on a headphone or click on a circle to select a scene',
+  LOAD_FAILED: 'This shared soundscape could not be loaded.',
+  BLOCKED_REQUEST: 'Not available in the shared view',
+  /** iframe snippet defaults for the embed code. */
+  EMBED_WIDTH: '100%',
+  EMBED_HEIGHT: '600',
+} as const;
+
+// Settings → Share (designer side).
+export const SHARE_SETTINGS = {
+  SECTION_LABEL: 'Share',
+  INTRO: 'Choose what anyone with the link can listen to. Viewers can only select and play, never edit.',
+  SCENES: 'Sound scenes',
+  SIMULATIONS: 'Acoustic simulations',
+  LISTENERS: 'Listeners',
+  LINKS: 'Linked groups',
+  LINKS_HINT: 'Click an item, then an item in another column to link them. Click a linked item again to unlink it. Activating one item of a group activates the others.',
+  EMPTY_LIST: 'Nothing to share yet',
+  /** Column headings of the link board. */
+  BOARD_COLUMNS: { scene: 'Sound scenes', simulation: 'Simulations', listener: 'Listeners' },
+  BOARD_EMPTY_COLUMN: 'Nothing shared',
+  /** Horizontal gap between board columns — room for the connecting lines. */
+  BOARD_COLUMN_GAP_PX: 18,
+  BOARD_LINE_OPACITY: 0.35,
+  BOARD_LINE_SELECTED_OPACITY: 0.9,
+  BOARD_LINE_WIDTH: 1.25,
+  /** Dash of a scene→listener line that passes behind the simulations column. */
+  BOARD_SKIP_DASH: '3 3',
+  CREATE: 'Create share link',
+  COPY_LINK: 'Copy link',
+  COPY_EMBED: 'Copy embed code',
+  COPIED: 'Copied',
+  REGENERATE: 'New link',
+  REGENERATE_CONFIRM: 'The current link stops working. Continue?',
+  REVOKE: 'Stop sharing',
+  REVOKE_CONFIRM: 'Anyone with the link loses access. Continue?',
+  OWNER_ONLY: 'Only the workspace owner can share this model.',
+  NO_MODEL: 'Open a saved model to share it.',
+  COPIED_RESET_MS: 1500,
 } as const;
 
 // Shared workspaces — only the owner's changes are saved; other members are view-only.
@@ -1401,6 +1453,18 @@ export const RESONANCE_AUDIO = {
   // resonance-audio npm package version (see package.json) — single source of
   // truth for the Resonance Audio card's "version" line.
   VERSION: '1.0.0',
+
+  /** Smallest accepted room axis (m) — guards against a degenerate box. */
+  MIN_ROOM_EXTENT: 1,
+
+  /** Gain-ramp duration when a source moves between rooms (seconds). */
+  ROOM_CROSSFADE_S: 0.03,
+
+  /**
+   * Each powered ShoeBox runs its own third-order binaural renderer + reverb.
+   * Powering past this is refused with a toast.
+   */
+  MAX_ACTIVE_ROOMS: 4,
   
   // Default room dimensions (meters)
   DEFAULT_ROOM_DIMENSIONS: {
@@ -2381,6 +2445,9 @@ export const PYROOMACOUSTICS_SCATTERING_MAX = 1.0; // Maximum scattering (diffus
 // Grid Receiver Simulation
 export const PYROOMACOUSTICS_DEFAULT_ENABLE_GRID = false; // Grid simulation disabled by default
 
+// One process per emitter room (up to the backend's PYROOMACOUSTICS_MAX_PROCESSES)
+export const PYROOMACOUSTICS_DEFAULT_PARALLEL = true;
+
 // ============================================================================
 // Simulation mesh preparation + geometry preflight
 // (mirrors backend/config/constants.py SIM_MESH_* / MeshPrepSettings)
@@ -2587,6 +2654,15 @@ export function normalizeSoundCategory(category?: string | null): SoundCategoryK
 // Floating-circle presentation that replaces the sidebars (see
 // components/simple/**, store/sceneWorkflowStore.ts). Sizes are `physical`
 // (constant CSS px); panel heights are clamped-fluid via dvh.
+/** Save / clear an Object Explorer hide-isolate view on a scene or simulation card (both modes). */
+export const SAVED_OBJECT_VISIBILITY = {
+  SAVE_LABEL: 'Save object visibility',
+  RESAVE_LABEL: 'Update saved object visibility',
+  CLEAR_LABEL: 'Clear saved visibility',
+  TOAST_ALL_VISIBLE: 'Saved object visibility: all visible',
+  CLEARED_TOAST: 'Saved object visibility cleared',
+} as const;
+
 export const SIMPLE_MODE = {
   /** Default UI mode for a browser with no persisted choice. */
   DEFAULT_UI_MODE: 'simple' as const,

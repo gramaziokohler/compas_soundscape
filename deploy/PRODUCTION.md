@@ -86,6 +86,30 @@ branch is checked out. `supervisor.log` says which.
   Reinstall it with `pip install -e <path>` in the `compas-soundscape` env.
 - Everything else (tunnel, Access, nginx, SA3): see `C:\compas\README.md` § Troubleshooting.
 
+## Public share links
+
+`/share/<share_id>` is a read-only, embeddable player that works without a login. To enable it:
+
+1. Create a Speckle personal access token with only `streams:read`, on the account that owns the
+   models. Set `SPECKLE_SHARE_TOKEN=<token>` in the backend `.env`, then run
+   `compas restart api`. Without it, share links answer 503. Do not reuse `SPECKLE_TOKEN`: the share page hands its token to every visitor, and the server token can write to Speckle.
+2. In Cloudflare Zero Trust → Access, add **self-hosted applications** on `soundisblue.com` for
+   these paths, each with a **Bypass / Everyone** policy:
+   - `share` (the page)
+   - `api/public` (the filtered soundscape plus its audio and IRs)
+   - `_next` (JS/CSS bundles)
+   - `compas_icon_white.png`, plus any other `frontend/public` file the share page requests (check
+     the browser network tab)
+
+   Path applications take precedence over the root one, so everything else stays behind Access.
+   Do **not** bypass `/soundscapes` or `/static`: the share page never uses them.
+3. Embedding: `SHARE_FRAME_ANCESTORS` (frontend env, default `*`) sets
+   `Content-Security-Policy: frame-ancestors` on `/share/*`. Make sure nginx does not add
+   `X-Frame-Options` on that path.
+
+Share viewers hear sources omnidirectionally, because directivity balloons are behind the
+authenticated API.
+
 ## Research study logging
 
 Study interaction logging is off by default. While it is off, every `/api/study/*` route returns 404 and no server hooks run.

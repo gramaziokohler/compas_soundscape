@@ -5,6 +5,8 @@ import { createPortal } from 'react-dom';
 import type { CardProps, CardBaseConfig } from '@/types/card';
 import { CARD_TYPE_LABELS, CARD_TYPE_DESCRIPTIONS } from '@/types/card';
 import { useNameEditing } from '@/utils/useNameEditing';
+import { useCanEdit } from '@/hooks/useCanEdit';
+import { useViewportClampedPosition } from '@/hooks/useViewportClampedPosition';
 import { GenerateButton, type GenerateStatus } from '@/components/ui/GenerateButton';
 import { VariantsBar } from '@/components/ui/VariantsBar';
 import { Notice } from '@/components/ui/Notice';
@@ -14,6 +16,7 @@ import { DeleteConfirmButton } from '@/components/ui/DeleteConfirmButton';
 import { OptionalShortcutTooltip, ariaKeyShortcuts } from '@/components/ui/ShortcutTooltip';
 import { isModEnter, isTypingTarget } from '@/lib/shortcuts/keyboard-utils';
 import type { ShortcutId } from '@/utils/constants';
+import { POPUP_MENU } from '@/utils/constants';
 
 /**
  * Card Component
@@ -83,7 +86,39 @@ export function getCardDefaultName<TConfig extends CardBaseConfig>(
 
 const DEFAULT_POWER_TITLES = { on: 'Disable simulation', off: 'Enable simulation' };
 
-export function Card<TConfig extends CardBaseConfig>({
+const NOOP = () => {};
+
+/**
+ * Card — resolves `readOnly` (explicit prop, else the public share view) and
+ * strips every editing affordance before rendering.
+ */
+export function Card<TConfig extends CardBaseConfig>(props: CardProps<TConfig>) {
+  const canEdit = useCanEdit();
+  const readOnly = props.readOnly ?? !canEdit;
+  if (!readOnly) return <CardView {...props} readOnly={false} />;
+  return (
+    <CardView
+      {...props}
+      readOnly
+      canRemove={false}
+      onRemove={NOOP}
+      onUpdateConfig={NOOP}
+      onRun={undefined}
+      onCancel={undefined}
+      onRegenerate={undefined}
+      onRevertSettings={undefined}
+      onDoneAction={undefined}
+      settingsContent={undefined}
+      showSettingsSummary={false}
+      footerPrefix={undefined}
+      footerSuffix={undefined}
+      variants={props.variants ? { ...props.variants, onDelete: undefined, onAdd: undefined, onRegenerateVariant: undefined } : props.variants}
+    />
+  );
+}
+
+function CardView<TConfig extends CardBaseConfig>({
+  readOnly,
   config,
   index,
   isExpanded,
@@ -208,6 +243,12 @@ export function Card<TConfig extends CardBaseConfig>({
   // Right-click context menu state
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [expandedSubKey, setExpandedSubKey] = useState<string | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
+  const contextMenuPos = useViewportClampedPosition(
+    contextMenuRef,
+    contextMenu?.x ?? 0,
+    contextMenu?.y ?? 0,
+  );
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -357,7 +398,7 @@ export function Card<TConfig extends CardBaseConfig>({
     <div
       className={cardClassName}
       onDoubleClick={handleCardDoubleClick}
-      onContextMenu={handleContextMenu}
+      onContextMenu={readOnly ? undefined : handleContextMenu}
       onKeyDown={handleCardKeyDown}
       style={{
         ...cardColorStyle,
@@ -634,14 +675,18 @@ export function Card<TConfig extends CardBaseConfig>({
           which creates a new stacking context and would trap z-index:9999 behind other cards. */}
       {contextMenu && createPortal(
         <div
+          ref={contextMenuRef}
           className={isGeneratedActive ? 'card-context-menu--generated' : undefined}
           onPointerDown={e => e.stopPropagation()}
           onClick={e => e.stopPropagation()}
           onDoubleClick={e => e.stopPropagation()}
           style={{
             position: 'fixed',
-            left: `${contextMenu.x}px`,
-            top: `${contextMenu.y}px`,
+            left: `${contextMenuPos?.x ?? contextMenu.x}px`,
+            top: `${contextMenuPos?.y ?? contextMenu.y}px`,
+            maxHeight: `calc(100vh - ${POPUP_MENU.VIEWPORT_MARGIN * 2}px)`,
+            overflowY: 'auto',
+            opacity: contextMenuPos ? 1 : 0,
             zIndex: 9999,
             backgroundColor: isGeneratedActive ? undefined : 'var(--color-surface-2)',
             border: isGeneratedActive ? '1px solid var(--color-on-blue-faint)' : '1px solid var(--color-border-strong)',

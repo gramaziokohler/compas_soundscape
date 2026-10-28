@@ -15,6 +15,7 @@ Design notes:
 """
 
 import hashlib
+import secrets
 import logging
 import sqlite3
 import threading
@@ -23,7 +24,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-from config.constants import APP_DB_PATH
+from config.constants import APP_DB_PATH, SHARE_ID_BYTES
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +125,17 @@ CREATE TABLE IF NOT EXISTS model_workspaces (
     workspace_id  TEXT NOT NULL,
     updated_at    TEXT NOT NULL,
     PRIMARY KEY (model_id, workspace_id)
+);
+
+-- Public read-only share links (`/share/<share_id>`). One live (non-revoked)
+-- share per (workspace, model); `share_id` is an unguessable capability id.
+CREATE TABLE IF NOT EXISTS model_shares (
+    share_id      TEXT PRIMARY KEY,
+    workspace_id  TEXT NOT NULL,
+    model_id      TEXT NOT NULL,
+    created_by    TEXT NOT NULL,
+    created_at    TEXT NOT NULL,
+    revoked_at    TEXT
 );
 
 CREATE TABLE IF NOT EXISTS blobs (
@@ -228,6 +240,7 @@ CREATE INDEX IF NOT EXISTS idx_members_user ON workspace_members(user_hash);
 CREATE INDEX IF NOT EXISTS idx_model_workspace ON model_workspace(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_model_workspaces_ws ON model_workspaces(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_blob_refs_ws ON blob_refs(workspace_id, model_id);
+CREATE INDEX IF NOT EXISTS idx_model_shares_ws ON model_shares(workspace_id, model_id);
 """
 
 
@@ -823,6 +836,7 @@ class MetadataStore:
             conn.execute("DELETE FROM model_workspace WHERE workspace_id = ?", (workspace_id,))
             conn.execute("DELETE FROM model_workspaces WHERE workspace_id = ?", (workspace_id,))
             conn.execute("DELETE FROM blob_refs WHERE workspace_id = ?", (workspace_id,))
+            conn.execute("DELETE FROM model_shares WHERE workspace_id = ?", (workspace_id,))
             conn.execute("DELETE FROM workspaces WHERE id = ?", (workspace_id,))
             conn.commit()
             return affected
@@ -906,6 +920,47 @@ class MetadataStore:
 
     def revoke_invite(self, token: str) -> None:
         self._execute("UPDATE invites SET revoked = 1 WHERE token_hash = ?", (hash_token(token),))
+
+    # ── public share links ───────────────────────────────────────────────
+    def get_share(self, workspace_id: str, model_id: str) -> Optional[dict]:
+        rows = self._query(
+            "SELECT * FROM model_shares WHERE workspace_id = ? AND model_id = ? AND revoked_at IS NULL "
+            "ORDER BY created_at DESC LIMIT 1",
+            (workspace_id, model_id),
+        )
+        return dict(rows[0]) if rows else None
+
+    def get_or_create_share(self, workspace_id: str, model_id: str, created_by: str) -> dict:
+        existing = self.get_share(workspace_id, model_id)
+        if existing:
+            return existing
+        share_id = secrets.token_urlsafe(SHARE_ID_BYTES)
+        self._execute(
+            "INSERT INTO model_shares (share_id, workspace_id, model_id, created_by, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (share_id, workspace_id, model_id, created_by, _now()),
+        )
+        return self.get_share(workspace_id, model_id) or {}
+
+    def revoke_share(self, workspace_id: str, model_id: str) -> bool:
+        with self._lock:
+            conn = self._connect()
+            cur = conn.execute(
+                "UPDATE model_shares SET revoked_at = ? WHERE workspace_id = ? AND model_id = ? AND revoked_at IS NULL",
+                (_now(), workspace_id, model_id),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
+    def regenerate_share(self, workspace_id: str, model_id: str, created_by: str) -> dict:
+        self.revoke_share(workspace_id, model_id)
+        return self.get_or_create_share(workspace_id, model_id, created_by)
+
+    def resolve_share(self, share_id: str) -> Optional[dict]:
+        rows = self._query(
+            "SELECT * FROM model_shares WHERE share_id = ? AND revoked_at IS NULL", (share_id,)
+        )
+        return dict(rows[0]) if rows else None
 
     # ── blobs (media registry / refcounting — used by the media layer) ───
     def register_blob(self, blob_hash: str, ext: str = "", mime: str = "", byte_size: int = 0, duration: Optional[float] = None) -> None:

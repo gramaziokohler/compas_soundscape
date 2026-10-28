@@ -560,6 +560,10 @@ Sound Scene Duplicate (scene bubble right-click → Duplicate; utils/duplicateSo
   Shared audio files: handleRefreshScenario / handleRegenerateText delete only files no other
   scene still plays (utils/sceneAudioUrls.collectUnsharedSceneAudioUrls).
   Rename (same menu) edits the panel title inline → usage card display_name.
+  "Save object visibility" / "Clear saved visibility" (same menu; also the simulation bubble menu and the
+  Expert usage / simulation card kebabs) store the Object Explorer hide / isolate / exclude view on the card
+  (`savedObjectVisibility`); powering the scene or simulation on restores it (`useApplySavedObjectVisibility`,
+  see .cursor/rules/object-explorer.mdc § Saved Object Visibility).
 
 SpeckleScene
   └── SceneBottomBar (full width, both modes): home · undo/redo · save
@@ -1033,6 +1037,51 @@ a transfer is picked up within one heartbeat. If a model's soundscape belongs to
 private workspace (`requires_invite`), the user stays on their own version.
 `notifyPrivateWorkspaceModel()` (`utils/workspaceNotifications.ts`) shows a clickable notice that
 opens Settings → Workspaces (`openAdvancedSettingsAt('workspaces')`).
+
+### Public Share Links (read-only, embeddable)
+
+A designer shares a model at `/share/<share_id>`. Anyone can open it without a Cloudflare Access
+login and can only select and play. It also works inside an iframe.
+
+**Designer side**
+- Settings → Share is built by `ShareSettingsSection.tsx` and `ShareLinkBoard.tsx`.
+- It picks scenes, simulations and listeners, and link groups made of at most one scene, one
+  simulation and one listener.
+- The link board has three columns. Click an item, then an item in another column, to link
+  them; clicking a linked item again unlinks it. A group left with fewer than two items is
+  removed. Each link is drawn as a faint SVG curve (`utils/shareBoardGeometry.ts`). A scene →
+  listener link with no simulation is drawn dashed, passing behind the opaque chips of the
+  middle column.
+- The selection lives in `shareConfigStore` and is saved by autosave as `soundscape.json` →
+  `share_config`. Ids that no longer exist are pruned at save time (`pruneShareConfig`).
+- Scenes get a stable `scene_id` from `utils/scene-id.ts`. It is installed on `analysisStore`
+  and assigned outside undo history.
+- The link itself is a `model_shares` row in `app.db`, holding one live share per workspace and
+  model. It is managed by the owner-only `/api/speckle/soundscape/{model_id}/share` routes:
+  create, regenerate and revoke (`routers/share.py`).
+
+**Viewer side**
+- `app/share/[shareId]/page.tsx` enters `shareViewStore`, then renders the normal `Home`.
+- The bootstrap loads `GET /api/public/share/{id}`. That route is in the middleware's
+  `_SKIP_PREFIXES`, so it runs with no identity and sets no cookie.
+- `services/share_service.py` filters the saved soundscape:
+  - Non-shared scenes and their sound configs become stubs (`share_hidden`), so index links
+    stay valid.
+  - Events, IRs and listeners are pruned to the shared items.
+  - `auth_token` becomes the read-only `SPECKLE_SHARE_TOKEN`. The viewer loads geometry
+    straight from Speckle in the browser, so whatever token it gets is readable by anyone with
+    the link. The server `SPECKLE_TOKEN` can create projects, upload files and write versions,
+    so it must never be sent.
+  - Audio and IRs are served only through `/api/public/share/{id}/audio|ir/{file}`, which is
+    allowlisted to the filtered payload.
+- In share view, `fetchWithErrorHandling` refuses any other backend call.
+- `useCanEdit()` hides every editing control: bottom-bar app, history, model and settings
+  buttons, card add / delete / rename / run, card editors, DAW snap / drag / trim / menus, the
+  3D gizmo and context menu, and the undo and delete shortcuts.
+- `useShareLinkActivation` activates the rest of a link group when one item is activated:
+  selecting a scene bubble, powering a simulation, or double-clicking a headphone.
+- `next.config.ts` sets `frame-ancestors` from `SHARE_FRAME_ANCESTORS`. Deploy steps:
+  `deploy/PRODUCTION.md` § Public share links.
 
 ### Simulation Mesh Preparation & Geometry Preflight
 

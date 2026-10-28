@@ -2,141 +2,318 @@
  * ResonanceMode
  *
  * Resonance Audio mode providing synthetic room acoustics.
- * Uses Google's Resonance Audio library for realistic spatialization with room acoustics.
- *
- * Workflow:
- * - Source → Resonance Source → Resonance Scene (room acoustics) → Output
- * - Dynamic library loading (browser-only)
- * - Configurable room materials and dimensions
- * - High-order ambisonics (up to 3rd order)
- * - HRTF-based binaural rendering
- *
- * Characteristics:
- * - 6 DOF: Full position + rotation movement
- * - Synthetic room acoustics (early reflections + late reverb)
- * - Distance attenuation models
- * - Directivity patterns for sources
+ * One Google ResonanceAudio scene per powered ShoeBox card; sources fan out
+ * into the rooms they occupy (see assignSourceRooms).
  *
  * Note: This is a wrapper around the resonance-audio library.
  * The library is dynamically imported to avoid SSR issues.
  */
 
 import type { IAudioMode } from '../core/interfaces/IAudioMode';
-import type { Position, Orientation, AmbisonicSendTap } from '@/types/audio';
+import type { Position, Orientation, AmbisonicSendTap, ResonanceRoomSpec, ResonanceExportRoom, ResonanceRoomMaterial, ResonanceRoomDimensions } from '@/types/audio';
 import { AudioMode } from '@/types/audio';
 import type { FadeOptions } from '../utils/fade-envelope';
 import { applyFadeInOut } from '../utils/fade-envelope';
 import { SourceLevelMeter } from '../utils/source-level';
 import { SourceDirectivityStage, type RealtimeDirectivity } from '../utils/source-directivity';
-import { AUDIO_CONTROL, DEFAULT_SPEED_OF_SOUND, GLOBAL_SOURCE } from '@/utils/constants';
+import { AUDIO_CONTROL, DEFAULT_SPEED_OF_SOUND, GLOBAL_SOURCE, RESONANCE_AUDIO, AMBISONIC } from '@/utils/constants';
+import {
+  assignSourceRooms,
+  isolateResonanceDirectPath,
+  clampRoomBounds,
+  type RoomAssignmentInput,
+  type RoomSend,
+} from '../utils/resonance-rooms';
 
-// Dynamic import type
-type ResonanceAudioClass = any;
+type ResonanceAudioClass = new (context: AudioContext, options?: {
+  ambisonicOrder?: number;
+  speedOfSound?: number;
+}) => ResonanceAudioScene;
 
-// Default configuration
-const DEFAULT_ROOM_DIMENSIONS = { width: 10, height: 3, depth: 10 };
-const DEFAULT_ROOM_MATERIALS = {
-  left: 'acoustic-ceiling-tiles',
-  right: 'brick-bare',
-  front: 'brick-bare',
-  back: 'brick-bare',
-  down: 'parquet-on-concrete',
-  up: 'brick-bare'
-};
+interface ResonanceAudioScene {
+  output: GainNode;
+  ambisonicOutput: GainNode;
+  createSource(): ResonanceAudioSource;
+  setRoomProperties(dimensions: ResonanceRoomDimensions, materials: ResonanceRoomMaterial): void;
+  setListenerPosition(x: number, y: number, z: number): void;
+  setListenerOrientation(
+    forwardX: number, forwardY: number, forwardZ: number,
+    upX: number, upY: number, upZ: number,
+  ): void;
+  _listener: { input: AudioNode };
+}
+
+interface ResonanceAudioSource {
+  input: AudioNode;
+  setPosition(x: number, y: number, z: number): void;
+  setGain(gain: number): void;
+  setRolloff?(rolloff: string): void;
+  setMinDistance?(distance: number): void;
+  setMaxDistance?(distance: number): void;
+  setSourceWidth?(degrees: number): void;
+  _encoder: { output: AudioNode };
+}
+
 const DEFAULT_AMBISONIC_ORDER = 3;
 const DEFAULT_ROLLOFF = 'logarithmic';
 const DEFAULT_MIN_DISTANCE = 1;
 const DEFAULT_MAX_DISTANCE = 10000;
+const SEND_CHANNELS = AMBISONIC.CHANNELS.TOA;
 
-/** Smallest room dimension accepted (m) — guards against a degenerate box. */
-const MIN_ROOM_EXTENT = 1;
+interface RoomEntry {
+  id: string;
+  scene: ResonanceAudioScene;
+  centerOffset: { x: number; y: number; z: number };
+  dimensions: ResonanceRoomDimensions;
+  materials: ResonanceRoomMaterial;
+  bounds: { min: [number, number, number]; max: [number, number, number] };
+}
+
+interface RoomLink {
+  roomId: string;
+  source: ResonanceAudioSource;
+  sendGain: GainNode;
+  directGain: GainNode;
+}
+
+interface SourceEntry {
+  buffer: AudioBuffer;
+  position: { x: number; y: number; z: number };
+  sourceNode: AudioBufferSourceNode | null;
+  gainNode: GainNode;
+  muteGainNode: GainNode;
+  levelMeter: SourceLevelMeter;
+  directivity: SourceDirectivityStage;
+  isPlaying: boolean;
+  isMuted: boolean;
+  roomLinks: Map<string, RoomLink>;
+  assignGen: number;
+}
+
+function boundsEqual(
+  a: { min: [number, number, number]; max: [number, number, number] },
+  b: { min: [number, number, number]; max: [number, number, number] },
+): boolean {
+  return a.min[0] === b.min[0] && a.min[1] === b.min[1] && a.min[2] === b.min[2]
+    && a.max[0] === b.max[0] && a.max[1] === b.max[1] && a.max[2] === b.max[2];
+}
+
+function materialsEqual(a: ResonanceRoomMaterial, b: ResonanceRoomMaterial): boolean {
+  return a.left === b.left && a.right === b.right && a.front === b.front
+    && a.back === b.back && a.down === b.down && a.up === b.up;
+}
+
+function dimensionsFromBounds(
+  bounds: { min: [number, number, number]; max: [number, number, number] },
+): { dimensions: ResonanceRoomDimensions; centerOffset: { x: number; y: number; z: number } } {
+  const minExtent = RESONANCE_AUDIO.MIN_ROOM_EXTENT;
+  return {
+    centerOffset: {
+      x: (bounds.min[0] + bounds.max[0]) / 2,
+      y: (bounds.min[1] + bounds.max[1]) / 2,
+      z: (bounds.min[2] + bounds.max[2]) / 2,
+    },
+    dimensions: {
+      width: Math.max(bounds.max[0] - bounds.min[0], minExtent),
+      height: Math.max(bounds.max[1] - bounds.min[1], minExtent),
+      depth: Math.max(bounds.max[2] - bounds.min[2], minExtent),
+    },
+  };
+}
 
 export class ResonanceMode implements IAudioMode {
   private audioContext: AudioContext | null = null;
-  private resonanceAudioScene: any | null = null; // ResonanceAudio scene instance
-  private ResonanceAudio: ResonanceAudioClass | null = null; // Class reference
+  private ResonanceAudio: ResonanceAudioClass | null = null;
   private masterGain: GainNode | null = null;
+  private ambisonicSumBus: GainNode | null = null;
   private enabled: boolean = true;
   private speedOfSound: number = DEFAULT_SPEED_OF_SOUND;
 
-  // Track current room properties
-  private currentRoomDimensions: any = DEFAULT_ROOM_DIMENSIONS;
-  private currentRoomMaterials: any = DEFAULT_ROOM_MATERIALS;
+  private rooms: Map<string, RoomEntry> = new Map();
+  private pendingRooms: ResonanceRoomSpec[] | null = null;
 
-  /** Snapshot of the last listener state, read by getExportState(). */
   listenerPosition = { x: 0, y: 0, z: 0 } as unknown as Position;
   listenerOrientation: Orientation = { yaw: 0, pitch: 0, roll: 0 };
 
-  /**
-   * Offset applied to all positions so that the bounding box center maps to the
-   * Resonance Audio room origin.  Resonance Audio always centers its room at (0,0,0),
-   * so we translate every world-space position by subtracting this offset.
-   */
-  private roomCenterOffset: { x: number; y: number; z: number } = { x: 0, y: 0, z: 0 };
-
-  // Track Resonance Audio sources
-  private resonanceSources: Map<string, {
-    source: any; // ResonanceAudio.Source
-    buffer: AudioBuffer;
-    position: { x: number; y: number; z: number };
-    sourceNode: AudioBufferSourceNode | null;
-    gainNode: GainNode;
-    muteGainNode: GainNode;
-    /** Realtime level probe (inline pass-through) for audio-reactive visuals. */
-    levelMeter: SourceLevelMeter;
-    /** Radiation pattern toward the listener (bypassed for global sources). */
-    directivity: SourceDirectivityStage;
-    isPlaying: boolean;
-    isMuted: boolean;
-  }> = new Map();
-
-  // Resolved radiation patterns; kept apart from `resonanceSources` so they survive
-  // a scene rebuild and can precede createSource.
+  private resonanceSources: Map<string, SourceEntry> = new Map();
   private sourceDirectivities: Map<string, RealtimeDirectivity> = new Map();
-
-  /** Independent, transient playback voices per source (see startVoice/IAudioMode). */
   private voices: Map<string, Set<AudioBufferSourceNode>> = new Map();
-
-  /**
-   * Sources rendered as global: pinned to the listener (no direction, no
-   * distance attenuation) with full source width, still feeding the room.
-   * Kept apart from `resonanceSources` so it survives a scene rebuild.
-   */
   private globalSourceIds: Set<string> = new Set();
+  private pendingCleanups: Map<string, ReturnType<typeof setTimeout>> = new Map();
+  private warnedDirectPath = false;
 
-  /**
-   * Place a source in the Resonance room. Spatial sources sit at their stored
-   * world position; global ones follow the listener as an omnidirectional source
-   * (their stored position is kept for when they turn spatial again).
-   */
-  private placeSource(sourceId: string, entry: { source: any; position: { x: number; y: number; z: number } }): void {
+  private assignmentInputs(): RoomAssignmentInput[] {
+    let order = 0;
+    const out: RoomAssignmentInput[] = [];
+    this.rooms.forEach((room) => {
+      out.push({ id: room.id, bounds: room.bounds, order: order++ });
+    });
+    return out;
+  }
+
+  private placeInRoom(sourceId: string, entry: SourceEntry, link: RoomLink): void {
+    const room = this.rooms.get(link.roomId);
+    if (!room) return;
     const isGlobal = this.globalSourceIds.has(sourceId);
     const at = isGlobal ? this.listenerPosition : entry.position;
-    entry.source.setSourceWidth(isGlobal
+    link.source.setSourceWidth?.(isGlobal
       ? GLOBAL_SOURCE.RESONANCE_SOURCE_WIDTH_DEG
       : GLOBAL_SOURCE.RESONANCE_POINT_SOURCE_WIDTH_DEG);
-    entry.source.setPosition(
-      at.x - this.roomCenterOffset.x,
-      at.y - this.roomCenterOffset.y,
-      at.z - this.roomCenterOffset.z
+    link.source.setPosition(
+      at.x - room.centerOffset.x,
+      at.y - room.centerOffset.y,
+      at.z - room.centerOffset.z,
     );
+  }
+
+  private rampGain(node: GainNode, value: number, immediate = false): void {
+    if (!this.audioContext) {
+      node.gain.value = value;
+      return;
+    }
+    const now = this.audioContext.currentTime;
+    node.gain.cancelScheduledValues(now);
+    if (immediate) {
+      node.gain.setValueAtTime(value, now);
+      return;
+    }
+    node.gain.setValueAtTime(node.gain.value, now);
+    node.gain.linearRampToValueAtTime(value, now + RESONANCE_AUDIO.ROOM_CROSSFADE_S);
+  }
+
+  private disposeLink(link: RoomLink): void {
+    try { link.sendGain.disconnect(); } catch { /* already disconnected */ }
+    try { link.directGain.disconnect(); } catch { /* already disconnected */ }
+  }
+
+  private createLink(entry: SourceEntry, room: RoomEntry, send: RoomSend): RoomLink | null {
+    if (!this.audioContext) return null;
+    const source = room.scene.createSource();
+    source.setRolloff?.(DEFAULT_ROLLOFF);
+    source.setMinDistance?.(DEFAULT_MIN_DISTANCE);
+    source.setMaxDistance?.(DEFAULT_MAX_DISTANCE);
+    source.setGain(1.0);
+
+    const sendGain = this.audioContext.createGain();
+    sendGain.gain.value = 0;
+    const directGain = this.audioContext.createGain();
+    directGain.gain.value = 0;
+
+    entry.directivity.output.connect(sendGain);
+    sendGain.connect(source.input);
+
+    const isolated = isolateResonanceDirectPath(source, room.scene._listener.input, directGain);
+    if (!isolated && !this.warnedDirectPath) {
+      this.warnedDirectPath = true;
+      console.warn('[ResonanceMode] Could not isolate the dry encoder path; overlapping rooms may double the direct sound');
+    }
+
+    const link: RoomLink = { roomId: room.id, source, sendGain, directGain };
+    this.rampGain(sendGain, send.sendGain);
+    this.rampGain(directGain, send.directGain);
+    return link;
+  }
+
+  private syncSourceRooms(sourceId: string, entry: SourceEntry): void {
+    const position = this.globalSourceIds.has(sourceId) ? this.listenerPosition : entry.position;
+    const sends = assignSourceRooms(position, this.assignmentInputs());
+    const wanted = new Set(sends.map((s) => s.roomId));
+    entry.assignGen += 1;
+    const gen = entry.assignGen;
+
+    for (const send of sends) {
+      const room = this.rooms.get(send.roomId);
+      if (!room) continue;
+      let link = entry.roomLinks.get(send.roomId);
+      if (!link) {
+        const created = this.createLink(entry, room, send);
+        if (!created) continue;
+        link = created;
+        entry.roomLinks.set(send.roomId, link);
+      } else {
+        this.rampGain(link.sendGain, send.sendGain);
+        this.rampGain(link.directGain, send.directGain);
+      }
+      this.placeInRoom(sourceId, entry, link);
+    }
+
+    for (const [roomId, link] of [...entry.roomLinks.entries()]) {
+      if (wanted.has(roomId)) continue;
+      this.rampGain(link.sendGain, 0);
+      this.rampGain(link.directGain, 0);
+      const key = `${sourceId}:${roomId}`;
+      const existing = this.pendingCleanups.get(key);
+      if (existing) clearTimeout(existing);
+      const timeout = setTimeout(() => {
+        this.pendingCleanups.delete(key);
+        const live = this.resonanceSources.get(sourceId);
+        if (!live || live.assignGen !== gen) return;
+        const stale = live.roomLinks.get(roomId);
+        if (!stale) return;
+        this.disposeLink(stale);
+        live.roomLinks.delete(roomId);
+      }, RESONANCE_AUDIO.ROOM_CROSSFADE_S * 1000 + 20);
+      this.pendingCleanups.set(key, timeout);
+    }
+  }
+
+  private syncAllSources(): void {
+    this.resonanceSources.forEach((entry, sourceId) => this.syncSourceRooms(sourceId, entry));
+  }
+
+  private applyListenerToScene(scene: ResonanceAudioScene, offset: { x: number; y: number; z: number }): void {
+    const position = this.listenerPosition;
+    const orientation = this.listenerOrientation;
+    scene.setListenerPosition(
+      position.x - offset.x,
+      position.y - offset.y,
+      position.z - offset.z,
+    );
+    const sinYaw = Math.sin(orientation.yaw), cosYaw = Math.cos(orientation.yaw);
+    const sinPitch = Math.sin(orientation.pitch), cosPitch = Math.cos(orientation.pitch);
+    const sinRoll = Math.sin(orientation.roll), cosRoll = Math.cos(orientation.roll);
+    scene.setListenerOrientation(
+      sinYaw * cosPitch, -cosYaw * cosPitch, sinPitch,
+      cosYaw * sinRoll, sinYaw * sinRoll, cosRoll,
+    );
+  }
+
+  private createScene(spec: ResonanceRoomSpec): RoomEntry | null {
+    if (!this.audioContext || !this.ResonanceAudio || !this.masterGain || !this.ambisonicSumBus) {
+      return null;
+    }
+    const bounds = clampRoomBounds(spec.bounds);
+    const { dimensions, centerOffset } = dimensionsFromBounds(bounds);
+    const scene = new this.ResonanceAudio(this.audioContext, {
+      ambisonicOrder: DEFAULT_AMBISONIC_ORDER,
+      speedOfSound: this.speedOfSound,
+    });
+    scene.setRoomProperties(dimensions, spec.materials);
+    scene.output.connect(this.masterGain);
+    scene.ambisonicOutput.connect(this.ambisonicSumBus);
+    this.applyListenerToScene(scene, centerOffset);
+    return { id: spec.id, scene, centerOffset, dimensions, materials: { ...spec.materials }, bounds };
+  }
+
+  private disposeScene(room: RoomEntry): void {
+    try { room.scene.output.disconnect(); } catch { /* ignore */ }
+    try { room.scene.ambisonicOutput.disconnect(); } catch { /* ignore */ }
   }
 
   /**
    * Load Resonance Audio library dynamically (browser-only)
    */
   private async loadResonanceAudio(): Promise<void> {
-    if (this.ResonanceAudio) return; // Already loaded
+    if (this.ResonanceAudio) return;
 
     if (typeof window === 'undefined') {
       throw new Error('[ResonanceMode] Cannot load in SSR environment');
     }
 
     try {
-      // Dynamic import
-      const module: any = await import('resonance-audio');
+      const module: { default?: { ResonanceAudio?: ResonanceAudioClass } | ResonanceAudioClass } = await import('resonance-audio');
 
-      if (module.default && typeof module.default.ResonanceAudio === 'function') {
+      if (module.default && typeof module.default === 'object' && typeof module.default.ResonanceAudio === 'function') {
         this.ResonanceAudio = module.default.ResonanceAudio;
       } else if (typeof module.default === 'function') {
         this.ResonanceAudio = module.default;
@@ -152,107 +329,118 @@ export class ResonanceMode implements IAudioMode {
     }
   }
 
-  /**
-   * Initialize Resonance Audio scene
-   */
   async initialize(audioContext: AudioContext, speedOfSound: number = DEFAULT_SPEED_OF_SOUND): Promise<void> {
     this.audioContext = audioContext;
     this.speedOfSound = speedOfSound;
 
     try {
       console.log('[ResonanceMode] Initializing...');
-
-      // Load library
       await this.loadResonanceAudio();
-
       if (!this.ResonanceAudio) {
         throw new Error('[ResonanceMode] Library not loaded');
       }
 
-      // Create Resonance Audio scene
-      this.resonanceAudioScene = new this.ResonanceAudio(audioContext, {
-        ambisonicOrder: DEFAULT_AMBISONIC_ORDER,
-        speedOfSound: this.speedOfSound,
-      });
-
-      // Set room properties
-      this.resonanceAudioScene.setRoomProperties(
-        DEFAULT_ROOM_DIMENSIONS,
-        DEFAULT_ROOM_MATERIALS
-      );
-
-      // Create master gain
       this.masterGain = audioContext.createGain();
       this.masterGain.gain.value = 1.0;
-
-      // Connect: Resonance scene → master gain → destination
-      this.resonanceAudioScene.output.connect(this.masterGain);
       this.masterGain.connect(audioContext.destination);
 
+      this.ambisonicSumBus = audioContext.createGain();
+      this.ambisonicSumBus.channelCount = SEND_CHANNELS;
+      this.ambisonicSumBus.channelCountMode = 'explicit';
+      this.ambisonicSumBus.channelInterpretation = 'discrete';
+
+      if (this.pendingRooms) {
+        const pending = this.pendingRooms;
+        this.pendingRooms = null;
+        this.setRooms(pending);
+      }
+
       console.log('[ResonanceMode] Initialized successfully');
-      console.log('  - Room dimensions:', DEFAULT_ROOM_DIMENSIONS);
-      console.log('  - Ambisonic order:', DEFAULT_AMBISONIC_ORDER);
     } catch (error) {
       console.error('[ResonanceMode] Initialization failed:', error);
       throw error;
     }
   }
 
-  /**
-   * Create audio source at given position
-   */
+  setRooms(specs: ResonanceRoomSpec[]): void {
+    if (!this.audioContext || !this.ResonanceAudio) {
+      this.pendingRooms = specs;
+      return;
+    }
+
+    const nextIds = new Set(specs.map((s) => s.id));
+
+    for (const [id, room] of [...this.rooms.entries()]) {
+      if (nextIds.has(id)) continue;
+      this.disposeScene(room);
+      this.rooms.delete(id);
+    }
+
+    for (const spec of specs) {
+      const existing = this.rooms.get(spec.id);
+      const bounds = clampRoomBounds(spec.bounds);
+      if (!existing) {
+        const created = this.createScene({ ...spec, bounds });
+        if (created) this.rooms.set(spec.id, created);
+        continue;
+      }
+      const boundsChanged = !boundsEqual(existing.bounds, bounds);
+      const materialsChanged = !materialsEqual(existing.materials, spec.materials);
+      if (!boundsChanged && !materialsChanged) continue;
+      const { dimensions, centerOffset } = dimensionsFromBounds(bounds);
+      existing.bounds = bounds;
+      existing.centerOffset = centerOffset;
+      existing.dimensions = dimensions;
+      existing.materials = { ...spec.materials };
+      existing.scene.setRoomProperties(dimensions, spec.materials);
+      this.applyListenerToScene(existing.scene, centerOffset);
+    }
+
+    this.syncAllSources();
+  }
+
+  getExportRooms(): ResonanceExportRoom[] {
+    return Array.from(this.rooms.values()).map((room) => ({
+      id: room.id,
+      bounds: room.bounds,
+      dimensions: { ...room.dimensions },
+      materials: { ...room.materials },
+      centerOffset: { ...room.centerOffset },
+    }));
+  }
+
   createSource(
     sourceId: string,
     audioBuffer: AudioBuffer,
-    position: Position
+    position: Position,
   ): void {
-    if (!this.resonanceAudioScene || !this.audioContext) {
+    if (!this.audioContext) {
       throw new Error('[ResonanceMode] Not initialized');
     }
 
-    // Remove existing source if present
     if (this.resonanceSources.has(sourceId)) {
       this.removeSource(sourceId);
     }
 
     try {
-      // Create Resonance Audio source
-      const resonanceSource = this.resonanceAudioScene.createSource();
-
-      // Create gain nodes for volume and mute control
       const gainNode = this.audioContext.createGain();
       gainNode.gain.value = 1.0;
 
       const muteGainNode = this.audioContext.createGain();
-      muteGainNode.gain.value = 1.0; // Not muted by default
+      muteGainNode.gain.value = 1.0;
 
-      // Realtime level probe — a side tap on gainNode (never inline, see
-      // SourceLevelMeter) so the visuals layer can read the post-volume level.
       const levelMeter = new SourceLevelMeter(this.audioContext);
 
-      // Radiation pattern toward the listener (unity for omni sources)
       const directivity = new SourceDirectivityStage(this.audioContext);
       directivity.setBypass(this.globalSourceIds.has(sourceId));
       directivity.setResolved(this.sourceDirectivities.get(sourceId) ?? null);
       directivity.update(position, this.listenerPosition);
 
-      // Wire the persistent chain now (not lazily inside playSource) so that
-      // startVoice() can play through it even if the legacy single-slot
-      // playSource() is never called for this source.
       gainNode.connect(muteGainNode);
       levelMeter.tap(gainNode);
       muteGainNode.connect(directivity.input);
-      directivity.output.connect(resonanceSource.input);
 
-      // Configure source properties
-      resonanceSource.setRolloff(DEFAULT_ROLLOFF);
-      resonanceSource.setMinDistance(DEFAULT_MIN_DISTANCE);
-      resonanceSource.setMaxDistance(DEFAULT_MAX_DISTANCE);
-      resonanceSource.setGain(1.0);
-
-      // Store source info
-      const entry = {
-        source: resonanceSource,
+      const entry: SourceEntry = {
         buffer: audioBuffer,
         position: { x: position.x, y: position.y, z: position.z },
         sourceNode: null,
@@ -261,12 +449,12 @@ export class ResonanceMode implements IAudioMode {
         levelMeter,
         directivity,
         isPlaying: false,
-        isMuted: false
+        isMuted: false,
+        roomLinks: new Map(),
+        assignGen: 0,
       };
       this.resonanceSources.set(sourceId, entry);
-
-      // Set initial position (offset by room center so it's relative to room origin)
-      this.placeSource(sourceId, entry);
+      this.syncSourceRooms(sourceId, entry);
 
       console.log(`[ResonanceMode] Created source: ${sourceId} at (${position.x.toFixed(1)}, ${position.y.toFixed(1)}, ${position.z.toFixed(1)})`);
     } catch (error) {
@@ -275,12 +463,6 @@ export class ResonanceMode implements IAudioMode {
     }
   }
 
-  /**
-   * Play a source
-   * @param sourceId - Source identifier
-   * @param loop - Whether to loop the audio
-   * @param offset - Start playback from this position in seconds (default: 0)
-   */
   playSource(sourceId: string, loop: boolean = false, offset: number = 0, duration?: number, opts?: FadeOptions): void {
     const source = this.resonanceSources.get(sourceId);
     if (!source || !this.audioContext) {
@@ -288,29 +470,19 @@ export class ResonanceMode implements IAudioMode {
       return;
     }
 
-    // Stop if already playing
     if (source.isPlaying && source.sourceNode) {
       source.sourceNode.stop();
       source.sourceNode.disconnect();
       source.sourceNode = null;
     }
 
-    // Create new source node
     const sourceNode = this.audioContext.createBufferSource();
     sourceNode.buffer = source.buffer;
     sourceNode.loop = loop;
 
-    // Insert a transient gain stage when a seam fade is requested, so loopable
-    // sounds dip to silence at each wrap. (With no fade this is a plain
-    // sourceNode → gainNode connection.)
     applyFadeInOut(sourceNode, source.gainNode, opts ? { ...opts, durationSec: duration } : {});
-
-    // Persistent chain is already wired in createSource
-    // (gainNode → muteGainNode → Resonance source input, levelMeter tapped); only the
-    // transient sourceNode → gainNode connection is created here.
     source.sourceNode = sourceNode;
 
-    // Set up ended callback
     sourceNode.onended = () => {
       if (!loop) {
         source.isPlaying = false;
@@ -318,7 +490,6 @@ export class ResonanceMode implements IAudioMode {
       }
     };
 
-    // Start playback from offset position, optionally limited to trim duration
     if (duration !== undefined && duration > 0) {
       sourceNode.start(0, offset, duration);
     } else {
@@ -329,9 +500,6 @@ export class ResonanceMode implements IAudioMode {
     console.log(`[ResonanceMode] Playing source: ${sourceId} (loop: ${loop}, offset: ${offset}s, duration: ${duration ?? 'full'}s)`);
   }
 
-  /**
-   * Stop a source
-   */
   stopSource(sourceId: string): void {
     const source = this.resonanceSources.get(sourceId);
     if (!source || !source.sourceNode) {
@@ -349,10 +517,6 @@ export class ResonanceMode implements IAudioMode {
     source.isPlaying = false;
   }
 
-  /**
-   * Stop all audio sources immediately (both the legacy single-slot playback and
-   * any independent voices started via startVoice).
-   */
   stopAllSources(): void {
     console.log(`[ResonanceMode] Stopping all ${this.resonanceSources.size} sources`);
     this.resonanceSources.forEach((_, sourceId) => {
@@ -361,11 +525,6 @@ export class ResonanceMode implements IAudioMode {
     this.stopAllVoices();
   }
 
-  /**
-   * Start an independent playback voice for `sourceId`, connected into that
-   * source's persistent gain chain (feeds muteGain → Resonance source input,
-   * same as the legacy single-slot path). See IAudioMode.startVoice.
-   */
   startVoice(sourceId: string, when: number, offset: number = 0, duration?: number, opts?: FadeOptions): void {
     if (!this.audioContext) return;
     const source = this.resonanceSources.get(sourceId);
@@ -414,19 +573,12 @@ export class ResonanceMode implements IAudioMode {
     this.voices.forEach((_set, sourceId) => this.stopAllVoicesForSource(sourceId));
   }
 
-  /**
-   * Smoothed realtime signal level (0..1) for a source.
-   */
   getSourceLevel(sourceId: string): number {
     const source = this.resonanceSources.get(sourceId);
     if (!source) return 0;
     return source.levelMeter.read();
   }
 
-  /**
-   * Sources with at least one in-flight voice, or the legacy single-slot source
-   * still playing.
-   */
   getPlayingSourceIds(): string[] {
     const ids = new Set<string>();
     this.voices.forEach((set, sourceId) => {
@@ -438,9 +590,6 @@ export class ResonanceMode implements IAudioMode {
     return Array.from(ids);
   }
 
-  /**
-   * Update source position
-   */
   updateSourcePosition(sourceId: string, position: Position): void {
     const source = this.resonanceSources.get(sourceId);
     if (!source) {
@@ -448,11 +597,10 @@ export class ResonanceMode implements IAudioMode {
     }
 
     source.position = { x: position.x, y: position.y, z: position.z };
-    this.placeSource(sourceId, source);
     source.directivity.update(source.position, this.listenerPosition);
+    this.syncSourceRooms(sourceId, source);
   }
 
-  /** Live radiation pattern of a source (null = omnidirectional). */
   setSourceDirectivity(sourceId: string, resolved: RealtimeDirectivity | null): void {
     if (resolved) this.sourceDirectivities.set(sourceId, resolved);
     else this.sourceDirectivities.delete(sourceId);
@@ -463,21 +611,19 @@ export class ResonanceMode implements IAudioMode {
     }
   }
 
-  /**
-   * Remove a source
-   */
   removeSource(sourceId: string): void {
     const source = this.resonanceSources.get(sourceId);
     if (!source) {
       return;
     }
 
-    // Stop if playing
     this.stopSource(sourceId);
     this.stopAllVoicesForSource(sourceId);
     this.voices.delete(sourceId);
 
-    // Disconnect the persistent chain and the level probe
+    source.roomLinks.forEach((link) => this.disposeLink(link));
+    source.roomLinks.clear();
+
     try {
       source.gainNode.disconnect();
       source.muteGainNode.disconnect();
@@ -487,74 +633,24 @@ export class ResonanceMode implements IAudioMode {
     source.levelMeter.dispose();
     source.directivity.dispose();
 
-    // Resonance Audio sources don't have explicit cleanup
-    // Just remove from tracking
     this.resonanceSources.delete(sourceId);
     console.log(`[ResonanceMode] Removed source: ${sourceId}`);
   }
 
-  /**
-   * Update listener position and orientation
-   */
   updateListener(position: Position, orientation: Orientation): void {
     this.listenerPosition = position;
     this.listenerOrientation = orientation;
 
-    // Source patterns depend on the source→listener direction (cheap when nothing moved).
     this.resonanceSources.forEach((source) => source.directivity.update(source.position, position));
 
-    if (!this.resonanceAudioScene) {
-      return;
-    }
+    this.rooms.forEach((room) => this.applyListenerToScene(room.scene, room.centerOffset));
 
-    try {
-      // Offset by room center so the listener is relative to the room origin
-      this.resonanceAudioScene.setListenerPosition(
-        position.x - this.roomCenterOffset.x,
-        position.y - this.roomCenterOffset.y,
-        position.z - this.roomCenterOffset.z
-      );
-
-      // Convert Euler angles to forward and up vectors
-      // Use positive yaw (matching AnechoicMode's coordinate transformation)
-      const sinYaw = Math.sin(orientation.yaw),   cosYaw = Math.cos(orientation.yaw);
-      const sinPitch = Math.sin(orientation.pitch), cosPitch = Math.cos(orientation.pitch);
-      const sinRoll = Math.sin(orientation.roll),  cosRoll = Math.cos(orientation.roll);
-
-      const forward = {
-        x: sinYaw * cosPitch,
-        y: -cosYaw * cosPitch,
-        z: sinPitch
-      };
-
-      // up = worldUp·cos(roll) + cameraRight·sin(roll), where cameraRight is the
-      // listener's local right vector (cosYaw, sinYaw, 0). This reduces to world-up
-      // (0,0,1) when roll is 0, keeping non-FPS (constant-roll) output identical to
-      // the previous implementation while enabling head-tilt in FPS mode.
-      const up = {
-        x: cosYaw * sinRoll,
-        y: sinYaw * sinRoll,
-        z: cosRoll
-      };
-
-      this.resonanceAudioScene.setListenerOrientation(
-        forward.x, forward.y, forward.z,
-        up.x, up.y, up.z
-      );
-
-      // Global sources travel with the listener.
-      this.globalSourceIds.forEach((sourceId) => {
-        const source = this.resonanceSources.get(sourceId);
-        if (source) this.placeSource(sourceId, source);
-      });
-    } catch (error) {
-      console.error('[ResonanceMode] Error updating listener:', error);
-    }
+    this.globalSourceIds.forEach((sourceId) => {
+      const source = this.resonanceSources.get(sourceId);
+      if (source) this.syncSourceRooms(sourceId, source);
+    });
   }
 
-  /**
-   * Get output node (master gain)
-   */
   getOutputNode(): AudioNode {
     if (!this.masterGain) {
       throw new Error('[ResonanceMode] Not initialized');
@@ -562,27 +658,15 @@ export class ResonanceMode implements IAudioMode {
     return this.masterGain;
   }
 
-  /**
-   * Resonance's ambisonic bus (SN3D, third order, room reflections included) for
-   * the multichannel send. It is already rotated into the listener frame. A new
-   * scene (speed-of-sound change) brings a new node, so callers re-read this.
-   */
   getAmbisonicSendTap(): AmbisonicSendTap | null {
-    const output: AudioNode | undefined = this.resonanceAudioScene?.ambisonicOutput;
-    if (!output) return null;
-    return { node: output, order: DEFAULT_AMBISONIC_ORDER, preRotated: true };
+    if (!this.ambisonicSumBus) return null;
+    return { node: this.ambisonicSumBus, order: DEFAULT_AMBISONIC_ORDER, preRotated: true };
   }
 
-  /**
-   * Get mode type
-   */
   getMode(): AudioMode {
     return AudioMode.NO_IR_RESONANCE;
   }
 
-  /**
-   * Enable the mode
-   */
   enable(): void {
     this.enabled = true;
     if (this.masterGain && this.audioContext) {
@@ -590,9 +674,6 @@ export class ResonanceMode implements IAudioMode {
     }
   }
 
-  /**
-   * Disable the mode
-   */
   disable(): void {
     this.enabled = false;
     if (this.masterGain && this.audioContext) {
@@ -600,30 +681,21 @@ export class ResonanceMode implements IAudioMode {
     }
   }
 
-  /**
-   * Resonance mode does NOT require receiver mode (6 DOF)
-   */
   requiresReceiverMode(): boolean {
     return false;
   }
 
-  /**
-   * Set volume for a specific source
-   */
   setSourceVolume(sourceId: string, volume: number): void {
     const source = this.resonanceSources.get(sourceId);
     if (!source || !this.audioContext) return;
 
     const clampedVolume = Math.max(
       AUDIO_CONTROL.SOURCE_VOLUME.MIN,
-      Math.min(AUDIO_CONTROL.SOURCE_VOLUME.MAX, volume)
+      Math.min(AUDIO_CONTROL.SOURCE_VOLUME.MAX, volume),
     );
     source.gainNode.gain.setValueAtTime(clampedVolume, this.audioContext.currentTime);
   }
 
-  /**
-   * Set mute state for a specific source
-   */
   setSourceMute(sourceId: string, muted: boolean): void {
     const source = this.resonanceSources.get(sourceId);
     if (!source || !this.audioContext) return;
@@ -633,10 +705,6 @@ export class ResonanceMode implements IAudioMode {
     source.muteGainNode.gain.setValueAtTime(gainValue, this.audioContext.currentTime);
   }
 
-  /**
-   * Pin a source to the listener as an omnidirectional source, or return it to
-   * its stored position as a point source.
-   */
   setSourceGlobal(sourceId: string, isGlobal: boolean): void {
     if (this.globalSourceIds.has(sourceId) === isGlobal) return;
     if (isGlobal) this.globalSourceIds.add(sourceId);
@@ -645,151 +713,59 @@ export class ResonanceMode implements IAudioMode {
     const source = this.resonanceSources.get(sourceId);
     if (source) {
       source.directivity.setBypass(isGlobal);
-      this.placeSource(sourceId, source);
+      this.syncSourceRooms(sourceId, source);
     }
   }
 
-  /**
-   * Set master volume
-   */
   setMasterVolume(volume: number): void {
     if (!this.masterGain || !this.audioContext) return;
 
     const clampedVolume = Math.max(
       AUDIO_CONTROL.MASTER_VOLUME.MIN,
-      Math.min(AUDIO_CONTROL.MASTER_VOLUME.MAX, volume)
+      Math.min(AUDIO_CONTROL.MASTER_VOLUME.MAX, volume),
     );
     this.masterGain.gain.setValueAtTime(clampedVolume, this.audioContext.currentTime);
   }
 
-  /**
-   * Update room properties (optional configuration method)
-   */
-  setRoomProperties(dimensions: any, materials: any): void {
-    if (!this.resonanceAudioScene) {
-      console.warn('[ResonanceMode] Cannot set room properties - not initialized');
-      return;
-    }
-
-    try {
-      this.currentRoomDimensions = dimensions;
-      this.currentRoomMaterials = materials;
-      this.resonanceAudioScene.setRoomProperties(dimensions, materials);
-      console.log('[ResonanceMode] Room properties updated:', { dimensions, materials });
-    } catch (error) {
-      console.error('[ResonanceMode] Error setting room properties:', error);
-    }
-  }
-
-  /**
-   * Set room bounds from the bounding box shown in the viewer.
-   *
-   * The bounds already include any logical buffer (they are the room box
-   * visualized on screen), so they map directly to the room dimensions. Computes
-   * a center offset so that all world-space positions are translated to be
-   * relative to the Resonance Audio room origin. Existing sources are
-   * repositioned accordingly.
-   *
-   * @param min - Bounding box min corner [x, y, z]
-   * @param max - Bounding box max corner [x, y, z]
-   */
-  setRoomBounds(
-    min: [number, number, number],
-    max: [number, number, number]
-  ): void {
-    if (!this.resonanceAudioScene) {
-      console.warn('[ResonanceMode] Cannot set room bounds - not initialized');
-      return;
-    }
-
-    // Compute center offset
-    this.roomCenterOffset = {
-      x: (min[0] + max[0]) / 2,
-      y: (min[1] + max[1]) / 2,
-      z: (min[2] + max[2]) / 2
-    };
-
-    // The bounds are the room box (buffer included by the caller) — use them directly.
-    const dimensions = {
-      width:  Math.max(max[0] - min[0], MIN_ROOM_EXTENT),
-      height: Math.max(max[1] - min[1], MIN_ROOM_EXTENT),
-      depth:  Math.max(max[2] - min[2], MIN_ROOM_EXTENT)
-    };
-
-    // Apply to Resonance Audio scene
-    this.currentRoomDimensions = dimensions;
-    this.resonanceAudioScene.setRoomProperties(dimensions, this.currentRoomMaterials);
-
-    console.log('[ResonanceMode] Room bounds updated from model bounding box:', {
-      min, max,
-      center: this.roomCenterOffset,
-      dimensions
-    });
-
-    // Re-position all existing sources using the new offset
-    this.resonanceSources.forEach((source, sourceId) => this.placeSource(sourceId, source));
-  }
-
-  /**
-   * Get current room dimensions
-   */
-  getRoomDimensions(): any {
-    return { ...this.currentRoomDimensions };
-  }
-
-  /**
-   * Get current room materials
-   */
-  getRoomMaterials(): any {
-    return { ...this.currentRoomMaterials };
-  }
-
-  /**
-   * Update speed of sound and reinitialize the Resonance Audio scene.
-   * Existing sources are re-registered so live playback is preserved.
-   */
   async setSpeedOfSound(c: number): Promise<void> {
     if (!this.audioContext || !this.ResonanceAudio) return;
     this.speedOfSound = c;
 
-    // Snapshot existing sources so we can re-add them after reinit
+    const specs: ResonanceRoomSpec[] = Array.from(this.rooms.values()).map((room) => ({
+      id: room.id,
+      bounds: room.bounds,
+      materials: room.materials,
+    }));
     const existingSources = Array.from(this.resonanceSources.entries());
 
-    // Disconnect old scene
-    if (this.resonanceAudioScene) {
-      try { this.resonanceAudioScene.output.disconnect(); } catch { /* ignore */ }
-    }
-
-    // Remove all sources from old scene
+    this.rooms.forEach((room) => this.disposeScene(room));
+    this.rooms.clear();
     existingSources.forEach(([id]) => this.removeSource(id));
 
-    // Create a fresh scene with updated speed of sound
-    this.resonanceAudioScene = new this.ResonanceAudio(this.audioContext, {
-      ambisonicOrder: DEFAULT_AMBISONIC_ORDER,
-      speedOfSound: this.speedOfSound,
-    });
-    this.resonanceAudioScene.setRoomProperties(this.currentRoomDimensions, this.currentRoomMaterials);
-    if (this.masterGain) {
-      this.resonanceAudioScene.output.connect(this.masterGain);
-    }
+    this.setRooms(specs);
 
-    // Re-add sources
     for (const [id, src] of existingSources) {
       this.createSource(id, src.buffer, src.position as Position);
     }
   }
 
-  /**
-   * Dispose of all resources
-   */
   dispose(): void {
     console.log('[ResonanceMode] Disposing');
 
-    // Stop and remove all sources
-    const sourceIds = Array.from(this.resonanceSources.keys());
-    sourceIds.forEach(id => this.removeSource(id));
+    this.pendingCleanups.forEach((t) => clearTimeout(t));
+    this.pendingCleanups.clear();
 
-    // Disconnect master gain
+    const sourceIds = Array.from(this.resonanceSources.keys());
+    sourceIds.forEach((id) => this.removeSource(id));
+
+    this.rooms.forEach((room) => this.disposeScene(room));
+    this.rooms.clear();
+
+    if (this.ambisonicSumBus) {
+      try { this.ambisonicSumBus.disconnect(); } catch { /* ignore */ }
+      this.ambisonicSumBus = null;
+    }
+
     if (this.masterGain) {
       try {
         this.masterGain.disconnect();
@@ -801,8 +777,6 @@ export class ResonanceMode implements IAudioMode {
 
     this.resonanceSources.clear();
     this.voices.clear();
-    this.resonanceAudioScene = null;
     this.audioContext = null;
   }
 }
-

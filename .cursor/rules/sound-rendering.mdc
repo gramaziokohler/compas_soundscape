@@ -114,8 +114,32 @@ Sound source (mono)
   └─ [ANECHOIC]     AmbisonicMonoEncoder (SN3D)                    → ambisonicMixBus
   └─ [AMBISONIC_IR] per-source gains → shared AmbisonicConvolver bank (AmbiX IR) → irMixBus
         └─ OmnitoneDecoder (rotation via setRotationMatrix3 + built-in HRIRs) → stereo
-  └─ [NO_IR_RESONANCE] Resonance scene (own Omnitone; ambisonicOutput is listener-rotated)
+  └─ [NO_IR_RESONANCE] one ResonanceAudio scene per powered ShoeBox card
+        (own Omnitone; ambisonicOutputs sum on a 16-ch send bus)
 ```
+
+### Multi-room Resonance (ShoeBox)
+
+Each powered Resonance card is an independent axis-aligned room (bounds + six face
+materials) stored on `ResonanceSimulationConfig.room`. `AudioOrchestrator.setResonanceRooms`
+diffs the list; `ResonanceMode` owns one `ResonanceAudio` scene per room.
+
+**Blend** (`lib/audio/utils/resonance-rooms.ts` `assignSourceRooms`): a source inside N
+boxes sends reverb to every containing room at `1/sqrt(N)`. The smallest containing
+room (card order breaks ties) owns the dry path (`directGain = sqrt(N)`); the others
+get `directGain = 0`. Outside every box, the nearest room is used with N = 1; the
+library already fades early/late reflections via `Source.getDistanceOutsideRoom`.
+Global (background) sources are assigned by the listener's position.
+
+**Dry isolation.** Resonance Audio has no public dry/wet split. To keep one dry path
+across overlapping rooms we re-route the library's private `_encoder.output` from
+`scene._listener.input` onto a per-link `directGain` (`isolateResonanceDirectPath`).
+That is a private-API boundary — if the library shape changes, isolation returns
+false and the source keeps the library's built-in dry path.
+
+**Limits.** `RESONANCE_AUDIO.MAX_ACTIVE_ROOMS` (4). Powering past the limit is refused
+with a toast. Room-link gains ramp over `ROOM_CROSSFADE_S` (~30 ms). IR simulation
+power and Resonance power are exclusive.
 
 ### Convolution cost — keep idle chains silent and shared
 

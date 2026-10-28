@@ -22,6 +22,7 @@ import { useAudioControlsStore } from '@/store/audioControlsStore';
 import { collapseVariantsToOne, groupSoundsByPosition } from '@/utils/positionKey';
 import type { SoundDirectivity } from '@/types/directivity';
 import { isFreshHomeUrl } from '@/utils/homeStage';
+import { isShareViewActive } from '@/store/shareViewStore';
 import { cardEventId } from '@/utils/config-id';
 import { latestAcousticsJobPerCard } from '@/utils/acousticsJobRecovery';
 import { generatedEventFieldsFromConfig } from '@/utils/event-factory';
@@ -227,7 +228,8 @@ export function useJobRecovery({ domainReady }: { domainReady: boolean }): {
     // recovered result (the backend lists finished jobs too, for an hour) would
     // land there as unsaved work. Leave the local records untouched — the jobs
     // reattach when their model/project is reopened.
-    if (isFreshHomeUrl()) {
+    // The read-only share view never runs jobs and has no identity to list them.
+    if (isFreshHomeUrl() || isShareViewActive()) {
       setRecoveryResolved(true);
       return;
     }

@@ -33,6 +33,8 @@ interface ListenerBubblesProps {
   isFpsMode: boolean;
   /** Power a listener on (index) or switch the powered one off (null). */
   onTogglePower: (index: number | null) => void;
+  /** Include / exclude a listener from simulations (bubble right-click). Omit to disable the menu. */
+  onToggleHiddenForSimulation?: (item: ListenerItemConfig) => void;
   /** Leave the FPS view (a grid stays powered, a single listener powers off). */
   onExitFps: () => void;
   onOpenChange: (index: number | null) => void;
@@ -69,12 +71,14 @@ export function ListenerBubbles({
   openIndex,
   isFpsMode,
   onTogglePower,
+  onToggleHiddenForSimulation,
   onExitFps,
   onOpenChange,
   onAddItem,
   renderCard,
 }: ListenerBubblesProps) {
   const [addMenu, setAddMenu] = useState<{ x: number; y: number } | null>(null);
+  const [itemMenu, setItemMenu] = useState<{ x: number; y: number; item: ListenerItemConfig } | null>(null);
   const columnSpace = useBubbleColumnSpace();
   const itemCount = items.length;
   const fpsRowRef = useRef<HTMLDivElement>(null);
@@ -157,6 +161,9 @@ export function ListenerBubbles({
               onClick={() => handleClick(index)}
               onTogglePower={item.type === 'listener' || item.points.length > 0 ? () => onTogglePower(active ? null : index) : undefined}
               powerTitle={powerTitle}
+              onContextMenu={onToggleHiddenForSimulation
+                ? (e) => setItemMenu({ x: e.clientX, y: e.clientY, item })
+                : undefined}
             />
             </div>
           );
@@ -172,6 +179,20 @@ export function ListenerBubbles({
           title="Add listener"
           items={availableTypes.map((t) => ({ key: t.type, label: t.label, onClick: () => onAddItem(t.type) }))}
           onClose={() => setAddMenu(null)}
+        />
+      )}
+
+      {itemMenu && onToggleHiddenForSimulation && (
+        <ContextMenu
+          x={itemMenu.x}
+          y={itemMenu.y}
+          title={itemMenu.item.name}
+          items={[{
+            key: 'simulation',
+            label: itemMenu.item.hiddenForSimulation ? 'Include in simulation' : 'Exclude from simulation',
+            onClick: () => onToggleHiddenForSimulation(itemMenu.item),
+          }]}
+          onClose={() => setItemMenu(null)}
         />
       )}
 

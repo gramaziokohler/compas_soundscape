@@ -32,6 +32,8 @@ import { resolveIterationTrim } from './utils/iteration-trim';
 import { isSoundSilenced } from './utils/mute-solo';
 import { applyOmniToEncoder, toOmniFilter } from './utils/global-source';
 import { GLOBAL_SOURCE } from '@/utils/constants';
+import { assignSourceRooms, isolateResonanceDirectPath } from './utils/resonance-rooms';
+import type { ResonanceExportRoom } from '@/types/audio';
 
 // ============================================================================
 // Public Types
@@ -105,14 +107,8 @@ export interface SoundscapeExportConfig {
 
   // ── Resonance Audio specific ──
 
-  /** Room dimensions for Resonance mode { width, height, depth } */
-  roomDimensions?: { width: number; height: number; depth: number } | null;
-
-  /** Room materials for Resonance mode { left, right, front, back, down, up } */
-  roomMaterials?: Record<string, string> | null;
-
-  /** Offset to translate world-space positions to Resonance room origin */
-  roomCenterOffset?: { x: number; y: number; z: number } | null;
+  /** Powered ShoeBox rooms (one scene each). */
+  rooms?: import('@/types/audio').ResonanceExportRoom[];
 
   /** Speed of sound in m/s (for Resonance mode) */
   speedOfSound?: number;
@@ -482,9 +478,7 @@ async function buildResonanceGraph(
     listenerPosition,
     listenerOrientation,
     soundGains,
-    roomDimensions,
-    roomMaterials,
-    roomCenterOffset,
+    rooms: exportRooms,
   } = config;
 
   try {
@@ -494,26 +488,11 @@ async function buildResonanceGraph(
       throw new Error('ResonanceAudio constructor not found');
     }
 
-    const dims = roomDimensions ?? { width: 10, height: 3, depth: 10 };
-    const mats = roomMaterials ?? {
-      left: 'acoustic-ceiling-tiles', right: 'brick-bare', front: 'brick-bare',
-      back: 'brick-bare', down: 'parquet-on-concrete', up: 'brick-bare',
-    };
-    const centerOffset = roomCenterOffset ?? { x: 0, y: 0, z: 0 };
-
-    // Create ResonanceAudio scene with the format's ambisonic order
-    const scene = new ResonanceAudio(offlineCtx, {
-      ambisonicOrder: fmt.order,
-      speedOfSound: config.speedOfSound ?? 343,
-    });
-
-    scene.setRoomProperties(dims, mats);
-
-    scene.setListenerPosition(
-      listenerPosition.x - centerOffset.x,
-      listenerPosition.y - centerOffset.y,
-      listenerPosition.z - centerOffset.z,
-    );
+    const rooms: ResonanceExportRoom[] = exportRooms ?? [];
+    if (rooms.length === 0) {
+      console.warn('[SoundscapeExporter] Resonance export has no rooms — writing silence');
+      return;
+    }
 
     const fwd = {
       x:  Math.sin(listenerOrientation.yaw) * Math.cos(listenerOrientation.pitch),
@@ -525,34 +504,59 @@ async function buildResonanceGraph(
       y: 0,
       z: Math.cos(listenerOrientation.roll),
     };
-    scene.setListenerOrientation(fwd.x, fwd.y, fwd.z, up.x, up.y, up.z);
+
+    const scenes = rooms.map((room) => {
+      const scene = new ResonanceAudio(offlineCtx, {
+        ambisonicOrder: fmt.order,
+        speedOfSound: config.speedOfSound ?? 343,
+      });
+      scene.setRoomProperties(room.dimensions, room.materials);
+      scene.setListenerPosition(
+        listenerPosition.x - room.centerOffset.x,
+        listenerPosition.y - room.centerOffset.y,
+        listenerPosition.z - room.centerOffset.z,
+      );
+      scene.setListenerOrientation(fwd.x, fwd.y, fwd.z, up.x, up.y, up.z);
+      return { room, scene };
+    });
 
     onProgress?.(0.25);
 
-    // Output tap by format
+    const mix = offlineCtx.createGain();
+    mix.channelCount = fmt.rawAmbisonic ? fmt.channels : 2;
+    mix.channelCountMode = 'explicit';
+    mix.channelInterpretation = 'discrete';
+
     if (fmt.rawAmbisonic) {
-      const ambiOut = (scene as any).ambisonicOutput as AudioNode;
-      if (!ambiOut) throw new Error('ResonanceAudio scene has no ambisonicOutput');
-      const outputBus = offlineCtx.createGain();
-      outputBus.channelCount = fmt.channels;
-      outputBus.channelCountMode = 'explicit';
-      outputBus.channelInterpretation = 'discrete';
-      ambiOut.connect(outputBus);
-      outputBus.connect(destinationNode);
+      for (const { scene } of scenes) {
+        const ambiOut = (scene as { ambisonicOutput?: AudioNode }).ambisonicOutput;
+        if (!ambiOut) throw new Error('ResonanceAudio scene has no ambisonicOutput');
+        ambiOut.connect(mix);
+      }
+      mix.connect(destinationNode);
     } else if (fmt.label === 'binaural') {
-      scene.output.connect(destinationNode);
+      for (const { scene } of scenes) {
+        scene.output.connect(mix);
+      }
+      mix.connect(destinationNode);
     } else {
-      // mono: extract W channel
-      const ambiOut = (scene as any).ambisonicOutput as AudioNode;
-      if (!ambiOut) throw new Error('ResonanceAudio scene has no ambisonicOutput');
       const numCh = (fmt.order + 1) ** 2;
       const splitter = offlineCtx.createChannelSplitter(numCh);
-      // ChannelSplitterNode has fixed channelCount=1 per spec — do not set it.
-      ambiOut.connect(splitter);
+      for (const { scene } of scenes) {
+        const ambiOut = (scene as { ambisonicOutput?: AudioNode }).ambisonicOutput;
+        if (!ambiOut) throw new Error('ResonanceAudio scene has no ambisonicOutput');
+        ambiOut.connect(mix);
+      }
+      mix.connect(splitter);
       splitter.connect(destinationNode, 0, 0);
     }
 
-    // Create sources and schedule
+    const assignmentRooms = rooms.map((room, order) => ({
+      id: room.id,
+      bounds: room.bounds,
+      order,
+    }));
+
     for (const sound of sounds) {
       const sourceInfo = sourceRegistry.get(sound.id);
       if (!sourceInfo) {
@@ -560,43 +564,56 @@ async function buildResonanceGraph(
         continue;
       }
 
-      const resonanceSource = scene.createSource();
-      // Global bed: omnidirectional source travelling with the listener
       const isGlobal = isGlobalSound(sound, config);
       const pos = isGlobal ? listenerPosition : sourceInfo.position;
-      (resonanceSource as any).setSourceWidth?.(isGlobal
-        ? GLOBAL_SOURCE.RESONANCE_SOURCE_WIDTH_DEG
-        : GLOBAL_SOURCE.RESONANCE_POINT_SOURCE_WIDTH_DEG);
-      resonanceSource.setPosition(
-        pos.x - centerOffset.x,
-        pos.y - centerOffset.y,
-        pos.z - centerOffset.z,
-      );
-      // Match real-time ResonanceMode.createSource exactly.
-      resonanceSource.setGain(1.0);
-      (resonanceSource as any).setRolloff?.('logarithmic');
-      (resonanceSource as any).setMinDistance?.(1);
-      (resonanceSource as any).setMaxDistance?.(10000);
+      const sends = assignSourceRooms(pos, assignmentRooms);
 
       const gainNode = offlineCtx.createGain();
       gainNode.gain.value = soundGains.get(sound.id) ?? 1.0;
-      gainNode.connect(resonanceSource.input);
+
+      for (const send of sends) {
+        const entry = scenes.find((s) => s.room.id === send.roomId);
+        if (!entry) continue;
+        const { room, scene } = entry;
+        const resonanceSource = scene.createSource();
+        (resonanceSource as { setSourceWidth?: (d: number) => void }).setSourceWidth?.(isGlobal
+          ? GLOBAL_SOURCE.RESONANCE_SOURCE_WIDTH_DEG
+          : GLOBAL_SOURCE.RESONANCE_POINT_SOURCE_WIDTH_DEG);
+        resonanceSource.setPosition(
+          pos.x - room.centerOffset.x,
+          pos.y - room.centerOffset.y,
+          pos.z - room.centerOffset.z,
+        );
+        resonanceSource.setGain(1.0);
+        (resonanceSource as { setRolloff?: (r: string) => void }).setRolloff?.('logarithmic');
+        (resonanceSource as { setMinDistance?: (d: number) => void }).setMinDistance?.(1);
+        (resonanceSource as { setMaxDistance?: (d: number) => void }).setMaxDistance?.(10000);
+
+        const sendGain = offlineCtx.createGain();
+        sendGain.gain.value = send.sendGain;
+        const directGain = offlineCtx.createGain();
+        directGain.gain.value = send.directGain;
+        gainNode.connect(sendGain);
+        sendGain.connect(resonanceSource.input);
+        isolateResonanceDirectPath(
+          resonanceSource as { _encoder?: { output: AudioNode } },
+          (scene as { _listener: { input: AudioNode } })._listener.input,
+          directGain,
+        );
+      }
 
       scheduleIterations(offlineCtx, resolveIterationBuffers(sound, sourceRegistry, config), sound.scheduledIterations, gainNode, durationSecs(offlineCtx), resolveClipFade(sound.soundGroup, !!config.soundLoopable?.[sound.id]));
     }
 
-    // Omnitone's HOARenderer.initialize() is async (Promise).  Yield to the
-    // event loop so it can load HRIRs and connect the room to the output
-    // nodes.  Then re-apply listener orientation — the renderer may reset
-    // its rotation matrix during initialization, discarding the synchronous
-    // setOrientation() call from the constructor.
     await new Promise<void>(r => setTimeout(r, 0));
-    scene.setListenerPosition(
-      listenerPosition.x - centerOffset.x,
-      listenerPosition.y - centerOffset.y,
-      listenerPosition.z - centerOffset.z,
-    );
-    scene.setListenerOrientation(fwd.x, fwd.y, fwd.z, up.x, up.y, up.z);
+    for (const { room, scene } of scenes) {
+      scene.setListenerPosition(
+        listenerPosition.x - room.centerOffset.x,
+        listenerPosition.y - room.centerOffset.y,
+        listenerPosition.z - room.centerOffset.z,
+      );
+      scene.setListenerOrientation(fwd.x, fwd.y, fwd.z, up.x, up.y, up.z);
+    }
 
     console.log(`[SoundscapeExporter] Resonance graph built (${fmt.label}, order ${fmt.order})`);
   } catch (err) {

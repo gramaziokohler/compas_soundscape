@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback, type ReactNode, Fragment } from 'react';
+import { useCanEdit } from '@/hooks/useCanEdit';
 import type { CardType, CardBaseConfig, CardColor } from '@/types/card';
 import { EmptyState } from '@/components/ui/EmptyState';
 
@@ -53,6 +54,8 @@ export interface CardSectionProps<TItem extends CardBaseConfig> {
   onReorder?: (from: number, to: number) => void;
   /** Ctrl+drag duplicate callback — called with (fromIndex, toInsertionIndex) when Ctrl is held during drag. */
   onDuplicate?: (fromIndex: number, toInsertionIndex: number) => void;
+  /** Hide add / reorder / duplicate and the footer (defaults to the share view state). */
+  readOnly?: boolean;
   /** Optional action rendered below the empty message (when items.length === 0) */
   emptyAction?: ReactNode;
   /** Label shown on the add-card button. Defaults to `Add a ${statusLabel} card`. */
@@ -107,7 +110,11 @@ export function CardSection<TItem extends CardBaseConfig>({
   onDuplicate,
   emptyAction,
   addButtonLabel,
+  readOnly: readOnlyProp,
 }: CardSectionProps<TItem>) {
+  const canEdit = useCanEdit();
+  const readOnly = readOnlyProp ?? !canEdit;
+  const canDrag = !readOnly && !!(onReorder || onDuplicate);
   const isControlled = controlledExpandedIndex !== undefined;
 
   const [internalExpandedIndex, setInternalExpandedIndex] = useState<number | null>(
@@ -393,6 +400,7 @@ export function CardSection<TItem extends CardBaseConfig>({
             {pendingCount > 0 && <span> ({pendingCount} pending)</span>}
           </div>
 
+          {!readOnly && (
           <div className="relative flex-shrink-0" ref={typeSelectorRef}>
             <button
               onClick={handleToggleTypeSelector}
@@ -431,6 +439,7 @@ export function CardSection<TItem extends CardBaseConfig>({
               </div>
             )}
           </div>
+          )}
         </div>
       )}
 
@@ -452,21 +461,21 @@ export function CardSection<TItem extends CardBaseConfig>({
                 opacity: isDraggingMoved && dragVisual.index === index ? 0.25 : 1,
                 transition: isDraggingMoved ? 'none' : 'opacity 0.15s',
               }}
-              onMouseDown={(onReorder || onDuplicate) ? (e) => {
+              onMouseDown={canDrag ? (e) => {
                 const target = e.target as HTMLElement;
                 if (target.closest('button, input, select, textarea, a')) return;
                 const rect = e.currentTarget.getBoundingClientRect();
                 if (e.clientY - rect.top > DRAG_HEADER_PX) return;
                 handleDragStart(e, index);
               } : undefined}
-              onMouseMove={(onReorder || onDuplicate) ? (e) => {
+              onMouseMove={canDrag ? (e) => {
                 const rect = e.currentTarget.getBoundingClientRect();
                 const inHeader = e.clientY - rect.top <= DRAG_HEADER_PX;
                 const isBtn = !!(e.target as HTMLElement).closest('button, input, select, textarea, a');
                 const ctrlHeld = e.ctrlKey || e.metaKey;
                 e.currentTarget.style.cursor = (inHeader && !isBtn) ? (ctrlHeld ? 'copy' : 'grab') : '';
               } : undefined}
-              onMouseLeave={(onReorder || onDuplicate) ? (e) => { e.currentTarget.style.cursor = ''; } : undefined}
+              onMouseLeave={canDrag ? (e) => { e.currentTarget.style.cursor = ''; } : undefined}
             >
               {renderCard(item, index, expandedIndex === index, handleToggleExpand)}
             </div>
@@ -488,6 +497,7 @@ export function CardSection<TItem extends CardBaseConfig>({
             <EmptyState message={emptyMessage} action={emptyAction} onGlass />
           )}
 
+          {!readOnly && (
           <div className="relative" ref={typeSelectorRef}>
             <button
               onClick={handleToggleTypeSelector}
@@ -527,6 +537,7 @@ export function CardSection<TItem extends CardBaseConfig>({
               </div>
             )}
           </div>
+          )}
         </>
       )}
 
@@ -534,7 +545,7 @@ export function CardSection<TItem extends CardBaseConfig>({
           so it stays reachable whatever the scroll position. No background
           color (per design); a backdrop blur keeps scrolled cards from
           showing through legibly. */}
-      {footer && (
+      {footer && !readOnly && (
         <div className="sticky bottom-0 z-20 backdrop-blur-lg backdrop-saturate-150">
           {footer}
         </div>

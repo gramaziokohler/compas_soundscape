@@ -19,6 +19,7 @@ import { UNDO_HISTORY_LIMIT, undoEquality, runWithoutUndo, type RegisterTemporal
 import { FilteringExtension, CameraController, SelectionExtension, type Viewer } from '@speckle/viewer';
 import type React from 'react';
 import type { ArchitecturalObject } from '@/types/analysis';
+import type { SavedObjectVisibility } from '@/types/card';
 import { useUIStore } from './uiStore';
 import { useSoundscapeStore } from './soundscapeStore';
 
@@ -285,6 +286,17 @@ export interface SpeckleStoreState {
   resetUserVisibility: () => void;
   /** Compute + apply the single target FilteringExtension state. Idempotent. */
   applyVisibility: () => void;
+  /**
+   * Copy of the user's hide / isolate / exclude intent for saving on a scene or
+   * simulation card. Auto-hides (`_autoHiddenIds`) are subtracted so a card's
+   * automatic hides never become permanent manual ones.
+   */
+  getVisibilitySnapshot: () => SavedObjectVisibility;
+  /**
+   * Replace the user's visibility intent with a saved snapshot and re-apply it.
+   * Live auto-hides are kept (the owning card re-derives them on top).
+   */
+  applyVisibilitySnapshot: (snapshot: SavedObjectVisibility) => void;
 
   // Actions — mode
   setFilteringEnabled: (enabled: boolean) => void;
@@ -986,6 +998,29 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
         // resetFilters wiped setUserObjectColors — restore entity/material colors.
         get().applyFilterColors();
         _viewerRef.requestRender();
+      },
+
+      getVisibilitySnapshot: () => ({
+        hiddenIds: [..._userHiddenIds],
+        isolatedIds: [..._userIsolatedIds],
+        excludedIds: [..._acousticExplorerHiddenIds].filter((id) => !_autoHiddenIds.has(id)),
+      }),
+
+      applyVisibilitySnapshot: (snapshot) => {
+        _userHiddenIds = new Set(snapshot.hiddenIds);
+        _userIsolatedIds = new Set(snapshot.isolatedIds);
+        // Keep the card's live auto-hides on top of the saved excludes.
+        _acousticExplorerHiddenIds = new Set([...snapshot.excludedIds, ..._autoHiddenIds]);
+        set(
+          {
+            userHiddenIds: [..._userHiddenIds],
+            userIsolatedIds: [..._userIsolatedIds],
+            acousticExplorerHiddenIds: [..._acousticExplorerHiddenIds],
+          },
+          false,
+          'speckle/applyVisibilitySnapshot',
+        );
+        get().applyVisibility();
       },
 
       // ── Acoustic explorer hidden tracking ────────────────────────────────

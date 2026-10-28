@@ -34,6 +34,7 @@ from config.constants import PYROOMACOUSTICS_DEFAULT_MAX_ORDER
 from config.constants import PYROOMACOUSTICS_DEFAULT_RAY_TRACING
 from config.constants import PYROOMACOUSTICS_DEFAULT_RIR_DURATION
 from config.constants import PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE
+from config.constants import PYROOMACOUSTICS_DEFAULT_PARALLEL
 from config.constants import PYROOMACOUSTICS_RAY_TRACING_N_RAYS
 from config.constants import SIM_MESH_COPLANAR_ANGLE_DEG_DEFAULT
 from config.constants import SIM_MESH_COPLANAR_ANGLE_DEG_MAX
@@ -688,6 +689,7 @@ class SoundscapeSimulationSettings(BaseModel):
     ray_tracing: bool = False
     air_absorption: bool = True
     n_rays: int = 10000
+    parallel: bool = PYROOMACOUSTICS_DEFAULT_PARALLEL
     simulation_mode: str = "foa"
     enable_grid: bool = False
     fmax: Optional[float] = None
@@ -733,6 +735,24 @@ class SoundscapeAcousticSelection(BaseModel):
     auto_detected: bool = False
 
 
+class SoundscapeObjectVisibility(BaseModel):
+    """Object Explorer hide / isolate / exclude view saved on a scene or simulation card."""
+    hidden_ids: list[str] = []
+    isolated_ids: list[str] = []
+    excluded_ids: list[str] = []
+
+
+class SoundscapeResonanceRoomBounds(BaseModel):
+    min: list[float]
+    max: list[float]
+
+
+class SoundscapeResonanceRoom(BaseModel):
+    """Per-card ShoeBox (Resonance) room: AABB + six face materials."""
+    bounds: Optional[SoundscapeResonanceRoomBounds] = None
+    materials: dict[str, str]
+
+
 class SoundscapeSimulationConfig(BaseModel):
     """Serializable simulation configuration"""
     id: str
@@ -740,6 +760,7 @@ class SoundscapeSimulationConfig(BaseModel):
     type: str  # "pyroomacoustics", "pffdtd", "resonance"
     state: str = "completed"
     simulation_instance_id: Optional[str] = None
+    resonance_room: Optional[SoundscapeResonanceRoom] = None
     settings: Optional[SoundscapeSimulationSettings] = None
     speckle_material_assignments: Optional[dict[str, str]] = None
     speckle_layer_name: Optional[str] = None
@@ -747,6 +768,8 @@ class SoundscapeSimulationConfig(BaseModel):
     speckle_scattering_assignments: Optional[dict[str, float]] = None
     # Acoustic region this card was simulated with (detects later re-assignment)
     speckle_acoustic_selection: Optional[SoundscapeAcousticSelection] = None
+    # Saved Object Explorer view, restored when the card is powered on
+    saved_object_visibility: Optional[SoundscapeObjectVisibility] = None
     # Speckle version the completed result was simulated on (outdated detection)
     simulated_version_id: Optional[str] = None
     simulation_results: Optional[str] = None
@@ -867,6 +890,9 @@ class SoundscapeData(BaseModel):
     excluded_iterations: Optional[dict] = None
     # Reason per excluded iteration, keyed f"{sound_id}-{iteration_index}"
     exclusion_reasons: Optional[dict] = None
+    # Public share selection {sceneIds, simulationIds, listenerIds, links[]}
+    # (frontend types/share.ts ShareConfig). Read by services/share_service.py.
+    share_config: Optional[dict] = None
 
 
 class SoundscapeSaveRequest(BaseModel):
@@ -934,6 +960,8 @@ class PyroomacousticsGeometrySettings(BaseModel):
     ray_tracing: bool = PYROOMACOUSTICS_DEFAULT_RAY_TRACING
     air_absorption: bool = PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION
     n_rays: int = PYROOMACOUSTICS_RAY_TRACING_N_RAYS
+    # Emitter rooms in parallel processes (PYROOMACOUSTICS_MAX_PROCESSES); False = one process
+    parallel: bool = PYROOMACOUSTICS_DEFAULT_PARALLEL
     simulation_mode: Literal["mono", "foa"] = PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE
     sound_speed: float = DEFAULT_SPEED_OF_SOUND
     rir_duration: float = PYROOMACOUSTICS_DEFAULT_RIR_DURATION
@@ -1024,6 +1052,25 @@ class SoundscapeLoadResponse(BaseModel):
     # True when the model belongs to a private workspace the caller is not a
     # member of (the client should ask for an invite rather than retry).
     requires_invite: bool = False
+
+
+class ShareLinkResponse(BaseModel):
+    """Owner view of a model's public share link (None = not shared)."""
+    share_id: Optional[str] = None
+    created_at: Optional[str] = None
+
+
+class PublicShareResponse(BaseModel):
+    """Filtered soundscape served to anonymous `/share/<share_id>` viewers.
+
+    `soundscape_data` keeps only the shared scenes / simulations / listeners;
+    its `auth_token` is the read-only SPECKLE_SHARE_TOKEN. Media base URLs point
+    at the share-scoped public routes, never at `/soundscapes/<ws>/...`.
+    """
+    soundscape_data: SoundscapeData
+    audio_base_url: str
+    ir_base_url: str
+    share_config: dict
 
 
 class SoundscapeExistsResponse(BaseModel):

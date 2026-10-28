@@ -17,6 +17,7 @@ import {
   PYROOMACOUSTICS_RAY_TRACING_N_RAYS,
   PYROOMACOUSTICS_RAY_TRACING_N_RAYS_MIN,
   PYROOMACOUSTICS_RAY_TRACING_N_RAYS_MAX,
+  PYROOMACOUSTICS_DEFAULT_PARALLEL,
   PYROOMACOUSTICS_SIMULATION_MODE_MONO,
   PYROOMACOUSTICS_SIMULATION_MODE_FOA,
   PYROOMACOUSTICS_SIMULATION_MODE_NAMES
@@ -49,7 +50,7 @@ export function PyroomAcousticsSimulationSettings({
   // to the whole model — Speckle World box, then the legacy vertex-upload `geometryBounds` —
   // when no region is resolved yet or the region is the whole model.
   const viewer = useSpeckleEngineStore((s) => s.viewer);
-  const boundingBoxManager = useSpeckleEngineStore((s) => s.boundingBoxManager);
+  const resonanceRoomBoxes = useSpeckleEngineStore((s) => s.resonanceRoomBoxes);
   const geometryBounds = useFileUploadStore((s) => s.geometryBounds);
   const acousticGeometryIds = useAcousticLayerStore((s) => s.selectedAcousticGeometryIds);
   const isWholeModel = useAcousticLayerStore((s) => s.isWholeModel);
@@ -60,7 +61,7 @@ export function PyroomAcousticsSimulationSettings({
   // World box is read every render (cheap) since it fills asynchronously after load.
   const modelBounds =
     acousticBounds ??
-    ((viewer && boundingBoxManager?.calculateBoundsFromSpeckleBatches(viewer)) || geometryBounds);
+    ((viewer && resonanceRoomBoxes?.calculateBoundsFromSpeckleBatches(viewer)) || geometryBounds);
 
   // Recommended ray count (Vorländer receiver-sphere criterion — theory and sources in
   // lib/acoustics/ray-count-estimate.ts). Shown as a "rec" tick + the slider's tooltip.
@@ -173,6 +174,13 @@ export function PyroomAcousticsSimulationSettings({
             sliderTitle={rayTooltip}
           />
         )}
+        <ToggleField
+          checked={config.settings.parallel ?? PYROOMACOUSTICS_DEFAULT_PARALLEL}
+          onChange={(checked) => handleSettingChange('parallel', checked)}
+          label="Parallel processing"
+          modified={isSettingModified('parallel')}
+          disabled={config.isRunning}
+        />
       </div>
 
       <AcousticMaterialsSummary modified={isModified('materials')} />

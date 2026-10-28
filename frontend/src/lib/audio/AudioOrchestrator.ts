@@ -22,7 +22,9 @@ import type {
   OutputDiagnostics,
   OutputSourceDiagnostics,
   AmbisonicSendStatus,
-  AmbisonicSendTarget
+  AmbisonicSendTarget,
+  ResonanceRoomSpec,
+  ResonanceExportRoom,
 } from '@/types/audio';
 import { AudioMode } from '@/types/audio';
 
@@ -426,13 +428,9 @@ export class AudioOrchestrator implements IAudioOrchestrator {
             await this.resonanceMode.initialize(this.audioContext, this._pendingSpeedOfSound);
             this.connectModeToOutput(this.resonanceMode);
 
-            // Apply pending room bounds if available
-            if (this._pendingRoomBounds) {
-              this.resonanceMode.setRoomBounds(
-                this._pendingRoomBounds.min,
-                this._pendingRoomBounds.max
-              );
-              this._pendingRoomBounds = null;
+            if (this._pendingResonanceRooms) {
+              this.resonanceMode.setRooms(this._pendingResonanceRooms);
+              this._pendingResonanceRooms = null;
             }
           }
           return this.resonanceMode;
@@ -1280,63 +1278,18 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   }
 
   /**
-   * Update Resonance Audio room materials
-   * Only affects Resonance Audio mode
+   * Replace the set of powered Resonance (ShoeBox) rooms. Applied immediately
+   * if the mode exists, otherwise queued until first init.
    */
-  updateResonanceRoomMaterials(materials: any): void {
-    console.log('[AudioOrchestrator] Updating Resonance room materials:', materials);
-    
-    if (this.currentMode === AudioMode.NO_IR_RESONANCE && this.resonanceMode) {
-      console.log('[AudioOrchestrator] Applying room materials to active Resonance mode');
-      
-      // Get current dimensions from the mode
-      const dimensions = this.resonanceMode.getRoomDimensions();
-      
-      this.resonanceMode.setRoomProperties(dimensions, materials);
-    } else {
-      console.warn('[AudioOrchestrator] Cannot apply materials - Resonance mode not active');
-    }
-  }
-
-  /**
-   * Update Resonance Audio room dimensions
-   * Only affects Resonance Audio mode
-   */
-  updateResonanceRoomDimensions(dimensions: any): void {
-    console.log('[AudioOrchestrator] Updating Resonance room dimensions:', dimensions);
-
-    if (this.currentMode === AudioMode.NO_IR_RESONANCE && this.resonanceMode) {
-      console.log('[AudioOrchestrator] Applying room dimensions to active Resonance mode');
-
-      // Get current materials from the mode
-      const materials = this.resonanceMode.getRoomMaterials();
-
-      this.resonanceMode.setRoomProperties(dimensions, materials);
-    } else {
-      console.warn('[AudioOrchestrator] Cannot apply dimensions - Resonance mode not active');
-    }
-  }
-
-  /**
-   * Set Resonance Audio room bounds from model bounding box.
-   * Computes room dimensions and center offset so sources sit inside the room.
-   * @param min - Bounding box min corner [x, y, z]
-   * @param max - Bounding box max corner [x, y, z]
-   */
-  updateResonanceRoomBounds(
-    min: [number, number, number],
-    max: [number, number, number]
-  ): void {
+  setResonanceRooms(specs: ResonanceRoomSpec[]): void {
+    this._pendingResonanceRooms = specs;
     if (this.resonanceMode) {
-      this.resonanceMode.setRoomBounds(min, max);
-    } else {
-      // Store for later application when mode is initialized
-      this._pendingRoomBounds = { min, max };
+      this.resonanceMode.setRooms(specs);
     }
   }
 
-  /** Pending room bounds to apply once ResonanceMode is initialized */
-  private _pendingRoomBounds: { min: [number, number, number]; max: [number, number, number] } | null = null;
+  /** Pending rooms to apply once ResonanceMode is initialized */
+  private _pendingResonanceRooms: ResonanceRoomSpec[] | null = null;
 
   /** Pending speed of sound to apply once ResonanceMode is initialized */
   private _pendingSpeedOfSound: number = DEFAULT_SPEED_OF_SOUND;
@@ -1365,9 +1318,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     irBuffer: AudioBuffer | null;
     perSourceIRBuffers: Map<string, AudioBuffer>;
     originalIRChannelCount: number;
-    roomDimensions: { width: number; height: number; depth: number } | null;
-    roomMaterials: Record<string, string> | null;
-    roomCenterOffset: { x: number; y: number; z: number } | null;
+    rooms: ResonanceExportRoom[];
     speedOfSound: number;
   } {
     // Extract listener state from current mode instance
@@ -1389,18 +1340,8 @@ export class AudioOrchestrator implements IAudioOrchestrator {
       perSourceIRBuffers = this.ambisonicIRMode.getSourceIRBuffers();
     }
 
-    // Resonance-specific data
-    let roomDimensions: { width: number; height: number; depth: number } | null = null;
-    let roomMaterials: Record<string, string> | null = null;
-    let roomCenterOffset: { x: number; y: number; z: number } | null = null;
-    let speedOfSound = 343;
-
-    if (this.resonanceMode) {
-      roomDimensions = this.resonanceMode.getRoomDimensions();
-      roomMaterials = this.resonanceMode.getRoomMaterials();
-      roomCenterOffset = (this.resonanceMode as any).roomCenterOffset ?? null;
-      speedOfSound = (this.resonanceMode as any).speedOfSound ?? 343;
-    }
+    const rooms = this.resonanceMode ? this.resonanceMode.getExportRooms() : [];
+    const speedOfSound = (this.resonanceMode as { speedOfSound?: number } | null)?.speedOfSound ?? 343;
 
     return {
       mode: this.currentMode,
@@ -1412,9 +1353,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
       irBuffer,
       perSourceIRBuffers,
       originalIRChannelCount: this.irState.channelCount ?? 0,
-      roomDimensions,
-      roomMaterials,
-      roomCenterOffset,
+      rooms,
       speedOfSound,
     };
   }

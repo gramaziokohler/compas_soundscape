@@ -5,9 +5,9 @@
  */
 
 import type { ReceiverData, SoundEvent, CompasGeometry } from './index';
-import type { ImpulseResponseMetadata, SourceReceiverIRMapping } from './audio';
+import type { ImpulseResponseMetadata, SourceReceiverIRMapping, ResonanceRoomMaterial } from './audio';
 import type { AcousticMaterial } from './materials';
-import type { CardBaseConfig, CardType, CardExecutionState } from './card';
+import type { CardBaseConfig, CardType, CardExecutionState, SavedObjectVisibility } from './card';
 import type { PffdtdSettings, PffdtdVoxelProblem } from './pffdtd';
 import type { SoundDirectivity } from './directivity';
 
@@ -63,8 +63,23 @@ export interface BaseSimulationConfig extends CardBaseConfig {
   simulationInstanceId?: string; // Unique ID to track which hook instance this config is bound to
   /** Acoustic region this card was simulated with (see SimulationAcousticSelection). */
   speckleAcousticSelection?: SimulationAcousticSelection;
+  /** Object Explorer hide / isolate state saved on this card; restored when it is powered on. */
+  savedObjectVisibility?: SavedObjectVisibility;
   /** Speckle version the completed result was simulated on (geometry-change / outdated detection). */
   simulatedVersionId?: string;
+}
+
+/** Axis-aligned shoebox used by a Resonance (ShoeBox) card. */
+export interface ResonanceRoomBounds {
+  min: [number, number, number];
+  max: [number, number, number];
+}
+
+/** Per-card Resonance room: independent bounds and wall materials. */
+export interface ResonanceRoom {
+  /** Null until model/sandbox bounds are known; filled lazily. */
+  bounds: ResonanceRoomBounds | null;
+  materials: ResonanceRoomMaterial;
 }
 
 /**
@@ -72,7 +87,7 @@ export interface BaseSimulationConfig extends CardBaseConfig {
  */
 export interface ResonanceSimulationConfig extends BaseSimulationConfig {
   type: 'resonance';
-  // Settings stored in resonanceAudioConfig (passed separately)
+  room: ResonanceRoom;
 }
 
 /**
@@ -85,6 +100,7 @@ export interface PyroomAcousticsSimulationConfig extends BaseSimulationConfig, C
     ray_tracing: boolean;
     air_absorption: boolean;
     n_rays: number;
+    parallel: boolean; // one process per emitter room on the backend
     simulation_mode: string; // "mono" or "foa" (directivity-based, supports ISM and hybrid ray tracing)
     enable_grid: boolean; // Enable grid receiver simulation (heatmap export)
   };

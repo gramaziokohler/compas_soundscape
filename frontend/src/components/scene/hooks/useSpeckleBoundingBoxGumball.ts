@@ -1,49 +1,48 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import * as THREE from 'three';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
+import { useAcousticsSimulationStore, useUIStore } from '@/store';
 import type { BoundingBoxBounds } from '@/lib/three/BoundingBoxManager';
+import { RESONANCE_AUDIO } from '@/utils/constants';
+import { clampRoomBounds } from '@/lib/audio/utils/resonance-rooms';
 
 interface BoundingBoxGumballProps {
   isViewerReady: boolean;
-  showBoundingBox?: boolean;
+  canEdit: boolean;
   containerRef: React.RefObject<HTMLDivElement | null>;
-  resonanceAudioConfig?: { roomMaterials?: any };
-  onBoundsComputed?: (bounds: { min: [number, number, number]; max: [number, number, number] }) => void;
-  roomScale: { x: number; y: number; z: number };
-  refreshBoundingBoxTrigger: number;
 }
 
 export function useSpeckleBoundingBoxGumball({
   isViewerReady,
-  showBoundingBox,
+  canEdit,
   containerRef,
-  resonanceAudioConfig,
-  onBoundsComputed,
-  roomScale,
-  refreshBoundingBoxTrigger,
 }: BoundingBoxGumballProps) {
-  const [draggedBoundsOverride, setDraggedBoundsOverride] = useState<BoundingBoxBounds | null>(null);
-
-  // Reset override when room scale or refresh trigger changes
-  useEffect(() => { setDraggedBoundsOverride(null); }, [roomScale.x, roomScale.y, roomScale.z]);
-  useEffect(() => { setDraggedBoundsOverride(null); }, [refreshBoundingBoxTrigger]);
+  const expandedTabIndex = useUIStore((s) => s.expandedSimulationTabIndex);
+  const simulationConfigs = useAcousticsSimulationStore((s) => s.simulationConfigs);
+  const editCardId = expandedTabIndex !== null
+    && simulationConfigs[expandedTabIndex]?.type === 'resonance'
+    ? simulationConfigs[expandedTabIndex].id
+    : null;
 
   useEffect(() => {
     const canvas = containerRef.current?.querySelector('canvas');
-    const { viewer, boundingBoxManager } = useSpeckleEngineStore.getState();
-    if (!canvas || !viewer || !boundingBoxManager || !showBoundingBox) return;
+    const { viewer, resonanceRoomBoxes } = useSpeckleEngineStore.getState();
+    if (!canvas || !viewer || !resonanceRoomBoxes || !canEdit || !editCardId) return;
+
+    const getManager = () => resonanceRoomBoxes.get(editCardId) ?? useSpeckleEngineStore.getState().resonanceRoomBoxes?.get(editCardId);
 
     let isDragging = false;
-    let dragAxis: 'x' | 'y' | 'z' | null = null;
+    let dragAxis: 'x' | 'y' | 'z' | 'xy' | null = null;
     let dragNormal: THREE.Vector3 | null = null;
     let dragStartAnchor: THREE.Vector3 | null = null;
     let baseBoundsAtDragStart: BoundingBoxBounds | null = null;
+    let isMoveHandle = false;
 
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
     const scene = viewer.getRenderer().scene;
-    const camera = (viewer as any).getRenderer().renderingCamera as THREE.Camera | null;
+    const camera = (viewer as { getRenderer: () => { renderingCamera: THREE.Camera } }).getRenderer().renderingCamera;
     if (!camera) return;
 
     const dragAnchor = new THREE.Object3D();
@@ -83,26 +82,44 @@ export function useSpeckleBoundingBoxGumball({
         min: [...bounds.min] as [number, number, number],
         max: [...bounds.max] as [number, number, number],
       };
+      const minExtent = RESONANCE_AUDIO.MIN_ROOM_EXTENT;
       if (Math.abs(normal.x) > 0.5) {
         if (normal.x > 0) nextBounds.max[0] += delta;
         else nextBounds.min[0] -= delta;
+        if (nextBounds.max[0] - nextBounds.min[0] < minExtent) {
+          if (normal.x > 0) nextBounds.max[0] = nextBounds.min[0] + minExtent;
+          else nextBounds.min[0] = nextBounds.max[0] - minExtent;
+        }
       } else if (Math.abs(normal.y) > 0.5) {
         if (normal.y > 0) nextBounds.max[1] += delta;
         else nextBounds.min[1] -= delta;
+        if (nextBounds.max[1] - nextBounds.min[1] < minExtent) {
+          if (normal.y > 0) nextBounds.max[1] = nextBounds.min[1] + minExtent;
+          else nextBounds.min[1] = nextBounds.max[1] - minExtent;
+        }
       } else if (Math.abs(normal.z) > 0.5) {
         if (normal.z > 0) nextBounds.max[2] += delta;
         else nextBounds.min[2] -= delta;
+        if (nextBounds.max[2] - nextBounds.min[2] < minExtent) {
+          if (normal.z > 0) nextBounds.max[2] = nextBounds.min[2] + minExtent;
+          else nextBounds.min[2] = nextBounds.max[2] - minExtent;
+        }
       }
       return nextBounds;
     };
 
-    const syncTransformAxis = (axis: 'x' | 'y' | 'z' | null) => {
-      const axisToken: 'X' | 'Y' | 'Z' | null =
-        axis === 'x' ? 'X' : axis === 'y' ? 'Y' : axis === 'z' ? 'Z' : null;
+    const syncTransformAxis = (axis: 'x' | 'y' | 'z' | 'xy' | null) => {
+      if (axis === 'xy') {
+        transformControls.showX = true;
+        transformControls.showY = true;
+        transformControls.showZ = false;
+        transformControls.axis = null;
+        return;
+      }
       transformControls.showX = axis === 'x';
       transformControls.showY = axis === 'y';
       transformControls.showZ = axis === 'z';
-      transformControls.axis = axisToken;
+      transformControls.axis = axis === 'x' ? 'X' : axis === 'y' ? 'Y' : axis === 'z' ? 'Z' : null;
     };
 
     transformControls.addEventListener('change', () => viewer.requestRender());
@@ -110,8 +127,8 @@ export function useSpeckleBoundingBoxGumball({
     transformControls.addEventListener('dragging-changed', (event) => {
       const dragging = !!(event as { value?: boolean }).value;
       isDragging = dragging;
-      const { cameraController, selectionExtension, boundingBoxManager: bbmForDrag } = useSpeckleEngineStore.getState();
-      bbmForDrag?.setDragging(dragging);
+      const { cameraController, selectionExtension } = useSpeckleEngineStore.getState();
+      getManager()?.setDragging(dragging);
       if (cameraController) {
         if (dragging) {
           cameraController.enabled = false;
@@ -127,33 +144,55 @@ export function useSpeckleBoundingBoxGumball({
     });
 
     transformControls.addEventListener('objectChange', () => {
-      const { boundingBoxManager: bbm } = useSpeckleEngineStore.getState();
-      if (!dragNormal || !dragStartAnchor || !baseBoundsAtDragStart || !bbm) return;
+      const bbm = getManager();
+      if (!dragStartAnchor || !baseBoundsAtDragStart || !bbm) return;
 
-      const projectedDelta = new THREE.Vector3()
-        .subVectors(dragAnchor.position, dragStartAnchor)
-        .dot(dragNormal);
-      const previewBounds = moveDraggedFace(baseBoundsAtDragStart, dragNormal, projectedDelta);
+      let previewBounds: BoundingBoxBounds;
+      if (isMoveHandle) {
+        const delta = new THREE.Vector3().subVectors(dragAnchor.position, dragStartAnchor);
+        previewBounds = {
+          min: [
+            baseBoundsAtDragStart.min[0] + delta.x,
+            baseBoundsAtDragStart.min[1] + delta.y,
+            baseBoundsAtDragStart.min[2],
+          ],
+          max: [
+            baseBoundsAtDragStart.max[0] + delta.x,
+            baseBoundsAtDragStart.max[1] + delta.y,
+            baseBoundsAtDragStart.max[2],
+          ],
+        };
+      } else if (dragNormal) {
+        const projectedDelta = new THREE.Vector3()
+          .subVectors(dragAnchor.position, dragStartAnchor)
+          .dot(dragNormal);
+        previewBounds = moveDraggedFace(baseBoundsAtDragStart, dragNormal, projectedDelta);
+      } else {
+        return;
+      }
 
+      previewBounds = clampRoomBounds(previewBounds);
+      const cfg = useAcousticsSimulationStore.getState().simulationConfigs.find((c) => c.id === editCardId);
+      const materials = cfg && cfg.type === 'resonance' ? cfg.room.materials : undefined;
       bbm.updateBoundingBox(previewBounds, {
-        roomMaterials: resonanceAudioConfig?.roomMaterials,
-        visible: showBoundingBox,
+        roomMaterials: materials,
+        visible: true,
+        editable: true,
+        label: cfg?.display_name,
       });
-      // updateBoundingBox recreates the bbox group (and any child readout label)
-      // when bounds change, so re-show the live dimension readout each drag frame.
-      if (dragAxis) {
+      if (dragAxis && dragAxis !== 'xy') {
         bbm.showDimensionLabel(previewBounds, dragAxis);
       }
-      setDraggedBoundsOverride(previewBounds);
-      onBoundsComputed?.(previewBounds);
+      useAcousticsSimulationStore.getState().setResonanceRoomBounds(editCardId, previewBounds);
       viewer.requestRender(8);
       viewer.requestRender();
     });
 
     const getIntersectedGumball = () => {
-      const { boundingBoxManager: bbm, viewer: v } = useSpeckleEngineStore.getState();
-      if (!bbm || bbm.gumballHandles.length === 0 || !showBoundingBox) return null;
-      const cam = (v as any)?.getRenderer().renderingCamera;
+      const bbm = getManager();
+      if (!bbm || bbm.gumballHandles.length === 0) return null;
+      const cam = (useSpeckleEngineStore.getState().viewer as { getRenderer: () => { renderingCamera: THREE.Camera } } | null)
+        ?.getRenderer().renderingCamera;
       if (!cam) return null;
       raycaster.setFromCamera(pointer, cam);
       const intersects = raycaster.intersectObjects(bbm.gumballHandles, false);
@@ -162,7 +201,7 @@ export function useSpeckleBoundingBoxGumball({
 
     const onCanvasPointerMove = (e: PointerEvent) => {
       if (isDragging) return;
-      const { boundingBoxManager: bbm } = useSpeckleEngineStore.getState();
+      const bbm = getManager();
       if (!bbm) return;
       updatePointer(e);
       const hit = getIntersectedGumball();
@@ -183,13 +222,12 @@ export function useSpeckleBoundingBoxGumball({
     };
 
     const onPointerDown = (e: PointerEvent) => {
-      // Arrows are draggable with the primary (left) mouse button only — ignore
-      // middle (button 1) and right (button 2) clicks.
       if (e.button !== 0) return;
       updatePointer(e);
-      const { boundingBoxManager: bbm, viewer: v } = useSpeckleEngineStore.getState();
-      if (!bbm || bbm.gumballHandles.length === 0 || !showBoundingBox) return;
-      const cam = (v as any)?.getRenderer().renderingCamera;
+      const bbm = getManager();
+      const v = useSpeckleEngineStore.getState().viewer;
+      if (!bbm || bbm.gumballHandles.length === 0) return;
+      const cam = (v as { getRenderer: () => { renderingCamera: THREE.Camera } } | null)?.getRenderer().renderingCamera;
       if (!cam) return;
       raycaster.setFromCamera(pointer, cam);
       const intersects = raycaster.intersectObjects(bbm.gumballHandles, false);
@@ -199,9 +237,12 @@ export function useSpeckleBoundingBoxGumball({
       const hitWorldPoint = intersects[0].point;
       e.stopPropagation();
 
+      isMoveHandle = !!hit.userData.isMoveHandle;
       const normal: THREE.Vector3 = hit.userData.faceNormal;
-      dragNormal = normal.clone();
-      if (Math.abs(normal.x) > 0.5) dragAxis = 'x';
+      dragNormal = isMoveHandle ? null : normal.clone();
+      if (isMoveHandle) {
+        dragAxis = 'xy';
+      } else if (Math.abs(normal.x) > 0.5) dragAxis = 'x';
       else if (Math.abs(normal.y) > 0.5) dragAxis = 'y';
       else dragAxis = 'z';
 
@@ -211,20 +252,17 @@ export function useSpeckleBoundingBoxGumball({
           min: [...bounds.min] as [number, number, number],
           max: [...bounds.max] as [number, number, number],
         };
-        bbm.showDimensionLabel(baseBoundsAtDragStart as BoundingBoxBounds, dragAxis);
+        if (dragAxis && dragAxis !== 'xy') {
+          bbm.showDimensionLabel(baseBoundsAtDragStart, dragAxis);
+        }
       }
 
       dragAnchor.position.copy(hitWorldPoint);
       dragStartAnchor = hitWorldPoint.clone();
       dragAnchor.visible = true;
-      // The TransformControls gizmo stays hidden: the face's own arrow is the
-      // only handle shown (it changes color while dragging).
       bbm.setHoveredGumball(hit);
       syncTransformAxis(dragAxis);
       transformControls.attach(dragAnchor);
-      // Refresh the object + TransformControls' drag plane matrices so pointerDown
-      // computes its delta against the new drag-anchor position, not the stale
-      // matrix from the last render (fixes the first-drag jump to a far position).
       dragAnchor.updateMatrixWorld(true);
       transformHelper.updateMatrixWorld(true);
       transformControls.pointerDown(getControlPointer(e, 0));
@@ -240,14 +278,15 @@ export function useSpeckleBoundingBoxGumball({
       dragNormal = null;
       dragStartAnchor = null;
       baseBoundsAtDragStart = null;
+      isMoveHandle = false;
       syncTransformAxis(null);
       transformControls.detach();
       dragAnchor.visible = false;
       transformHelper.visible = false;
       canvas.style.cursor = 'default';
       document.removeEventListener('pointermove', onDocumentDragMove, true);
-      const { boundingBoxManager: bbm, selectionExtension } = useSpeckleEngineStore.getState();
-      bbm?.hideDimensionLabel();
+      const { selectionExtension } = useSpeckleEngineStore.getState();
+      getManager()?.hideDimensionLabel();
       if (selectionExtension) selectionExtension.enabled = true;
     };
 
@@ -265,12 +304,10 @@ export function useSpeckleBoundingBoxGumball({
       transformControls.dispose();
       scene.remove(transformHelper);
       scene.remove(dragAnchor);
-      const { boundingBoxManager, cameraController, selectionExtension } = useSpeckleEngineStore.getState();
-      boundingBoxManager?.hideDimensionLabel();
+      const { cameraController, selectionExtension } = useSpeckleEngineStore.getState();
+      getManager()?.hideDimensionLabel();
       if (cameraController) cameraController.enabled = true;
       if (selectionExtension) selectionExtension.enabled = true;
     };
-  }, [isViewerReady, showBoundingBox]);
-
-  return { draggedBoundsOverride };
+  }, [isViewerReady, canEdit, editCardId, containerRef]);
 }

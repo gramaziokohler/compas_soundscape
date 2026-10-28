@@ -3,6 +3,7 @@
 import { type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import { Power } from "lucide-react";
 import { SIMPLE_MODE } from "@/utils/constants";
+import { useCanEdit } from "@/hooks/useCanEdit";
 
 export type BubbleStatus = "idle" | "queued" | "running" | "error";
 /** Accent family: primary (scenes, simulations) or listener (the listener card color). */
@@ -178,6 +179,9 @@ export interface BubbleAddButtonProps {
  * ```
  */
 export function BubbleAddButton({ label, id, onClick, active = false, size = SIMPLE_MODE.BUBBLE_SIZE, labelSide = "right", tone = "primary" }: BubbleAddButtonProps) {
+  // Share view: nothing can be added.
+  const canEdit = useCanEdit();
+  if (!canEdit) return null;
   return (
     <div className="bubble-wrap group" style={{ width: size, height: size }}>
       <button

@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { globalUndo, globalRedo, installUndoInteractionTracking } from '@/store';
 import { hasModKey, isTypingTarget } from '@/lib/shortcuts/keyboard-utils';
+import { isShareViewActive } from '@/store/shareViewStore';
 
 /**
  * Mounts global Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z (Cmd on macOS) keyboard
@@ -19,6 +20,8 @@ export function useUndoRedo(): void {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (!hasModKey(e) || e.altKey) return;
+      // Share view: nothing is editable, so there is nothing to undo.
+      if (isShareViewActive()) return;
 
       // Don't intercept while the user is typing
       if (isTypingTarget(e.target)) return;

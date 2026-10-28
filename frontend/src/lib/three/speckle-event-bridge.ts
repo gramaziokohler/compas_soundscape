@@ -479,18 +479,19 @@ export class SpeckleEventBridge {
    * drag release would fall through to normal object selection.
    */
   private isBoundingBoxGumballDragging(): boolean {
-    const { boundingBoxManager } = useSpeckleEngineStore.getState();
-    return !!(boundingBoxManager?.isDragging || boundingBoxManager?.justFinishedDragging);
+    const { resonanceRoomBoxes } = useSpeckleEngineStore.getState();
+    return !!resonanceRoomBoxes?.anyJustFinishedDragging();
   }
 
   /** Raycasts the bounding-box gumball resize handles (separate TransformControls, not a custom object). */
   private isPointerOnGumballHandle(): boolean {
     try {
-      const { boundingBoxManager } = useSpeckleEngineStore.getState();
-      if (!boundingBoxManager || boundingBoxManager.gumballHandles.length === 0) return false;
+      const { resonanceRoomBoxes } = useSpeckleEngineStore.getState();
+      const handles = resonanceRoomBoxes?.allGumballHandles() ?? [];
+      if (handles.length === 0) return false;
       const camera = this.adapter.getCamera();
       this.raycaster.setFromCamera(this.mouse, camera);
-      const intersects = this.raycaster.intersectObjects(boundingBoxManager.gumballHandles, false);
+      const intersects = this.raycaster.intersectObjects(handles, false);
       return intersects.length > 0;
     } catch {
       return false;

@@ -2,7 +2,7 @@
  * UI Store
  *
  * Holds page-level UI state from page.tsx that doesn't belong to any domain
- * store: active load tab, IR selection, bounding box toggles, room scale,
+ * store: active load tab, IR selection, bounding box toggles,
  * audio rendering mode, Speckle viewer flags, global model identity, and
  * sidebar expand states.
  *

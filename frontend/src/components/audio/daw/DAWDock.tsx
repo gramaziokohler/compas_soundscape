@@ -1,5 +1,6 @@
 'use client';
 
+import { useCanEdit } from '@/hooks/useCanEdit';
 import { Fragment, useLayoutEffect, useRef, useState, useCallback, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { DAWRuler, computeTickStep, type LoopRegion } from './DAWRuler';
@@ -83,6 +84,8 @@ export function DAWDock({
   rightOffset,
   bottomOffset = 0,
 }: DAWDockProps) {
+  // Share view: playback only — no clip drag / trim / delete / menus / edit keys.
+  const canEdit = useCanEdit();
   const timelineDurationMs = useAudioControlsStore((s) => s.timelineDurationMs);
   const mutedSounds = useAudioControlsStore((s) => s.mutedSounds);
   const soloedSounds = useAudioControlsStore((s) => s.soloedSounds);
@@ -562,6 +565,8 @@ export function DAWDock({
     const mod = e.ctrlKey || e.metaKey;
     // preventDefault: Esc in the dock is consumed here (global Esc cascade stands down).
     if (e.key === 'Escape') { e.preventDefault(); selection.clear(); return; }
+    // Share view: every other dock key edits clips.
+    if (!canEdit) return;
     if (mod && e.key.toLowerCase() === 'a') { e.preventDefault(); selection.selectAll([...registryRef.current.keys()]); return; }
     if (mod && e.key.toLowerCase() === 'd') { e.preventDefault(); handleDuplicateSelected(); return; }
     if (mod && e.key.toLowerCase() === 'c') { e.preventDefault(); handleCopySelected(); return; }
@@ -573,7 +578,7 @@ export function DAWDock({
       commitDelta([...selection.selectedClipKeys], e.key === 'ArrowLeft' ? -step : step);
       return;
     }
-  }, [selection, snapStepSec, commitDelta, handleDeleteSelected, handleDuplicateSelected, handleCopySelected, handlePasteAtPlayhead]);
+  }, [canEdit, selection, snapStepSec, commitDelta, handleDeleteSelected, handleDuplicateSelected, handleCopySelected, handlePasteAtPlayhead]);
 
   /* ---- Top-edge dock resize (hover-blue grip, mirrors sidebar resize handle).
        Starting a drag also switches the dock out of auto-fit mode: the height
@@ -752,7 +757,7 @@ export function DAWDock({
         )}
         <div ref={scrollContainerRef} style={{ flex: 1, overflow: 'auto', position: 'relative' }}>
           <div
-            onPointerDown={handleTracksPointerDown}
+            onPointerDown={canEdit ? handleTracksPointerDown : undefined}
             style={{ minWidth: DAW.HEAD_WIDTH + contentWidth, position: 'relative' }}
           >
             <DAWRuler
@@ -805,19 +810,20 @@ export function DAWDock({
                   trackHeight={trackHeight}
                   timelineDurationMs={timelineDurationMs}
                   isMuted={mutedSounds.has(sound.id)}
-                  isDraggable
+                  isDraggable={canEdit}
                   selectedClipKeys={selection.selectedClipKeys}
                   dragPreview={gesture.dragPreview}
                   isDragging={gesture.isDragging}
                   isDuplicating={gesture.isDuplicating}
                   tickStepPx={tickStepPx}
                   onClipPointerDown={(e, clip) => {
+                    if (!canEdit) return;
                     selection.onClipPressed(clip.clipKey, e, clips.map((c) => c.clipKey));
                     gesture.beginDrag(e, { clipKey: clip.clipKey, soundId: sound.id, iterationIndex: clip.iterationIndex, startMs: clip.startMs, durationMs: clip.durationMs });
                   }}
                   trimPreview={trimGesture.trimPreview}
                   onClipTrimPointerDown={(e, clip, edge) => {
-                    if (!clip.sourceDurationMs) return;
+                    if (!canEdit || !clip.sourceDurationMs) return;
                     trimGesture.beginTrim(e, {
                       clipKey: clip.clipKey,
                       soundId: sound.id,
@@ -828,8 +834,8 @@ export function DAWDock({
                       sourceDurationMs: clip.sourceDurationMs,
                     }, edge);
                   }}
-                  onDeleteClip={(iterationIndex) => { ensureTrackMaterialized(soundsRef, sound.id); handleRemoveTimestamp(sound.id, iterationIndex); }}
-                  onClipContextMenu={(iterationIndex, x, y) => setContextMenu({ soundId: sound.id, iterationIndex, x, y })}
+                  onDeleteClip={(iterationIndex) => { if (!canEdit) return; ensureTrackMaterialized(soundsRef, sound.id); handleRemoveTimestamp(sound.id, iterationIndex); }}
+                  onClipContextMenu={(iterationIndex, x, y) => { if (canEdit) setContextMenu({ soundId: sound.id, iterationIndex, x, y }); }}
                   onClipDoubleClick={configIdx !== undefined ? () => { triggerZoomToSoundCard(configIdx); handleZoomToLinkedEntity(configIdx); } : undefined}
                   onClipHover={(iterationIndex) => handleIterationHover(sound.id, iterationIndex, configIdx)}
                   onClipHoverEnd={handleIterationHoverEnd}

@@ -14,6 +14,8 @@ import { useGridListenersStore } from '@/store/gridListenersStore';
 import { useReceiversStore } from '@/store/receiversStore';
 import { usePositionClipboardStore } from '@/store';
 import { useOnFloatingPanelsCollapse } from '@/hooks/useOnFloatingPanelsCollapse';
+import { useCanEdit } from '@/hooks/useCanEdit';
+import { FpsLockedNotice } from './listeners/FpsLockedNotice';
 
 interface ListenersSectionProps {
   receivers: ReceiverData[];
@@ -143,6 +145,7 @@ export function ListenersSection({
 
   // Grid whose point the viewer is standing on (FPS on a grid listener point)
   const fpsGridListenerId = isFPSModeActive && poweredListenerId === null ? activeGridListenerId : null;
+  const canEdit = useCanEdit();
 
   const isItemPowered = useCallback((item: ListenerItemConfig) => (
     item.type === 'listener' ? poweredListenerId === item.id : activeGridListenerId === item.id
@@ -300,7 +303,11 @@ export function ListenersSection({
 
     const isPowered = isItemPowered(item);
 
-    const content = item.type === 'listener' ? (
+    // Share view: listeners are only powered on/off — no position / orientation /
+    // grid editors, clipboard or hide buttons.
+    const content = !canEdit ? (
+      isPowered && item.type === 'listener' ? <FpsLockedNotice /> : null
+    ) : item.type === 'listener' ? (
       <SingleListenerContent
         receiver={item}
         color={LISTENER_COLOR}
@@ -330,7 +337,7 @@ export function ListenersSection({
           showIndex={true}
           canRemove={true}
           closeButtonTitle="Delete listener"
-          customButtons={[...clipboardButtons, hideButton, ...(floating?.extraMenu ?? [])]}
+          customButtons={canEdit ? [...clipboardButtons, hideButton, ...(floating?.extraMenu ?? [])] : floating?.extraMenu}
           onReduce={floating?.onReduce}
           onToggleExpand={onToggleExpand}
           onUpdateConfig={handleUpdateConfig as (index: number, updates: Partial<typeof item>) => void}
@@ -353,6 +360,7 @@ export function ListenersSection({
     isItemPowered,
     toggleItemPower,
     fpsGridListenerId,
+    canEdit,
   ]);
 
   if (presentation === 'bubbles') {
@@ -364,6 +372,10 @@ export function ListenersSection({
         openIndex={expandedIndex}
         isFpsMode={poweredListenerId !== null || fpsGridListenerId !== null}
         onTogglePower={handleBubblePower}
+        onToggleHiddenForSimulation={canEdit ? (item) => {
+          if (item.type === 'listener') onToggleReceiverHiddenForSimulation(item.id);
+          else toggleGridListenerHiddenForSimulation(item.id);
+        } : undefined}
         onExitFps={() => onExitFPS?.()}
         onOpenChange={handleExpandedIndexChange}
         onAddItem={handleAddItem}

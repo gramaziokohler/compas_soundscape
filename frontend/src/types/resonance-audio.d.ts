@@ -68,6 +68,12 @@ declare module 'resonance-audio' {
       forwardX: number, forwardY: number, forwardZ: number,
       upX: number, upY: number, upZ: number
     ): void;
+
+    /**
+     * Private listener (ambisonic mix input). Used to isolate a source's dry
+     * encoder path so overlapping rooms can share one direct sound.
+     */
+    _listener: { input: AudioNode };
   }
 
   /**
@@ -113,5 +119,16 @@ declare module 'resonance-audio' {
       forwardX: number, forwardY: number, forwardZ: number,
       upX: number, upY: number, upZ: number
     ): void;
+
+    /**
+     * Private ambisonic encoder. `_encoder.output` is the dry path into the
+     * listener; ResonanceMode re-routes it through a GainNode for overlap blend.
+     */
+    _encoder: { output: AudioNode };
+
+    setRolloff?(rolloff: string): void;
+    setMinDistance?(distance: number): void;
+    setMaxDistance?(distance: number): void;
+    setSourceWidth?(degrees: number): void;
   }
 }

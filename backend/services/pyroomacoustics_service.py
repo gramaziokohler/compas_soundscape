@@ -167,7 +167,8 @@ class PyroomacousticsService:
         receiver_radius: float = None,
         energy_thres: float = None,
         time_thres: float = None,
-        hist_bin_size: float = None
+        hist_bin_size: float = None,
+        n_processes: int = 1,
     ):
         """
         Enable hybrid ISM and ray tracing simulator for more accurate late reverberation.
@@ -183,6 +184,7 @@ class PyroomacousticsService:
             energy_thres: Threshold for ray termination (default: from constants)
             time_thres: Maximum ray flight time in seconds (default: from constants)
             hist_bin_size: Time granularity of energy bins in seconds (default: from constants)
+            n_processes: Processes the rays of each source are split across (default: 1)
 
         Returns:
             Room with ray tracing enabled
@@ -202,7 +204,7 @@ class PyroomacousticsService:
                 PYROOMACOUSTICS_RAY_TRACING_RECEIVER_RADIUS,
                 PYROOMACOUSTICS_RAY_TRACING_ENERGY_THRES,
                 PYROOMACOUSTICS_RAY_TRACING_TIME_THRES,
-                PYROOMACOUSTICS_RAY_TRACING_HIST_BIN_SIZE
+                PYROOMACOUSTICS_RAY_TRACING_HIST_BIN_SIZE,
             )
 
             # Use defaults from constants if not provided
@@ -211,6 +213,7 @@ class PyroomacousticsService:
             energy_thres = energy_thres or PYROOMACOUSTICS_RAY_TRACING_ENERGY_THRES
             time_thres = time_thres or PYROOMACOUSTICS_RAY_TRACING_TIME_THRES
             hist_bin_size = hist_bin_size or PYROOMACOUSTICS_RAY_TRACING_HIST_BIN_SIZE
+            n_processes = max(1, int(n_processes or 1))
 
             # Enable ray tracing with specified parameters
             # This will raise an error if room wasn't created with ray_tracing=True
@@ -219,10 +222,11 @@ class PyroomacousticsService:
                 receiver_radius=receiver_radius,
                 energy_thres=energy_thres,
                 time_thres=time_thres,
-                hist_bin_size=hist_bin_size
+                hist_bin_size=hist_bin_size,
+                n_processes=n_processes,
             )
 
-            print(f"Ray tracing enabled with {n_rays} rays, receiver_radius={receiver_radius}m")
+            print(f"Ray tracing enabled with {n_rays} rays over {n_processes} process(es), receiver_radius={receiver_radius}m")
 
             return room
 

@@ -346,7 +346,7 @@ function DAWClipImpl({
           </span>
         )}
 
-        {isHovered && !isExcluded && (
+        {isHovered && !isExcluded && isDraggable && (
           <button
             onClick={(e) => { e.stopPropagation(); onDelete(); }}
             onPointerDown={(e) => e.stopPropagation()}

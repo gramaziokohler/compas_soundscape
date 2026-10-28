@@ -32,6 +32,7 @@ from config.constants import (
     AUTH_DEV_BYPASS,
     CF_ACCESS_REQUIRE,
     DEV_USER_EMAIL,
+    PUBLIC_API_PREFIX,
     SESSION_COOKIE,
     SESSION_COOKIE_MAX_AGE,
     SESSION_TOKEN_BYTES,
@@ -46,8 +47,9 @@ logger = logging.getLogger(__name__)
 _COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "true").lower() in ("true", "1", "yes")
 
 # Static/media routes never need identity and are hit many times per page — skip
-# all DB work and cookie writes for them.
-_SKIP_PREFIXES = ("/static", "/soundscapes")
+# all DB work and cookie writes for them. Public share routes (`/api/public`) are
+# reached by anonymous embeds without an Access JWT, so they skip it too.
+_SKIP_PREFIXES = ("/static", "/soundscapes", PUBLIC_API_PREFIX)
 
 
 def _new_token() -> str:

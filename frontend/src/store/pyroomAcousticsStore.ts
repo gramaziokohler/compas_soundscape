@@ -24,6 +24,7 @@ import {
   PYROOMACOUSTICS_RAY_TRACING_N_RAYS,
   PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE,
   PYROOMACOUSTICS_DEFAULT_ENABLE_GRID,
+  PYROOMACOUSTICS_DEFAULT_PARALLEL,
 } from '@/utils/constants';
 import { groupSoundsByPosition, collapseVariantsToOne } from '@/utils/positionKey';
 import { notifyError } from './errorsStore';
@@ -50,6 +51,7 @@ export interface PyroomSimulationSettings {
   ray_tracing: boolean;
   air_absorption: boolean;
   n_rays: number;
+  parallel: boolean;
   simulation_mode: string;
   enable_grid: boolean;
 }
@@ -91,6 +93,7 @@ function createDefaultInstanceState(sharedMaterials: PyroomMaterial[]): PyroomIn
       ray_tracing: PYROOMACOUSTICS_DEFAULT_RAY_TRACING,
       air_absorption: PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION,
       n_rays: PYROOMACOUSTICS_RAY_TRACING_N_RAYS,
+      parallel: PYROOMACOUSTICS_DEFAULT_PARALLEL,
       simulation_mode: PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE,
       enable_grid: PYROOMACOUSTICS_DEFAULT_ENABLE_GRID,
     },

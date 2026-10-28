@@ -1,5 +1,6 @@
 'use client';
 
+import { useCanEdit } from '@/hooks/useCanEdit';
 import { useCallback, useRef, useState } from 'react';
 import { NumberField } from '@/components/ui/NumberField';
 import { DAW } from '@/utils/constants';
@@ -55,6 +56,8 @@ export function DAWRuler({
   isEditingDuration, onStartEditDuration, onStopEditDuration, onDurationChange,
   overrun = null, onExtendTimeline, isBakingSchedule = false,
 }: DAWRulerProps) {
+  // Share view: the timeline length is not editable.
+  const canEdit = useCanEdit();
   const labelStep = computeTickStep(pxPerSecond);
   const minorStep = computeMinorStep(labelStep);
   const subSecond = labelStep < 1;
@@ -197,7 +200,7 @@ export function DAWRuler({
             <style>{`@keyframes daw-bake-pulse { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.3; transform: scale(0.7); } }`}</style>
           </>
         )}
-        {!isBakingSchedule && overrun && onExtendTimeline && (
+        {canEdit && !isBakingSchedule && overrun && onExtendTimeline && (
           <button
             onPointerDown={(e) => e.stopPropagation()}
             onDoubleClick={(e) => e.stopPropagation()}
@@ -272,6 +275,7 @@ export function DAWRuler({
             </div>
           );
         })}
+        {canEdit && (
         <div
           onPointerDown={(e) => e.stopPropagation()}
           onDoubleClick={(e) => e.stopPropagation()}
@@ -317,6 +321,7 @@ export function DAWRuler({
             </button>
           )}
         </div>
+        )}
       </div>
     </div>
   );

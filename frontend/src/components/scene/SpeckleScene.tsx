@@ -3,7 +3,8 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { SpeckleAudioCoordinator } from '@/lib/three/speckle-audio-coordinator';
 import { PlaybackSchedulerService } from '@/lib/audio/playback-scheduler-service';
-import { BoundingBoxManager } from '@/lib/three/BoundingBoxManager';
+import { ResonanceRoomBoxes } from '@/lib/three/ResonanceRoomBoxes';
+import { getPlaceholderRoomBounds } from '@/lib/three/placeholder-room-manager';
 import { GradientMapManager } from '@/lib/three/gradient-map-manager';
 import { useTransportClock } from '@/hooks/useTransportClock';
 import { useSpeckleStore, useAcousticsSimulationStore, useGridListenersStore, notifyError } from '@/store';
@@ -50,6 +51,7 @@ import { useAcousticLayerIsolation } from '@/hooks/useAcousticLayerIsolation';
 import { SceneViewModeToolbar } from '@/components/scene/SceneViewModeToolbar';
 import { SceneBottomBar } from '@/components/scene/SceneBottomBar';
 import { SceneContextMenu } from '@/components/scene/SceneContextMenu';
+import { useCanEdit } from '@/hooks/useCanEdit';
 import { useSceneContextMenu } from '@/components/scene/hooks/useSceneContextMenu';
 import { HomeUploadPrompt } from '@/components/scene/HomeUploadPrompt';import { SpeckleModelModal } from '@/components/scene/SpeckleModelModal';
 import { SceneTimeline } from '@/components/scene/SceneTimeline';
@@ -136,12 +138,7 @@ interface SpeckleSceneProps {
   // Playback controls
   // (onPlayAll/onPauseAll/onStopAll/isAnyPlaying are now read from audioControlsStore)
 
-  // Resonance Audio (ShoeBox Acoustics) - NEW
-  resonanceAudioConfig?: import('@/types/audio').ResonanceAudioConfig;
-  showBoundingBox?: boolean;
-  refreshBoundingBoxTrigger?: number;
-  roomScale?: { x: number; y: number; z: number };
-  onRoomScaleChange?: (scale: { x: number; y: number; z: number }) => void;
+  // Resonance Audio (ShoeBox Acoustics) — boxes are owned by acousticsSimulationStore.
 
   // Callback when viewer is loaded
   onViewerLoaded?: (viewer: Viewer) => void;
@@ -258,11 +255,6 @@ export function SpeckleScene({
   onSelectSoundCard,
   isLinkingEntity = false,
   linkingConfigIndex = null,
-  resonanceAudioConfig,
-  showBoundingBox ,
-  refreshBoundingBoxTrigger = 0,
-  roomScale = { x: 1, y: 1, z: 1 },
-  onRoomScaleChange,
   onViewerLoaded,
   onBoundsComputed,
   isLeftSidebarExpanded = true,
@@ -327,7 +319,7 @@ export function SpeckleScene({
   const coordinatorRef = useRef<SpeckleAudioCoordinator | null>(null);
   const selectionExtensionRef = useRef<SelectionExtension | null>(null);
   const filteringExtensionRef = useRef<FilteringExtension | null>(null);
-  const boundingBoxManagerRef = useRef<BoundingBoxManager | null>(null);
+  const resonanceRoomBoxesRef = useRef<ResonanceRoomBoxes | null>(null);
   const cameraControllerRef = useRef<CameraController | null>(null);
   const playbackSchedulerRef = useRef<PlaybackSchedulerService | null>(null);
 
@@ -450,7 +442,7 @@ export function SpeckleScene({
       coordinatorRef.current = state.coordinator;
       selectionExtensionRef.current = state.selectionExtension;
       filteringExtensionRef.current = state.filteringExtension;
-      boundingBoxManagerRef.current = state.boundingBoxManager;
+      resonanceRoomBoxesRef.current = state.resonanceRoomBoxes;
       cameraControllerRef.current = state.cameraController;
       playbackSchedulerRef.current = state.playbackScheduler;
     });
@@ -475,6 +467,7 @@ export function SpeckleScene({
 
   // ── Right-click context menu ──
   const { menu: contextMenu, closeMenu: closeContextMenu } = useSceneContextMenu(containerRef);
+  const canEdit = useCanEdit();
 
   // ── Area Drawing ──
   useSpeckleAreaDrawing({ isViewerReady, containerRef });
@@ -553,28 +546,14 @@ export function SpeckleScene({
     previewingSoundId,
   });
 
-  // ── Bounding Box Gumball ── (Phase 5 — owns draggedBoundsOverride state)
-  const { draggedBoundsOverride } = useSpeckleBoundingBoxGumball({
+  useSpeckleBoundingBoxGumball({
     isViewerReady,
-    showBoundingBox,
+    canEdit,
     containerRef,
-    resonanceAudioConfig,
-    onBoundsComputed,
-    roomScale,
-    refreshBoundingBoxTrigger,
   });
 
-  // ── Bounding Box ──
   useSpeckleBoundingBox({
     isViewerReady,
-    soundscapeData,
-    showBoundingBox,
-    resonanceAudioConfig,
-    refreshBoundingBoxTrigger,
-    onBoundsComputed,
-    roomScale,
-    draggedBoundsOverride,
-    isSandbox,
   });
 
   // Use Speckle tree hook for selection handling
@@ -909,17 +888,13 @@ export function SpeckleScene({
   // This ensures bounds are available for sound generation before any sounds exist
   // ============================================================================
   useEffect(() => {
-    if (!isViewerReady || !viewerRef.current || !boundingBoxManagerRef.current) {
+    if (!isViewerReady || !viewerRef.current || !resonanceRoomBoxesRef.current) {
       return;
     }
 
-    // The Home sandbox World only holds the expanded ground-grid stage box, not
-    // real geometry — reporting it here would clobber the sound-fitted resonance
-    // bounds owned by useSpeckleBoundingBox. Let that hook own the sandbox bounds.
-    if (isSandbox) return;
-
-    // Compute bounds from Speckle viewer
-    const bounds = boundingBoxManagerRef.current.calculateBoundsFromSpeckleBatches(viewerRef.current);
+    const bounds = isSandbox
+      ? getPlaceholderRoomBounds()
+      : resonanceRoomBoxesRef.current.calculateBoundsFromSpeckleBatches(viewerRef.current);
 
     if (bounds && onBoundsComputed) {
       console.log('[SpeckleScene] ✅ Reporting initial bounds to parent:', bounds);
@@ -1301,7 +1276,7 @@ export function SpeckleScene({
       />
 
       {/* Right-click command menu — acts on the object the right-click selected */}
-      {contextMenu && (
+      {contextMenu && canEdit && (
         <SceneContextMenu
           x={contextMenu.x}
           y={contextMenu.y}

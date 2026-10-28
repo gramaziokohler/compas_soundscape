@@ -7,6 +7,7 @@ import { SoundDirectivityRow } from './SoundDirectivityRow';
 import { UI_VOLUME_SLIDER, DEFAULT_DBFS } from '@/utils/constants';
 import { useBatchedSlider } from '@/hooks/useBatchedSlider';
 import type { SoundDirectivity } from '@/types/directivity';
+import { useCanEdit } from '@/hooks/useCanEdit';
 
 /**
  * SoundCardBody
@@ -74,6 +75,8 @@ export function SoundCardBody({
   storeContext,
   onBlueBackground = false,
 }: SoundCardBodyProps) {
+  // Share view: position / directivity / volume are edits — hidden.
+  const canEdit = useCanEdit();
   // Local slider state for smooth visual feedback while dragging
   const [tempVolumeDbfs, setTempVolumeDbfs] = useState(volumeDbfs);
 
@@ -111,7 +114,7 @@ export function SoundCardBody({
         {mainContent}
 
         {/* 2. Position widget — always visible when provided */}
-        {onUpdatePosition && (
+        {canEdit && onUpdatePosition && (
           <div className="flex items-center gap-1.5 flex-shrink-0">
             <PositionWidget
               position={position}
@@ -125,7 +128,7 @@ export function SoundCardBody({
         )}
 
         {/* 3. Directivity — pattern picker (+ orientation when directional) */}
-        {onUpdateDirectivity && (
+        {canEdit && onUpdateDirectivity && (
           <SoundDirectivityRow
             directivity={directivity}
             onChange={onUpdateDirectivity}
@@ -135,7 +138,7 @@ export function SoundCardBody({
       </div>
 
       {/* ── Right column: volume slider ── */}
-      {onVolumeChange && (
+      {canEdit && onVolumeChange && (
         <div className="flex gap-2 items-stretch">
           <VerticalVolumeSlider
             value={tempVolumeDbfs}

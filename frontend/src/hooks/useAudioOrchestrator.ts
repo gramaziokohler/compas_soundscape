@@ -294,20 +294,11 @@ export function useAudioOrchestrator() {
     orchestratorRef.current.setNormalize(normalize);
   }, []);
 
-  // Update Resonance room materials
-  const updateResonanceRoomMaterials = useCallback((materials: any) => {
+  const setResonanceRooms = useCallback((specs: import('@/types/audio').ResonanceRoomSpec[]) => {
     if (!orchestratorRef.current) {
       throw new Error('Orchestrator not initialized');
     }
-    orchestratorRef.current.updateResonanceRoomMaterials(materials);
-  }, []);
-
-  // Update Resonance room dimensions
-  const updateResonanceRoomDimensions = useCallback((dimensions: any) => {
-    if (!orchestratorRef.current) {
-      throw new Error('Orchestrator not initialized');
-    }
-    orchestratorRef.current.updateResonanceRoomDimensions(dimensions);
+    orchestratorRef.current.setResonanceRooms(specs);
   }, []);
 
   // Set receiver mode
@@ -354,8 +345,7 @@ export function useAudioOrchestrator() {
     getWarnings,
     clearWarnings,
     setNormalize,
-    updateResonanceRoomMaterials,
-    updateResonanceRoomDimensions,
+    setResonanceRooms,
     setReceiverMode,
     updateListener
   };

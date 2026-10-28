@@ -28,6 +28,12 @@ export interface BoundingBoxConfig {
   roomMaterials?: ResonanceRoomMaterial;
   /** Whether to show the bounding box */
   visible?: boolean;
+  /** Card name shown above the box */
+  label?: string;
+  /** When false, gumball handles are hidden (other rooms stay visible but not editable). */
+  editable?: boolean;
+  /** Multiplier on face/wireframe opacity (dim non-edited rooms). */
+  opacityScale?: number;
 }
 
 /**
@@ -72,6 +78,9 @@ export class BoundingBoxManager {
    *  created sprites immediately so they never render one frame at the rough
    *  creation scale (which is huge relative to their correct screen-space size). */
   private lastCamera: THREE.PerspectiveCamera | null = null;
+  private nameLabel: THREE.Sprite | null = null;
+  private opacityScale = 1;
+  private lastMaterials: BoundingBoxConfig['roomMaterials'];
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
@@ -216,15 +225,13 @@ export class BoundingBoxManager {
     if (!this.boundingBoxGroup) {
       this.createBoundingBox(bounds, config);
     } else {
-      // Update existing bounding box (materials, visibility)
+      // Update existing bounding box (materials, visibility, gumballs)
       this.updateMaterials(config.roomMaterials);
+      this.setGumballsVisible(config.editable !== false);
+      this.setOpacityScale(config.opacityScale ?? 1);
+      this.updateNameLabel(config.label);
       if (config.visible !== undefined) {
         this.boundingBoxGroup.visible = config.visible;
-
-        // Also set visibility on all children to ensure they render
-        this.boundingBoxGroup.traverse((child) => {
-          child.visible = config.visible ?? true;
-        });
       }
     }
   }
@@ -439,6 +446,59 @@ export class BoundingBoxManager {
       this.gumballHandles.push(hitMesh);
     });
 
+    // Center move handle — translates the whole box on the ground (XY) plane.
+    {
+      const centerGrp = new THREE.Group();
+      centerGrp.scale.setScalar(roughArrowScale);
+      const colorNormal = getCssColorHex('--color-receiver');
+      const colorHover = getCssColorHex('--color-warning');
+      const colorDrag = getCssColorHex('--color-warning-hover');
+      const sphereGeo = new THREE.SphereGeometry(RESONANCE_AUDIO.BOUNDING_BOX.GUMBALL_HEAD_RADIUS * 1.4, 12, 12);
+      const sphereMat = new THREE.MeshBasicMaterial({
+        color: colorNormal,
+        depthTest: false,
+        depthWrite: false,
+        transparent: true,
+        opacity: 0.95,
+      });
+      const sphere = new THREE.Mesh(sphereGeo, sphereMat);
+      centerGrp.add(sphere);
+      const hitGeo = new THREE.SphereGeometry(RESONANCE_AUDIO.BOUNDING_BOX.GUMBALL_HIT_RADIUS, 12, 12);
+      const hitMat = new THREE.MeshBasicMaterial({ visible: false, depthTest: false, depthWrite: false });
+      const hitMesh = new THREE.Mesh(hitGeo, hitMat);
+      hitMesh.userData = {
+        isGumballHit: true,
+        isMoveHandle: true,
+        faceName: 'center',
+        faceNormal: new THREE.Vector3(0, 0, 1),
+        originalColor: colorNormal,
+        hoverColor: colorHover,
+        dragColor: colorDrag,
+        visualArrowMaterial: sphereMat,
+      };
+      centerGrp.add(hitMesh);
+      centerGrp.traverse((c) => {
+        c.renderOrder = 9999;
+        c.layers.disableAll();
+        c.layers.enable(0);
+        c.layers.enable(4);
+      });
+      boundingBoxGroup.add(centerGrp);
+      this.gumballGroups.push(centerGrp);
+      this.gumballHandles.push(hitMesh);
+    }
+
+    if (config.label) {
+      const nameSprite = createLabelSprite(config.label);
+      nameSprite.position.set(0, 0, depth / 2 + RESONANCE_AUDIO.BOUNDING_BOX.GUMBALL_LABEL_CLEARANCE);
+      nameSprite.frustumCulled = false;
+      nameSprite.layers.disableAll();
+      nameSprite.layers.enable(0);
+      nameSprite.layers.enable(4);
+      boundingBoxGroup.add(nameSprite);
+      this.nameLabel = nameSprite;
+    }
+
     // Add to scene
     this.scene.add(boundingBoxGroup);
     this.boundingBoxGroup = boundingBoxGroup;
@@ -455,6 +515,9 @@ export class BoundingBoxManager {
     if (config.roomMaterials) {
       this.updateMaterials(config.roomMaterials);
     }
+
+    this.setGumballsVisible(config.editable !== false);
+    this.setOpacityScale(config.opacityScale ?? 1);
 
     // Set visibility
     if (config.visible !== undefined) {
@@ -474,7 +537,9 @@ export class BoundingBoxManager {
    * Update face colors based on room materials
    */
   private updateMaterials(roomMaterials?: BoundingBoxConfig['roomMaterials']): void {
-    if (!this.boundingBoxGroup || !roomMaterials) return;
+    if (roomMaterials) this.lastMaterials = roomMaterials;
+    const mats = roomMaterials ?? this.lastMaterials;
+    if (!this.boundingBoxGroup || !mats) return;
 
     // Gradient colors from CSS vars
     const getHexStr = (cssVar: string, fallback: string) => {
@@ -486,7 +551,7 @@ export class BoundingBoxManager {
 
     this.boundingBoxGroup.children.forEach(child => {
       if (child instanceof THREE.Mesh && child.userData.faceName) {
-        const faceMaterial = roomMaterials[child.userData.faceName as keyof typeof roomMaterials];
+        const faceMaterial = mats[child.userData.faceName as keyof typeof mats];
         const absorption = RESONANCE_AUDIO.MATERIAL_ABSORPTION[faceMaterial as keyof typeof RESONANCE_AUDIO.MATERIAL_ABSORPTION] || 0;
 
         // Interpolate between teal (low absorption) and orange (high absorption)
@@ -498,8 +563,8 @@ export class BoundingBoxManager {
         const material = child.material as THREE.MeshBasicMaterial | SpeckleBasicMaterial;
         material.color.setRGB(r, g, b);
         material.opacity =
-          RESONANCE_AUDIO.BOUNDING_BOX.FACE_BASE_OPACITY +
-          absorption * RESONANCE_AUDIO.BOUNDING_BOX.FACE_ABSORPTION_OPACITY_SCALE;
+          (RESONANCE_AUDIO.BOUNDING_BOX.FACE_BASE_OPACITY +
+          absorption * RESONANCE_AUDIO.BOUNDING_BOX.FACE_ABSORPTION_OPACITY_SCALE) * this.opacityScale;
       }
     });
   }
@@ -578,9 +643,57 @@ export class BoundingBoxManager {
     }
     // Gumball group meshes are disposed by the generic child loop above; just drop refs.
     this.gumballGroups = [];
+    if (this.nameLabel) {
+      disposeLabelSprite(this.nameLabel);
+      this.nameLabel = null;
+    }
 
     this.boundingBoxGroup = null;
     this.gumballHandles = [];
+  }
+
+  public setGumballsVisible(visible: boolean): void {
+    for (const grp of this.gumballGroups) {
+      grp.visible = visible;
+    }
+  }
+
+  public setOpacityScale(scale: number): void {
+    this.opacityScale = scale;
+    if (!this.boundingBoxGroup) return;
+    this.boundingBoxGroup.traverse((child) => {
+      if (child instanceof THREE.LineSegments) {
+        const mat = child.material as THREE.LineBasicMaterial;
+        mat.opacity = scale;
+        mat.transparent = scale < 1;
+      }
+    });
+    this.updateMaterials();
+  }
+
+  public updateNameLabel(label?: string): void {
+    if (!this.boundingBoxGroup) return;
+    if (!label) {
+      if (this.nameLabel) this.nameLabel.visible = false;
+      return;
+    }
+    if (this.nameLabel) {
+      updateLabelSprite(this.nameLabel, label);
+      this.nameLabel.visible = true;
+      return;
+    }
+    const sprite = createLabelSprite(label);
+    sprite.frustumCulled = false;
+    sprite.layers.disableAll();
+    sprite.layers.enable(0);
+    sprite.layers.enable(4);
+    if (this.currentBounds) {
+      const depth = this.currentBounds.max[2] - this.currentBounds.min[2];
+      sprite.position.set(0, 0, depth / 2 + RESONANCE_AUDIO.BOUNDING_BOX.GUMBALL_LABEL_CLEARANCE);
+    }
+    this.boundingBoxGroup.add(sprite);
+    this.nameLabel = sprite;
+    if (this.lastCamera) this.updateScreenSpaceScale(this.lastCamera);
   }
 
   /**
@@ -685,9 +798,19 @@ export class BoundingBoxManager {
     if (this.dimensionLabel && this.dimensionLabel.visible && this.boundingBoxGroup) {
       this.dimensionLabel.getWorldPosition(tmpVec);
       const distance = camera.position.distanceTo(tmpVec);
-      if (distance < 0.01) return;
-      const h = computeLabelWorldHeight(camera, distance);
-      this.dimensionLabel.scale.set(h * (this.dimensionLabel.userData.aspectRatio as number || 2), h, 1);
+      if (distance >= 0.01) {
+        const h = computeLabelWorldHeight(camera, distance);
+        this.dimensionLabel.scale.set(h * (this.dimensionLabel.userData.aspectRatio as number || 2), h, 1);
+      }
+    }
+
+    if (this.nameLabel && this.nameLabel.visible) {
+      this.nameLabel.getWorldPosition(tmpVec);
+      const distance = camera.position.distanceTo(tmpVec);
+      if (distance >= 0.01) {
+        const h = computeLabelWorldHeight(camera, distance);
+        this.nameLabel.scale.set(h * (this.nameLabel.userData.aspectRatio as number || 2), h, 1);
+      }
     }
   }
 

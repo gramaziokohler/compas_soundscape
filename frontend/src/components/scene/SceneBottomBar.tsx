@@ -13,7 +13,8 @@ import { BugReportButton } from '@/components/scene/BugReportButton';
 import { ModelPill } from '@/components/scene/model-version/ModelPill';
 import { useSceneWorkflowStore, useUIStore, useWorkspaceStore, selectHasSaveTarget, selectIsReadOnlyWorkspace, selectHasNewerSave } from '@/store';
 import { useHomeStageHasWork } from '@/hooks/useHomeStageHasWork';
-import { SCENE_BOTTOM_BAR, WORKSPACE_MESSAGES } from '@/utils/constants';
+import { SCENE_BOTTOM_BAR, SHARE_VIEW, WORKSPACE_MESSAGES } from '@/utils/constants';
+import { useCanEdit } from '@/hooks/useCanEdit';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
 
 function formatTime(ms: number): string {
@@ -116,6 +117,8 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
   const isReadOnly = useWorkspaceStore(selectIsReadOnlyWorkspace);
   // The owner saved since this soundscape was loaded (heartbeat revision moved on).
   const hasNewerSave = useWorkspaceStore(selectHasNewerSave);
+  // Public share view: a player only — no app navigation, history, model or settings.
+  const canEdit = useCanEdit();
 
   return (
     <div
@@ -126,6 +129,10 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
     >
       {/* ── Left: app, mode, history ── */}
       <div className="scene-bottom-bar__group" style={{ justifySelf: 'start' }}>
+        {!canEdit ? (
+          <span className="bar-unsaved" role="status">{SHARE_VIEW.HINT}</span>
+        ) : (
+        <>
         {isExpert ? (
           <>
             <BugReportButton variant="bar" />
@@ -182,6 +189,8 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
         )}
         {isViewerReady && showUnsavedHint && (
           <span className="bar-unsaved" role="status">progress not saved</span>
+        )}
+        </>
         )}
       </div>
 
@@ -257,7 +266,7 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
       {/* ── Right: view tools, then help & system ── */}
       <div className="scene-bottom-bar__group" style={{ justifySelf: 'end' }}>
         {/* Level-of-detail toggle lives in Settings → Display; mirrored here only in Detailed mode. */}
-        {isExpert && (
+        {isExpert && canEdit && (
           <div className="bar-mode-toggle" role="group" aria-label="User interface level of detail" title="User interface level of detail">
             {(['simple', 'expert'] as const).map((mode) => {
               const selected = (mode === 'expert') === isExpert;
@@ -319,7 +328,7 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
               dot={showUpdateBadge}
               icon={<RefreshIcon size="0.8rem" />}
             />
-            {isSandbox && !hasHomeProject ? (
+            {!canEdit ? null : isSandbox && !hasHomeProject ? (
               <BarButton
                 id="load-speckle-model-button"
                 onClick={onToggleLoadModel}
@@ -352,7 +361,7 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
               />
             )}
             {/* Loaded model / no-model soundscape name → versions, upload, switch model */}
-            {(!isSandbox || hasHomeProject) && (
+            {canEdit && (!isSandbox || hasHomeProject) && (
               <ModelPill
                 onOpenModelBrowser={() => { if (!showLoadModelPanel) onToggleLoadModel(); }}
                 onUploadNewVersion={(file) => onUploadNewVersion?.(file)}
@@ -362,6 +371,8 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
             <div className="scene-bottom-bar__sep" />
           </>
         )}
+        {canEdit && (
+        <>
         <SceneShortcutsButton isFirstPersonMode={isFirstPersonMode} />
         <NotificationCenter />
         <BarButton
@@ -375,6 +386,8 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
             </svg>
           }
         />
+        </>
+        )}
       </div>
     </div>
   );

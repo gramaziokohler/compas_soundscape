@@ -1,5 +1,6 @@
 'use client';
 
+import { useCanEdit } from '@/hooks/useCanEdit';
 import { useMemo, useCallback, useEffect, useState, useRef } from "react";
 import type { SoundGenerationSectionProps } from "@/types/components";
 import type { SoundGenerationConfig, SoundEvent, CardType, CardBaseConfig, AnalysisConfig } from "@/types";
@@ -173,6 +174,8 @@ export function SoundGenerationSection({
   const handleRegenerateConfig      = useSoundscapeStore((s) => s.handleRegenerateConfig);
   const revertGenerationSettings    = useSoundscapeStore((s) => s.revertGenerationSettings);
   const applyVariantGenerationSettings = useSoundscapeStore((s) => s.applyVariantGenerationSettings);
+  // Share view: no linking, loop analysis or other edits on sound cards.
+  const canEdit = useCanEdit();
   const orchestrateSoundsEnabled    = useSoundscapeStore((s) => s.orchestrateSoundsEnabled);
   const setOrchestrateSoundsEnabled = useSoundscapeStore((s) => s.setOrchestrateSoundsEnabled);
   const reorchestrateTimeline       = useSoundscapeStore((s) => s.reorchestrateTimeline);
@@ -626,7 +629,7 @@ export function SoundGenerationSection({
 
     // Make loopable (only if generated): analyses the audio and narrows
     // playback to a seamless loop region with a seam-smoothing fade.
-    if (isGenerated && generatedSound) {
+    if (isGenerated && generatedSound && canEdit) {
       const isLoopable = generatedSound.id ? (soundLoopable[generatedSound.id] ?? false) : false;
       const isAnalyzingLoop = generatedSound.id ? (loopAnalysisInProgress[generatedSound.id] ?? false) : false;
       customButtons.push({
@@ -823,9 +826,9 @@ export function SoundGenerationSection({
 
     // Link button rendered in the card header prefix (pre-gen and post-gen)
     const isCurrentlyLinking = isLinkingEntity && linkingConfigIndex === originalIndex;
-    const showLinkButton = modelEntities.length > 0 || useSpeckleViewer
+    const showLinkButton = canEdit && (modelEntities.length > 0 || useSpeckleViewer
       || !!config.entities?.length
-      || (isGenerated && generatedSound?.entity_index !== undefined);
+      || (isGenerated && generatedSound?.entity_index !== undefined));
 
     const configEntityLabel = config.entities?.length
       ? config.entities.map((e: any) => e.name || (e.index !== undefined

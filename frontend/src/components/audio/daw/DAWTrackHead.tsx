@@ -1,5 +1,6 @@
 'use client';
 
+import { useCanEdit } from '@/hooks/useCanEdit';
 import { useState, useCallback, useEffect, useRef, memo } from 'react';
 import { RangeSlider } from '@/components/ui/RangeSlider';
 import { DAW, DEFAULT_DBFS, SOUND_CATEGORIES, soundCategoryTooltip } from '@/utils/constants';
@@ -57,6 +58,8 @@ function DAWTrackHeadImpl({
   onHoverTrack,
   onHoverTrackEnd,
 }: DAWTrackHeadProps) {
+  // Share view: mute / solo only — no track menu (distribute, clear, reset) or volume.
+  const canEdit = useCanEdit();
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   const kebabRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -157,6 +160,7 @@ function DAWTrackHeadImpl({
             {excludedCount}!
           </span>
         )}
+        {canEdit && (
         <button
           ref={kebabRef}
           onClick={openMenu}
@@ -171,6 +175,7 @@ function DAWTrackHeadImpl({
             <circle cx="12" cy="5" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="12" cy="19" r="2" />
           </svg>
         </button>
+        )}
         {menuPos && (
           <div
             ref={menuRef}
@@ -229,6 +234,7 @@ function DAWTrackHeadImpl({
         >
           S
         </button>
+        {canEdit && (
         <div style={{ flex: 1, minWidth: 0 }}>
           <RangeSlider
             label=""
@@ -243,6 +249,7 @@ function DAWTrackHeadImpl({
             hoverText="Double-click to reset"
           />
         </div>
+        )}
       </div>
     </div>
   );

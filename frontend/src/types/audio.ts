@@ -326,6 +326,25 @@ export interface ResonanceAudioConfig {
   roomMaterials: ResonanceRoomMaterial;
 }
 
+/**
+ * One powered Resonance room fed to the audio engine.
+ * `id` is the simulation card id.
+ */
+export interface ResonanceRoomSpec {
+  id: string;
+  bounds: { min: [number, number, number]; max: [number, number, number] };
+  materials: ResonanceRoomMaterial;
+}
+
+/** Snapshot of a live Resonance room for offline WAV export. */
+export interface ResonanceExportRoom {
+  id: string;
+  bounds: { min: [number, number, number]; max: [number, number, number] };
+  dimensions: ResonanceRoomDimensions;
+  materials: ResonanceRoomMaterial;
+  centerOffset: { x: number; y: number; z: number };
+}
+
 /* ========================================
  * AUDIO MODE & ORCHESTRATION TYPES
  * ======================================== */

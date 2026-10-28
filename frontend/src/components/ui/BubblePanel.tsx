@@ -5,6 +5,7 @@ import { Power } from "lucide-react";
 import { DeleteConfirmButton } from "@/components/ui/DeleteConfirmButton";
 import { useNameEditing } from "@/utils/useNameEditing";
 import { SIMPLE_MODE } from "@/utils/constants";
+import { useCanEdit } from "@/hooks/useCanEdit";
 
 export interface BubblePanelProps {
   /** Header title; omit for a header-less panel (the content brings its own). */
@@ -69,13 +70,13 @@ export interface BubblePanelProps {
 export function BubblePanel({
   title,
   titleTooltip,
-  onRename,
+  onRename: onRenameProp,
   renameRequested = false,
   onRenameRequestHandled,
   subtitle,
   actions,
   onReduce,
-  onRemove,
+  onRemove: onRemoveProp,
   removeTitle = "Remove",
   removeConfirmMessage,
   removeDisabledReason,
@@ -88,6 +89,10 @@ export function BubblePanel({
   ariaLabel,
   children,
 }: BubblePanelProps) {
+  // Share view: panels are never renamed or removed.
+  const canEdit = useCanEdit();
+  const onRename = canEdit ? onRenameProp : undefined;
+  const onRemove = canEdit ? onRemoveProp : undefined;
   const hasHeader = title !== undefined || actions || onReduce || onTogglePower;
   const canRename = !!onRename && typeof title === "string";
   const { isEditing, startEdit, inputProps } = useNameEditing({

@@ -34,6 +34,8 @@ import type { SidebarProps } from '@/types/components';
 import type { SceneProgress, SoundScene } from '@/types/sceneWorkflow';
 import { useHomeComposerStore } from '@/store/homeComposerStore';
 import { SIMPLE_MODE } from '@/utils/constants';
+import { selectSceneByIndex } from '@/utils/sceneSelection';
+import { useCanEdit } from '@/hooks/useCanEdit';
 
 type LeftPanel =
   | { kind: 'composer' }
@@ -72,8 +74,8 @@ interface SceneBubbleProps {
   open: boolean;
   onClick: (scene: SoundScene, progress: SceneProgress) => void;
   onTogglePower: (scene: SoundScene) => void;
-  /** Right-click → Rename / Duplicate menu. */
-  onContextMenu: (scene: SoundScene, progress: SceneProgress, e: MouseEvent<HTMLElement>) => void;
+  /** Right-click → Rename / Duplicate menu (absent in the share view). */
+  onContextMenu?: (scene: SoundScene, progress: SceneProgress, e: MouseEvent<HTMLElement>) => void;
 }
 
 function SceneBubble({ scene, selected, open, onClick, onTogglePower, onContextMenu }: SceneBubbleProps) {
@@ -97,7 +99,7 @@ function SceneBubble({ scene, selected, open, onClick, onTogglePower, onContextM
       onClick={() => onClick(scene, progress)}
       onTogglePower={isPlayable(scene) ? () => onTogglePower(scene) : undefined}
       powerTitle={powerTitle(selected)}
-      onContextMenu={(e) => onContextMenu(scene, progress, e)}
+      onContextMenu={onContextMenu ? (e) => onContextMenu(scene, progress, e) : undefined}
     />
   );
 }
@@ -176,6 +178,7 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
   const activeSoundParentIndex = useUIStore((s) => s.activeSoundParentIndex);
   const isInSoundsStep = useUIStore((s) => s.isInSoundsStep);
   const startScene = useSceneWorkflowStore((s) => s.startScene);
+  const canEdit = useCanEdit();
 
   const columnSpace = useBubbleColumnSpace();
   useSimpleSceneHighlights();
@@ -211,11 +214,7 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
   useDismissOnSceneClick(closePanel, panel !== null, () => !!sidebarProps.isLinkingEntity, KEEP_PANEL_ON);
 
   const selectScene = useCallback((scene: SoundScene) => {
-    useAudioControlsStore.getState().stopSoundcardPreview();
-    useUIStore.getState().setActiveSoundParentIndex(scene.usageIndex);
-    const flow = useCardFlowStore.getState();
-    flow.setActiveUsageOriginalIndex(scene.usageIndex);
-    flow.setActiveContextOriginalIndex(scene.contextIndex);
+    selectSceneByIndex(scene.usageIndex, scene.contextIndex);
   }, []);
 
   const deselectScene = useCallback(() => {
@@ -291,12 +290,15 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
   }, [scenes, panel]);
 
   // Expand / reduce only — powering a scene is the flyout / header button's job.
+  // Share view: a click on the circle selects (plays) the scene, and its panel
+  // only ever lists its (read-only) sounds.
   const handleSceneClick = useCallback((scene: SoundScene, progress: SceneProgress) => {
-    const kind = panelKind(scene, progress);
+    if (!canEdit && isPlayable(scene)) selectScene(scene);
+    const kind = canEdit ? panelKind(scene, progress) : 'scene';
     setPanel((p) =>
       p && p.kind !== 'composer' && p.usageIndex === scene.usageIndex ? null : { kind, usageIndex: scene.usageIndex },
     );
-  }, []);
+  }, [canEdit, selectScene]);
 
   const handleSubmit = useCallback((prompt: string, options: Parameters<typeof startScene>[1]) => {
     const usageIndex = startScene(prompt, options);
@@ -344,7 +346,7 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
             open={panel !== null && panel.kind !== 'composer' && panel.usageIndex === scene.usageIndex}
             onClick={handleSceneClick}
             onTogglePower={toggleScenePower}
-            onContextMenu={sceneMenu.openMenu}
+            onContextMenu={canEdit ? sceneMenu.openMenu : undefined}
           />
         ))}
         addButton={

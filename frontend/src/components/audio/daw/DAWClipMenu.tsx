@@ -1,6 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useViewportClampedPosition } from '@/hooks/useViewportClampedPosition';
+import { getViewport } from '@/utils/scale';
+import { POPUP_MENU } from '@/utils/constants';
 
 export interface DAWClipMenuVariant {
   id: string;
@@ -32,6 +35,40 @@ export interface DAWClipMenuProps {
 }
 
 const MENU_WIDTH = 150;
+const SUBMENU_WIDTH = 80;
+
+/**
+ * Flyout beside a menu row, top-aligned with it. Shifted up when it would run
+ * past the bottom of the viewport (rows near the bottom of a clamped menu).
+ */
+function DAWClipSubmenu({ children }: { children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [offsetY, setOffsetY] = useState<number | null>(null);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const overflow = rect.bottom - (getViewport().height - POPUP_MENU.VIEWPORT_MARGIN);
+    const maxShift = Math.max(0, rect.top - POPUP_MENU.VIEWPORT_MARGIN);
+    setOffsetY(-Math.min(Math.max(0, overflow), maxShift));
+  }, []);
+
+  return (
+    <div
+      ref={ref}
+      style={{
+        position: 'absolute', left: `${MENU_WIDTH - 2}px`, top: offsetY ?? 0, width: SUBMENU_WIDTH,
+        maxHeight: `calc(100vh - ${POPUP_MENU.VIEWPORT_MARGIN * 2}px)`, overflowY: 'auto',
+        opacity: offsetY === null ? 0 : 1,
+        backgroundColor: 'var(--background)', border: '1px solid var(--color-border-strong)',
+        borderRadius: '6px', boxShadow: '0 4px 16px rgba(0,0,0,0.5)', padding: '4px 0', zIndex: 10000,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
 
 /**
  * Right-click context menu for a DAW clip: variant override + linked-entity
@@ -57,15 +94,19 @@ export function DAWClipMenu({
   const activeVariantLabel = String.fromCharCode(65 + (currentVariantIndex ?? 0));
   const showApplyVariant = variants.length > 1;
   const showApplyEntity = !!currentEntityNodeId;
+  const menuRef = useRef<HTMLDivElement>(null);
+  const pos = useViewportClampedPosition(menuRef, x, y);
 
   return (
     <div
+      ref={menuRef}
       onPointerDown={(e) => e.stopPropagation()}
       onMouseLeave={onClose}
       style={{
         position: 'fixed',
-        left: `${x}px`,
-        top: `${y}px`,
+        left: `${pos?.x ?? x}px`,
+        top: `${pos?.y ?? y}px`,
+        opacity: pos ? 1 : 0,
         zIndex: 9999,
         backgroundColor: 'var(--background)',
         border: '1px solid var(--color-border-strong)',
@@ -90,13 +131,7 @@ export function DAWClipMenu({
             <path d="M9 18l6-6-6-6" />
           </svg>
           {submenuOpen === 'variants' && (
-            <div
-              style={{
-                position: 'absolute', left: `${MENU_WIDTH - 2}px`, top: 0, width: 80,
-                backgroundColor: 'var(--background)', border: '1px solid var(--color-border-strong)',
-                borderRadius: '6px', boxShadow: '0 4px 16px rgba(0,0,0,0.5)', padding: '4px 0', zIndex: 10000,
-              }}
-            >
+            <DAWClipSubmenu>
               {variants.map((v, vi) => {
                 const isActive = currentVariantIndex === vi;
                 return (
@@ -112,7 +147,7 @@ export function DAWClipMenu({
                   </div>
                 );
               })}
-            </div>
+            </DAWClipSubmenu>
           )}
         </div>
       )}
@@ -151,13 +186,7 @@ export function DAWClipMenu({
             <path d="M9 18l6-6-6-6" />
           </svg>
           {submenuOpen === 'entities' && (
-            <div
-              style={{
-                position: 'absolute', left: `${MENU_WIDTH - 2}px`, top: 0, width: 80,
-                backgroundColor: 'var(--background)', border: '1px solid var(--color-border-strong)',
-                borderRadius: '6px', boxShadow: '0 4px 16px rgba(0,0,0,0.5)', padding: '4px 0', zIndex: 10000,
-              }}
-            >
+            <DAWClipSubmenu>
               {linkedEntities.map((entity) => {
                 const isActive = currentEntityNodeId === entity.id;
                 return (
@@ -173,7 +202,7 @@ export function DAWClipMenu({
                   </div>
                 );
               })}
-            </div>
+            </DAWClipSubmenu>
           )}
         </div>
       )}

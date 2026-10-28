@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import { loadUserPreferences } from '@/lib/user-preferences-sync';
+import { isShareViewActive } from '@/store/shareViewStore';
 
 /**
  * Loads the current user's Advanced Settings preferences once on mount and
@@ -14,6 +15,8 @@ export function useUserPreferencesSync(): void {
   useEffect(() => {
     if (started.current) return;
     started.current = true;
+    // Anonymous share viewers have no preferences (and no identity).
+    if (isShareViewActive()) return;
     void loadUserPreferences();
   }, []);
 }

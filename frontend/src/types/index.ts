@@ -1,6 +1,6 @@
 // Import card types
-import type { CardType, CardBaseConfig, CardState, CardProps, CardHeaderProps, CardButtonBarProps, CardExecutionState } from './card';
-export type { CardType, CardBaseConfig, CardState, CardProps, CardHeaderProps, CardButtonBarProps, CardExecutionState };
+import type { CardType, CardBaseConfig, CardState, CardProps, CardHeaderProps, CardButtonBarProps, CardExecutionState, SavedObjectVisibility } from './card';
+export type { CardType, CardBaseConfig, CardState, CardProps, CardHeaderProps, CardButtonBarProps, CardExecutionState, SavedObjectVisibility };
 export { CARD_TYPE_LABELS } from './card';
 
 // Import and re-export Speckle Scene types
@@ -57,6 +57,8 @@ import type {
   SimulationState,
   BaseSimulationConfig,
   ResonanceSimulationConfig,
+  ResonanceRoom,
+  ResonanceRoomBounds,
   PyroomAcousticsSimulationConfig,
   PffdtdSimulationConfig,
   SimulationConfig,
@@ -67,6 +69,8 @@ export type {
   SimulationState,
   BaseSimulationConfig,
   ResonanceSimulationConfig,
+  ResonanceRoom,
+  ResonanceRoomBounds,
   PyroomAcousticsSimulationConfig,
   PffdtdSimulationConfig,
   SimulationConfig,
@@ -438,3 +442,4 @@ export type {
   PffdtdVoxelProblem,
   PffdtdOverlayKind,
 } from './pffdtd';
+export * from './share';

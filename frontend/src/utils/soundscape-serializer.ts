@@ -6,6 +6,7 @@
  */
 
 import type { SoundGenerationConfig, SoundEvent, ReceiverData, SimulationConfig } from '@/types';
+import type { ResonanceSimulationConfig } from '@/types/acoustics';
 import type {
   SoundscapeSavePayload,
   SoundscapeSoundConfig,
@@ -21,12 +22,15 @@ import type {
   AnalysisState,
   SoundscapeIterationLink,
   SoundscapeAcousticSelection,
+  SoundscapeObjectVisibility,
 } from '@/types/soundscape';
+import type { SavedObjectVisibility } from '@/types/card';
 import type { SimulationAcousticSelection } from '@/types/acoustics';
 import type { GridListenerData } from '@/types/receiver';
 import type { ImpulseResponseMetadata, SourceReceiverIRMapping, ResonanceAudioConfig } from '@/types/audio';
+import { defaultResonanceMaterials } from '@/lib/audio/utils/resonance-rooms';
 import type { AnalysisConfig, AnalysisResult, TextPromptResult } from '@/types/analysis';
-import { API_BASE_URL, AUDIO_PLAYBACK, PFFDTD, PYROOMACOUSTICS_DEFAULT_MAX_ORDER, PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE } from '@/utils/constants';
+import { API_BASE_URL, AUDIO_PLAYBACK, PFFDTD, PYROOMACOUSTICS_DEFAULT_MAX_ORDER, PYROOMACOUSTICS_DEFAULT_PARALLEL, PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE } from '@/utils/constants';
 import type { PffdtdFreeMode, PffdtdSettings } from '@/types/pffdtd';
 import { newConfigId } from '@/utils/config-id';
 import { parseAuthoredSeconds } from '@/lib/audio/utils/timeline-utils';
@@ -138,6 +142,30 @@ function deserializeAcousticSelection(
   };
 }
 
+/** Runtime saved Object Explorer view → persisted (snake_case) shape. */
+export function serializeObjectVisibility(
+  v: SavedObjectVisibility | null | undefined,
+): SoundscapeObjectVisibility | undefined {
+  if (!v) return undefined;
+  return {
+    hidden_ids: [...v.hiddenIds],
+    isolated_ids: [...v.isolatedIds],
+    excluded_ids: [...v.excludedIds],
+  };
+}
+
+/** Persisted saved Object Explorer view → runtime (camelCase) shape. */
+export function deserializeObjectVisibility(
+  saved: SoundscapeObjectVisibility | null | undefined,
+): SavedObjectVisibility | undefined {
+  if (!saved) return undefined;
+  return {
+    hiddenIds: [...(saved.hidden_ids ?? [])],
+    isolatedIds: [...(saved.isolated_ids ?? [])],
+    excludedIds: [...(saved.excluded_ids ?? [])],
+  };
+}
+
 /**
  * Get a list of sound events that have blob URLs (need server upload before save).
  * These are library downloads and user-uploaded audio that only exist in browser memory.
@@ -217,8 +245,8 @@ export function buildSoundscapeSavePayload(
   simulationConfigs?: SimulationConfig[],
   /** Active simulation tab index */
   activeSimulationIndex?: number | null,
-  /** Resonance Audio global config */
-  resonanceAudioConfig?: ResonanceAudioConfig,
+  /** @deprecated Legacy global Resonance config — no longer written. Kept so callers do not shift positional args. */
+  _resonanceAudioConfig?: ResonanceAudioConfig,
   /** Per-track explicit timestamps (seconds) keyed by sound ID (from audioControls) */
   soundTimestamps?: Record<string, number[]>,
   /** Per-iteration variant/entity links keyed by `${soundId}-${iterationIndex}` (from audioControls) */
@@ -408,14 +436,21 @@ export function buildSoundscapeSavePayload(
 
     const pyConfig = config as any;
 
-    // Resonance cards: save minimal data only (settings live in resonance_audio_config)
+    // Resonance cards: per-card room (bounds + materials). Power state is not persisted.
     if (config.type === 'resonance') {
+      const room = config.room;
       serializedSimConfigs.push({
         id: config.id,
         display_name: config.display_name || config.id,
         type: config.type,
         state: config.state,
         simulation_instance_id: config.simulationInstanceId,
+        resonance_room: {
+          bounds: room.bounds
+            ? { min: [...room.bounds.min], max: [...room.bounds.max] }
+            : null,
+          materials: { ...room.materials },
+        },
       });
       continue;
     }
@@ -519,6 +554,7 @@ export function buildSoundscapeSavePayload(
           ray_tracing: pyConfig.settings.ray_tracing,
           air_absorption: pyConfig.settings.air_absorption,
           n_rays: pyConfig.settings.n_rays,
+          parallel: pyConfig.settings.parallel,
           simulation_mode: pyConfig.settings.simulation_mode,
           enable_grid: pyConfig.settings.enable_grid,
         } : undefined,
@@ -527,6 +563,7 @@ export function buildSoundscapeSavePayload(
       speckle_geometry_object_ids: speckleGeometryObjectIds,
       speckle_scattering_assignments: speckleScatteringAssignments,
       speckle_acoustic_selection: serializeAcousticSelection(speckleAcousticSelection),
+      saved_object_visibility: serializeObjectVisibility(config.savedObjectVisibility),
       simulated_version_id: pyConfig.simulatedVersionId,
       simulation_results: pyConfig.simulationResults,
       current_simulation_id: pyConfig.currentSimulationId,
@@ -601,19 +638,6 @@ export function buildSoundscapeSavePayload(
     acoustic_region: serializeAcousticSelection(acousticRegion),
     custom_materials: customMaterials.length > 0 ? customMaterials : undefined,
     directivities: directivities.length > 0 ? directivities : undefined,
-    resonance_audio_config: resonanceAudioConfig ? {
-      enabled: resonanceAudioConfig.enabled,
-      ambisonic_order: resonanceAudioConfig.ambisonicOrder,
-      room_dimensions: resonanceAudioConfig.roomDimensions,
-      room_materials: {
-        left: resonanceAudioConfig.roomMaterials.left,
-        right: resonanceAudioConfig.roomMaterials.right,
-        front: resonanceAudioConfig.roomMaterials.front,
-        back: resonanceAudioConfig.roomMaterials.back,
-        down: resonanceAudioConfig.roomMaterials.down,
-        up: resonanceAudioConfig.roomMaterials.up,
-      },
-    } : undefined,
     iteration_links: iterationLinks && Object.keys(iterationLinks).length > 0 ? iterationLinks : undefined,
     iteration_trims: iterationTrims && Object.keys(iterationTrims).length > 0 ? iterationTrims : undefined,
     muted_sounds: mutedSounds && mutedSounds.length > 0 ? mutedSounds : undefined,
@@ -951,6 +975,33 @@ export function restoreSoundscapeState(
 
   // Restore simulation configs
   const restoredSimConfigs: SimulationConfig[] = (loadedData.simulation_configs || []).map((saved) => {
+    if (saved.type === 'resonance') {
+      const legacyMaterials = loadedData.resonance_audio_config?.room_materials;
+      const rr = saved.resonance_room;
+      const restored: ResonanceSimulationConfig = {
+        id: saved.id,
+        display_name: saved.display_name,
+        type: 'resonance',
+        state: (saved.state as ResonanceSimulationConfig['state']) || 'idle',
+        createdAt: Date.now(),
+        simulationInstanceId: saved.simulation_instance_id,
+        room: {
+          bounds: rr?.bounds
+            ? {
+                min: [rr.bounds.min[0], rr.bounds.min[1], rr.bounds.min[2]],
+                max: [rr.bounds.max[0], rr.bounds.max[1], rr.bounds.max[2]],
+              }
+            : null,
+          materials: rr?.materials
+            ? { ...rr.materials }
+            : legacyMaterials
+              ? { ...legacyMaterials }
+              : defaultResonanceMaterials(),
+        },
+      };
+      return restored;
+    }
+
     // Rebuild sourceReceiverIRMapping with rewritten URLs pointing to persistent ir_files folder
     let sourceReceiverIRMapping: SourceReceiverIRMapping | undefined;
     if (saved.source_receiver_ir_mapping && irBase) {
@@ -1027,6 +1078,7 @@ export function restoreSoundscapeState(
         ray_tracing: settings.ray_tracing,
         air_absorption: settings.air_absorption,
         n_rays: settings.n_rays,
+        parallel: settings.parallel ?? PYROOMACOUSTICS_DEFAULT_PARALLEL,
         simulation_mode: settings.simulation_mode,
         enable_grid: settings.enable_grid,
       } : {
@@ -1034,6 +1086,7 @@ export function restoreSoundscapeState(
         ray_tracing: false,
         air_absorption: true,
         n_rays: 10000,
+        parallel: PYROOMACOUSTICS_DEFAULT_PARALLEL,
         simulation_mode: 'foa',
         enable_grid: false,
       },
@@ -1092,6 +1145,7 @@ export function restoreSoundscapeState(
       speckleGeometryObjectIds: saved.speckle_geometry_object_ids,
       speckleScatteringAssignments: saved.speckle_scattering_assignments,
       speckleAcousticSelection: deserializeAcousticSelection(saved.speckle_acoustic_selection),
+      savedObjectVisibility: deserializeObjectVisibility(saved.saved_object_visibility),
       simulatedVersionId: saved.simulated_version_id,
       // Import-IRs advanced settings
       irGain: saved.ir_gain ?? undefined,
@@ -1179,6 +1233,8 @@ export function buildAnalysisStateSave(
       display_name: (config as any).display_name,
       parentContextOriginalIndex: (config as any).parentContextOriginalIndex,
     };
+    if (config.scene_id) base.scene_id = config.scene_id;
+    if (config.savedObjectVisibility) base.saved_object_visibility = serializeObjectVisibility(config.savedObjectVisibility);
 
     if ('numSounds' in config) base.numSounds = (config as any).numSounds;
     if ('textInput' in config) base.textInput = (config as any).textInput;
@@ -1366,6 +1422,9 @@ export function restoreAnalysisState(analysisState: AnalysisState): {
       display_name: saved.display_name,
       parentContextOriginalIndex: saved.parentContextOriginalIndex,
     };
+    if (saved.scene_id) config.scene_id = saved.scene_id;
+    if (saved.saved_object_visibility) config.savedObjectVisibility = deserializeObjectVisibility(saved.saved_object_visibility);
+    if (saved.share_hidden) config.share_hidden = true;
 
     if (saved.numSounds !== undefined) config.numSounds = saved.numSounds;
     if (saved.textInput !== undefined) config.textInput = saved.textInput;

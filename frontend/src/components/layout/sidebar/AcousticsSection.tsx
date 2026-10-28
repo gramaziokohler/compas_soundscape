@@ -21,15 +21,17 @@
 
 'use client';
 
+import { useCanEdit } from '@/hooks/useCanEdit';
 import React, { useCallback, useEffect, useState, useRef, useMemo } from 'react';
-import { Power, ChevronDown, ChevronRight } from 'lucide-react';
+import { Power, ChevronDown, ChevronRight, Eye } from 'lucide-react';
 import { CardSection, type CardTypeOption } from '@/components/ui/CardSection';
 import { Card } from '@/components/ui/Card';
 import { Notice } from '@/components/ui/Notice';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Bubble, BubbleAddButton, BubbleHeading } from '@/components/ui/Bubble';
 import { SimulationTypeIcon } from '@/components/ui/BubbleIcons';
-import { ContextMenu } from '@/components/ui/ContextMenu';
+import { ContextMenu, type ContextMenuItem } from '@/components/ui/ContextMenu';
+import { buildSavedVisibilityRows } from '@/utils/savedObjectVisibility';
 import { useDismissOnSceneClick } from '@/hooks/useDismissOnSceneClick';
 import { useOnFloatingPanelsCollapse } from '@/hooks/useOnFloatingPanelsCollapse';
 import { useBubbleColumnSpace } from '@/hooks/useBubbleColumnSpace';
@@ -89,7 +91,6 @@ import type {
 } from '@/types';
 import type {
   ImpulseResponseMetadata,
-  ResonanceAudioConfig,
   AuralizationConfig
 } from '@/types/audio';
 import type {
@@ -97,7 +98,6 @@ import type {
   AcousticMaterial
 } from '@/types/materials';
 import type { AudioRenderingMode } from '@/components/audio/AudioRenderingModeSelector';
-import type { RoomScale } from '@/components/layout/sidebar/acoustics/ResonanceAudioControls';
 
 // Constants
 import {
@@ -109,6 +109,7 @@ import {
   SIMPLE_MODE,
 } from '@/utils/constants';
 import { groupSoundsByPosition, collapseVariantsToOne } from '@/utils/positionKey';
+import { isSoundSilenced } from '@/lib/audio/utils/mute-solo';
 import { useServiceVersions } from '@/hooks/useServiceVersions';
 import { logSimulationLaunch, logSimulationResult } from '@/lib/study/simulationEvents';
 import { recordInflightJob, removeInflightJob } from '@/lib/job-tracker';
@@ -120,17 +121,6 @@ interface AcousticsSectionProps {
   onClearIR: () => void;
   selectedIRId: string | null;
   auralizationConfig: AuralizationConfig;
-
-  // Resonance Audio props
-  resonanceAudioConfig: ResonanceAudioConfig;
-  onToggleResonanceAudio: (enabled: boolean) => void;
-  onUpdateRoomMaterials: (materials: any) => void;
-  hasGeometry: boolean;
-  showBoundingBox: boolean;
-  onToggleBoundingBox: (show: boolean) => void;
-  onRefreshBoundingBox?: () => void;
-  roomScale?: RoomScale;
-  onRoomScaleChange?: (scale: RoomScale) => void;
 
   // Audio Orchestrator props
   audioRenderingMode?: AudioRenderingMode;
@@ -257,20 +247,13 @@ function computeIRGainSafeRange(
 }
 
 export function AcousticsSection(props: AcousticsSectionProps) {
+  // Share view: simulations can only be powered on/off and inspected.
+  const canEdit = useCanEdit();
   const {
     onSelectIRFromLibrary,
     onClearIR,
     selectedIRId,
     auralizationConfig,
-    resonanceAudioConfig,
-    onToggleResonanceAudio,
-    onUpdateRoomMaterials,
-    hasGeometry,
-    showBoundingBox ,
-    onToggleBoundingBox,
-    onRefreshBoundingBox,
-    roomScale,
-    onRoomScaleChange,
     audioRenderingMode = 'anechoic',
     onAudioRenderingModeChange,
     modelEntities = [],
@@ -302,23 +285,13 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   // ==========================================================================
 
   const serviceVersions = useServiceVersions();
+  const activeResonanceIds = useAcousticsSimulationStore((s) => s.activeResonanceIds);
+  const hasActiveResonance = activeResonanceIds.length > 0;
 
-  // Powering ShoeBox (resonance) off hides its bounding box; powering it back on
-  // restores the box if it was shown before (unless the user re-enabled it meanwhile).
-  const resonanceEnabled = resonanceAudioConfig?.enabled ?? false;
-  const prevResonanceEnabledRef = useRef(resonanceEnabled);
-  const boundingBoxBeforePowerOffRef = useRef(false);
-  useEffect(() => {
-    const wasEnabled = prevResonanceEnabledRef.current;
-    prevResonanceEnabledRef.current = resonanceEnabled;
-    if (wasEnabled && !resonanceEnabled) {
-      boundingBoxBeforePowerOffRef.current = showBoundingBox;
-      if (showBoundingBox) onToggleBoundingBox(false);
-    } else if (!wasEnabled && resonanceEnabled) {
-      if (boundingBoxBeforePowerOffRef.current && !showBoundingBox) onToggleBoundingBox(true);
-      boundingBoxBeforePowerOffRef.current = false;
-    }
-  }, [resonanceEnabled, showBoundingBox, onToggleBoundingBox]);
+  const powerOnResonance = useCallback((id: string) => {
+    const { activeResonanceIds: ids, toggleResonanceActive } = useAcousticsSimulationStore.getState();
+    if (!ids.includes(id)) toggleResonanceActive(id);
+  }, []);
 
   const { getViewerRef, clearMaterialColors, filteringEnabled, viewMode, setViewMode, worldTreeVersion } = useSpeckleStore();
   const handleReorderSimulationConfigs = useAcousticsSimulationStore((s) => s.handleReorderConfigs);
@@ -355,8 +328,9 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     });
   }, []);
 
-  // Muted sounds from audio controls store
+  // Muted / soloed sounds from audio controls store
   const mutedSounds = useAudioControlsStore((s) => s.mutedSounds);
+  const soloedSounds = useAudioControlsStore((s) => s.soloedSounds);
   const individualSoundStates = useAudioControlsStore((s) => s.individualSoundStates);
   // Which variant is active per sound source — used to pick the representative variant
   // when collapsing multi-variant sources into single acoustic simulation sources.
@@ -429,9 +403,10 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     }
   }, [hasValidGeometry, hasLocalModelFile, speckleData]);
 
-  // Active soundscape: exclude muted sounds and limit to the active sound section
+  // Active soundscape: exclude silenced sounds (muted, or not soloed while a solo is
+  // active) and limit to the active sound section
   const activeSoundscapeData = useMemo(() => {
-    const unmuted = (soundscapeData ?? []).filter((s) => !mutedSounds.has(s.id));
+    const unmuted = (soundscapeData ?? []).filter((s) => !isSoundSilenced(s.id, mutedSounds, soloedSounds));
     if (activeSoundParentIndex === null || activeSoundParentIndex === undefined) {
       return unmuted;
     }
@@ -443,7 +418,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       }
     });
     return unmuted.filter((s) => s.prompt_index !== undefined && matchingPromptIndices.has(s.prompt_index));
-  }, [soundscapeData, mutedSounds, activeSoundParentIndex, isInSoundsStep, soundConfigsFromStore]);
+  }, [soundscapeData, mutedSounds, soloedSounds, activeSoundParentIndex, isInSoundsStep, soundConfigsFromStore]);
 
   // Only fetch materials when a card of that type exists
   // Wave-based (PFFDTD) cards share the pyroomacoustics absorption database and `pyroom_` ids.
@@ -991,6 +966,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         simulationPositions: (config as any).simulationPositions,
         completedAt: (config as any).completedAt,
         irImportMode: (config as any).irImportMode,
+        savedObjectVisibility: config.savedObjectVisibility,
       } as any);
       return;
     }
@@ -1005,6 +981,8 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       speckleGeometryObjectIds: (simConfig as any).speckleGeometryObjectIds,
       speckleScatteringAssignments: (simConfig as any).speckleScatteringAssignments,
       speckleIsolatedObjectIds: (simConfig as any).speckleIsolatedObjectIds,
+      // Project content (not a run field): the copy keeps the saved Object Explorer view.
+      savedObjectVisibility: simConfig.savedObjectVisibility,
     };
 
     // Apply updates synchronously — Zustand updates are synchronous and React 18
@@ -1086,7 +1064,6 @@ export function AcousticsSection(props: AcousticsSectionProps) {
 
   // Derive the active config's relevant properties to use as stable dependencies
   const activeConfig = activeSimulationIndex !== null ? simulationConfigs[activeSimulationIndex] : null;
-  const activeConfigType = activeConfig?.type;
   const activeConfigState = activeConfig?.state;
   const activeConfigIRId = activeConfig && 'importedIRMetadata' in activeConfig
     ? (activeConfig as any).importedIRMetadata?.id
@@ -1097,10 +1074,13 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     const selectIR = onSelectIRFromLibraryRef.current;
     if (!changeMode || !selectIR) return;
 
+    if (hasActiveResonance) {
+      if (audioRenderingMode !== 'resonance') changeMode('resonance');
+      return;
+    }
+
     if (activeSimulationIndex === null) {
       if (audioRenderingMode !== 'anechoic') changeMode('anechoic');
-    } else if (activeConfigType === 'resonance') {
-      if (audioRenderingMode !== 'resonance') changeMode('resonance');
     } else if (activeConfigState === 'completed') {
       const activeSimConfig = simulationConfigs[activeSimulationIndex] as any;
       const hasPerSourceMapping =
@@ -1121,7 +1101,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         }
       }
     }
-  }, [activeSimulationIndex, activeConfigType, activeConfigState, activeConfigIRId, audioRenderingMode, selectedIRId, simulationConfigs]);
+  }, [hasActiveResonance, activeSimulationIndex, activeConfigState, activeConfigIRId, audioRenderingMode, selectedIRId, simulationConfigs]);
 
   // ==========================================================================
   // Mono Convolution Helper — "rotation does not change anything"
@@ -1279,9 +1259,9 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       const newConfig = simulationConfigs[newIndex];
       setExpandedCardIndex(newIndex);
       if (newConfig?.type === 'resonance') {
-        // Resonance card is always ready → activate immediately so Resonance Audio launches
-        // Do NOT change the view mode — Resonance doesn't use layer isolation/coloring
-        if (onSetActiveSimulation) onSetActiveSimulation(newIndex);
+        // Resonance card is always ready → power it on so ShoeBox acoustics launch.
+        // Do NOT change the view mode — Resonance doesn't use layer isolation/coloring.
+        powerOnResonance(newConfig.id);
       } else {
         // Non-resonance cards are always before-simulation → deactivate audio
         if (activeSimulationIndex !== null && onSetActiveSimulation) {
@@ -1294,7 +1274,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       }
     }
     prevSimCount.current = simulationConfigs.length;
-  }, [simulationConfigs.length, simulationConfigs, activeSimulationIndex, onSetActiveSimulation, viewMode, setViewMode]);
+  }, [simulationConfigs.length, simulationConfigs, activeSimulationIndex, onSetActiveSimulation, viewMode, setViewMode, powerOnResonance]);
 
   // Track last completed-card index so the power button can re-enable it
   const lastActiveIndexRef = useRef<number | null>(null);
@@ -1323,8 +1303,8 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     useUIStore.getState().setExpandedSimulationTabIndex(index);
 
     if (index === null) {
-      // Collapsing all cards — deactivate audio but DON'T switch away from acoustic mode.
-      // ViewMode is now user-controlled via the toolbar, not card state.
+      // Collapsing all cards — deactivate IR auralization. Powered Resonance
+      // rooms stay on (collapse is not power-off).
       if (activeSimulationIndex !== null && onSetActiveSimulation) {
         onSetActiveSimulation(null);
       }
@@ -1334,16 +1314,16 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       if (config?.type !== 'resonance' && viewMode !== 'dark') {
         setViewMode('acoustic');
       }
-      if (config?.state === 'completed' || config?.type === 'resonance') {
-        // Expanding a completed card or a resonance card → activate it
-        // (Resonance is always ready; it doesn't need a simulation run)
+      if (config?.type === 'resonance') {
+        powerOnResonance(config.id);
+      } else if (config?.state === 'completed') {
         if (onSetActiveSimulation) onSetActiveSimulation(index);
       } else if (activeSimulationIndex !== null && onSetActiveSimulation) {
-        // Expanding a before-simulation card → deactivate current
+        // Expanding a before-simulation card → deactivate current IR
         onSetActiveSimulation(null);
       }
     }
-  }, [onSetActiveSimulation, simulationConfigs, activeSimulationIndex, viewMode, setViewMode]);
+  }, [onSetActiveSimulation, simulationConfigs, activeSimulationIndex, viewMode, setViewMode, powerOnResonance]);
 
   // Model-version review panel: expand a simulation card so its materials become
   // editable ("Assign") or its outdated results are shown. Without an explicit
@@ -1555,18 +1535,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     // beforeContent/afterContent assignment happens below the IR-import handlers so the
     // import-IRS body can be shared between its collecting (neutral) and completed (blue) states.
     const resonanceContent = config.type === 'resonance' ? (
-        <ResonanceContent
-            config={config}
-            resonanceAudioConfig={resonanceAudioConfig}
-            onToggleResonanceAudio={onToggleResonanceAudio}
-            onUpdateRoomMaterials={onUpdateRoomMaterials}
-            hasGeometry={hasGeometry}
-            showBoundingBox={showBoundingBox}
-            onToggleBoundingBox={onToggleBoundingBox}
-            onRefreshBoundingBox={onRefreshBoundingBox}
-            roomScale={roomScale}
-            onRoomScaleChange={onRoomScaleChange}
-        />
+        <ResonanceContent config={config} />
     ) : null;
 
     // After Content - results. The setup editors (which also keep the material
@@ -2100,7 +2069,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
 
     // Duplicate button — available for all simulation types and states
     const customButtons: CustomMenuItem[] = [];
-    if (onAddSimulationConfig && onUpdateSimulationConfig) {
+    if (canEdit && onAddSimulationConfig && onUpdateSimulationConfig) {
       customButtons.push({
         key: 'duplicate',
         icon: (
@@ -2111,6 +2080,21 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         label: 'Duplicate simulation',
         onClick: (e) => { e.stopPropagation(); handleDuplicateSimulation(index); },
       });
+    }
+    if (canEdit && onUpdateSimulationConfig) {
+      for (const row of buildSavedVisibilityRows({
+        saved: config.savedObjectVisibility,
+        onSave: (snapshot) => handleUpdateConfig(index, { savedObjectVisibility: snapshot }),
+        onClear: () => handleUpdateConfig(index, { savedObjectVisibility: undefined }),
+      })) {
+        customButtons.push({
+          key: row.key,
+          icon: <Eye className="h-3 w-3" />,
+          label: row.label,
+          isActive: row.isActive,
+          onClick: (e) => { e.stopPropagation(); row.onClick(); },
+        });
+      }
     }
     if (floating?.extraMenu) customButtons.push(...floating.extraMenu);
 
@@ -2170,11 +2154,15 @@ export function AcousticsSection(props: AcousticsSectionProps) {
               ? (open) => handleCardSettingsExpandedChange(config.id, open)
               : undefined}
             onReduce={floating?.onReduce}
-            // Power: ready cards (completed / resonance) switch their auralization on/off
-            onTogglePower={(isCompleted || config.type === 'resonance') && onSetActiveSimulation
-              ? () => onSetActiveSimulation(activeSimulationIndex === index ? null : index)
-              : undefined}
-            isPoweredOn={activeSimulationIndex === index}
+            // Power: completed IR cards use activeSimulationIndex; Resonance uses activeResonanceIds
+            onTogglePower={config.type === 'resonance'
+              ? () => { useAcousticsSimulationStore.getState().toggleResonanceActive(config.id); }
+              : isCompleted && onSetActiveSimulation
+                ? () => onSetActiveSimulation(activeSimulationIndex === index ? null : index)
+                : undefined}
+            isPoweredOn={config.type === 'resonance'
+              ? activeResonanceIds.includes(config.id)
+              : activeSimulationIndex === index}
             closeButtonTitle="Remove simulation"
             removeConfirmMessage={isCompleted ? 'Remove this simulation and its results?' : 'Remove this simulation?'}
             customButtons={customButtons.length > 0 ? customButtons : undefined}
@@ -2232,15 +2220,21 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         <AcousticsBubbles
           simulationConfigs={simulationConfigs}
           activeSimulationIndex={activeSimulationIndex}
+          activeResonanceIds={activeResonanceIds}
           openIndex={expandedCardIndex}
           availableTypes={AVAILABLE_TYPES}
           onAddItem={handleAddItem}
           onSetActiveSimulation={onSetActiveSimulation}
+          onUpdateConfig={canEdit && onUpdateSimulationConfig ? handleUpdateConfig : undefined}
           onOpen={(index) => {
             setExpandedCardIndex(index);
             useUIStore.getState().setExpandedSimulationTabIndex(index);
-            // Same view switch as expanding a card in the sidebar (layer isolation + colors).
-            if (simulationConfigs[index]?.type !== 'resonance' && viewMode !== 'dark') setViewMode('acoustic');
+            const opened = simulationConfigs[index];
+            if (opened?.type === 'resonance') {
+              powerOnResonance(opened.id);
+            } else if (opened && viewMode !== 'dark') {
+              setViewMode('acoustic');
+            }
           }}
           onReduce={() => {
             // Reduce is not deactivate: the auralization keeps running with the panel closed.
@@ -2294,12 +2288,15 @@ export interface FloatingCardOptions {
 interface AcousticsBubblesProps {
   simulationConfigs: SimulationConfig[];
   activeSimulationIndex: number | null;
+  activeResonanceIds: string[];
   openIndex: number | null;
   availableTypes: CardTypeOption[];
   onAddItem: (type: CardType) => void;
   onSetActiveSimulation?: (index: number | null) => void;
   onOpen: (index: number) => void;
   onReduce: () => void;
+  /** Right-click menu rows (save / clear object visibility). Undefined = no menu (read-only). */
+  onUpdateConfig?: (index: number, updates: Partial<SimulationConfig>) => void;
   renderCard: (
     config: SimulationConfig,
     index: number,
@@ -2330,15 +2327,28 @@ function simRuntime(config: SimulationConfig): { isRunning: boolean; progress: n
 function AcousticsBubbles({
   simulationConfigs,
   activeSimulationIndex,
+  activeResonanceIds,
   openIndex,
   availableTypes,
   onAddItem,
   onSetActiveSimulation,
   onOpen,
   onReduce,
+  onUpdateConfig,
   renderCard,
 }: AcousticsBubblesProps) {
   const [addMenu, setAddMenu] = useState<{ x: number; y: number } | null>(null);
+  const [simMenu, setSimMenu] = useState<{ x: number; y: number; index: number } | null>(null);
+  // Rows are built from the live config so the label reflects what is saved now.
+  const simMenuItems = useMemo<ContextMenuItem[]>(() => {
+    if (!simMenu || !onUpdateConfig) return [];
+    const { index } = simMenu;
+    return buildSavedVisibilityRows({
+      saved: simulationConfigs[index]?.savedObjectVisibility,
+      onSave: (snapshot) => onUpdateConfig(index, { savedObjectVisibility: snapshot }),
+      onClear: () => onUpdateConfig(index, { savedObjectVisibility: undefined }),
+    });
+  }, [simMenu, simulationConfigs, onUpdateConfig]);
   const columnSpace = useBubbleColumnSpace();
   const simulationCount = simulationConfigs.length;
 
@@ -2378,7 +2388,9 @@ function AcousticsBubbles({
         items={simulationConfigs.map((config, index) => {
           const rt = simRuntime(config);
           const label = config.display_name || CARD_TYPE_LABELS[config.type] || 'Simulation';
-          const isActive = activeSimulationIndex === index;
+          const isActive = config.type === 'resonance'
+            ? activeResonanceIds.includes(config.id)
+            : activeSimulationIndex === index;
           const action = openIndex === index ? 'click to reduce' : 'click to open';
           const detail = rt.isRunning
             ? rt.status || 'Running…'
@@ -2397,10 +2409,17 @@ function AcousticsBubbles({
               status={rt.isRunning ? 'running' : rt.error ? 'error' : 'idle'}
               progress={rt.progress / 100}
               onClick={() => handleClick(index)}
-              onTogglePower={isReady(config) && onSetActiveSimulation
-                ? () => onSetActiveSimulation(isActive ? null : index)
+              onTogglePower={isReady(config)
+                ? config.type === 'resonance'
+                  ? () => { useAcousticsSimulationStore.getState().toggleResonanceActive(config.id); }
+                  : onSetActiveSimulation
+                    ? () => onSetActiveSimulation(isActive ? null : index)
+                    : undefined
                 : undefined}
               powerTitle={isActive ? 'Disable simulation' : 'Enable simulation'}
+              onContextMenu={onUpdateConfig
+                ? (e) => setSimMenu({ x: e.clientX, y: e.clientY, index })
+                : undefined}
             />
           );
         })}
@@ -2426,6 +2445,16 @@ function AcousticsBubbles({
             .filter((t) => t.enabled !== false)
             .map((t) => ({ key: t.type, label: t.label, onClick: () => onAddItem(t.type) }))}
           onClose={() => setAddMenu(null)}
+        />
+      )}
+
+      {simMenu && simMenuItems.length > 0 && (
+        <ContextMenu
+          x={simMenu.x}
+          y={simMenu.y}
+          title="Simulation"
+          items={simMenuItems}
+          onClose={() => setSimMenu(null)}
         />
       )}
 

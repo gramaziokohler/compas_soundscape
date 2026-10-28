@@ -1,4 +1,5 @@
-import { API_BASE_URL, SPECKLE_DIRECT_UPLOAD, SPECKLE_INGESTION } from '@/utils/constants';
+import { API_BASE_URL, SHARE_VIEW, SPECKLE_DIRECT_UPLOAD, SPECKLE_INGESTION } from '@/utils/constants';
+import { isShareViewActive } from '@/store/shareViewStore';
 import type { CompasGeometry, SoundEvent, SoundGenerationConfig, FileUploadResponse, JobType, JobRecord, UserPreferences, BugReportPayload, BugReportCreated } from '@/types';
 import { recordFailedRequest } from '@/lib/diagnostics/diagnosticsBuffer';
 import type { TtsCustomVoice, TtsCustomVoiceCreateRequest, TtsDialectsResponse, TtsLanguageMatch } from '@/types/ttsLanguage';
@@ -23,6 +24,7 @@ import type {
 import type { ModelVersionImpactReport, ModelVersionImpactRequest } from '@/types/modelVersionImpact';
 import type { SoundscapeSavePayload, SoundscapeSaveResponse, SoundscapeLoadResponse, SoundscapeStats } from '@/types/soundscape';
 import type { SendScenesRequest, SendScenesResponse } from '@/types/sceneTransfer';
+import type { PublicShareResponse, ShareLinkInfo } from '@/types/share';
 import type { PreflightJobResult, PreflightPayload, SimulationEngine, SimulationMeshSettings } from '@/types/simulationPreflight';
 import type {
   PffdtdAnimationJobResult,
@@ -73,6 +75,13 @@ async function fetchWithErrorHandling(
   options?: RequestInit,
   context: string = 'API request'
 ): Promise<Response> {
+  // The public share view has no identity and Cloudflare Access only bypasses
+  // the public prefix: any other backend call would fail behind a login page.
+  // Fail fast (and loudly in the console) so the offending caller gets gated.
+  if (isShareViewActive() && url.startsWith(API_BASE_URL) && !url.includes(SHARE_VIEW.PUBLIC_API_PREFIX)) {
+    console.warn('[share] blocked non-public request in share view:', context, url);
+    throw new Error(SHARE_VIEW.BLOCKED_REQUEST);
+  }
   try {
     const response = await fetch(url, {
       ...options,
@@ -83,6 +92,24 @@ async function fetchWithErrorHandling(
   } catch (error) {
     handleApiError(error, context);
   }
+}
+
+async function shareLinkRequest(
+  modelId: string,
+  suffix: string,
+  method: 'GET' | 'POST' | 'DELETE',
+  context: string,
+): Promise<ShareLinkInfo> {
+  const response = await fetchWithErrorHandling(
+    `${API_BASE_URL}/api/speckle/soundscape/${encodeURIComponent(modelId)}/share${suffix}`,
+    { method },
+    context,
+  );
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: context }));
+    throw new Error(error.detail || context);
+  }
+  return response.json();
 }
 
 // ─── Speckle file-ingestion polling ─────────────────────────────────────────
@@ -1668,6 +1695,7 @@ export const apiService = {
       ray_tracing: boolean;
       air_absorption: boolean;
       n_rays: number;
+      parallel?: boolean;
       simulation_mode: string;
       enable_grid?: boolean;
       sound_speed?: number;
@@ -1699,6 +1727,9 @@ export const apiService = {
       formData.append('ray_tracing', settings.ray_tracing.toString());
       formData.append('air_absorption', settings.air_absorption.toString());
       formData.append('n_rays', settings.n_rays.toString());
+      if (settings.parallel !== undefined) {
+        formData.append('parallel', settings.parallel.toString());
+      }
       formData.append('object_scattering', JSON.stringify(objectScattering || {}));
 
       formData.append('simulation_mode', settings.simulation_mode);
@@ -2395,6 +2426,40 @@ export const apiService = {
     } catch (error) {
       handleApiError(error, 'Load soundscape from Speckle');
     }
+  },
+
+  /** Anonymous: the filtered soundscape behind a public share link. */
+  async loadSharedSoundscape(shareId: string): Promise<PublicShareResponse> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}${SHARE_VIEW.PUBLIC_API_PREFIX}/share/${encodeURIComponent(shareId)}`,
+      undefined,
+      'Load shared soundscape',
+    );
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: SHARE_VIEW.LOAD_FAILED }));
+      throw new Error(error.detail || SHARE_VIEW.LOAD_FAILED);
+    }
+    return response.json();
+  },
+
+  /** Owner: current share link of a model (share_id null = not shared). */
+  async getShareLink(modelId: string): Promise<ShareLinkInfo> {
+    return shareLinkRequest(modelId, '', 'GET', 'Load share link');
+  },
+
+  /** Owner: create (or return the existing) share link. */
+  async createShareLink(modelId: string): Promise<ShareLinkInfo> {
+    return shareLinkRequest(modelId, '', 'POST', 'Create share link');
+  },
+
+  /** Owner: revoke the old link and issue a new one. */
+  async regenerateShareLink(modelId: string): Promise<ShareLinkInfo> {
+    return shareLinkRequest(modelId, '/regenerate', 'POST', 'Regenerate share link');
+  },
+
+  /** Owner: revoke the share link (the URL then 404s). */
+  async revokeShareLink(modelId: string): Promise<ShareLinkInfo> {
+    return shareLinkRequest(modelId, '', 'DELETE', 'Revoke share link');
   },
 
   /**

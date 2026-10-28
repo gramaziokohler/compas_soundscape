@@ -30,6 +30,18 @@ Save copies audio/IR/analysis from `temp/` → `data/soundscapes/`. Load restore
 so the running session can use them. `SoundscapeData` schema holds `project_id`, `version_id`, and
 `auth_token` so the frontend can reconstruct the Speckle viewer on URL bootstrap.
 
+`soundscape.json` → `share_config` (public share selection, `shareConfigStore`) is domain state.
+It is saved by autosave and restored in `applyRestoredSoundscapePayload` and in the model-open
+path. Scene cards carry a stable `scene_id` (`utils/scene-id.ts`), which share links reference.
+Never key share data by `usageIndex`. The public share view (`/share/<id>`) never saves, rehydrates
+the domain only from `GET /api/public/share/{id}`, and skips job recovery and preferences.
+
+`savedObjectVisibility` (Object Explorer hide / isolate / exclude saved on a scene or simulation card) is
+domain state too: `saved_object_visibility` in `analysis_state.configs[]` (free dict, no schema change)
+and in `SoundscapeSimulationConfig` (needs the Pydantic field or the backend drops it). The live hidden
+state is not persisted; `useApplySavedObjectVisibility` re-applies the powered card's saved view after
+the restore + world tree load (see `object-explorer.mdc`).
+
 ## Critical Pitfalls
 
 ### 1. `useSearchParams` is unreliable on cold page refresh

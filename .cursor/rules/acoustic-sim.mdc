@@ -108,6 +108,11 @@ deterministic (`SIM_MESH_RAY_SEED`).
 - `find_non_convex_walls`: uses unit hull planes with a relative tolerance and includes wall 0.
   Upstream used an absolute 1e-10 on float32 cross products, so most walls of any rotated room were
   marked obstructing.
+- `Room.check_inside` stays `False` (default): sources and listeners outside the hull of an open
+  mesh are valid. Only upstream tests turn it on.
+- SOFA files are read with `h5py` (`directivities/sofa.py`, pinned in `requirements.txt`), not
+  `python-sofa`: no `netCDF4`/second HDF5 copy, and the editable fork's own requirements are never
+  installed on the production host anyway.
 - After editing the C++, rebuild with `python setup.py build_ext --inplace`. A running worker locks
   `libroom*.pyd`; rename it aside first. If two-sided faces exist and pra lacks the flag,
   `build_room` raises. There is no silent fallback.
@@ -124,6 +129,43 @@ deterministic (`SIM_MESH_RAY_SEED`).
   (`utils/simulationRequest.ts`). The signature it produces detects stale results.
   `AcousticsSection.runSimulation` gates the run: errors ask "Run anyway"; warnings and failed checks
   never block.
+
+### Run Cost — Parallel Rays, Shared Receivers, Reciprocity
+
+- **Extra microphones are almost free; extra emitters are not.** Per ray bounce the C++ tests every
+  wall once for the emitter's ray, then one obstruction test per microphone for the scattered ray;
+  per image source it reflects across every wall, then one visibility test per microphone. The fork
+  runs the cheap test first in both (energy/distance threshold before the obstruction loop in
+  `scat_ray`, generating-wall crossing before `is_obstructed_dfs` in `is_visible_dfs`), with
+  bit-identical results. Measured (order 2, 968 walls, 40k rays): 1 mic 214 s, 8 mics 205 s
+  (before: 273 s / 974 s). Never move these tests back after the obstruction loops.
+- **A job uses up to `PYROOMACOUSTICS_MAX_PROCESSES` processes (default 8, capped by the CPU count;
+  env override) when the card's "Parallel processing" toggle (`parallel`, default on) is set.**
+  `split_processes` (`services/pyroomacoustics_worker.py`): one room per emitter (after reciprocity),
+  `min(max, emitters)` rooms at once in a `utils/child_pool.py` pool; processes left over split each
+  room's rays (`enable_ray_tracing(n_processes=...)` → the fork's `rt_parallel.py`, histograms
+  summed: statistically equivalent, not bit-identical). One emitter = in-process with all processes
+  on its rays. Rooms report progress through `<progress_file>.emitter<i>`; results stay in request
+  order. Toggle off = everything in the job process. Measured (248 walls, order 2, 20k rays):
+  8 sources × 2 listeners 57.5 s → 24.5 s, FOA 4 sources × 1 listener 96.8 s → 29.4 s.
+  - The CPU job child is daemonic: both pools lift that flag only while starting workers and hide
+    `__main__` (else every worker re-imports `workers.worker_main`). Workers exit when their parent
+    is killed (job cancel), so no orphans. The fork's ray pool shuts down through a
+    `multiprocessing.util.Finalize` (runs before the exit hook joins children); a plain `atexit`
+    hung every finished job (`test_parallel_job_child_exits_when_done`).
+  - `CPU_WORKER_SLOTS` jobs each start their own pools: with 4 slots, 8 processes oversubscribe a
+    small machine; lower the env var there. Never reduce the rays to save time.
+- **Coincident microphones are one ray-traced receiver** (`share_coincident_mics`, default on): the
+  four FOA channels share one directional detector and keep their own responses. Never add
+  channels as separate positions to work around it.
+- **Reciprocity (`utils/reciprocity.py`, `PYROOMACOUSTICS_RECIPROCITY`):** with more sources than
+  listeners the listeners emit and the sources are their microphones (IR A→B = B→A), so there are
+  fewer emitter rooms (extra microphones are almost free, see above): 8 sources × 2 listeners,
+  one process, 199.5 s → 65.2 s. ISM-only IRs are identical; hybrid ones agree within the
+  Monte-Carlo noise. Only for mono listeners and omnidirectional sources; FOA (four emitting
+  channels would cost more) and directional sources keep the normal direction. Output files and
+  results are still keyed by the original source / receiver; the results JSON records
+  `reciprocity: {flipped, reason, n_sources, n_receivers}`.
 
 ### Receiver Types
 

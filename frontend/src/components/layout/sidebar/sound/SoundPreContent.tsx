@@ -6,6 +6,7 @@ import { SoundCardBody } from './SoundCardBody';
 import { SearchBar } from '@/components/ui/SearchBar';
 import { useCatalogBrowse, type CatalogBrowseState, type CatalogBrowseActions } from '@/hooks/useCatalogBrowse';
 import type { SoundDirectivity } from '@/types/directivity';
+import { useCanEdit } from '@/hooks/useCanEdit';
 
 interface SoundPreContentProps extends SoundConfigContentProps {
   /**
@@ -74,6 +75,7 @@ export function SoundPreContent(props: SoundPreContentProps) {
 
   // ── Catalog search state (lifted so SearchBar can render full-width) ───────
   const catalogBrowse = useCatalogBrowse();
+  const canEdit = useCanEdit();
   const isCatalog = currentType === 'catalog';
   const catalogSearchState: (CatalogBrowseState & CatalogBrowseActions) | undefined = isCatalog ? catalogBrowse : undefined;
 
@@ -89,6 +91,11 @@ export function SoundPreContent(props: SoundPreContentProps) {
   // For text-to-audio: render just the textarea; sliders go in an "Additional
   // settings" collapse inside TextToAudioMode.
   const isTextToAudio = currentType === 'text-to-audio';
+
+  // Share view: a not-yet-generated card only shows its prompt, never the editors.
+  if (!canEdit) {
+    return config.prompt ? <p className="text-xs text-secondary-hover whitespace-pre-wrap">{config.prompt}</p> : null;
+  }
 
   return (
     <SoundCardBody

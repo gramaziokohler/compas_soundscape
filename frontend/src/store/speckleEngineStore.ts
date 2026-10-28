@@ -3,6 +3,7 @@ import { Viewer, CameraController, SelectionExtension, FilteringExtension } from
 import { SpeckleAudioCoordinator } from '@/lib/three/speckle-audio-coordinator';
 import { PlaybackSchedulerService } from '@/lib/audio/playback-scheduler-service';
 import { BoundingBoxManager } from '@/lib/three/BoundingBoxManager';
+import { ResonanceRoomBoxes } from '@/lib/three/ResonanceRoomBoxes';
 import { GradientMapManager } from '@/lib/three/gradient-map-manager';
 import { AreaDrawingManager } from '@/lib/three/area-drawing-manager';
 import * as THREE from 'three';
@@ -15,6 +16,7 @@ interface SpeckleEngineState {
   selectionExtension: SelectionExtension | null;
   filteringExtension: FilteringExtension | null;
   boundingBoxManager: BoundingBoxManager | null;
+  resonanceRoomBoxes: ResonanceRoomBoxes | null;
   cameraController: CameraController | null;
   areaDrawingManager: AreaDrawingManager | null;
   gradientMapManager: GradientMapManager | null;
@@ -41,6 +43,7 @@ interface SpeckleEngineState {
   setSelectionExtension: (ext: SelectionExtension | null) => void;
   setFilteringExtension: (ext: FilteringExtension | null) => void;
   setBoundingBoxManager: (manager: BoundingBoxManager | null) => void;
+  setResonanceRoomBoxes: (boxes: ResonanceRoomBoxes | null) => void;
   setCameraController: (controller: CameraController | null) => void;
   setAreaDrawingManager: (manager: AreaDrawingManager | null) => void;
   setGradientMapManager: (manager: GradientMapManager | null) => void;
@@ -61,6 +64,7 @@ export const useSpeckleEngineStore = create<SpeckleEngineState>((set) => ({
   selectionExtension: null,
   filteringExtension: null,
   boundingBoxManager: null,
+  resonanceRoomBoxes: null,
   cameraController: null,
   areaDrawingManager: null,
   gradientMapManager: null,
@@ -79,6 +83,7 @@ export const useSpeckleEngineStore = create<SpeckleEngineState>((set) => ({
   setSelectionExtension: (selectionExtension) => set({ selectionExtension }),
   setFilteringExtension: (filteringExtension) => set({ filteringExtension }),
   setBoundingBoxManager: (boundingBoxManager) => set({ boundingBoxManager }),
+  setResonanceRoomBoxes: (resonanceRoomBoxes) => set({ resonanceRoomBoxes }),
   setCameraController: (cameraController) => set({ cameraController }),
   setAreaDrawingManager: (areaDrawingManager) => set({ areaDrawingManager }),
   setGradientMapManager: (gradientMapManager) => set({ gradientMapManager }),
