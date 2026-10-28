@@ -769,7 +769,7 @@ Controller to a Holophonix processor (decodes to the loudspeaker dome) and optio
 recorder (Reaper) that only listens. Frontend-only (Chrome/Edge). Needs ONE output device with
 ≥ (order+1)² channels: DVS on macOS works; DVS on Windows (WDM) only exposes stereo pairs, so
 Windows uses the **local ASIO bridge** instead: `BridgeSendTransport` (AudioWorklet
-`public/worklets/ambisonic-capture-processor.js` → `ws://127.0.0.1:8765`) →
+`public/assets/worklets/ambisonic-capture-processor.js` → `ws://127.0.0.1:8765`) →
 `scripts/ambisonic_bridge/ambisonic_bridge.py` (drift-compensating buffer → ASIO: DVS, or ReaRoute
 into Reaper). The send picker probes channel counts (`lib/audio/output/probe-output-channels.ts`).
 

@@ -67,7 +67,7 @@ export function loadHeadphonesGeometry(scaleForSounds: number): Promise<Headphon
   loadPromise = new Promise((resolve, reject) => {
     const loader = new OBJLoader();
     loader.load(
-      '/Headphones.obj',
+      '/assets/Headphones.obj',
       (group) => {
         const geometries: THREE.BufferGeometry[] = [];
 

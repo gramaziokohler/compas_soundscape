@@ -98,8 +98,10 @@ branch is checked out. `supervisor.log` says which.
    - `share` (the page)
    - `api/public` (the filtered soundscape plus its audio and IRs)
    - `_next` (JS/CSS bundles)
-   - `compas_icon_white.png`, plus any other `frontend/public` file the share page requests (check
-     the browser network tab)
+   - `assets` (`frontend/public/assets/`: audio worklets, the listener model, the app icon).
+     Any `frontend/public` file the player loads must live under `assets/`, so this one
+     bypass keeps covering it. `/favicon.ico` stays behind Access; a share viewer just gets no
+     tab icon.
 
    Path applications take precedence over the root one, so everything else stays behind Access.
    Do **not** bypass `/soundscapes` or `/static`: the share page never uses them.

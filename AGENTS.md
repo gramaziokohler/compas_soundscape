@@ -140,7 +140,8 @@ frontend/src/
 
 10. **The public share view is read-only and anonymous.** `/share/<id>` (Cloudflare Access
     bypassed) may only call `/api/public/*` and Speckle. Gate every new editing control with
-    `useCanEdit()`. Never expose `SPECKLE_TOKEN` or `/soundscapes/<ws>/…` paths to it. See
+    `useCanEdit()`. Never expose `SPECKLE_TOKEN` or `/soundscapes/<ws>/…` paths to it. Static
+    files it loads go in `frontend/public/assets/` (the only bypassed public folder). See
     ARCHITECTURE.md § Public Share Links.
 
 ## Scoped Rules

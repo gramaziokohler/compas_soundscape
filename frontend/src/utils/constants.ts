@@ -1299,7 +1299,7 @@ export const AMBISONIC_SEND = {
   // (DVS in ASIO mode) — the Windows route to 16 aligned Dante channels.
   BRIDGE: {
     DEFAULT_URL: 'ws://127.0.0.1:8765',
-    WORKLET_URL: '/worklets/ambisonic-capture-processor.js',
+    WORKLET_URL: '/assets/worklets/ambisonic-capture-processor.js',
     PROCESSOR_NAME: 'ambisonic-capture-processor',
     // Frames per WebSocket message (~10.7 ms at 48 kHz).
     FRAMES_PER_MESSAGE: 512,
@@ -1419,8 +1419,8 @@ export const SOUND_FX = {
   MIN_DELAY_SAMPLES: 128,
   DISPLAY_RENDER_SAMPLE_RATE: 8000,
   DISPLAY_RENDER_DEBOUNCE_MS: 200,
-  WORKLET_URL: '/worklets/fx-dynamics-processor.js',
-  PITCH_WORKLET_URL: '/worklets/fx-pitch-processor.js',
+  WORKLET_URL: '/assets/worklets/fx-dynamics-processor.js',
+  PITCH_WORKLET_URL: '/assets/worklets/fx-pitch-processor.js',
   PITCH_GRAIN_SEC: 0.03,
   EQ_FFT_BINS: 1024,
   /** Output meter scale (dBFS) and clip detection. */

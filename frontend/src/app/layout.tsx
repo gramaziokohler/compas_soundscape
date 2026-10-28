@@ -29,7 +29,7 @@ export const metadata: Metadata = {
   title: "Sound is blue",
   description: "Populate your architectural model with contextualized sound events",
   icons: {
-    icon: '/compas_icon_white.png',
+    icon: '/assets/compas_icon_white.png',
   },
 };
 
