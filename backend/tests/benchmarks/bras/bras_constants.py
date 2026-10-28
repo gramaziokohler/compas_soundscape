@@ -1,6 +1,9 @@
 """Generic settings of the BRAS benchmark (scene inputs and band tests live in scenes.py)."""
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 from config.constants import BACKEND_DIR
 
 # ── Measurements ──────────────────────────────────────────────────────────────
@@ -61,5 +64,6 @@ SOURCE_PHASE_PRE_S = 0.002                      # pre-ringing room kept before t
 SOURCE_PHASE_FLOOR_DB = -60.0                   # below this |H| (re max) the phase is noise: left at 0
 
 # ── Outputs ───────────────────────────────────────────────────────────────────
-OUTPUT_ROOT = BACKEND_DIR / "temp" / "benchmarks" / "bras"   # <scene>/f<fmax>/ per benchmark
-CACHE_DIR = BACKEND_DIR / "tests" / "benchmarks" / "bras" / "cache"  # directivity balloons (survives the janitor)
+# outside the repository (a sibling folder of compas_soundscape), so runs and caches never touch git
+OUTPUT_ROOT = Path(os.environ.get("BRAS_OUTPUT_ROOT", BACKEND_DIR.parent.parent / "compas_soundscape_benchmarks" / "bras"))
+CACHE_DIR = OUTPUT_ROOT / "_cache"                  # directivity balloons, loudspeaker phase (<scene>/ beside it)

@@ -7,7 +7,7 @@ with the compas-toy python:
     BRAS_FULL=1 python -m pytest tests/benchmarks/bras -m bras_benchmark -s        # every pair
     BRAS_SCENE=RS2_1m_absorbing BRAS_FMAX=2000 BRAS_FULL=1 python -m pytest ...    # another scene / stage
 
-Outputs: backend/temp/benchmarks/bras/<scene>/f<fmax>/ (report.md, plots/, animation/*.mp4).
+Outputs: ../compas_soundscape_benchmarks/bras/<scene>/f<fmax>/ (outside the repo; BRAS_OUTPUT_ROOT) (report.md, plots/, animation/*.mp4).
 The assertions are sanity checks; the comparison itself is the report.
 """
 import os

@@ -36,7 +36,7 @@ from the `.skp` files first, with one material per surface type.
 | `smoothing_fraction` | Frequency-response curves, 1/N octave (12) |
 | `pre_ms`, `gate_ms` | Analysis window around the direct sound (2 ms before, 17 ms after) |
 | `duration_s` | Simulated IR length (0.05 s) |
-| `padding_m` | Free air per stage, overriding `Scene.padding_m` (2.5 m at 2.5 kHz to fit the 8 GB GPU) |
+| `padding_m` | Free air per stage, used only when `Scene.padding_m` does not fit the GPU budget (`PFFDTD_GPU_MEMORY_GB`, default 8): 2.5 m at 2.5 kHz on an 8 GB GPU, the full 3 m on 11 GB |
 
 ## 3. Run (from `backend/`, compas-toy python)
 
@@ -64,7 +64,10 @@ Or the CLI (with `backend/` and `backend/tests` on `PYTHONPATH`):
 CPU-only unit tests: `python -m pytest tests/benchmarks/bras/test_bras_units.py tests/benchmarks/bras/test_bras_animation_units.py`.
 `test_ground_plane_reflection` (GPU) checks the hemi-anechoic floor against an image source.
 
-## 4. Outputs: `backend/temp/benchmarks/bras/<scene>/f<fmax>/`
+## 4. Outputs: `../compas_soundscape_benchmarks/bras/<scene>/f<fmax>/`
+
+A sibling folder of the repository, so runs and caches stay out of git (`BRAS_OUTPUT_ROOT` moves
+it; `_cache/` holds the directivity balloons and the loudspeaker phase).
 
 | File | Content |
 | --- | --- |
