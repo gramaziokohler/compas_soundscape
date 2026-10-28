@@ -6,7 +6,7 @@ CLI (from backend/, with backend/ and backend/tests on PYTHONPATH):
     python -m benchmarks.bras.bras_benchmark --scene RS2_1m_rigid --fmax 500 --pairs all
     python -m benchmarks.bras.bras_benchmark --scene RS2_1m_rigid --all-stages --pairs all
 
-Outputs: backend/temp/benchmarks/bras/<scene>/f<fmax>/ (report.md, results.json, plots/, animation/).
+Outputs: ../compas_soundscape_benchmarks/bras/<scene>/f<fmax>/ (outside the repo; BRAS_OUTPUT_ROOT) (report.md, results.json, plots/, animation/).
 """
 from __future__ import annotations
 
@@ -130,8 +130,12 @@ def run_benchmark(data: SceneData, opts: RunOptions) -> dict:
     c_meas = speed_of_sound(scene.temperature_c)
     geoms = {p.key: pair_geometry(p, mesh.vertices, mesh.faces, scene.source, c_meas) for p in pairs}
     points = np.vstack([np.vstack([p.source_position, p.receiver_position]) for p in pairs])
-    padding = float(bt.padding_m.get(opts.fmax, scene.padding_m))
+    # the stage's reduced padding only when the full padding does not fit this GPU (PFFDTD_GPU_MEMORY_GB)
+    padding = float(scene.padding_m)
     plan = domain_plan(mesh.bmin, mesh.bmax, points, opts.fmax, opts.ppw, bt.duration_s, padding, ground_z)
+    if not plan.fits_gpu and opts.fmax in bt.padding_m:
+        padding = float(bt.padding_m[opts.fmax])
+        plan = domain_plan(mesh.bmin, mesh.bmax, points, opts.fmax, opts.ppw, bt.duration_s, padding, ground_z)
     if not plan.fits_gpu:
         raise RuntimeError(f"{scene.name}: domain needs {plan.gpu_gb:.1f} GB > budget {plan.gpu_budget_gb:.1f} GB "
                            "(lower ppw / fmax or the padding)")

@@ -77,8 +77,8 @@ class BandTest:
     gate_ms: float = 17.0                 # analysis window: pre_ms before to gate_ms after the direct sound
     pre_ms: float = 2.0
     duration_s: float = 0.05              # simulated IR length (longest direct path + gate + margin)
-    padding_m: dict = field(default_factory=dict)  # fmax -> free air (m) for that stage (else Scene.padding_m);
-                                          # less padding = smaller grid, the domain-edge echo is removed anyway
+    padding_m: dict = field(default_factory=dict)  # fmax -> free air (m) when Scene.padding_m does not fit the GPU
+                                          # (PFFDTD_GPU_MEMORY_GB); the domain-edge echo is removed anyway
 
 
 @dataclass(frozen=True)
@@ -116,7 +116,7 @@ RS2_SOURCE = SourceInput(
     orientations={"LS1": (-150, 0), "LS2": (-135, 0), "LS3": (-120, 0), "LS4": (150, 0), "LS5": (135, 0), "LS6": (120, 0)},
 )
 # Band test: 125 Hz - 2 kHz on the final stage (compared up to 0.8 fmax = 2 kHz, so fmax = 2.5 kHz;
-# 2.5 m of padding keeps that grid within the 8 GB GPU: h = 12.5 mm, 348 M nodes).
+# the full 3 m padding needs 487 M nodes / 7.8 GB; on an 8 GB GPU 2.5 m keeps it within budget: 348 M nodes).
 RS2_BANDS = BandTest(stages={500.0: 27.456, 2500.0: 10.0}, fmin_hz=125.0, padding_m={2500.0: 2.5})
 RS2_COMMON = dict(source=RS2_SOURCE, temperature_c=17.6, humidity=47.0, gain_pair="LS1-MP1", band_test=RS2_BANDS,
                   smoke_pairs=("LS1-MP1", "LS4-MP4"), animation=AnimationSpec(source="LS1", receiver="MP1"))
