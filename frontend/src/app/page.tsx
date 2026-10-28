@@ -368,6 +368,35 @@ function HomeContent() {
     const params = new URLSearchParams(window.location.search);
     const urlModelId = params.get('model_id');
     const homeProjectId = params.get('home');
+    // Public share view: anonymous, read-only — only /api/public + Speckle.
+    // Must run before the no-model_id Home branch: share URLs carry no model_id.
+    const shareId = useShareViewStore.getState().shareId;
+    if (shareId) {
+      bootstrappedRef.current = true;
+      collapseFloatingPanels();
+      setIsBootstrappingModel(true);
+      resetDomainForFreshModel();
+      apiService.loadSharedSoundscape(shareId).then((res) => {
+        const data = res.soundscape_data;
+        useShareViewStore.getState().setLinks(res.share_config?.links ?? []);
+        applySavedSpeckleModel(data, setModelFileName);
+        applyRestoredSoundscapePayload(
+          data,
+          `${API_BASE_URL}${res.audio_base_url}`,
+          res.ir_base_url || undefined,
+          suppressOrchestrateBakeRef,
+        );
+        console.log('[page:bootstrap] Shared soundscape restored:', shareId);
+      }).catch((err) => {
+        console.error('[page:bootstrap] Failed to load shared soundscape:', err);
+        notifyError(err instanceof Error ? err.message : SHARE_VIEW.LOAD_FAILED, 'warning');
+      }).finally(() => {
+        setIsBootstrappingModel(false);
+        setDomainRestored(true);
+      });
+      return;
+    }
+
     if (!urlModelId) {
       bootstrappedRef.current = true;
       resetHomeLayout();
@@ -409,34 +438,6 @@ function HomeContent() {
       startEmptyHomeStage();
       useUIStore.getState().setLeftSidebarExpandCommand(false);
       console.log('[page:bootstrap] Empty Home stage');
-      return;
-    }
-
-    // Public share view: anonymous, read-only — only /api/public + Speckle.
-    const shareId = useShareViewStore.getState().shareId;
-    if (shareId) {
-      bootstrappedRef.current = true;
-      collapseFloatingPanels();
-      setIsBootstrappingModel(true);
-      resetDomainForFreshModel();
-      apiService.loadSharedSoundscape(shareId).then((res) => {
-        const data = res.soundscape_data;
-        useShareViewStore.getState().setLinks(res.share_config?.links ?? []);
-        applySavedSpeckleModel(data, setModelFileName);
-        applyRestoredSoundscapePayload(
-          data,
-          `${API_BASE_URL}${res.audio_base_url}`,
-          res.ir_base_url || undefined,
-          suppressOrchestrateBakeRef,
-        );
-        console.log('[page:bootstrap] Shared soundscape restored:', shareId);
-      }).catch((err) => {
-        console.error('[page:bootstrap] Failed to load shared soundscape:', err);
-        notifyError(err instanceof Error ? err.message : SHARE_VIEW.LOAD_FAILED, 'warning');
-      }).finally(() => {
-        setIsBootstrappingModel(false);
-        setDomainRestored(true);
-      });
       return;
     }
 
