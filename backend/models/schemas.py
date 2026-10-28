@@ -7,6 +7,14 @@ from typing import Optional
 
 from config.constants import AUDIO_SAMPLE_RATE
 from config.constants import BUG_REPORT_MAX_DESCRIPTION_CHARS
+from config.constants import CUSTOM_MATERIAL_CATEGORY
+from config.constants import CUSTOM_MATERIAL_CENTER_FREQS
+from config.constants import CUSTOM_MATERIAL_COEFF_MAX
+from config.constants import CUSTOM_MATERIAL_COEFF_MIN
+from config.constants import CUSTOM_MATERIAL_DESCRIPTION_MAX_LEN
+from config.constants import CUSTOM_MATERIAL_NAME_MAX_LEN
+from config.constants import DIRECTIVITY_NAME_MAX_LEN
+from config.constants import DIRECTIVITY_OMNI_ID
 from config.constants import STUDY_MAX_ID_CHARS
 from config.constants import STUDY_MAX_NOTE_CHARS
 from config.constants import STUDY_MAX_TAGS
@@ -39,6 +47,7 @@ from config.constants import SIM_MESH_WELD_TOLERANCE_MM_MAX
 from pydantic import BaseModel
 from pydantic import Field
 from pydantic import field_validator
+from pydantic import model_validator
 
 
 class PromptRequest(BaseModel):
@@ -441,6 +450,72 @@ class SoundscapeGlobalSettings(BaseModel):
     orchestrate_sounds_enabled: bool = False
 
 
+class SourceDirectivityRef(BaseModel):
+    """Directivity + orientation of one sound source.
+
+    ``id`` is an analytical preset ("omni", "cardioid", ...), a measured preset
+    ("preset_<name>") or a library entry ("dir_<hex>"). Angles are radians in the
+    listener convention: yaw=0 faces -Y, +yaw turns toward -X, +pitch tilts up (+Z),
+    roll turns about the forward axis (utils/orientation.py).
+    """
+    id: str = DIRECTIVITY_OMNI_ID
+    yaw: float = 0.0
+    pitch: float = 0.0
+    roll: float = 0.0
+
+    @property
+    def is_omni(self) -> bool:
+        return not self.id or self.id == DIRECTIVITY_OMNI_ID
+
+
+class SourceReceiverPair(BaseModel):
+    """One source → receiver pair of a simulation request (``source_receiver_pairs``)."""
+    source_id: str
+    source_position: list[float] = Field(min_length=3, max_length=3)
+    receiver_id: str
+    receiver_position: list[float] = Field(min_length=3, max_length=3)
+    source_directivity: Optional[SourceDirectivityRef] = None
+
+
+class DirectivityRecord(BaseModel):
+    """A directivity the client can assign: built-in preset or library / shared entry."""
+    id: str
+    name: str
+    kind: Literal["analytical", "measured"]
+    origin: Literal["builtin", "library", "shared"] = "library"
+    p: Optional[float] = None               # analytical: CardioidFamily parameter
+    format: Optional[str] = None            # measured: "sofa" | "bras_csv"
+    source_label: Optional[str] = None      # measured: label inside the file (SOFA sources)
+    fs: Optional[int] = None
+    n_points: Optional[int] = None
+    taps: Optional[int] = None
+    fit_residual: Optional[list[float]] = None  # per band, relative RMS of the first-order fit
+    available: bool = True                  # False while a measured preset is still being built
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class DirectivityInspectResult(BaseModel):
+    """Quick look at an uploaded file before the import job runs."""
+    format: str
+    sofa_sources: list[str] = []
+    fs: Optional[float] = None
+    n_points: Optional[int] = None
+    warning: Optional[str] = None
+
+
+class DirectivityRenameInput(BaseModel):
+    name: str = Field(..., min_length=1, max_length=DIRECTIVITY_NAME_MAX_LEN)
+
+    @field_validator("name")
+    @classmethod
+    def _strip_name(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Name is required")
+        return v
+
+
 class SoundscapeSoundConfig(BaseModel):
     """Serializable sound configuration (one card)"""
     index: int
@@ -481,6 +556,9 @@ class SoundscapeSoundConfig(BaseModel):
     # sphere. Persisted so a pending sphere keeps its authored position after a
     # refresh/save-load instead of falling back to camera-front spiral placement.
     position: Optional[list[float]] = None
+    # Source directivity + orientation (None = omnidirectional); copied onto the
+    # generated events of this card.
+    directivity: Optional[SourceDirectivityRef] = None
 
 
 class SoundscapeSoundEvent(BaseModel):
@@ -520,6 +598,9 @@ class SoundscapeSoundEvent(BaseModel):
     # Generation inputs of this variant (opaque JSON signature string), loaded
     # into the card's settings editor when the variant is selected.
     generated_signature: Optional[str] = None
+    # Source directivity + orientation (None = omnidirectional), shared by the
+    # variants of one prompt like `position`.
+    directivity: Optional[SourceDirectivityRef] = None
 
     @field_validator("timestamps", mode="before")
     @classmethod
@@ -684,6 +765,64 @@ class SoundscapeSimulationConfig(BaseModel):
     ir_import_mode: Optional[str] = None  # "single" | "per-pair"
 
 
+def _check_absorption_coeffs(coeffs: list[float]) -> list[float]:
+    for c in coeffs:
+        if not CUSTOM_MATERIAL_COEFF_MIN <= c <= CUSTOM_MATERIAL_COEFF_MAX:
+            raise ValueError(
+                f"Absorption coefficients must be between {CUSTOM_MATERIAL_COEFF_MIN} "
+                f"and {CUSTOM_MATERIAL_COEFF_MAX}"
+            )
+    return coeffs
+
+
+class CustomMaterialInput(BaseModel):
+    """Create / update payload of a user-defined acoustic material (one coeff per octave band)."""
+    name: str = Field(..., min_length=1, max_length=CUSTOM_MATERIAL_NAME_MAX_LEN)
+    description: str = Field("", max_length=CUSTOM_MATERIAL_DESCRIPTION_MAX_LEN)
+    coeffs: list[float]
+
+    @field_validator("name")
+    @classmethod
+    def _strip_name(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Material name is required")
+        return v
+
+    @field_validator("coeffs")
+    @classmethod
+    def _check_coeffs(cls, v: list[float]) -> list[float]:
+        if len(v) != len(CUSTOM_MATERIAL_CENTER_FREQS):
+            raise ValueError(f"Expected {len(CUSTOM_MATERIAL_CENTER_FREQS)} band coefficients")
+        return _check_absorption_coeffs(v)
+
+
+class CustomMaterial(BaseModel):
+    """A user-defined acoustic material — same shape as GET /api/pyroomacoustics/materials items."""
+    id: str
+    name: str
+    description: str = ""
+    coeffs: list[float]
+    center_freqs: list[float] = list(CUSTOM_MATERIAL_CENTER_FREQS)
+    absorption: float
+    category: str = CUSTOM_MATERIAL_CATEGORY
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class CustomMaterialCoefficients(BaseModel):
+    """Per-band absorption of one custom material, inlined into a simulation request."""
+    coeffs: list[float]
+    center_freqs: list[float] = list(CUSTOM_MATERIAL_CENTER_FREQS)
+
+    @model_validator(mode="after")
+    def _check_bands(self) -> "CustomMaterialCoefficients":
+        if not self.coeffs or len(self.coeffs) != len(self.center_freqs):
+            raise ValueError("coeffs and center_freqs must be non-empty and the same length")
+        _check_absorption_coeffs(self.coeffs)
+        return self
+
+
 class SoundscapeData(BaseModel):
     """Full soundscape data package"""
     version: str = "1.0"
@@ -704,6 +843,12 @@ class SoundscapeData(BaseModel):
     active_simulation_index: Optional[int] = None
     # Live acoustic region of the model (survives refresh / re-open)
     acoustic_region: Optional[SoundscapeAcousticSelection] = None
+    # Read-only snapshot of the owner's custom materials assigned in this soundscape,
+    # so collaborators resolve names/colours and can re-run simulations.
+    custom_materials: list[CustomMaterial] = []
+    # Read-only snapshot of the library directivities assigned to sounds of this
+    # soundscape (their balloons are copied into <model>/directivities/ on save).
+    directivities: list[DirectivityRecord] = []
     # Analysis state persistence
     analysis_state: Optional[dict] = None
     # Resonance audio persistence
@@ -731,13 +876,14 @@ class SoundscapeSaveRequest(BaseModel):
     ir_urls: list[str] = []  # IR file URLs to copy
     analysis_ids: list[str] = []  # Analysis result IDs to persist
     scenario_ids: list[str] = []  # Scenario IDs to persist
+    directivity_ids: list[str] = []  # Library directivities whose balloon files to copy
     # Optimistic-concurrency token: the workspace revision the client last saw.
     # If set and stale, the save is rejected with 409 (shared workspaces).
     base_revision: Optional[int] = None
 
 
 class SendScenesRequest(BaseModel):
-    """Copy sound scenes from the URL's model into another model of the same workspace."""
+    """Copy sound scenes from the URL's model into another model: of the same workspace for its owner, of the caller's own workspace otherwise"""
     target_model_id: str
     # analysis_state.configs indices of the usage cards to copy (frontend useSoundScenes usageIndex)
     usage_indices: list[int]
@@ -761,7 +907,8 @@ class SendScenesResponse(BaseModel):
     audio_files_copied: int
     missing_audio_filenames: list[str] = []
     revision: int
-
+    # True when the target lives in the caller's own workspace, not the open one
+    cross_workspace: bool = False
 
 class PyroomacousticsGeometryMaterial(BaseModel):
     """Material assignment for a face group.

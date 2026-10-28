@@ -27,6 +27,8 @@ import { PffdtdFreePositioningResults } from './PffdtdFreePositioningResults';
 import { Badge } from '@/components/ui/Badge';
 import { GradientMapManager } from '@/lib/three/gradient-map-manager';
 import { SIMULATION_POSITION_THRESHOLD } from '@/utils/constants';
+import { directivityKeySuffix, positionKeyBase } from '@/utils/positionKey';
+import { useSoundscapeStore } from '@/store/soundscapeStore';
 
 // ─── Metric metadata ──────────────────────────────────────────────────────────
 
@@ -303,6 +305,8 @@ export function SimulationResultContent({
   } | undefined)?.sources;
 
   const gridListeners = useGridListenersStore((s) => s.gridListeners);
+  // Current directivities: a changed pattern / orientation outdates the IR like a move.
+  const liveSounds = useSoundscapeStore((s) => s.soundscapeData);
   // Free-source runs start at the listeners: no per-source field outputs to show.
   const freeSourceRun = usePffdtdFreeStore((s) => (simulationId ? s.grids[simulationId]?.block?.mode === 'source' : false));
   // ── Position mismatch detection ─────────────────────────────────────────
@@ -342,6 +346,12 @@ export function SimulationResultContent({
         const dist = Math.hypot(simPos[0] - cur[0], simPos[1] - cur[1], simPos[2] - cur[2]);
         if (dist > SIMULATION_POSITION_THRESHOLD) {
           names.push(currentSoundNames?.[soundId] || soundId);
+          sourceIds.push(soundId);
+          continue;
+        }
+        const liveDirectivity = liveSounds?.find((s) => s.id === soundId)?.directivity;
+        if (directivityKeySuffix(liveDirectivity) !== simPosKey.slice(positionKeyBase(simPosKey).length)) {
+          names.push(`${currentSoundNames?.[soundId] || soundId} (directivity changed)`);
           sourceIds.push(soundId);
         }
       }
@@ -391,7 +401,7 @@ export function SimulationResultContent({
     }
 
     return { names, sourceIds, receiverIds };
-  }, [isExpanded, simulationConfig, currentSoundPositions, currentSoundNames, currentReceiverPositions, receiverDisplayNames, gridListeners]);
+  }, [isExpanded, simulationConfig, currentSoundPositions, currentSoundNames, currentReceiverPositions, receiverDisplayNames, gridListeners, liveSounds]);
 
   const mismatchedNames = mismatchInfo.names;
 

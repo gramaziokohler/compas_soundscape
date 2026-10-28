@@ -456,7 +456,8 @@ PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE = PYROOMACOUSTICS_SIMULATION_MODE_MONO  
 
 # FOA Ambisonics Configuration
 # B-format microphone: Uses directivity patterns (W=omni, Y/Z/X=figure-8) via MicrophoneArray.
-# Directivity is applied to ISM; ray tracing uses omnidirectional fallback.
+# The local pyroomacoustics fork applies mic and source directivities to ISM and
+# ray tracing (band energies / sampled rays).
 
 # Ray Tracing Configuration (Hybrid ISM/Ray Tracing)
 PYROOMACOUSTICS_RAY_TRACING_N_RAYS = 10000  # Number of rays to shoot (default)
@@ -487,8 +488,87 @@ PYROOMACOUSTICS_CUSTOM_MATERIALS = {
         "description": "Almost perfect absorber (fully absorptive at all frequencies)",
         "coeffs": [0.99, 0.99, 0.99, 0.99, 0.99, 0.99, 0.99],
         "center_freqs": [125, 250, 500, 1000, 2000, 4000, 8000],
-    },    
+    },
 }
+
+# User-defined acoustic materials (routers/materials.py, services/custom_materials_service.py)
+# Stored per user_hash in SQLite; inlined as coefficient dicts into simulation
+# payloads by the routers so workers never read the database.
+CUSTOM_MATERIAL_ID_PREFIX = "user_"
+CUSTOM_MATERIAL_CATEGORY = "Custom"
+CUSTOM_MATERIAL_CENTER_FREQS = [125, 250, 500, 1000, 2000, 4000, 8000]
+CUSTOM_MATERIAL_COEFF_MIN = 0.0
+CUSTOM_MATERIAL_COEFF_MAX = 1.0
+CUSTOM_MATERIAL_NAME_MAX_LEN = 60
+CUSTOM_MATERIAL_DESCRIPTION_MAX_LEN = 240
+CUSTOM_MATERIALS_PER_USER_MAX = 200
+
+# ============================================================================
+# Source directivity (routers/directivities.py, services/directivity_*.py)
+# ============================================================================
+# A sound source may radiate with an analytical Cardioid-family pattern or a
+# measured balloon (SOFA / BRAS front-pole CSV). Orientation uses the listener
+# convention (yaw/pitch/roll radians, yaw=0 faces -Y, +pitch up; utils/orientation.py).
+# Balloon source frame: +x front, +z up, +y left.
+DIRECTIVITY_OMNI_ID = "omni"
+# Analytical presets: id -> (label, CardioidFamily p). p=1 omni ... p=0 figure-eight.
+DIRECTIVITY_ANALYTICAL_PRESETS = {
+    "omni": ("Omnidirectional", 1.0),
+    "subcardioid": ("Subcardioid", 0.75),
+    "cardioid": ("Cardioid", 0.5),
+    "supercardioid": ("Supercardioid", 0.366),
+    "hypercardioid": ("Hypercardioid", 0.25),
+    "figure_eight": ("Figure-eight", 0.0),
+}
+DIRECTIVITY_PRESET_ID_PREFIX = "preset_"  # measured built-ins
+DIRECTIVITY_ID_PREFIX = "dir_"            # user library entries (dir_<hex>)
+# Measured presets from the DIRPAT loudspeaker SOFA bundled with the pyroomacoustics
+# fork (pyroomacoustics/data/sofa/, CC0): id -> (label in the file, display name).
+DIRECTIVITY_MEASURED_PRESETS = {
+    "preset_genelec_8020": ("Genelec_8020", "Genelec 8020 (studio loudspeaker)"),
+    "preset_hats_4128c": ("HATS_4128C", "Human speaking (B&K HATS 4128C)"),
+}
+DIRECTIVITY_SOFA_DIRPAT_STEM = "LSPs_HATS_GuitarCabinets_Akustikmessplatz"
+DIRECTIVITY_SOFA_PATH = os.environ.get("DIRECTIVITY_SOFA_PATH", "")  # overrides the bundled file
+DIRECTIVITY_SOFA_FALLBACK_URL = "https://phaidra.kug.ac.at/api/object/o:68229/comp/COMP000003"
+DIRECTIVITY_SOFA_DIRPAT_LABELS = [
+    "Genelec_8020", "Lambda_labs_CX-1A", "HATS_4128C", "Tannoy_System_1200", "Neumann_KH120A",
+    "Yamaha_DXR8", "BM_1x12inch_driver_closed_cabinet", "BM_1x12inch_driver_open_cabinet",
+    "BM_open_stacked_on_closed_withCrossoverNetwork", "BM_open_stacked_on_closed_fullrange",
+    "Palmer_1x12inch", "Vibrolux_2x10inch",
+]
+DIRECTIVITY_SOFA_DIRPAT_RESHAPE = 36  # the DIRPAT files flatten the mic grid wrongly (fork's _read_dirpat)
+DIRECTIVITY_DATA_DIR = str(BACKEND_DIR / "data" / "directivities")            # <user_hash>/<id>.npz
+DIRECTIVITY_PRESET_DIR = str(BACKEND_DIR / "data" / "directivities" / "presets")
+DIRECTIVITY_UPLOAD_DIR = str(BACKEND_DIR / "temp" / "uploads" / "directivities")
+DIRECTIVITY_SOUNDSCAPE_SUBDIR = "directivities"  # copies inside data/soundscapes/<ws>/<model>/
+DIRECTIVITY_PRESET_BUILD_MARKER_TTL_S = 1800
+DIRECTIVITY_SAMPLE_RATE = AUDIO_SAMPLE_RATE
+DIRECTIVITY_IR_TAPS = 512               # 10.7 ms at 48 kHz; ISM cost grows with images x taps
+DIRECTIVITY_IR_PREROLL_SAMPLES = 16
+DIRECTIVITY_IR_FADE_OUT_SAMPLES = 32
+DIRECTIVITY_ONSET_THRESHOLD_DB = -40.0
+DIRECTIVITY_BAND_CENTER_FREQS = CUSTOM_MATERIAL_CENTER_FREQS
+DIRECTIVITY_NORMALIZE_BAND_HZ = (250.0, 4000.0)  # on-axis energy in this range -> 1 (1 m reference)
+# Band levels are per-hertz power (mean |X(f)|^2 over the band; a unit impulse is 1 in every band) on a
+# zero-padded FFT, so the fit's per-band gain is a spectral magnitude, as PFFDTD's composition expects.
+# Version 1 summed |X|^2 (+3 dB/octave on the gains) over a 512-bin FFT (1 bin in the 125 Hz band).
+DIRECTIVITY_BAND_NFFT = 8192
+DIRECTIVITY_PROCESSING_VERSION = 2      # stored balloons below it get band levels + fit recomputed on load
+DIRECTIVITY_GRID_STEP_DEG = 5           # BRAS 1 deg grid sub-sampled at import
+DIRECTIVITY_BRAS_FS = 44100
+DIRECTIVITY_BRAS_LINE_RE = r"^P(\d{3})T(\d{3})$"
+DIRECTIVITY_MIN_GRID_POINTS = 50
+DIRECTIVITY_MAX_UPLOAD_BYTES = 400 * 1024 * 1024
+DIRECTIVITY_PREVIEW_POINTS = 72
+DIRECTIVITY_PREVIEW_BANDS_HZ = [250, 1000, 4000]
+DIRECTIVITY_NAME_MAX_LEN = 60
+DIRECTIVITIES_PER_USER_MAX = 100
+DIRECTIVITY_ALLOWED_EXTENSIONS = (".sofa", ".csv")
+DIRECTIVITY_FRONT_CHECK_MAX_DEG = 30.0  # preset self-check: max-energy direction vs +x
+# Real-time playback balloon (GET /api/directivities/{id}/balloon): little-endian binary
+# "DIRB" + uint32 n, taps, fs + float32 directions[n*3] + float32 irs[n*taps].
+DIRECTIVITY_BALLOON_MAGIC = b"DIRB"
 PYROOMACOUSTICS_MESH_WELD_TOLERANCE = 1e-4  # Vertex merge tolerance in meters (0.1 mm) for welding connected meshes
 
 # Simulation mesh preparation (services/simulation_mesh_service.py)
@@ -906,6 +986,11 @@ PFFDTD_FREE_MODE_OFF = "off"
 PFFDTD_FREE_MODE_LISTENER = "listener"
 PFFDTD_FREE_MODE_SOURCE = "source"
 PFFDTD_FREE_MODES = (PFFDTD_FREE_MODE_OFF, PFFDTD_FREE_MODE_LISTENER, PFFDTD_FREE_MODE_SOURCE)
+# Directional sources (pffdtd_backend/directional.py): the job runs reciprocally, one
+# run per listener (x4 for FOA), with 7 pressure probes at every source; a first-order
+# pattern per octave band is composed from them in post-processing.
+PFFDTD_DIRECTIONAL_PROBES = 7
+PFFDTD_DIRECTIONAL_MAX_RUNS = 64
 PFFDTD_DEFAULT_FREE_MODE = PFFDTD_FREE_MODE_OFF
 PFFDTD_FREE_GRID_SPACING_DEFAULT = 0.5   # m; snapped to a multiple of the grid spacing h
 PFFDTD_FREE_GRID_SPACING_MIN = 0.1
@@ -1019,6 +1104,8 @@ JOB_TYPE_SED = "sed"
 JOB_TYPE_LOOP = "loop"
 JOB_TYPE_PFFDTD = "pffdtd"
 JOB_TYPE_PFFDTD_ANIMATION = "pffdtd_animation"  # on-demand wave animation of a finished run
+JOB_TYPE_DIRECTIVITY_IMPORT = "directivity_import"  # parse + process a SOFA / BRAS balloon (CPU queue)
+JOB_TYPE_DIRECTIVITY_PRESET_BUILD = "directivity_preset_build"  # measured presets from the bundled SOFA
 
 # IO job types (asyncio.create_task in the API process — no queue, no worker)
 JOB_TYPE_TTS = "tts"
@@ -1042,6 +1129,8 @@ JOB_TYPE_QUEUE = {
     JOB_TYPE_LOOP: "queue:cpu",
     JOB_TYPE_PFFDTD: "queue:pffdtd",
     JOB_TYPE_PFFDTD_ANIMATION: "queue:pffdtd",
+    JOB_TYPE_DIRECTIVITY_IMPORT: "queue:cpu",
+    JOB_TYPE_DIRECTIVITY_PRESET_BUILD: "queue:cpu",
 }
 
 # GPU-style jobs share the per-session fairness cap and the pending-GPU set.

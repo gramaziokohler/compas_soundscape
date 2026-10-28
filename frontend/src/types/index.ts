@@ -15,6 +15,16 @@ export type { SEDAudioInfo, DetectedSound, SEDAnalysisResult, SEDAnalysisOptions
 import type { ReceiverData, ReceiverOverlay, GridListenerData } from './receiver';
 export type { ReceiverData, ReceiverOverlay, GridListenerData };
 
+// Import and re-export source directivity types
+import type {
+  SoundDirectivity,
+  DirectivityRecord,
+  DirectivityInspectResult,
+  DirectivityPreview,
+  DirectivityImportStatus,
+} from './directivity';
+export type { SoundDirectivity, DirectivityRecord, DirectivityInspectResult, DirectivityPreview, DirectivityImportStatus };
+
 // Import and re-export Analysis types
 import type {
   AudioAnalysisConfig,
@@ -126,6 +136,12 @@ export interface SoundEvent {
    * settings editor when the variant is selected.
    */
   generated_signature?: string;
+  /**
+   * Radiation pattern + orientation of this source (undefined = omnidirectional).
+   * Shared by the variants of one prompt like `position`; part of the simulation
+   * source key (utils/positionKey.ts).
+   */
+  directivity?: SoundDirectivity;
 }
 
 export interface UIOverlay {
@@ -222,6 +238,8 @@ export interface SoundGenerationConfig {
   timestamps?: string[];
   /** Manual position override for pre-generation sphere placement. */
   position?: [number, number, number];
+  /** Source directivity + orientation, copied onto the events this card generates. */
+  directivity?: SoundDirectivity;
   // Uploaded audio fields (when bypassing generation)
   uploadedAudioBuffer?: AudioBuffer; // Audio buffer for playback
   uploadedAudioInfo?: SEDAudioInfo; // Audio metadata for display

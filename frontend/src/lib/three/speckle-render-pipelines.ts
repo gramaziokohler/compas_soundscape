@@ -6,7 +6,8 @@
  * swaps each mesh batch's BASE material for the override and restores it after
  * (`batcher.overrideBatchMaterial` → `restoreBatchMaterial`). Filter-colored
  * surfaces (user colors) are restyled per frame by FilterMaterialStyler, keeping
- * their color; hidden/ghost, selection and hover materials are left untouched,
+ * their color; hidden/ghost and selection materials are left untouched (hover
+ * never swaps a material — it is a border overlay, speckle-hover-outline.ts),
  * so these styles compose with applyFilterColors / applyVisibility / selection
  * without any enforcement loop. The batcher clones the override per batch and
  * adds the USE_RTE define when the batch needs it, so large-coordinate models

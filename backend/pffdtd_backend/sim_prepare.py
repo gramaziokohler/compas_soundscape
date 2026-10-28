@@ -300,11 +300,17 @@ _VOX_CACHE_FIELDS = ("bn_ixyz", "adj_bn", "mat_bn", "saf_bn", "tidx_bn")
 _CUT_CACHE_FIELDS = ("bn_ixyz", "beta_bn", "vol_bn", "mat_bn", "saf_bn")
 
 
+def job_domain_bounds(job: dict) -> dict:
+    """``{"bmin", "bmax"}`` SimSpec kwargs of a job's padded domain (open scenes), else Nones."""
+    return {key: None if job.get(key) is None else np.asarray(job[key], np.float64) for key in ("bmin", "bmax")}
+
+
 def _vox_cache_path(spec: SimSpec, cart_grid: CartGrid) -> Optional[Path]:
     """Cache file of this geometry + grid (None when caching is off).
 
     The voxelisation depends only on the triangles (mats_hash), the grid and the lattice type --
-    not on sources, receivers, materials' absorption, Courant number or duration.
+    not on sources, receivers, materials' absorption, Courant number or duration. Padded domains
+    (SimSpec.bmin/bmax) change Nxyz / xyzmin, so they key apart from unpadded ones.
     """
     if spec.vox_cache_dir is None:
         return None

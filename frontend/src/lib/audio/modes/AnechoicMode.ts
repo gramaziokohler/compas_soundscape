@@ -36,6 +36,7 @@ import { cartesianToSpherical } from '../utils/ambisonic-utils';
 import { AmbisonicMonoEncoder } from '../utils/ambisonic-encoder';
 import { applyOmniToEncoder } from '../utils/global-source';
 import { SourceLevelMeter } from '../utils/source-level';
+import { SourceDirectivityStage, type RealtimeDirectivity } from '../utils/source-directivity';
 import { AUDIO_CONTROL } from '@/utils/constants';
 
 /**
@@ -57,6 +58,9 @@ interface AnechoicSource {
 
   // ACN/SN3D encoder
   encoder: AmbisonicMonoEncoder;
+
+  // Source radiation pattern toward the listener (bypassed for global sources)
+  directivity: SourceDirectivityStage;
 
   // Playback state
   isPlaying: boolean;
@@ -84,6 +88,9 @@ export class AnechoicMode implements IAudioMode {
   // Sources rendered as global (omni, no distance attenuation). Kept apart from
   // `sources` so the flag survives chain rebuilds and can precede createSource.
   private globalSourceIds: Set<string> = new Set();
+  // Resolved radiation patterns; kept apart from `sources` so they survive rebuilds
+  // and can precede createSource.
+  private sourceDirectivities: Map<string, RealtimeDirectivity> = new Map();
 
   private enabled: boolean = false;
   private debug: boolean = false;
@@ -189,11 +196,18 @@ export class AnechoicMode implements IAudioMode {
     const encoder = new AmbisonicMonoEncoder(this.audioContext, this.ambisonicOrder);
     distanceGainNode.gain.value = this.encodeSource(sourceId, encoder, position);
 
-    // Connect audio graph: Gain → MuteGain → DistanceGain → Encoder (+ Gain → LevelMeter tap)
+    // Radiation pattern toward the listener (unity for omni sources)
+    const directivity = new SourceDirectivityStage(this.audioContext);
+    directivity.setBypass(this.globalSourceIds.has(sourceId));
+    directivity.setResolved(this.sourceDirectivities.get(sourceId) ?? null);
+    directivity.update(position, this.listenerPosition);
+
+    // Connect audio graph: Gain → MuteGain → DistanceGain → Directivity → Encoder (+ Gain → LevelMeter tap)
     gainNode.connect(muteGainNode);
     levelMeter.tap(gainNode);
     muteGainNode.connect(distanceGainNode);
-    distanceGainNode.connect(encoder.in);
+    distanceGainNode.connect(directivity.input);
+    directivity.output.connect(encoder.in);
 
     // Connect encoder output to ambisonic mix bus
     // encoder.out is a multi-channel node with all ambisonic channels
@@ -210,6 +224,7 @@ export class AnechoicMode implements IAudioMode {
       distanceGainNode,
       levelMeter,
       encoder,
+      directivity,
       isPlaying: false,
       startTime: 0,
       loop: false,
@@ -217,6 +232,17 @@ export class AnechoicMode implements IAudioMode {
     };
 
     this.sources.set(sourceId, source);
+  }
+
+  /** Live radiation pattern of a source (null = omnidirectional). */
+  setSourceDirectivity(sourceId: string, resolved: RealtimeDirectivity | null): void {
+    if (resolved) this.sourceDirectivities.set(sourceId, resolved);
+    else this.sourceDirectivities.delete(sourceId);
+    const source = this.sources.get(sourceId);
+    if (source) {
+      source.directivity.setResolved(resolved);
+      source.directivity.update(source.position, this.listenerPosition);
+    }
   }
 
   /**
@@ -236,14 +262,13 @@ export class AnechoicMode implements IAudioMode {
     if (source.distanceGainNode) {
       source.distanceGainNode.gain.setTargetAtTime(distanceGain, this.audioContext!.currentTime, 0.1);
     }
+    source.directivity.update(position, this.listenerPosition);
   }
 
   /**
    * Update listener position and orientation
    * Called every frame for camera movement
    */
-  private _dbgFrame = 0;
-
   updateListener(position: Position, orientation: Orientation): void {
     const positionChanged =
       position.x !== this.listenerPosition.x ||
@@ -253,8 +278,6 @@ export class AnechoicMode implements IAudioMode {
     // Store plain-object snapshots — caller passes a live THREE.Vector3 mutated each frame
     this.listenerPosition = { x: position.x, y: position.y, z: position.z } as Position;
     this.listenerOrientation = orientation;
-
-    this._dbgFrame++;
 
     // Re-encode only when listener moves; orientation is handled by OmnitoneDecoder.setRotationMatrix3
     if (positionChanged) {
@@ -444,6 +467,7 @@ export class AnechoicMode implements IAudioMode {
     source.muteGainNode.disconnect();
     source.distanceGainNode.disconnect();
     source.levelMeter.dispose();
+    source.directivity.dispose();
 
     source.encoder.dispose();
 
@@ -511,7 +535,10 @@ export class AnechoicMode implements IAudioMode {
     else this.globalSourceIds.delete(sourceId);
 
     const source = this.sources.get(sourceId);
-    if (source) this.updateSourcePosition(sourceId, source.position);
+    if (source) {
+      source.directivity.setBypass(isGlobal);
+      this.updateSourcePosition(sourceId, source.position);
+    }
   }
 
   /**

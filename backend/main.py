@@ -47,11 +47,12 @@ from services.tts_service import TTSService
 from services.job_store import job_store
 from services.io_jobs import sweep_orphaned_io_jobs
 from services.metadata_store import metadata_store
+from services.directivity_service import ensure_presets_built
 from services.study_log_store import study_log_store
 # from services.modal_analysis_service import ModalAnalysisService
 
 # Import routers
-from routers import upload, generation, sounds, stable_audio, sed_analysis, sed_extract, library_search, reprocess, impulse_responses, modal_analysis, pffdtd, pffdtd_free, pyroomacoustics, simulation_preflight, speckle, soundscape, tokens, tts, tts_voices, loop_analysis, jobs, auth, workspaces, preferences, bug_reports, study
+from routers import upload, generation, sounds, stable_audio, sed_analysis, sed_extract, library_search, reprocess, impulse_responses, modal_analysis, pffdtd, pffdtd_free, pyroomacoustics, simulation_preflight, speckle, soundscape, tokens, tts, tts_voices, loop_analysis, jobs, auth, workspaces, preferences, materials, directivities, bug_reports, study
 
 # Import constants
 from config.constants import (
@@ -238,6 +239,12 @@ async def lifespan(app: FastAPI):
 
     job_store_task = asyncio.create_task(_job_store_loop())
     janitor_task = asyncio.create_task(_temp_janitor_loop())
+    # Measured source-directivity presets (Genelec / HATS balloons) are processed
+    # once by a CPU worker; the UI shows them as "preparing" until the files exist.
+    try:
+        await ensure_presets_built()
+    except Exception as exc:
+        print(f"[directivity] preset check failed: {exc}")
     print("Startup complete.")
 
     yield
@@ -311,6 +318,8 @@ app.add_middleware(
 # --- Include Routers ---
 app.include_router(auth.router)
 app.include_router(preferences.router)
+app.include_router(materials.router)
+app.include_router(directivities.router)
 app.include_router(bug_reports.router)
 app.include_router(study.router)
 app.include_router(workspaces.router)

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import Optional
 
 import numpy as np
 
@@ -38,6 +39,7 @@ class GridPlan:
     gpu_bytes: int
     gpu_budget_bytes: int
     est_runtime_s: float          # per source
+    domain_extents: Optional[list] = None  # padded domain (open scenes); None = geometry bbox
 
     @property
     def fits_gpu(self) -> bool:
@@ -55,6 +57,7 @@ class GridPlan:
             "gpu_memory_gb": self.gpu_bytes / 1e9,
             "gpu_budget_gb": self.gpu_budget_bytes / 1e9,
             "est_runtime_s_per_source": self.est_runtime_s,
+            "domain_extents": self.domain_extents,
         }
 
 
@@ -78,11 +81,25 @@ def aligned_spacing(extents, h_target: float) -> tuple[float, list]:
     return best, _misalignment(extents, best).tolist()
 
 
-def plan_grid(extents, fmax: float, ppw: float, duration: float) -> GridPlan:
+def plan_grid(extents, fmax: float, ppw: float, duration: float, domain_extents=None,
+              h: Optional[float] = None) -> GridPlan:
+    """Grid spacing aligned to the geometry ``extents``; cost from ``domain_extents`` if given.
+
+    ``domain_extents`` is a padded simulation domain (open scenes: the source/receivers are
+    outside the geometry). ``h`` stays aligned to the geometry so its faces sit on cell faces;
+    padded bounds must then be whole cells away from the geometry bbox. An explicit ``h`` skips
+    the alignment search (callers that planned the grid themselves, e.g. a padded domain whose
+    ground plane spans the domain).
+    """
     extents = np.asarray(extents, np.float64)
     h_target = PFFDTD_SPEED_OF_SOUND / (fmax * ppw)
-    h, mis = aligned_spacing(extents, h_target)
-    shape = tuple(int(math.ceil(L / h)) + PFFDTD_GRID_PADDING_CELLS for L in extents)
+    if h is None:
+        h, mis = aligned_spacing(extents, h_target)
+    else:
+        h = float(h)
+        mis = _misalignment(extents, h).tolist()
+    sized = extents if domain_extents is None else np.asarray(domain_extents, np.float64)
+    shape = tuple(int(math.ceil(L / h)) + PFFDTD_GRID_PADDING_CELLS for L in sized)
     nodes = int(np.prod(shape))
     Ts = h * PFFDTD_COURANT_CART / PFFDTD_SPEED_OF_SOUND
     steps = int(math.ceil(duration / Ts))
@@ -97,6 +114,7 @@ def plan_grid(extents, fmax: float, ppw: float, duration: float) -> GridPlan:
         gpu_bytes=nodes * PFFDTD_BYTES_PER_NODE,
         gpu_budget_bytes=int(PFFDTD_GPU_MEMORY_GB * 1e9 * PFFDTD_GPU_MEMORY_USABLE_FRACTION),
         est_runtime_s=nodes * steps / PFFDTD_NODE_UPDATES_PER_S,
+        domain_extents=None if domain_extents is None else sized.tolist(),
     )
 
 

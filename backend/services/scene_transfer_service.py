@@ -28,7 +28,7 @@ from config.constants import (
     SOUNDSCAPE_JSON_FILENAME,
 )
 from models.schemas import SoundscapeData
-from services.metadata_store import metadata_store
+from services.metadata_store import ROLE_OWNER, metadata_store
 from services.paths import find_session_audio, user_audio_dir, user_data_dir, user_model_dir
 from services.scene_transfer_core import (
     apply_audio_renames,
@@ -101,6 +101,27 @@ def write_json_atomic(path: Path, data: dict) -> None:
     os.replace(tmp, path)
 
 
+def resolve_send_target_workspace(session_id: str, user_hash: Optional[str]) -> str:
+    """Workspace the caller may send scenes into.
+
+    The owner of the open workspace sends within it. Any other member (editor /
+    viewer of a shared workspace) sends into the workspace they own themselves.
+    Raises ``PermissionError`` when the caller is not a member of the open
+    workspace or owns no workspace.
+    """
+    if not user_hash:
+        return session_id  # anonymous/legacy session: the cookie is the owner
+    role = metadata_store.get_member_role(session_id, user_hash)
+    if role is None:
+        raise PermissionError("You are not a member of this workspace.")
+    if role == ROLE_OWNER:
+        return session_id
+    own = metadata_store.get_owned_workspace(user_hash)
+    if not own:
+        raise PermissionError("You need a workspace of your own to send scenes into.")
+    return own["id"]
+
+
 def _read_soundscape(path: Path) -> Optional[dict]:
     if not path.is_file():
         return None
@@ -112,7 +133,7 @@ def _read_soundscape(path: Path) -> Optional[dict]:
 
 
 class SceneTransferService:
-    """Copies sound scenes between two models of the same workspace."""
+    """Copies sound scenes between two models (same workspace, or into the caller's own)."""
 
     def __init__(self) -> None:
         # One send at a time: the revision check + write must not interleave.
@@ -127,26 +148,34 @@ class SceneTransferService:
         keep_positions: bool = False,
         target_meta: Optional[dict] = None,
         base_revision: Optional[int] = None,
+        target_workspace_id: Optional[str] = None,
     ) -> dict:
         """Append copies of the source's scenes to the target's soundscape.
 
         ``usage_indices`` are ``analysis_state.configs`` indices (the frontend's
         scene ``usageIndex``). Object links are always dropped (the target has
         other geometry); positions are reset unless ``keep_positions``.
+        ``workspace_id`` holds the source; ``target_workspace_id`` (default: the
+        same workspace) holds the target, and is the one that is revisioned.
 
         Raises ``FileNotFoundError`` (no saved source), ``ValueError`` (bad
         selection) or ``SceneTransferConflict`` (stale ``base_revision``).
         """
-        if source_model_id == target_model_id:
+        target_ws = target_workspace_id or workspace_id
+        cross_workspace = target_ws != workspace_id
+        if source_model_id == target_model_id and not cross_workspace:
             raise ValueError("Source and target are the same model.")
         if not usage_indices:
             raise ValueError("Pick at least one scene to send.")
 
         with self._lock:
-            workspace = metadata_store.get_workspace(workspace_id)
-            current_revision = int(workspace["revision"]) if workspace else 0
-            if base_revision is not None and base_revision != current_revision:
-                raise SceneTransferConflict(current_revision)
+            # The revision token belongs to the open workspace; a send into the
+            # caller's own workspace is not a stale write of it.
+            if not cross_workspace:
+                workspace = metadata_store.get_workspace(workspace_id)
+                current_revision = int(workspace["revision"]) if workspace else 0
+                if base_revision is not None and base_revision != current_revision:
+                    raise SceneTransferConflict(current_revision)
 
             source = _read_soundscape(user_model_dir(workspace_id, source_model_id) / SOUNDSCAPE_JSON_FILENAME)
             if source is None:
@@ -158,7 +187,7 @@ class SceneTransferService:
                 raise ValueError(f"Card(s) {unknown} are not sound scenes in the saved model.")
             scene_numbers = sorted({number_by_usage[u] for u in usage_indices})
 
-            target_dir = user_model_dir(workspace_id, target_model_id)
+            target_dir = user_model_dir(target_ws, target_model_id)
             target_json = target_dir / SOUNDSCAPE_JSON_FILENAME
             target = _read_soundscape(target_json)
             if target is None:
@@ -174,7 +203,7 @@ class SceneTransferService:
             package = extract_package(
                 source, scene_numbers, strip_entities=True, reset_positions=not keep_positions
             )
-            dst_audio_dir = user_audio_dir(workspace_id, target_model_id)
+            dst_audio_dir = user_audio_dir(target_ws, target_model_id)
             copies, renames, missing = plan_audio(
                 workspace_id, source_model_id, dst_audio_dir, package_audio_files(package)
             )
@@ -196,12 +225,12 @@ class SceneTransferService:
                         shutil.copy2(src_analysis / name, dst_analysis / name)
             write_json_atomic(target_json, merged)
 
-            metadata_store.link_model(target_model_id, workspace_id)
-            revision = metadata_store.bump_revision(workspace_id)
+            metadata_store.link_model(target_model_id, target_ws)
+            revision = metadata_store.bump_revision(target_ws)
 
         logger.info(
-            "Sent %d scene(s) %s -> %s (ws %s): %d sounds, %d events, %d audio copied, %d missing",
-            len(scene_numbers), source_model_id, target_model_id, workspace_id,
+            "Sent %d scene(s) %s (ws %s) -> %s (ws %s): %d sounds, %d events, %d audio copied, %d missing",
+            len(scene_numbers), source_model_id, workspace_id, target_model_id, target_ws,
             len(package["sound_configs"]), len(package["events"]), len(copies), len(missing),
         )
         return {
@@ -212,6 +241,7 @@ class SceneTransferService:
             "audio_files_copied": len(copies),
             "missing_audio_filenames": sorted(missing),
             "revision": revision,
+            "cross_workspace": cross_workspace,
         }
 
 

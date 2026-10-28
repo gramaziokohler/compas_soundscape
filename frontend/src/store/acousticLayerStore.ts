@@ -278,7 +278,6 @@ export function getAcousticSelectionForSave(): SimulationAcousticSelection | nul
  */
 export function restoreAcousticSelection(sel: SimulationAcousticSelection | null): void {
   if (!sel || sel.nodeIds.length === 0) return;
-  console.log('[dbg:acoustic-region] restoring saved region', sel.nodeNames);
   runAsLoad(() => useAcousticLayerStore.getState().setAcousticSelection(sel));
 }
 

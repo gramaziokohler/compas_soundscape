@@ -42,7 +42,9 @@ import {
 } from './utils/mode-selector';
 import type { IRState, NoIRPreferences, ModeSelectionResult } from './utils/mode-selector';
 import { crossfadeModes, safeDisconnect, safeConnect } from './utils/mode-transition';
-import { computePositionKey } from '@/utils/positionKey';
+import { computePositionKey, directivityKeySuffix, isDirectionalSourceKey } from '@/utils/positionKey';
+import { resolveRealtimeDirectivity } from './utils/source-directivity';
+import type { SoundDirectivity } from '@/types/directivity';
 import { SIMULATION_POSITION_MATCH_THRESHOLD } from '@/utils/constants';
 import {
   AudioErrorType,
@@ -124,6 +126,8 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   // distance to the recorded coordinate (not by quantized grid-cell equality), so a
   // newly added sound placed anywhere near a simulated source inherits that IR.
   private simulationSourcePositions: Record<string, [number, number, number]> = {};
+  /** sound id → simulated source key (lets a directional sound find ITS own IR row). */
+  private simulationSoundToPosKey: Record<string, string> = {};
 
   // Source registry - tracks all sources for re-creation on mode switch
   private sourceRegistry: Map<string, { buffer: AudioBuffer; position: Position }> = new Map();
@@ -135,6 +139,10 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   // before a source's buffer has loaded. Positions stay in sourceRegistry either
   // way, so turning a source back to spatial restores where its sphere is.
   private globalSources: Set<string> = new Set();
+  /** Radiation pattern per source for the dry 6-DoF modes (IR modes bake it into the IRs). */
+  private sourceDirectivities: Map<string, SoundDirectivity> = new Map();
+  /** Per-source sequence so a slow balloon load never overrides a newer setting. */
+  private directivitySeq: Map<string, number> = new Map();
 
   // Pending volumes - persists per-source volume across mode switches (and caches
   // values for sources not yet created while their buffer loads asynchronously).
@@ -636,7 +644,11 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   /**
    * Get current audio mode
    */
-  /** Receiver whose IRs are applied (null before a mapping is set). */
+  /**
+   * Listener being heard: the last receiver chosen via updateActiveReceiver or a
+   * mapping call. Recorded even while no mapping is set, so activating a
+   * simulation keeps the listener the user picked (null until one is chosen).
+   */
   getActiveReceiverId(): string | null {
     return this.activeReceiverId;
   }
@@ -671,18 +683,20 @@ export class AudioOrchestrator implements IAudioOrchestrator {
    * Enables per-source IR assignment based on active receiver
    * @param mapping - Source-receiver IR mapping
    * @param simulationMode - Type of simulation (pyroomacoustics, pffdtd)
-   * @param initialReceiverId - Initial receiver to activate (optional)
+   * @param initialReceiverId - Receiver to activate; omitted = keep the current listener
    */
   async setSourceReceiverIRMapping(
     mapping: SourceReceiverIRMapping,
     simulationMode: AcousticSimulationMode,
     initialReceiverId?: string,
-    simulationSourcePositions?: Record<string, [number, number, number]>
+    simulationSourcePositions?: Record<string, [number, number, number]>,
+    simulationSoundToPosKey?: Record<string, string>
   ): Promise<void> {
     this.sourceReceiverIRMapping = mapping;
     this.simulationMode = simulationMode;
-    this.activeReceiverId = initialReceiverId || null;
+    this.activeReceiverId = initialReceiverId || this.activeReceiverId;
     this.simulationSourcePositions = simulationSourcePositions || {};
+    this.simulationSoundToPosKey = simulationSoundToPosKey || {};
     this.clearSimulationGlobalIR();
 
     console.log('[AudioOrchestrator] Source-Receiver IR mapping set:', {
@@ -740,19 +754,16 @@ export class AudioOrchestrator implements IAudioOrchestrator {
    */
   async updateActiveReceiver(receiverId: string): Promise<void> {
     console.log('[AudioOrchestrator] 🎯 updateActiveReceiver called:', receiverId);
-    
-    if (!this.sourceReceiverIRMapping) {
-      console.warn('[AudioOrchestrator] ❌ No source-receiver mapping available');
-      return;
-    }
 
-    console.log('[AudioOrchestrator] Source-receiver mapping exists:', {
-      sourceCount: Object.keys(this.sourceReceiverIRMapping).length,
-      sources: Object.keys(this.sourceReceiverIRMapping)
-    });
-
+    // Record the choice even without a mapping: a listener picked before a
+    // simulation is activated must be the one heard once it is.
     this.activeReceiverId = receiverId;
     console.log('[AudioOrchestrator] 📍 Set active receiver to:', receiverId);
+
+    if (!this.sourceReceiverIRMapping) {
+      console.log('[AudioOrchestrator] No source-receiver mapping yet — IRs load on activation');
+      return;
+    }
 
     await this.updateSourceIRsForReceiver(receiverId);
   }
@@ -785,7 +796,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
 
     // For each source in the registry — look up IR by position key
     for (const [sourceId, { position }] of this.sourceRegistry) {
-      const posKey = this.resolveSimSourcePosKey([position.x, position.y, position.z]);
+      const posKey = this.resolveSimSourcePosKey([position.x, position.y, position.z], sourceId);
       const irMetadata = this.sourceReceiverIRMapping[posKey]?.[receiverId];
 
       if (irMetadata) {
@@ -889,12 +900,14 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     mapping: SourceReceiverIRMapping,
     simulationMode: AcousticSimulationMode,
     activeReceiverId?: string,
-    simulationSourcePositions?: Record<string, [number, number, number]>
+    simulationSourcePositions?: Record<string, [number, number, number]>,
+    simulationSoundToPosKey?: Record<string, string>
   ): Promise<void> {
     this.sourceReceiverIRMapping = mapping;
     this.simulationMode = simulationMode;
     this.activeReceiverId = activeReceiverId || this.activeReceiverId;
     this.simulationSourcePositions = simulationSourcePositions || {};
+    this.simulationSoundToPosKey = simulationSoundToPosKey || {};
     this.clearSimulationGlobalIR();
 
     console.log('[AudioOrchestrator] Hot-swapping IR mapping (no stop):', {
@@ -923,7 +936,8 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   clearSourceReceiverIRMapping(): void {
     this.sourceReceiverIRMapping = null;
     this.simulationMode = 'none';
-    this.activeReceiverId = null;
+    // activeReceiverId is kept: the listener choice outlives the simulation, so
+    // re-activating one (or another) plays the same listener.
     this.simulationSourcePositions = {};
     this.clearIRCache();
 
@@ -1456,6 +1470,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
 
     this.currentModeInstance.createSource(sourceId, audioBuffer, position);
     this.currentModeInstance.setSourceGlobal(sourceId, this.globalSources.has(sourceId));
+    this.pushSourceDirectivity(sourceId);
 
     // Apply any pending volume that was set before the source was created
     const pendingVolume = this.pendingVolumes.get(sourceId);
@@ -1466,7 +1481,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     // If in simulation mode with active receiver, apply source-specific IR immediately
     // (sequenced via resolveSourceIR so creation can never be clobbered by a stale load)
     if (this.sourceReceiverIRMapping && this.activeReceiverId && this.simulationMode !== 'none') {
-      const posKey = this.resolveSimSourcePosKey([position.x, position.y, position.z]);
+      const posKey = this.resolveSimSourcePosKey([position.x, position.y, position.z], sourceId);
       this.resolveSourceIR(sourceId, posKey);
     }
   }
@@ -1486,6 +1501,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
       try {
         this.currentModeInstance.createSource(sourceId, buffer, position);
         this.currentModeInstance.setSourceGlobal(sourceId, this.globalSources.has(sourceId));
+        this.pushSourceDirectivity(sourceId);
 
         // Reapply persisted volume — new mode chains always start at unity gain, so
         // without this the user's per-source fader is silently reset on every switch.
@@ -1526,7 +1542,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     const existing = this.sourceRegistry.get(sourceId);
     if (existing) {
       // Check if the source's convolver state no longer matches its current position
-      const newPosKey = this.resolveSimSourcePosKey([position.x, position.y, position.z]);
+      const newPosKey = this.resolveSimSourcePosKey([position.x, position.y, position.z], sourceId);
       this.sourceRegistry.set(sourceId, { ...existing, position });
 
       // Re-assign simulation IR whenever the last-APPLIED key differs from the
@@ -1560,15 +1576,24 @@ export class AudioOrchestrator implements IAudioOrchestrator {
    * Always returns a posKey (the grid key as a fallback) so downstream mute/apply
    * bookkeeping stays well-defined.
    */
-  private resolveSimSourcePosKey(position: [number, number, number]): string {
+  private resolveSimSourcePosKey(position: [number, number, number], sourceId?: string): string {
     const gridKey = computePositionKey(position);
     if (!this.sourceReceiverIRMapping) return gridKey;
+    // A sound simulated with a directivity owns a `pos_…~d…` row: use it while the
+    // sound still sits at its simulated position (other sounds never inherit it).
+    const ownKey = sourceId ? this.simulationSoundToPosKey[sourceId] : undefined;
+    if (ownKey && this.sourceReceiverIRMapping[ownKey]) {
+      const ownPos = this.simulationSourcePositions[ownKey];
+      const dist = ownPos ? Math.hypot(position[0] - ownPos[0], position[1] - ownPos[1], position[2] - ownPos[2]) : 0;
+      if (dist <= SIMULATION_POSITION_MATCH_THRESHOLD) return ownKey;
+    }
     if (this.sourceReceiverIRMapping[gridKey]) return gridKey;
 
     const sources = this.simulationSourcePositions;
     let bestKey: string | undefined;
     let bestDist = Infinity;
     for (const [posKey, coord] of Object.entries(sources)) {
+      if (isDirectionalSourceKey(posKey)) continue;  // directional rows belong to their own sound
       const d = Math.hypot(position[0] - coord[0], position[1] - coord[1], position[2] - coord[2]);
       if (d < bestDist) {
         bestDist = d;
@@ -1795,6 +1820,36 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   /** Whether a source currently plays as a global (non-spatial) bed. */
   isSourceGlobal(sourceId: string): boolean {
     return this.globalSources.has(sourceId);
+  }
+
+  /**
+   * Radiation pattern + orientation of a source for the dry modes (undefined = omni).
+   * Idempotent: the same pattern twice is a no-op, so the sphere manager may call it
+   * on every sync. Measured balloons load asynchronously and apply when ready.
+   */
+  setSourceDirectivity(sourceId: string, directivity: SoundDirectivity | undefined): void {
+    const previous = this.sourceDirectivities.get(sourceId);
+    if (directivityKeySuffix(previous) === directivityKeySuffix(directivity)) return;
+    if (directivity && directivityKeySuffix(directivity)) this.sourceDirectivities.set(sourceId, directivity);
+    else this.sourceDirectivities.delete(sourceId);
+    this.pushSourceDirectivity(sourceId);
+  }
+
+  /** Resolve the stored pattern of a source and hand it to the current mode (if it applies one). */
+  private pushSourceDirectivity(sourceId: string): void {
+    const mode = this.currentModeInstance;
+    if (!mode?.setSourceDirectivity) return;
+    const directivity = this.sourceDirectivities.get(sourceId);
+    const seq = (this.directivitySeq.get(sourceId) ?? 0) + 1;
+    this.directivitySeq.set(sourceId, seq);
+    if (!directivity) {
+      mode.setSourceDirectivity(sourceId, null);
+      return;
+    }
+    void resolveRealtimeDirectivity(directivity).then((resolved) => {
+      if (this.directivitySeq.get(sourceId) !== seq || this.currentModeInstance !== mode) return;
+      mode.setSourceDirectivity?.(sourceId, resolved);
+    });
   }
 
   /**

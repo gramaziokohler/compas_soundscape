@@ -133,7 +133,63 @@ deterministic (`SIM_MESH_RAY_SEED`).
 | `"foa"` | `pra.MicrophoneArray` — 4 coincident `CardioidFamily` mics | ACN W(0), Y(1), Z(2), X(3) with N3D |
 
 FOA directivity is aligned to the **Speckle Z-up coordinate system** (+X=Right, -Y=Forward, +Z=Up).
-Directivity applies to ISM only; ray tracing always uses an omnidirectional fallback.
+The local fork applies mic and source directivities to ISM and ray tracing alike.
+
+### Source Directivity (both engines)
+
+A sound source may carry `directivity: {id, yaw, pitch, roll}` (radians, listener convention:
+yaw 0 faces -Y, +yaw toward -X, +pitch up; `utils/orientation.py` ↔ `lib/three/orientation.ts`).
+Ids: analytical Cardioid family (`omni`, `subcardioid`, `cardioid`, `supercardioid`,
+`hypercardioid`, `figure_eight` — `DIRECTIVITY_ANALYTICAL_PRESETS`), measured presets
+(`preset_genelec_8020`, `preset_hats_4128c` = "human speaking", built once by the CPU job
+`directivity_preset_build` from the DIRPAT SOFA bundled in the fork into
+`data/directivities/presets/`), or library entries `dir_<hex>` (`routers/directivities.py`,
+`user_directivities` table + `data/directivities/<user_hash>/<id>.npz`).
+
+- **Import** (`services/directivity_formats.py` → `directivity_processing.py`, CPU job
+  `directivity_import`): SOFA via h5py (DIRPAT source files, GeneralFIR sources, per-measurement
+  receivers; HRIR / moving-source layouts are rejected) and the BRAS `*_IR_front_pole.csv`
+  (1° grid streamed and kept at `DIRECTIVITY_GRID_STEP_DEG`; the MPS spectrum CSV is rejected).
+  Balloon frame: +x front, +y left, +z up. Processing: resample to 48 kHz, ONE common onset crop
+  (`DIRECTIVITY_IR_TAPS`), one global gain so the on-axis energy in `DIRECTIVITY_NORMALIZE_BAND_HZ`
+  equals a unit impulse (device response kept, no per-direction normalisation), octave-band
+  **per-hertz power** (`band_powers`: mean |X|² over the band on a `DIRECTIVITY_BAND_NFFT` zero-padded
+  FFT, a unit impulse = 1 in every band), a first-order fit per band (`a_k`, `gain_k` = on-axis spectral
+  magnitude, `axis_k`) and a polar preview. Never feed `band_energies` (summed |X|², grows with the
+  bandwidth) to the fit: version 1 did and tilted every measured source +3 dB/octave in PFFDTD.
+  Stored balloons carry `meta.processing_version`; `load_npz` recomputes band levels + fit from the
+  stored IRs for older ones (`DIRECTIVITY_PROCESSING_VERSION`), so bump it when the fit changes.
+- **Request**: each `source_receiver_pairs` entry may carry `source_directivity` (typed
+  `SourceReceiverPair`, `utils/request_parsing.parse_source_receiver_pairs`). The routers resolve
+  the id with `attach_directivity_specs` (presets → user library → soundscape copy under
+  `<model dir>/directivities/`, hence the `model_id` form field) into `source_directivity_spec`;
+  unknown ids → 400. Co-located sounds with different directivities are different sources: the
+  frontend key is `pos_x_y_z~d<hash8>` (`utils/positionKey.ts`; `parsePositionKey` tolerates it).
+- **pyroomacoustics** (`services/pyroomacoustics_directivity.py`): analytical →
+  `CardioidFamily(forward, p)`; measured → `MeasuredDirectivity` with the grid pre-rotated into
+  the world (identity `Rotation3D`). `add_source_with_directivity` asserts the source was added
+  (the fork silently drops unknown directivity classes).
+- **PFFDTD** (`pffdtd_backend/directional.py`, `free_runs.run_reciprocal`): any directional
+  source makes the job reciprocal — one run per listener (×4 for FOA), 7 probes at every
+  directional source, and `compose()` builds `g_k·[a_k·W + (1−a_k)·(n_k·XYZ)]` per octave band
+  with log-frequency weights summing to 1. No strength-G volume / animation in that case;
+  Free listener mode is refused (`pffdtd_directional_free_listener`), runs are capped by
+  `PFFDTD_DIRECTIONAL_MAX_RUNS` (`pffdtd_directional_too_many_runs`); moved free sources stay omni.
+  The near-field term of the gradient channel limits the null of a cardioid at short range
+  (validated ≥ 12 dB front/back at 1.4 m, `tests/test_pffdtd_directional_e2e.py`).
+- **Real-time (anechoic / ShoeBox)**: the dry 6-DoF modes apply the pattern live with
+  `SourceDirectivityStage` (`lib/audio/utils/source-directivity.ts`) inserted in each source
+  chain: analytical = smoothed gain `p + (1−p)·cos θ` along source→listener; measured = convolver
+  with the nearest balloon direction's IR (binary `GET /api/directivities/{id}/balloon`, cached per
+  id), crossfaded between two convolvers (`DIRECTIVITY_REALTIME.CROSSFADE_S`) when the direction
+  changes cell. The orchestrator keeps the pattern per source (`setSourceDirectivity`, pushed by
+  the sphere manager on every sync; idempotent) and re-applies it on mode switch; IR modes ignore
+  it because their IRs already contain it. Global (bed) sources bypass the stage.
+- **Persistence**: `directivity` on `SoundscapeSoundEvent` / `SoundscapeSoundConfig`,
+  `SoundscapeData.directivities` (snapshot of used library entries), `simulation_positions.
+  source_directivities`; the save request's `directivity_ids` makes the backend copy the balloons
+  next to the soundscape. A changed directivity outdates a result like a moved source
+  (`useSpeckleSimulationMismatch`, `SimulationResultContent`).
 
 ### Acoustic Metrics (`utils/acoustic_measurement.py`)
 
@@ -184,6 +240,15 @@ Rules:
   staircases) and single precision fails the long rigid-room test (A3).
 - **Grid alignment:** cell faces start at the bbox minimum (CartGrid 3.5-cell offset); `plan_grid`
   picks h so the bbox extents are whole cells → axis-aligned walls exact (A3 passes from PPW ≈ 28).
+- **Open scenes (padded domain):** by default the domain is the geometry bbox + 3.5 cells and
+  `RoomGeo` rejects seeds outside it. `run_pffdtd_simulation_from_geometry(..., domain_bounds=(bmin, bmax))`
+  pads it (job keys `bmin`/`bmax` → `SimSpec` via `sim_prepare.job_domain_bounds`); `plan_grid` keeps h
+  aligned to the geometry and sizes the grid from `domain_extents`, so keep the bounds whole cells from
+  the geometry bbox. The grid edge is a first-order ABC: it echoes at oblique incidence (≈ −12…−22 dB re
+  the direct sound for a 3 m padding), so free-field comparisons need gating or an empty-domain control
+  run to subtract. `grid_spacing` fixes h when the caller planned the grid (e.g. a floor spanning
+  the padded domain). Measured benchmark: `backend/tests/benchmarks/bras/` (BRAS reference scenes;
+  inputs linked in `scenes.py`, README there).
 - **Oblique walls use conformal cut cells** (`SimSpec.conformal`, default on, Cartesian only;
   `python/voxelizer/cut_cells.py` + `cut_cell_geom.py`). Each cut cell gets its air volume fraction
   `vol_bn` and its open face fractions `beta_bn`; the engines use weights `beta/vol`. That makes them

@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from config.constants import SPECKLE_SERVER_URL
 from services.speckle_service import SpeckleService
+from services.scene_transfer_service import resolve_send_target_workspace
 from services.speckle_version_service import list_model_versions
 from services.model_version_impact_service import ModelVersionImpactService, Region, Tolerance
 from models.schemas import (
@@ -60,7 +61,7 @@ def _ensure_authenticated() -> None:
 
 
 @router.get("/models", response_model=SpeckleProjectModelsResponse)
-async def get_project_models(req: Request):
+async def get_project_models(req: Request, own_workspace: bool = False):
     """
     List all models in the current Speckle project with detailed metadata.
 
@@ -69,7 +70,9 @@ async def get_project_models(req: Request):
 
     Each model is also annotated with ``last_saved_at`` — the time this
     workspace last saved a soundscape for that model (local SoundscapeStore
-    save), which is independent of Speckle's own ``updated_at``.
+    save), which is independent of Speckle's own ``updated_at``. With
+    ``own_workspace`` it is the caller's own workspace (scene-send targets),
+    not the shared one they are viewing.
     """
     _ensure_authenticated()
 
@@ -81,9 +84,11 @@ async def get_project_models(req: Request):
     # Annotate models the workspace has saved so the browser can surface them
     # first. Best-effort: a filesystem hiccup must not fail the model listing.
     try:
-        saved = list_saved_soundscape_models(
-            getattr(getattr(req, "state", None), "session_id", "") or ""
-        )
+        state = getattr(req, "state", None)
+        session_id = getattr(state, "session_id", "") or ""
+        if own_workspace:
+            session_id = resolve_send_target_workspace(session_id, getattr(state, "user_hash", None))
+        saved = list_saved_soundscape_models(session_id)
         for model in result.get("models", []):
             model["last_saved_at"] = saved.get(model.get("id"))
     except Exception as exc:  # noqa: BLE001

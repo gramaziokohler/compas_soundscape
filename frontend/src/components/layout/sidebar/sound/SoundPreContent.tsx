@@ -5,6 +5,7 @@ import { SoundConfigContent, type SoundConfigContentProps } from './SoundConfigC
 import { SoundCardBody } from './SoundCardBody';
 import { SearchBar } from '@/components/ui/SearchBar';
 import { useCatalogBrowse, type CatalogBrowseState, type CatalogBrowseActions } from '@/hooks/useCatalogBrowse';
+import type { SoundDirectivity } from '@/types/directivity';
 
 interface SoundPreContentProps extends SoundConfigContentProps {
   /**
@@ -62,6 +63,10 @@ export function SoundPreContent(props: SoundPreContentProps) {
   const handleUpdatePosition = (pos: [number, number, number]) =>
     onUpdateConfig(index, 'position', pos);
 
+  // Pattern + orientation set before generation; copied onto the generated events.
+  const handleUpdateDirectivity = (next: SoundDirectivity | undefined) =>
+    onUpdateConfig(index, 'directivity', next);
+
   const handleUnlinkEntity = () =>
     onUpdateConfig(index, 'entity' as any, undefined as any);
 
@@ -101,6 +106,8 @@ export function SoundPreContent(props: SoundPreContentProps) {
       volumeDbfs={volumeDbfs}
       position={displayedPosition}
       entityIndex={entityIndex}
+      directivity={config.directivity}
+      onUpdateDirectivity={settingsOnly ? undefined : handleUpdateDirectivity}
       onUpdatePosition={settingsOnly ? undefined : handleUpdatePosition}
       onUnlinkEntity={settingsOnly ? undefined : handleUnlinkEntity}
       storeContext="soundscape"

@@ -15,7 +15,8 @@
  *
  * Left untouched:
  *  - the batch's base material (handled by the pipeline's override),
- *  - stencil-writing materials (selection + hover highlight — they stay solid),
+ *  - stencil-writing materials (selection highlight — it stays solid; hover is
+ *    a separate border overlay, see speckle-hover-outline.ts),
  *  - hidden (visible = false) and already-transparent materials (ghost filter).
  */
 

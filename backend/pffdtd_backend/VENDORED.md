@@ -47,6 +47,10 @@ Every local change is marked with a `compas:` comment.
 - `sim_prepare.py` `derive()`: re-uses a prepared voxelisation for another source position,
   duration, source signal or extras. Only the comms are rebuilt; setup files are hard-linked.
   The pipeline voxelises once per job. `voxelise_only()` backs the voxel preview.
+- Padded domain for open scenes: job keys `bmin`/`bmax` (set by `pffdtd_job` from `domain_bounds`)
+  reach `SimSpec.bmin/bmax` through `sim_prepare.job_domain_bounds()` in `pipeline.run_job` and
+  `free_runs.run_reciprocal`. Without them the domain is the geometry bbox + 3.5 cells, and
+  `RoomGeo` rejects sources/receivers outside it.
 - `outputs.py`: trilinear recombination, the exact inverse of `diff_source`, and snapshot
   unfolding. Also the output plane: `plane_nodes()` (decimated z-plane + wall mask),
   `read_plane_accum()`, and plane snapshots.

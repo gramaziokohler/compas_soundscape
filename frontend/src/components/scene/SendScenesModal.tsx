@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { useSceneWorkflowStore, useUIStore, notifyError } from '@/store';
+import { useSceneWorkflowStore, useUIStore, useWorkspaceStore, selectIsReadOnlyWorkspace, notifyError } from '@/store';
 import { useSoundScenes } from '@/hooks/useSoundScenes';
 import { useWorkspaceModelEntries, type WorkspaceModelEntry } from '@/hooks/useWorkspaceModelEntries';
 import { useSendScenesToModel } from '@/hooks/useSendScenesToModel';
@@ -130,7 +130,9 @@ function SendScenesDialog({
 }: Omit<SendScenesModalProps, 'open'>) {
   const scenes = useSoundScenes();
   const runs = useSceneWorkflowStore((s) => s.runs);
-  const { entries, projectId, authToken, isLoading, error: listError } = useWorkspaceModelEntries(true);
+  const isReadOnly = useWorkspaceStore(selectIsReadOnlyWorkspace);
+  // A non-owner sends into the workspace they own, so list that one's models.
+  const { entries, projectId, authToken, isLoading, error: listError } = useWorkspaceModelEntries(true, isReadOnly);
   const { send, isSending, error: sendError } = useSendScenesToModel({ sourceModelId, flushSave });
 
   const isRunning = (usageIndex: number) => runs[usageIndex]?.status === 'running';
@@ -149,9 +151,10 @@ function SendScenesDialog({
     () =>
       entries.filter((e) => {
         const id = e.kind === 'home' ? e.project.model_id : e.model.id;
-        return id !== sourceModelId && id !== SANDBOX_MODEL_ID;
+        // Another workspace may hold a model with the source's id.
+        return (isReadOnly || id !== sourceModelId) && id !== SANDBOX_MODEL_ID;
       }),
-    [entries, sourceModelId],
+    [entries, sourceModelId, isReadOnly],
   );
   const targets = useMemo(() => targetEntries.map((e) => toTarget(e, projectId)), [targetEntries, projectId]);
   const target = targets.find((t) => t.modelId === targetId) ?? null;
@@ -258,7 +261,7 @@ function SendScenesDialog({
                 <Spinner size={12} /> Loading models…
               </div>
             ) : targets.length === 0 ? (
-              <p className="px-2 py-2 text-xs text-secondary-hover">{SCENE_TRANSFER.NO_TARGETS}</p>
+              <p className="px-2 py-2 text-xs text-secondary-hover">{isReadOnly ? SCENE_TRANSFER.NO_TARGETS_SHARED : SCENE_TRANSFER.NO_TARGETS}</p>
             ) : (
               targets.map((t) => (
                 <SelectRow
@@ -294,7 +297,7 @@ function SendScenesDialog({
           </div>
         </div>
 
-        <p className="text-[11px] text-secondary-hover opacity-80">{SCENE_TRANSFER.FOOTNOTE}</p>
+        <p className="text-[11px] text-secondary-hover opacity-80">{isReadOnly ? SCENE_TRANSFER.FOOTNOTE_SHARED : SCENE_TRANSFER.FOOTNOTE}</p>
         {sendError && <Notice type="error" message={sendError} />}
 
         <div className="flex gap-2">
@@ -326,8 +329,9 @@ function SendScenesDialog({
 /**
  * SendScenesModal
  *
- * Copies sound scenes of the open model into another model of the same
- * workspace (a Speckle project model — saved or not — or a Homepage project).
+ * Copies sound scenes of the open model into another model: of the same
+ * workspace for its owner, of the user's own workspace for any other member
+ * (a Speckle project model — saved or not — or a Homepage project).
  * Opened from the model pill menu. The open model is saved first; the copies
  * lose their object links and are re-placed in front of the camera unless
  * "Keep sound positions" is on.

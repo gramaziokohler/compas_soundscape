@@ -267,7 +267,107 @@ export const MATERIAL_SELECT = {
   PLACEHOLDER_LABEL: 'Select...',
   /** Clear-row label when the target surfaces already carry a material. */
   UNASSIGN_LABEL: 'Unassign (remove from simulation)',
+  /** Option-label suffixes for user-defined materials. */
+  CUSTOM_TAG: 'mine',
+  SHARED_TAG: 'shared',
 } as const;
+
+/**
+ * User-defined acoustic materials (per-user library, backend routers/materials.py).
+ * Mirrors CUSTOM_MATERIAL_* in backend/config/constants.py.
+ */
+export const CUSTOM_MATERIAL = {
+  ID_PREFIX: 'user_',
+  CENTER_FREQS: [125, 250, 500, 1000, 2000, 4000, 8000],
+  COEFF_MIN: 0,
+  COEFF_MAX: 1,
+  COEFF_STEP: 0.01,
+  DEFAULT_COEFF: 0.3,
+  NAME_MAX_LEN: 60,
+  DESCRIPTION_MAX_LEN: 240,
+  /** Histogram preview size in the editor dialog (px). */
+  PREVIEW_W: 260,
+  PREVIEW_H: 140,
+  NEW_LABEL: '+ New material…',
+  MANAGE_LABEL: 'My materials',
+  EDITOR_WIDTH: '30rem',
+  MANAGER_WIDTH: '28rem',
+  /** Mini histogram size in the manager list (px). */
+  LIST_ICON_SIZE: 22,
+} as const;
+
+/**
+ * Source directivity (per-sound radiation pattern + orientation; backend
+ * routers/directivities.py). Mirrors DIRECTIVITY_* in backend/config/constants.py.
+ */
+export const DIRECTIVITY = {
+  OMNI_ID: 'omni',
+  ID_PREFIX: 'dir_',
+  PRESET_PREFIX: 'preset_',
+  /** Analytical Cardioid-family presets (same ids/labels as the backend). */
+  ANALYTICAL_PRESETS: [
+    { id: 'omni', label: 'Omnidirectional', p: 1 },
+    { id: 'subcardioid', label: 'Subcardioid', p: 0.75 },
+    { id: 'cardioid', label: 'Cardioid', p: 0.5 },
+    { id: 'supercardioid', label: 'Supercardioid', p: 0.366 },
+    { id: 'hypercardioid', label: 'Hypercardioid', p: 0.25 },
+    { id: 'figure_eight', label: 'Figure-eight', p: 0 },
+  ],
+  /** Directional sources get `pos_x_y_z~d<hash8>` keys (utils/positionKey.ts). */
+  KEY_SUFFIX_PREFIX: '~d',
+  /** Orientation quantisation of the key hash (rad, ~0.06 deg). */
+  ORIENTATION_QUANT_RAD: 1e-3,
+  ACCEPT: '.sofa,.csv',
+  ACCEPT_LABEL: 'SOFA, BRAS IR csv',
+  NAME_MAX_LEN: 60,
+  IMPORT_POLL_INTERVAL_MS: 800,
+  /** Polar preview size (px) and plotted bands. */
+  PREVIEW_W: 260,
+  PREVIEW_H: 150,
+  PREVIEW_MIN_DB: -30,
+  PREVIEW_BANDS_HZ: [250, 1000, 4000],
+  IMPORT_LABEL: '+ Import directivity…',
+  MANAGE_LABEL: 'My directivities',
+  DIALOG_WIDTH: '30rem',
+  MANAGER_WIDTH: '28rem',
+  /** Cone indicator on a directional sound sphere, relative to the sphere radius. */
+  INDICATOR: { LENGTH_MULT: 1.8, RADIUS_MULT: 0.45, SEGMENTS: 14 },
+  INDICATOR_OPACITY: 0.85,
+  /** Option-label suffixes. */
+  CUSTOM_TAG: 'mine',
+  SHARED_TAG: 'shared',
+  PREPARING_TAG: 'preparing…',
+} as const;
+
+/**
+ * Real-time source directivity in the anechoic / ShoeBox playback modes
+ * (lib/audio/utils/source-directivity.ts). Analytical patterns are an
+ * angle-dependent gain; measured balloons a per-source convolver with the
+ * nearest-direction impulse response, crossfaded when the direction changes.
+ */
+export const DIRECTIVITY_REALTIME = {
+  /** Header of GET /api/directivities/{id}/balloon (mirrors DIRECTIVITY_BALLOON_MAGIC). */
+  BALLOON_MAGIC: 'DIRB',
+  BALLOON_HEADER_BYTES: 16,
+  /** Crossfade between the two convolvers when the balloon direction changes (s). */
+  CROSSFADE_S: 0.025,
+  /** Smoothing of the analytical gain (setTargetAtTime time constant, s). */
+  GAIN_SMOOTHING_S: 0.03,
+  /** Source / listener moves below this distance do not re-evaluate the pattern (m). */
+  MOVE_EPSILON_M: 0.005,
+} as const;
+
+/** Centered modal dialogs (components/ui/ModalShell.tsx). */
+export const MODAL_SHELL = {
+  DEFAULT_WIDTH: '26rem',
+  MAX_HEIGHT: '86vh',
+  PADDING_PX: 14,
+  Z_INDEX: 99990, // below CardSelect menus (99999) / histograms (100000) so pickers inside a dialog open on top
+} as const;
+
+/** Text input / textarea look shared by dialog forms. */
+export const FORM_FIELD_CLASS =
+  'w-full px-2 py-1 text-xs bg-secondary-lighter text-foreground border border-secondary-light focus:outline-none focus:border-primary transition-colors';
 
 // Overlays (3D Scene UI)
 export const UI_OVERLAY = {
@@ -1523,16 +1623,18 @@ export const HOME_PROJECT_PREFIX = 'home-';
 // ============================================================================
 export const SCENE_TRANSFER = {
   MENU_LABEL: 'Send scenes to another model…',
-  MENU_HINT: 'Copy sound scenes into a model in this workspace',
+  MENU_HINT: 'Copy sound scenes into one of your own models',
   TITLE: 'Send scenes to another model',
   SCENES_LABEL: 'Scenes',
   TARGET_LABEL: 'Target model',
   KEEP_POSITIONS_LABEL: 'Keep sound positions',
   KEEP_POSITIONS_HINT: 'Off: sounds are placed in front of the camera in the target model.',
   FOOTNOTE: 'Saves this model first · object links are not kept · simulations, receivers and IRs stay here.',
+  FOOTNOTE_SHARED: 'Sends the owner’s saved scenes into your own workspace · object links are not kept · simulations, receivers and IRs stay here.',
   STILL_GENERATING: 'Still generating',
   NO_SOUNDSCAPE_YET: 'no soundscape yet',
   NO_TARGETS: 'No other model in this workspace.',
+  NO_TARGETS_SHARED: 'No model in your own workspace.',
   SEND: 'Send',
   SENDING: 'Sending…',
   CANCEL: 'Cancel',
@@ -2364,6 +2466,8 @@ export const PFFDTD = {
   FREE_GRID_SPACING_STEP: 0.05,
   /** A moved object snaps to the nearest grid point within this (m); farther needs a re-run. */
   FREE_SNAP_RADIUS_M: 0.5,
+  /** Directional sources: reciprocal runs = listeners × (4 for FOA); mirrors PFFDTD_DIRECTIONAL_MAX_RUNS. */
+  DIRECTIONAL_MAX_RUNS: 64,
   /** Wait this long after the last move before asking for the new IR. */
   FREE_DEBOUNCE_MS: 500,
   /** A free object counts as moved once it is this far (m) from the position its IR was made for. */
@@ -2602,6 +2706,19 @@ export const RENDER_STYLE = {
   POPOVER_WIDTH: 240, // px
   /** Shown in the dropdown while the Sounds view mode owns the lighting. */
   SOUNDS_MODE_NOTE: 'Sounds view uses its own lighting — styles apply in Default & Acoustics.',
+} as const;
+
+/** Viewport hover highlight — a screen-space border only (lib/three/speckle-hover-outline.ts). */
+export const HOVER_OUTLINE = {
+  /** Same blue as primary blue, so hover and selection borders match. */
+  COLOR: 0x002aff,
+  WIDTH_PX: 1, // CSS px
+  /** Directions the silhouette is shifted in to draw the border (evenly spaced). */
+  DIRECTIONS: 8,
+  /** Stencil value marking the hovered silhouette (Speckle's own outline uses 0 / 255). */
+  STENCIL_REF: 1,
+  /** Drawn after every other overlay object. */
+  RENDER_ORDER: 10000,
 } as const;
 
 export const RENDER_STYLE_OPTIONS: ReadonlyArray<{ value: RenderStyle; label: string; description: string }> = [

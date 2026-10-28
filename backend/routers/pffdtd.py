@@ -44,6 +44,8 @@ from config.constants import (
     PFFDTD_FMAX_MAX,
     PFFDTD_FMAX_MIN,
     PFFDTD_DEFAULT_FREE_MODE,
+    PFFDTD_DIRECTIONAL_MAX_RUNS,
+    PFFDTD_FREE_MODE_LISTENER,
     PFFDTD_FREE_GRID_SPACING_DEFAULT,
     PFFDTD_FREE_GRID_SPACING_MAX,
     PFFDTD_FREE_GRID_SPACING_MIN,
@@ -60,11 +62,13 @@ from config.constants import (
 from models.schemas import JobEnqueueResponse
 from routers.pyroomacoustics import get_materials as get_pyroomacoustics_materials
 from routers.simulation_preflight import _workspace_dir
+from services.custom_materials_service import inline_custom_materials
+from services.directivity_service import any_directional, attach_directivity_specs, directional_run_count
 from services.job_store import job_store
 from services.pffdtd_job import pffdtd_available
 from services.pffdtd_preview_job import preview_paths
 from services.pyroomacoustics_service import PyroomacousticsService
-from utils.request_parsing import parse_mesh_settings
+from utils.request_parsing import parse_mesh_settings, parse_source_receiver_pairs
 
 router = APIRouter(prefix="/api")
 
@@ -92,16 +96,46 @@ def _require_available() -> None:
         raise HTTPException(status_code=503, detail=f"PFFDTD is not available: {reason}")
 
 
-def _parse_geometry_fields(source_receiver_pairs: str, object_materials: str, geometry_object_ids: Optional[str]):
+def _parse_geometry_fields(
+    req: Request,
+    source_receiver_pairs: str,
+    object_materials: str,
+    geometry_object_ids: Optional[str],
+    custom_materials: Optional[str],
+    model_id: Optional[str],
+):
+    """Typed pairs (with resolved source directivities), inlined materials, object filter."""
+    pairs = parse_source_receiver_pairs(source_receiver_pairs)
+    state = getattr(req, "state", None)
+    pairs_data = attach_directivity_specs(
+        pairs, getattr(state, "user_hash", None), getattr(state, "session_id", None), model_id,
+    )
     try:
-        pairs_data = json.loads(source_receiver_pairs)
         object_materials_dict = json.loads(object_materials)
         object_ids_filter = json.loads(geometry_object_ids) if geometry_object_ids else None
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=400, detail=f"Invalid JSON field: {exc}")
-    if not pairs_data:
-        raise HTTPException(status_code=400, detail="No source-receiver pairs provided")
+    object_materials_dict = inline_custom_materials(object_materials_dict, custom_materials)
     return pairs_data, object_materials_dict, object_ids_filter
+
+
+def _check_directional_runs(pairs_data: list, simulation_mode: str, free_mode: str) -> None:
+    """Directional sources run reciprocally: refuse free-listener mode and run explosions."""
+    if not any_directional(pairs_data):
+        return
+    if free_mode == PFFDTD_FREE_MODE_LISTENER:
+        raise HTTPException(
+            status_code=400,
+            detail="Free listener positioning runs forward from each source and cannot radiate a "
+                   "directional source. Switch to Free source, or set the sources to omnidirectional.",
+        )
+    runs = directional_run_count(pairs_data, simulation_mode)
+    if runs > PFFDTD_DIRECTIONAL_MAX_RUNS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Directional sources need one GPU run per listener ({runs} runs here, limit "
+                   f"{PFFDTD_DIRECTIONAL_MAX_RUNS}). Use fewer listeners, mono output, or omnidirectional sources.",
+        )
 
 
 @router.get("/pffdtd/materials")
@@ -160,6 +194,7 @@ async def run_simulation_speckle(
     speckle_project_id: str = Form(...),
     speckle_version_id: str = Form(...),
     object_materials: str = Form(...),               # JSON: {"objectId": "materialId"}
+    custom_materials: str = Form("{}"),              # JSON: {"user_<hex>": {"coeffs", "center_freqs"}}
     layer_name: str = Form("Acoustics"),
     geometry_object_ids: Optional[str] = Form(None),  # JSON: ["id1", ...]
     simulation_mode: str = Form(PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE),
@@ -172,6 +207,7 @@ async def run_simulation_speckle(
     field_plane_z: Optional[float] = Form(None),      # default plane height; default = mean listener z
     free_mode: str = Form(PFFDTD_DEFAULT_FREE_MODE),  # off | listener | source (routers/pffdtd_free.py)
     free_grid_spacing: float = Form(PFFDTD_FREE_GRID_SPACING_DEFAULT),
+    model_id: Optional[str] = Form(None),             # resolves shared-soundscape directivity copies
 ):
     """Validate and enqueue; Speckle fetch, voxelisation and the GPU solve run in the worker."""
     _require_available()
@@ -187,8 +223,9 @@ async def run_simulation_speckle(
     simulation_id = str(uuid.uuid4())
     session_id = getattr(getattr(req, "state", None), "session_id", None)
     pairs_data, object_materials_dict, object_ids_filter = _parse_geometry_fields(
-        source_receiver_pairs, object_materials, geometry_object_ids,
+        req, source_receiver_pairs, object_materials, geometry_object_ids, custom_materials, model_id,
     )
+    _check_directional_runs(pairs_data, simulation_mode, free_mode)
     mesh_prep = parse_mesh_settings(mesh_settings)
 
     try:
@@ -264,19 +301,21 @@ async def voxel_preview(
     speckle_project_id: str = Form(...),
     speckle_version_id: str = Form(...),
     object_materials: str = Form(...),
+    custom_materials: str = Form("{}"),
     layer_name: str = Form("Acoustics"),
     geometry_object_ids: Optional[str] = Form(None),
     source_receiver_pairs: str = Form(...),
     mesh_settings: Optional[str] = Form(None),
     fmax: float = Form(PFFDTD_DEFAULT_FMAX),
     ppw: float = Form(PFFDTD_DEFAULT_PPW),
+    model_id: Optional[str] = Form(None),
 ):
     """Enqueue a voxelise-only CPU job (same queue and contract as the geometry preflight)."""
     _require_available()
     _check_range("fmax", fmax, PFFDTD_FMAX_MIN, PFFDTD_FMAX_MAX)
     _check_range("ppw", ppw, PFFDTD_PPW_MIN, PFFDTD_PPW_MAX)
     pairs_data, object_materials_dict, object_ids_filter = _parse_geometry_fields(
-        source_receiver_pairs, object_materials, geometry_object_ids,
+        req, source_receiver_pairs, object_materials, geometry_object_ids, custom_materials, model_id,
     )
     if not object_materials_dict:
         raise HTTPException(status_code=400, detail="Assign materials first")

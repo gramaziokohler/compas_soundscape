@@ -23,7 +23,7 @@ compas_soundscape/
 │   │   ├── free_grid.py free_ir.py free_runs.py  # Free positioning: candidate grid, raw store, reciprocal runs
 │   │   ├── ir_server.py             # Resident IR server (free positioning), started by services/pffdtd_ir_server.py
 │   │   ├── air_absorption.py        # numba build of upstream's visco air-absorption filter (bit-identical, ~80x faster)
-│   │   └── validation/              # A1–A4, B1–B3 tests + REPORT.md
+│   │   └── validation/              # A1–A4, B1–B3 tests + REPORT.md (measured benchmark: backend/tests/benchmarks/bras/, scenes.py)
 │   ├── models/
 │   │   └── schemas.py               # Pydantic request/response models
 │   ├── routers/
@@ -698,8 +698,14 @@ SceneBottomBar → SceneRenderStyleButton (dropdown: Rendered · Ghosted · Arct
 - Filter-colored surfaces (Acoustics materials, linked objects) are restyled per frame by
   `FilterMaterialStyler` (`speckle-filter-material-styler.ts`). It patches them in
   `onBeforePipelineRender` (translucent / wireframe, keeping their color) and restores them in
-  `onAfterPipelineRender`. Selection/hover (stencil) and hidden/ghost materials are untouched,
-  so no enforcement loop is needed. Arctic keeps filter colors solid.- The Sounds view (dark mode) always runs on the stock pipeline, because it hooks the current pipeline's
+  `onAfterPipelineRender`. Selection (stencil) and hidden/ghost materials are untouched,
+  so no enforcement loop is needed. Arctic keeps filter colors solid.
+- Hover never swaps the hovered object's material (Speckle's hover does, and a swapped material
+  escapes every render style). `HoverOutline` (`speckle-hover-outline.ts`, driven by the
+  `applyHover` patch in `useSpeckleViewerInit`) copies the render view's triangles out of its
+  batch into an OVERLAY-layer mesh and draws a screen-space border with a stencil dilation
+  (mask → silhouette shifted in 8 directions → unmask). Plain mesh batches only; instanced
+  batches get no hover border.- The Sounds view (dark mode) always runs on the stock pipeline, because it hooks the current pipeline's
   GEOMETRY passes when it enables. That is why the render-style hook must run first.
 - We set `renderer.pipeline` directly instead of using Speckle's `ViewModes` extension. That
   extension caches its mode and would ignore "back to DEFAULT" after one of our custom pipelines.

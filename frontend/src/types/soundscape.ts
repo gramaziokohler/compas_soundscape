@@ -10,6 +10,8 @@ import type { GridPlacementMode } from './receiver';
 import type { IRAcousticParameters } from './audio';
 import type { FoleySoundDetail } from './analysis';
 import type { PffdtdVoxelProblem } from './pffdtd';
+import type { CustomMaterialRecord } from './materials';
+import type { DirectivityRecord, SoundDirectivity } from './directivity';
 
 /** Global generation settings for a soundscape session */
 export interface SoundscapeGlobalSettings {
@@ -58,6 +60,8 @@ export interface SoundscapeSoundConfig {
    *  sphere. Persisted so a pending sphere keeps its authored position after a
    *  refresh/save-load instead of falling back to camera-front spiral placement. */
   position?: number[];
+  /** Source directivity + orientation (absent = omnidirectional). */
+  directivity?: SoundDirectivity;
 }
 
 /** Serializable orchestration metadata (parametric trigger links). */
@@ -116,6 +120,8 @@ export interface SoundscapeSoundEvent {
   fx_enabled?: boolean;
   /** Generation inputs of this variant (JSON signature), shown when the variant is selected. */
   generated_signature?: string;
+  /** Source directivity + orientation (absent = omnidirectional). */
+  directivity?: SoundDirectivity;
 }
 
 /** Serializable receiver position */
@@ -226,6 +232,7 @@ export interface SoundscapeSimulationConfig {
     sources: Record<string, number[]>; // posKey -> [x, y, z]
     receivers: Record<string, number[]>; // receiverId -> [x, y, z]
     sound_to_pos_key?: Record<string, string>; // soundId -> posKey
+    source_directivities?: Record<string, SoundDirectivity>; // posKey -> directivity (directional sources only)
     grid_listeners?: Array<{
       id: string;
       name: string;
@@ -271,6 +278,10 @@ export interface SoundscapeData {
   active_simulation_index?: number;
   /** Live acoustic region of the model (Object Explorer selection) — survives refresh. */
   acoustic_region?: SoundscapeAcousticSelection;
+  /** Snapshot of the custom materials assigned on any card (resolves for collaborators). */
+  custom_materials?: CustomMaterialRecord[];
+  /** Read-only snapshot of the library directivities assigned in this soundscape. */
+  directivities?: DirectivityRecord[];
   // Analysis state persistence
   analysis_state?: AnalysisState;
   // Resonance audio persistence
@@ -298,6 +309,8 @@ export interface SoundscapeSavePayload {
   ir_urls: string[];
   analysis_ids?: string[];
   scenario_ids?: string[];
+  /** Library directivities assigned to sounds — their balloons are copied next to the soundscape. */
+  directivity_ids?: string[];
   /** Workspace revision the client last saw (optimistic concurrency). */
   base_revision?: number;
 }

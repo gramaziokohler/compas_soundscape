@@ -31,6 +31,15 @@ import type { PffdtdFreeMode, PffdtdSettings } from '@/types/pffdtd';
 import { newConfigId } from '@/utils/config-id';
 import { parseAuthoredSeconds } from '@/lib/audio/utils/timeline-utils';
 import { captureGenerationSignature } from '@/utils/generationSignature';
+import { customMaterialRecordsFor, useCustomMaterialStore } from '@/store/customMaterialStore';
+import { directivityRecordsFor, isLibraryDirectivityId, useDirectivityStore } from '@/store/directivityStore';
+import type { SoundDirectivity } from '@/types/directivity';
+
+/** Plain copy of a sound directivity (omits an omni / missing one). */
+function serializeDirectivity(d: SoundDirectivity | undefined): SoundDirectivity | undefined {
+  if (!d || !d.id || d.id === 'omni') return undefined;
+  return { id: d.id, yaw: d.yaw ?? 0, pitch: d.pitch ?? 0, roll: d.roll ?? 0 };
+}
 
 const PFFDTD_FREE_MODES: readonly PffdtdFreeMode[] = ['off', 'listener', 'source'];
 
@@ -133,6 +142,38 @@ function deserializeAcousticSelection(
  * Get a list of sound events that have blob URLs (need server upload before save).
  * These are library downloads and user-uploaded audio that only exist in browser memory.
  */
+/**
+ * Earlier saves dropped a card's entities on load whenever the entity id started
+ * with a letter (see the entities restore in restoreSoundscapeState), while its
+ * sound events kept entity_index — the card still shows as linked but has no
+ * object, so nothing is colored or followed. A real detach clears entity_index
+ * (handleDetachSoundFromEntity), so a card with entity-linked sounds and no
+ * entities lost them: restore them from the scenario object ids it was built
+ * with. Returns the number of repaired cards.
+ */
+function repairDroppedEntityLinks(configs: SoundGenerationConfig[], events: SoundEvent[]): number {
+  const linkedCards = new Set<number>();
+  for (const event of events) {
+    if (event.entity_index === undefined || event.prompt_index === undefined) continue;
+    linkedCards.add(event.prompt_index >= 10000 ? Math.floor(event.prompt_index / 10000) : event.prompt_index);
+  }
+  let repaired = 0;
+  linkedCards.forEach((cardIndex) => {
+    const config = configs[cardIndex];
+    if (!config || config.entities?.length) return;
+    const objectIds = config.orchestrateMeta?.allObjectIds?.length
+      ? config.orchestrateMeta.allObjectIds
+      : config.scenarioSource?.objectsInvolved;
+    if (!objectIds?.length) return;
+    configs[cardIndex] = {
+      ...config,
+      entities: objectIds.map((id, index) => ({ id, nodeId: id, index })),
+    };
+    repaired++;
+  });
+  return repaired;
+}
+
 export function getBlobUrlSounds(soundEvents: SoundEvent[]): SoundEvent[] {
   return soundEvents.filter(
     (event) => event.url && event.url.startsWith('blob:')
@@ -245,6 +286,7 @@ export function buildSoundscapeSavePayload(
       // Persisted so the sphere keeps its authored position on save/load instead
       // of falling back to camera-front spiral placement.
       position: config.position ? [...config.position] : undefined,
+      directivity: serializeDirectivity(config.directivity),
     };
   });
 
@@ -308,6 +350,7 @@ export function buildSoundscapeSavePayload(
         fx_audio_filename: event.fx_url ? extractFilename(event.fx_url) : undefined,
         fx_enabled: event.fx_enabled || undefined,
         generated_signature: event.generated_signature || undefined,
+        directivity: serializeDirectivity(event.directivity),
       };
     }
   );
@@ -450,6 +493,7 @@ export function buildSoundscapeSavePayload(
       sources?: Record<string, [number, number, number]>;
       receivers?: Record<string, [number, number, number]>;
       soundToPosKey?: Record<string, string>;
+      sourceDirectivities?: Record<string, SoundDirectivity>;
       gridListeners?: Array<{
         id: string;
         name: string;
@@ -502,6 +546,9 @@ export function buildSoundscapeSavePayload(
             sound_to_pos_key: simPositions.soundToPosKey
               ? { ...simPositions.soundToPosKey }
               : undefined,
+            source_directivities: simPositions.sourceDirectivities
+              ? { ...simPositions.sourceDirectivities }
+              : undefined,
             grid_listeners: simPositions.gridListeners
               ? simPositions.gridListeners.map((g) => ({
                   id: g.id,
@@ -525,6 +572,19 @@ export function buildSoundscapeSavePayload(
     });
   }
 
+  // Snapshot every custom material a card uses, so collaborators (and this
+  // soundscape after the material is edited/deleted) still resolve it.
+  const customMaterials = customMaterialRecordsFor(
+    serializedSimConfigs.flatMap((c) => Object.values(c.speckle_material_assignments ?? {})),
+  );
+  // Snapshot the library directivities any sound uses (their balloons are copied
+  // next to the soundscape by the backend, see `directivity_ids`).
+  const usedDirectivityIds = [
+    ...serializedEvents.map((e) => e.directivity?.id),
+    ...serializedConfigs.map((c) => c.directivity?.id),
+  ].filter((id): id is string => isLibraryDirectivityId(id));
+  const directivities = directivityRecordsFor(usedDirectivityIds);
+
   const soundscapePayload: SoundscapeData = {
     version: '1.0',
     model_id: modelId,
@@ -539,6 +599,8 @@ export function buildSoundscapeSavePayload(
     simulation_configs: serializedSimConfigs.length > 0 ? serializedSimConfigs : undefined,
     active_simulation_index: activeSimulationIndex ?? undefined,
     acoustic_region: serializeAcousticSelection(acousticRegion),
+    custom_materials: customMaterials.length > 0 ? customMaterials : undefined,
+    directivities: directivities.length > 0 ? directivities : undefined,
     resonance_audio_config: resonanceAudioConfig ? {
       enabled: resonanceAudioConfig.enabled,
       ambisonic_order: resonanceAudioConfig.ambisonicOrder,
@@ -634,9 +696,25 @@ export function restoreSoundscapeState(
       position: Array.isArray(saved.position) && saved.position.length >= 3
         ? [saved.position[0], saved.position[1], saved.position[2]] as [number, number, number]
         : undefined,
+      directivity: serializeDirectivity(saved.directivity),
       entity: undefined, // deprecated — use entities[] below
       entities: (() => {
-        // New multi-entity format: entity_indices[] array
+        // entity_node_ids is the link's identity. Restore from it first: the saved
+        // entity_indices are parseInt(id) with NaN dropped, so they are empty (or
+        // misaligned) for any id that starts with a letter, and the link was lost.
+        const nodeIds = (saved.entity_node_ids ?? []).filter(Boolean);
+        if (nodeIds.length) {
+          const indicesAligned = saved.entity_indices?.length === nodeIds.length;
+          return nodeIds.map((nodeId: string, i: number) => ({
+            id: nodeId,
+            nodeId,
+            applicationId: nodeId,
+            index: indicesAligned ? saved.entity_indices![i] : i,
+            name: saved.entity_meta?.[i]?.name,
+            layer: saved.entity_meta?.[i]?.layer,
+          }));
+        }
+        // Older multi-entity saves without node ids: entity_indices[] array
         if (saved.entity_indices?.length) {
           return saved.entity_indices.map((idx: number, i: number) => ({
             id: saved.entity_node_ids?.[i] || String(idx),
@@ -749,6 +827,8 @@ export function restoreSoundscapeState(
     if (saved.fx) event.fx = saved.fx;
     if (saved.fx_enabled) event.fx_enabled = true;
     if (saved.generated_signature) event.generated_signature = saved.generated_signature;
+    const restoredDirectivity = serializeDirectivity(saved.directivity);
+    if (restoredDirectivity) event.directivity = restoredDirectivity;
     if (saved.fx_audio_filename) {
       event.fx_url = `${baseUrl}/${saved.fx_audio_filename}`;
     }
@@ -769,6 +849,11 @@ export function restoreSoundscapeState(
   });
   if (healedEventCount > 0) {
     console.warn(`[soundscape-load] re-linked ${healedEventCount} sound event(s) with a stale prompt_index to their card`);
+  }
+
+  const repairedEntityCards = repairDroppedEntityLinks(soundConfigs, soundEvents);
+  if (repairedEntityCards > 0) {
+    console.warn(`[soundscape-load] restored the linked objects of ${repairedEntityCards} card(s) from their scenario object ids`);
   }
 
   // ── Re-attach source clips for generated upload cards ─────────────────────
@@ -914,6 +999,7 @@ export function restoreSoundscapeState(
       sources?: Record<string, number[]>;
       receivers?: Record<string, number[]>;
       sound_to_pos_key?: Record<string, string>;
+      source_directivities?: Record<string, SoundDirectivity>;
       grid_listeners?: Array<{
         id: string;
         name: string;
@@ -978,6 +1064,9 @@ export function restoreSoundscapeState(
             soundToPosKey: savedSimPositions.sound_to_pos_key
               ? { ...savedSimPositions.sound_to_pos_key }
               : undefined,
+            sourceDirectivities: savedSimPositions.source_directivities
+              ? { ...savedSimPositions.source_directivities }
+              : undefined,
             gridListeners: savedSimPositions.grid_listeners
               ? savedSimPositions.grid_listeners.map((g) => ({
                   id: g.id,
@@ -1020,6 +1109,11 @@ export function restoreSoundscapeState(
   });
 
   const activeSimulationIndex = loadedData.active_simulation_index ?? null;
+
+  // Custom-material snapshot first: simulation-card signatures include the
+  // coefficients of their assigned custom materials.
+  useCustomMaterialStore.getState().setSnapshot(loadedData.custom_materials ?? []);
+  useDirectivityStore.getState().setSnapshot(loadedData.directivities ?? []);
 
   // Baseline the "Regenerate" snapshots: a restored card starts clean (the
   // snapshot is transient and never saved). In place — later restore passes

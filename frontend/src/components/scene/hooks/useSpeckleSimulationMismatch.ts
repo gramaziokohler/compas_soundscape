@@ -3,7 +3,8 @@ import * as THREE from 'three';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { getCssColorHex } from '@/utils/utils';
 import { SIMULATION_POSITION_THRESHOLD, SIMULATION_POSITION_MATCH_THRESHOLD } from '@/utils/constants';
-import type { ReceiverData, GridListenerData } from '@/types';
+import { directivityKeySuffix, positionKeyBase } from '@/utils/positionKey';
+import type { ReceiverData, GridListenerData, SoundEvent } from '@/types';
 
 interface SimulationMismatchProps {
   isViewerReady: boolean;
@@ -85,6 +86,11 @@ export function useSpeckleSimulationMismatch({
             const dist = Math.hypot(simPos[0] - curX, simPos[1] - curY, simPos[2] - curZ);
             if (dist > SIMULATION_POSITION_THRESHOLD) isRed = true;
           }
+          // A changed directivity / orientation is a different simulated source
+          // (the key suffix encodes it), even when the sphere did not move.
+          const soundEvent = mesh.userData.soundEvent as SoundEvent | undefined;
+          const simSuffix = simPosKey.slice(positionKeyBase(simPosKey).length);
+          if (directivityKeySuffix(soundEvent?.directivity) !== simSuffix) isRed = true;
         }
       }
 

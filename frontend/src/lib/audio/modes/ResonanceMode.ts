@@ -27,6 +27,7 @@ import { AudioMode } from '@/types/audio';
 import type { FadeOptions } from '../utils/fade-envelope';
 import { applyFadeInOut } from '../utils/fade-envelope';
 import { SourceLevelMeter } from '../utils/source-level';
+import { SourceDirectivityStage, type RealtimeDirectivity } from '../utils/source-directivity';
 import { AUDIO_CONTROL, DEFAULT_SPEED_OF_SOUND, GLOBAL_SOURCE } from '@/utils/constants';
 
 // Dynamic import type
@@ -83,9 +84,15 @@ export class ResonanceMode implements IAudioMode {
     muteGainNode: GainNode;
     /** Realtime level probe (inline pass-through) for audio-reactive visuals. */
     levelMeter: SourceLevelMeter;
+    /** Radiation pattern toward the listener (bypassed for global sources). */
+    directivity: SourceDirectivityStage;
     isPlaying: boolean;
     isMuted: boolean;
   }> = new Map();
+
+  // Resolved radiation patterns; kept apart from `resonanceSources` so they survive
+  // a scene rebuild and can precede createSource.
+  private sourceDirectivities: Map<string, RealtimeDirectivity> = new Map();
 
   /** Independent, transient playback voices per source (see startVoice/IAudioMode). */
   private voices: Map<string, Set<AudioBufferSourceNode>> = new Map();
@@ -223,12 +230,19 @@ export class ResonanceMode implements IAudioMode {
       // SourceLevelMeter) so the visuals layer can read the post-volume level.
       const levelMeter = new SourceLevelMeter(this.audioContext);
 
+      // Radiation pattern toward the listener (unity for omni sources)
+      const directivity = new SourceDirectivityStage(this.audioContext);
+      directivity.setBypass(this.globalSourceIds.has(sourceId));
+      directivity.setResolved(this.sourceDirectivities.get(sourceId) ?? null);
+      directivity.update(position, this.listenerPosition);
+
       // Wire the persistent chain now (not lazily inside playSource) so that
       // startVoice() can play through it even if the legacy single-slot
       // playSource() is never called for this source.
       gainNode.connect(muteGainNode);
       levelMeter.tap(gainNode);
-      muteGainNode.connect(resonanceSource.input);
+      muteGainNode.connect(directivity.input);
+      directivity.output.connect(resonanceSource.input);
 
       // Configure source properties
       resonanceSource.setRolloff(DEFAULT_ROLLOFF);
@@ -245,6 +259,7 @@ export class ResonanceMode implements IAudioMode {
         gainNode,
         muteGainNode,
         levelMeter,
+        directivity,
         isPlaying: false,
         isMuted: false
       };
@@ -434,6 +449,18 @@ export class ResonanceMode implements IAudioMode {
 
     source.position = { x: position.x, y: position.y, z: position.z };
     this.placeSource(sourceId, source);
+    source.directivity.update(source.position, this.listenerPosition);
+  }
+
+  /** Live radiation pattern of a source (null = omnidirectional). */
+  setSourceDirectivity(sourceId: string, resolved: RealtimeDirectivity | null): void {
+    if (resolved) this.sourceDirectivities.set(sourceId, resolved);
+    else this.sourceDirectivities.delete(sourceId);
+    const source = this.resonanceSources.get(sourceId);
+    if (source) {
+      source.directivity.setResolved(resolved);
+      source.directivity.update(source.position, this.listenerPosition);
+    }
   }
 
   /**
@@ -458,6 +485,7 @@ export class ResonanceMode implements IAudioMode {
       // Already disconnected
     }
     source.levelMeter.dispose();
+    source.directivity.dispose();
 
     // Resonance Audio sources don't have explicit cleanup
     // Just remove from tracking
@@ -471,6 +499,9 @@ export class ResonanceMode implements IAudioMode {
   updateListener(position: Position, orientation: Orientation): void {
     this.listenerPosition = position;
     this.listenerOrientation = orientation;
+
+    // Source patterns depend on the source→listener direction (cheap when nothing moved).
+    this.resonanceSources.forEach((source) => source.directivity.update(source.position, position));
 
     if (!this.resonanceAudioScene) {
       return;
@@ -612,7 +643,10 @@ export class ResonanceMode implements IAudioMode {
     else this.globalSourceIds.delete(sourceId);
 
     const source = this.resonanceSources.get(sourceId);
-    if (source) this.placeSource(sourceId, source);
+    if (source) {
+      source.directivity.setBypass(isGlobal);
+      this.placeSource(sourceId, source);
+    }
   }
 
   /**

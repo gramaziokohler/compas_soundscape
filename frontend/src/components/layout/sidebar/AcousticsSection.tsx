@@ -46,7 +46,7 @@ import { useSimulationPreflightStore, usePffdtdVisualsStore, type RunPreflightAr
 import { useModelVersionStore } from '@/store';
 import { SimulationOutdatedNotice } from '@/components/layout/sidebar/acoustics/SimulationOutdatedNotice';
 import { SimulationVersionBadge } from '@/components/layout/sidebar/acoustics/SimulationVersionBadge';
-import { buildSimulationGeometryRequest, simulationRequestSignature, speckleCardFields, type BuildResult } from '@/utils/simulationRequest';
+import { buildSimulationGeometryRequest, simulationRequestSignature, simulationSourceSnapshot, speckleCardFields, type BuildResult } from '@/utils/simulationRequest';
 import type { SimulationEngine } from '@/types/simulationPreflight';
 
 // Content Components
@@ -63,6 +63,7 @@ import { SpeckleSurfaceMaterialsSection } from '@/components/acoustics/SpeckleSu
 
 // Hooks
 import { useAcousticsMaterials } from '@/hooks/useAcousticsMaterials';
+import { useAvailableAcousticMaterials } from '@/hooks/useAvailableAcousticMaterials';
 import { useAutoHideUnassignedObjects } from '@/hooks/useAutoHideUnassignedObjects';
 import { usePffdtdStatus } from '@/hooks/usePffdtdStatus';
 // Utils
@@ -450,11 +451,13 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   const pffdtdStatus = usePffdtdStatus();
   const hasImportIrsCard = simulationConfigs.some(c => c.type === 'import-irs');
 
-  const { materials: pyroomMaterials } = useAcousticsMaterials({
+  const { materials: builtInPyroomMaterials } = useAcousticsMaterials({
     fetchMaterials: () => apiService.getPyroomacousticsMaterials(),
     idPrefix: 'pyroom',
     enabled: hasPyroomCard || hasImportIrsCard
   });
+  // Built-ins + my custom materials + custom materials of a shared soundscape
+  const pyroomMaterials = useAvailableAcousticMaterials(builtInPyroomMaterials, hasPyroomCard || hasImportIrsCard);
 
   // Clear material colors when layer isolation is disabled (filteringEnabled comes from context,
   // controlled by the View Mode switch in SpeckleScene)
@@ -725,7 +728,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     }
     const {
       projectId, versionId, layerName, objectMaterials, geometryObjectIds, objectScattering,
-      sourceReceiverPairs, uniqueSourcePositions, sourceSoundToPosKey,
+      sourceReceiverPairs, modelId,
     } = built.request;
 
     handleUpdateConfig(index, { isRunning: true, progress: 0, status: 'Submitting...', error: null } as any);
@@ -746,6 +749,8 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         geometryObjectIds,
         objectScattering,
         useUIStore.getState().simulationMeshSettings,
+        built.request.customMaterials,
+        modelId,
       );
 
       // Store running simulation ID so the cancel handler can reach it
@@ -818,9 +823,8 @@ export function AcousticsSection(props: AcousticsSectionProps) {
               currentSimulationRunId: null,
               currentSimulationId: result.simulation_id,
               simulationPositions: {
-                sources: Object.fromEntries(uniqueSourcePositions.entries()),
+                ...simulationSourceSnapshot(built.request),
                 receivers: Object.fromEntries(receiversList.map(r => [r.id, r.position])),
-                soundToPosKey: Object.fromEntries(sourceSoundToPosKey.entries()),
                 gridListeners: buildGridListenerSnapshot(gridListeners),
               },
             } as any);

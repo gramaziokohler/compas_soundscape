@@ -15,14 +15,42 @@ export interface AcousticMaterial {
   name: string;
   /** Absorption coefficient (0-1, higher = more absorption) */
   absorption: number;
-  /** Material category (Wall, Floor, Ceiling, Soft) */
-  category: 'Wall' | 'Floor' | 'Ceiling' | 'Soft';
+  /** Material category (Wall, Floor, Ceiling, Soft, Custom = user-defined) */
+  category: 'Wall' | 'Floor' | 'Ceiling' | 'Soft' | 'Custom';
   /** Optional description */
   description?: string;
   /** Per-frequency absorption coefficients (0-1), indexed by center_freqs */
   coeffs?: number[];
   /** Octave-band center frequencies in Hz matching coeffs (e.g. [125,250,500,1000,2000,4000,8000]) */
   center_freqs?: number[];
+  /** User-defined material (id starts with CUSTOM_MATERIAL.ID_PREFIX) */
+  isCustom?: boolean;
+  /** Custom material known only from a shared soundscape snapshot — not in my library */
+  isShared?: boolean;
+}
+
+/** Per-band absorption of a custom material, as sent inline with a simulation request. */
+export interface CustomMaterialCoefficients {
+  coeffs: number[];
+  center_freqs: number[];
+}
+
+/** User-defined material as returned by GET /api/me/materials (and stored in soundscape snapshots). */
+export interface CustomMaterialRecord extends CustomMaterialCoefficients {
+  id: string;
+  name: string;
+  description: string;
+  absorption: number;
+  category: 'Custom';
+  created_at?: string;
+  updated_at?: string;
+}
+
+/** Create / update payload of a custom material (one coefficient per CUSTOM_MATERIAL.CENTER_FREQS band). */
+export interface CustomMaterialInput {
+  name: string;
+  description: string;
+  coeffs: number[];
 }
 
 /**

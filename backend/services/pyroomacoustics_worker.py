@@ -31,6 +31,7 @@ from config.constants import PYROOMACOUSTICS_SIMULATION_MODE_FOA
 from config.constants import PYROOMACOUSTICS_SIMULATION_MODE_MONO
 from models.schemas import MeshPrepSettings
 from scipy.io import wavfile
+from services.pyroomacoustics_directivity import add_source_with_directivity, directivity_result_entry
 from services.pyroomacoustics_room_builder import build_room, pra_supports_two_sided, room_offset
 from services.pyroomacoustics_service import PyroomacousticsService
 from services.simulation_geometry_loader import load_speckle_simulation_geometry
@@ -178,17 +179,23 @@ def _run_pyroomacoustics_compute_loop(
             pair_label = f"Pairs {pair_label_start}-{pair_label_end}/{total_pairs}"
 
         prog_build = 20 + src_idx * 70 // n_sources
+        # Directivity + orientation of this source (None = omnidirectional); resolved
+        # by the router from the pair's `source_directivity` (services/directivity_service.py).
+        directivity_spec = source_pairs[0].get("source_directivity_spec")
+        source_note = f" ({directivity_spec['label']} source)" if directivity_spec else ""
         _write_progress(
             progress_file,
             prog_build,
-            f"{pair_label}: Building room...",
+            f"{pair_label}: Building room{source_note}...",
         )
 
         # Fresh room per source from the prepared walls
         room = build_room(mesh, offset, max_order, ray_tracing, air_absorption, sound_speed)
 
-        # Single source per room
-        room.add_source((np.asarray(source_position, dtype=float) - offset).tolist())
+        # Single source per room, with its directivity pattern when it has one
+        add_source_with_directivity(
+            room, (np.asarray(source_position, dtype=float) - offset).tolist(), directivity_spec,
+        )
 
         # Add all unique receivers for this source
         receiver_local_indices: dict[str, int] = {}
@@ -315,6 +322,8 @@ def _run_pyroomacoustics_compute_loop(
                 result_entry["encoding_method"] = "directivity"
             if ray_tracing and ray_tracing_entry_meta:
                 result_entry.update(ray_tracing_entry_meta)
+            if directivity_spec:
+                result_entry["source_directivity"] = directivity_result_entry(directivity_spec)
             if acoustic_params:
                 result_entry["acoustic_parameters"] = acoustic_params
             results_data.append(result_entry)
@@ -540,6 +549,8 @@ def run_pyroomacoustics_simulation_from_geometry(
                     "source_position": src["position"],
                     "receiver_id": rcv["id"],
                     "receiver_position": rcv["position"],
+                    # optional worker-ready spec (tests / future Grasshopper support)
+                    "source_directivity_spec": src.get("directivity_spec"),
                 })
 
         # ── Phase 4: Shared compute loop (welds + per-source compute_rir) ─────

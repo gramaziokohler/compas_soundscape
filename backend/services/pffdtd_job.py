@@ -34,6 +34,7 @@ from config.constants import (
     PFFDTD_FIELD_MAX_PX,
     PFFDTD_FOA_OFFSET_CELLS,
     PFFDTD_FREE_GRID_SPACING_DEFAULT,
+    PFFDTD_FREE_MODE_LISTENER,
     PFFDTD_IR_REFERENCE_GAIN,
     PFFDTD_LOWCUT_HZ,
     PFFDTD_LOWCUT_ORDER,
@@ -52,7 +53,9 @@ from config.constants import (
     PYROOMACOUSTICS_SIMULATION_MODE_FOA,
 )
 from models.schemas import MeshPrepSettings
+from services.pffdtd_directivity import job_source_directivities
 from services.pffdtd_free import FreeOptions, job_block as free_job_block, reset_store as reset_free_store, results_block as free_results_block
+from services.pyroomacoustics_directivity import directivity_result_entry
 from services.pffdtd_scene_export import bounding_box, build_scene
 from services.simulation_geometry_loader import load_speckle_simulation_geometry
 from services.simulation_mesh_service import MeshPrepOptions, SimulationMeshService
@@ -240,6 +243,26 @@ def unique_seeds(pairs_data: list) -> tuple["OrderedDict[str, list]", "OrderedDi
     return sources, receivers
 
 
+def resolve_domain_bounds(bmin, bmax, seeds: list, domain_bounds: Optional[tuple]) -> Optional[tuple]:
+    """Validated padded simulation domain ``(dmin, dmax)`` or None (domain = geometry bbox).
+
+    PFFDTD (RoomGeo) requires every source and receiver strictly inside the domain, so an open
+    scene (a reflector in free field, seeds outside its bbox) needs explicit bounds.
+    """
+    if domain_bounds is None:
+        return None
+    dmin, dmax = (np.asarray(b, np.float64).reshape(3) for b in domain_bounds)
+    if np.any(dmin > np.asarray(bmin)) or np.any(dmax < np.asarray(bmax)):
+        raise RuntimeError(f"Domain bounds {dmin.tolist()}..{dmax.tolist()} do not enclose the geometry "
+                           f"{np.asarray(bmin).tolist()}..{np.asarray(bmax).tolist()}")
+    for p in seeds:
+        p = np.asarray(p, np.float64)
+        if not (np.all(p > dmin) and np.all(p < dmax)):
+            raise RuntimeError(f"Source/receiver {p.tolist()} lies outside the domain bounds "
+                               f"{dmin.tolist()}..{dmax.tolist()}")
+    return dmin, dmax
+
+
 def run_pipeline_job(job: dict, work_dir: Path, progress_file: str) -> None:
     job_path = work_dir / "job.json"
     job_path.write_text(json.dumps(job))
@@ -250,6 +273,7 @@ def _run_from_geometry(
     simulation_id, progress_file, result_file, geometry, pairs_data, simulation_mode, fmax, ppw,
     duration, air_absorption, simulation_name, rir_output_dir, temp_dir, mesh_settings,
     field: Optional[FieldOptions] = None, header_meta=None, free: Optional[FreeOptions] = None,
+    domain_bounds: Optional[tuple] = None, grid_spacing: Optional[float] = None,
 ) -> None:
     """Shared by the Speckle entry point and tests (geometry given directly)."""
     field = field or FieldOptions()
@@ -258,12 +282,28 @@ def _run_from_geometry(
     mesh, seed_meta = prepare_pffdtd_mesh(geometry, pairs_data, mesh_settings)
 
     bmin, bmax = bounding_box(mesh)
-    plan = plan_grid(bmax - bmin, fmax, ppw, duration)
+    domain = resolve_domain_bounds(bmin, bmax, [s["position"] for s in seed_meta], domain_bounds)
+    plan = plan_grid(bmax - bmin, fmax, ppw, duration,
+                     domain_extents=None if domain is None else domain[1] - domain[0], h=grid_spacing)
+    if domain is not None and not plan.fits_gpu:
+        raise RuntimeError(
+            f"Padded domain needs {plan.gpu_bytes / 1e9:.1f} GB of GPU memory "
+            f"(budget {plan.gpu_budget_bytes / 1e9:.1f} GB); shrink the bounds or lower fmax/ppw."
+        )
+    sources, receivers = unique_seeds(pairs_data)
+    foa = simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_FOA
+    # Directional sources: reciprocal runs (one per listener, x4 for FOA) with a first-order
+    # pattern per octave band composed from 7 probes at each source (pffdtd_backend/directional.py).
+    source_directivities = job_source_directivities(sources, pairs_data)
+    reciprocal = any(source_directivities)
+    directional_runs = len(receivers) * (4 if foa else 1) if reciprocal else 0
     ctx = PreflightContext(
         engine=ENGINE_PFFDTD,
         seeds=[SeedMeta(**s) for s in seed_meta],
         pairs=[(str(p["source_id"]), str(p["receiver_id"])) for p in pairs_data],
         pffdtd_fmax=fmax, pffdtd_ppw=ppw, pffdtd_duration=duration,
+        pffdtd_runs=float(directional_runs),
+        pffdtd_directional_free_listener=float(reciprocal and free.mode == PFFDTD_FREE_MODE_LISTENER),
     )
     analysis = SimulationPreflightService.analyze(mesh, ctx)
     errors = [i for i in analysis.issues if i.severity == "error" and i.code.startswith("pffdtd_")]
@@ -276,11 +316,9 @@ def _run_from_geometry(
         "stats": {**mesh.stats, "air_volume_m3": mesh.air_volume_m3, "air_volume_method": mesh.air_volume_method},
     }
 
-    sources, receivers = unique_seeds(pairs_data)
-    foa = simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_FOA
     plane_z = field.plane_z if field.plane_z is not None else float(np.mean([r[2] for r in receivers.values()]))
-    if free.reciprocal:
-        plane_z = None  # free source: the runs are from the listeners -- no per-source field outputs
+    if free.reciprocal or reciprocal:
+        plane_z = None  # runs are from the listeners (free source / directional sources) -- no per-source field outputs
 
     mats_hash, materials = build_scene(mesh)
     work_dir = Path(PFFDTD_TEMP_DIR) / simulation_id
@@ -293,6 +331,8 @@ def _run_from_geometry(
         "voxel_cache_dir": PFFDTD_VOXEL_CACHE_DIR,
         "sources": list(sources.values()),
         "receivers": list(receivers.values()),
+        "source_directivities": source_directivities,  # aligned with "sources"; None = omni
+        "reciprocal": reciprocal,
         "h": plan.h,
         "fmax": fmax,
         "duration": duration,
@@ -313,13 +353,16 @@ def _run_from_geometry(
         "spl_volume_max_nodes": PFFDTD_SPL_VOLUME_MAX_NODES,
         "anim_base_dir": PFFDTD_ANIM_BASE_DIR_NAME,
     }
+    if domain is not None:  # padded simulation domain (open scenes); default = geometry bbox
+        job["bmin"], job["bmax"] = domain[0].tolist(), domain[1].tolist()
     if free.enabled:
         reset_free_store(simulation_id)
         job["free"] = free_job_block(simulation_id, free)
     print(
         f"[{simulation_id[:8]}] PFFDTD: {len(mesh.faces)} faces, {len(materials)} materials, "
         f"{len(sources)} source(s) x {len(receivers)} receiver(s), h={plan.h:.4f} m "
-        f"(PPW {plan.ppw_effective:.1f} @ {fmax:.0f} Hz), grid {plan.shape}, ~{plan.est_runtime_s:.0f} s/source"
+        f"(PPW {plan.ppw_effective:.1f} @ {fmax:.0f} Hz), grid {plan.shape}, ~{plan.est_runtime_s:.0f} s/run"
+        + (f", {directional_runs} reciprocal runs for {sum(1 for d in source_directivities if d)} directional source(s)" if reciprocal else "")
     )
     _write_progress(progress_file, PROGRESS_PIPELINE_START, "Starting GPU wave simulation...")
     run_pipeline_job(job, work_dir, progress_file)
@@ -329,6 +372,7 @@ def _run_from_geometry(
     _write_progress(progress_file, PROGRESS_PIPELINE_END, "Writing impulse responses...")
     rid_index = {rid: i for i, rid in enumerate(receivers)}
     sid_index = {sid: i for i, sid in enumerate(sources)}
+    spec_by_sid = {str(p["source_id"]): p.get("source_directivity_spec") for p in pairs_data}
     loaded: dict[int, np.ndarray] = {}
     ir_files, results = [], []
     rir_dir = Path(rir_output_dir)
@@ -364,6 +408,8 @@ def _run_from_geometry(
         if foa:
             entry.update({"channel_ordering": "ACN", "normalization_convention": "SN3D", "format": "AmbiX",
                           "encoding_method": "pressure_gradient", "channel_names": CHANNELS_FOA})
+        if spec_by_sid.get(sid):
+            entry["source_directivity"] = {**directivity_result_entry(spec_by_sid[sid]), "approximation": "first_order_per_band"}
         try:
             params = AcousticMeasurement.calculate_acoustic_parameters_from_rir(ir[0].astype(np.float64), AUDIO_SAMPLE_RATE)
             if params:
@@ -378,7 +424,9 @@ def _run_from_geometry(
         "simulation_name": simulation_name,
         "method": "PFFDTD",
         "results": results,
-        "grid": {**plan.as_dict(), "runs": meta.get("sources", [])},
+        "grid": {**plan.as_dict(), "runs": meta.get("sources", []), "reciprocal": reciprocal,
+                 "runs_planned": directional_runs if reciprocal else len(sources),
+                 "domain_bounds": None if domain is None else [domain[0].tolist(), domain[1].tolist()]},
         "field": field_block,
         "free": free_results_block(simulation_id, meta["free"], list(sources), list(receivers)) if meta.get("free") else None,
         "geometry_diagnostics": geometry_diagnostics,
@@ -493,8 +541,15 @@ def run_pffdtd_simulation_from_geometry(
     field_plane_z: Optional[float] = None,
     free_mode: str = PFFDTD_DEFAULT_FREE_MODE,
     free_grid_spacing: float = PFFDTD_FREE_GRID_SPACING_DEFAULT,
+    domain_bounds: Optional[tuple] = None,
+    grid_spacing: Optional[float] = None,
 ) -> None:
-    """Direct-geometry entry point (vertices/faces/object_face_ranges/face_materials), used by tests."""
+    """Direct-geometry entry point (vertices/faces/object_face_ranges/face_materials), used by tests.
+
+    ``domain_bounds`` = ``(bmin, bmax)`` pads the simulation domain beyond the geometry (open
+    scenes such as a reflector in free field); keep them whole grid cells from the geometry bbox.
+    ``grid_spacing`` fixes h (otherwise aligned to the geometry bbox by ``plan_grid``).
+    """
     try:
         reason = pffdtd_available()
         if reason:
@@ -503,6 +558,7 @@ def run_pffdtd_simulation_from_geometry(
             simulation_id, progress_file, result_file, geometry, pairs_data, simulation_mode, fmax, ppw,
             duration, air_absorption, simulation_name, rir_output_dir, temp_dir, mesh_settings,
             FieldOptions(field_plane_z), free=FreeOptions(free_mode, free_grid_spacing),
+            domain_bounds=domain_bounds, grid_spacing=grid_spacing,
         )
     except Exception as exc:
         tb = traceback.format_exc()

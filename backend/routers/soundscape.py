@@ -20,8 +20,13 @@ from services.paths import (
     user_model_dir,
     user_sounds_dir,
 )
+from services.directivity_service import copy_library_files_to_model
 from services.metadata_store import metadata_store, ROLE_OWNER, ROLE_VIEWER
-from services.scene_transfer_service import SceneTransferConflict, scene_transfer_service
+from services.scene_transfer_service import (
+    SceneTransferConflict,
+    resolve_send_target_workspace,
+    scene_transfer_service,
+)
 from models.schemas import (
     SoundscapeSaveRequest,
     SoundscapeSaveResponse,
@@ -118,11 +123,21 @@ def _resolve_owning_workspace(
 
 
 @router.get("/home-projects")
-async def list_home_projects_endpoint(request: Request):
-    """List locally saved Home (sandbox) projects for this workspace."""
+async def list_home_projects_endpoint(request: Request, own_workspace: bool = False):
+    """List locally saved Home (sandbox) projects for this workspace.
+
+    With ``own_workspace``, list the caller's own workspace instead of the shared
+    one they are viewing (scene-send targets).
+    """
     from utils.file_operations import list_home_projects
 
-    return {"projects": list_home_projects(_get_session_id(request))}
+    session_id = _get_session_id(request)
+    if own_workspace:
+        try:
+            session_id = resolve_send_target_workspace(session_id, getattr(request.state, "user_hash", None))
+        except PermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e))
+    return {"projects": list_home_projects(session_id)}
 
 
 def _resolve_audio_source(url: str, session_id: str) -> Path | None:
@@ -555,6 +570,16 @@ async def save_soundscape(request: SoundscapeSaveRequest, req: Request):
     ir_copied = _copy_ir_files(session_id, model_id, request.ir_urls)
     logger.info(f"Copied {ir_copied}/{len(request.ir_urls)} IR files")
 
+    # Copy the balloons of library directivities assigned to sounds → model-linked
+    # directivities/ so collaborators' simulations resolve them (never fails the save).
+    if request.directivity_ids:
+        try:
+            user_hash = getattr(getattr(req, "state", None), "user_hash", None)
+            copied = copy_library_files_to_model(user_hash, session_id, model_id, request.directivity_ids)
+            logger.info(f"Copied {copied}/{len(request.directivity_ids)} directivity balloons")
+        except Exception as e:
+            logger.warning(f"Failed to copy directivity balloons: {e}")
+
     # Copy simulation results JSON files
     for sim_config in data.simulation_configs:
         if sim_config.current_simulation_id:
@@ -754,20 +779,28 @@ async def upload_soundscape_audio(
 @router.post("/{model_id}/send-scenes", response_model=SendScenesResponse)
 async def send_scenes_to_model(model_id: str, request: SendScenesRequest, req: Request):
     """
-    Copy sound scenes from this model's saved soundscape into another model of
-    the same workspace (owner-only).
+    Copy sound scenes from this model's saved soundscape into another model.
 
-    The client saves the source first; the scenes are read from its
-    soundscape.json. The target keeps its own scenes; the copies get fresh ids,
-    lose their object links and (unless ``keep_positions``) are re-placed in front
-    of the camera. Bumps the workspace revision like a save.
+    The workspace owner sends within the workspace. Any other member (editor /
+    viewer of a shared workspace) sends into a model of the workspace they own.
+
+    The client saves the source first (owners only; the source of a non-owner is
+    the owner's saved copy). The scenes are read from its soundscape.json. The
+    target keeps its own scenes; the copies get fresh ids, lose their object
+    links and (unless ``keep_positions``) are re-placed in front of the camera.
+    Bumps the target workspace revision like a save.
     """
     session_id = _get_session_id(req)
-    _require_role(req, session_id, (ROLE_OWNER,))
+    user_hash = getattr(getattr(req, "state", None), "user_hash", None)
+    try:
+        target_workspace_id = resolve_send_target_workspace(session_id, user_hash)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    cross_workspace = target_workspace_id != session_id
     target_id = request.target_model_id.strip()
     if not target_id or target_id == SANDBOX_MODEL_ID:
         raise HTTPException(status_code=400, detail="Pick a saved model or Home project as the target.")
-    if target_id == model_id:
+    if target_id == model_id and not cross_workspace:
         raise HTTPException(status_code=400, detail="The target must be a different model.")
 
     target_meta = {
@@ -785,6 +818,7 @@ async def send_scenes_to_model(model_id: str, request: SendScenesRequest, req: R
             request.keep_positions,
             target_meta,
             request.base_revision,
+            target_workspace_id,
         )
     except SceneTransferConflict as e:
         raise HTTPException(status_code=409, detail={"message": str(e), "revision": e.revision})

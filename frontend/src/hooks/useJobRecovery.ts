@@ -20,6 +20,7 @@ import { useReceiversStore } from '@/store/receiversStore';
 import { useGridListenersStore } from '@/store/gridListenersStore';
 import { useAudioControlsStore } from '@/store/audioControlsStore';
 import { collapseVariantsToOne, groupSoundsByPosition } from '@/utils/positionKey';
+import type { SoundDirectivity } from '@/types/directivity';
 import { isFreshHomeUrl } from '@/utils/homeStage';
 import { cardEventId } from '@/utils/config-id';
 import { latestAcousticsJobPerCard } from '@/utils/acousticsJobRecovery';
@@ -103,19 +104,29 @@ function buildRecoveredSimulationPositions(): PyroomAcousticsSimulationConfig['s
   if (!soundscapeData || soundscapeData.length === 0) return undefined;
 
   const sourceSounds = collapseVariantsToOne(
-    soundscapeData as Array<{ id: string; position: [number, number, number]; prompt_index?: number; copy_index?: number }>,
+    soundscapeData as Array<{
+      id: string;
+      position: [number, number, number];
+      prompt_index?: number;
+      copy_index?: number;
+      directivity?: SoundDirectivity;
+    }>,
     useAudioControlsStore.getState().selectedVariants,
   );
-  const { uniquePositions, soundToPosKey } = groupSoundsByPosition(sourceSounds);
+  const { uniquePositions, soundToPosKey, sourceDirectivities } = groupSoundsByPosition(sourceSounds);
   if (uniquePositions.size === 0) return undefined;
 
   const receivers = useReceiversStore.getState().receivers;
   const gridListeners = useGridListenersStore.getState().gridListeners;
+  const directional = Object.fromEntries(
+    [...sourceDirectivities.entries()].filter((entry): entry is [string, SoundDirectivity] => entry[1] !== undefined),
+  );
 
   return {
     sources: Object.fromEntries(uniquePositions.entries()),
     receivers: Object.fromEntries(receivers.map((r) => [r.id, r.position])),
     soundToPosKey: Object.fromEntries(soundToPosKey.entries()),
+    ...(Object.keys(directional).length > 0 ? { sourceDirectivities: directional } : {}),
     gridListeners: gridListeners
       .filter((g) => !g.hiddenForSimulation)
       .map((g) => ({

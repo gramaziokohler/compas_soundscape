@@ -55,6 +55,9 @@ export interface RunPreflightArgs {
   signature: string;
   maxOrder?: number;
   rayTracing?: boolean;
+  /** PFFDTD: output mode / free mode (run count and refusal of directional sources). */
+  simulationMode?: string;
+  freeMode?: string;
 }
 
 export interface SimulationPreflightStoreState {
@@ -111,7 +114,7 @@ export const useSimulationPreflightStore = create<SimulationPreflightStoreState>
         hoveredIssueId: null,
         focusSeq: 0,
 
-        runPreflight: async ({ configId, engine, request, meshSettings, signature, maxOrder, rayTracing }) => {
+        runPreflight: async ({ configId, engine, request, meshSettings, signature, maxOrder, rayTracing, simulationMode, freeMode }) => {
           stopPoller(configId);
           patch(configId, {
             ...EMPTY_ENTRY,
@@ -126,6 +129,7 @@ export const useSimulationPreflightStore = create<SimulationPreflightStoreState>
               projectId: request.projectId,
               versionId: request.versionId,
               objectMaterials: request.objectMaterials,
+              customMaterials: request.customMaterials,
               layerName: request.layerName,
               geometryObjectIds: request.geometryObjectIds,
               objectScattering: request.objectScattering,
@@ -133,6 +137,9 @@ export const useSimulationPreflightStore = create<SimulationPreflightStoreState>
               maxOrder,
               rayTracing,
               meshSettings,
+              modelId: request.modelId,
+              simulationMode,
+              freeMode,
             });
             patch(configId, { jobId: job_id, statusText: 'Queued...' }, 'preflight/queued');
 

@@ -4,15 +4,11 @@ import { useCallback } from 'react';
 import type { ReceiverData } from '@/types/receiver';
 import { useReceiversStore } from '@/store/receiversStore';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
-import { RefreshIcon } from '@/components/ui/Icon';
-import { PositionWidget } from '@/components/ui/PositionWidget';
+import { OrientationWidget } from '@/components/ui/OrientationWidget';
 import { LISTENER_ORIENTATION } from '@/utils/constants';
 import type { ListenerOrientation as Orientation } from '@/hooks/useListenerOrientationAutosave';
 
-const ORIENTATION_AXES = ['Y', 'P', 'R'] as const;
-
 const toDeg = (rad: number) => (isNaN(rad) ? 0 : (rad * 180) / Math.PI);
-const toRad = (deg: number) => (deg * Math.PI) / 180;
 const formatDeg = (rad: number) => toDeg(rad).toFixed(LISTENER_ORIENTATION.PRECISION);
 
 interface ListenerOrientationWidgetProps {
@@ -40,11 +36,6 @@ export function ListenerOrientationWidget({ receiver, color, isPowered }: Listen
   const shown = isPowered ? live : stored;
   const saved = receiver.orientationSaved ?? false;
 
-  const isNonDefault =
-    Math.abs(shown.yaw) > LISTENER_ORIENTATION.EPSILON_RAD ||
-    Math.abs(shown.pitch) > LISTENER_ORIENTATION.EPSILON_RAD ||
-    Math.abs(shown.roll) > LISTENER_ORIENTATION.EPSILON_RAD;
-
   const receiverId = receiver.id;
 
   // ── Edits ───────────────────────────────────────────────────────────────
@@ -58,10 +49,6 @@ export function ListenerOrientationWidget({ receiver, color, isPowered }: Listen
     }
   }, [isPowered, live.yaw, live.pitch, live.roll, receiverId, updateReceiverOrientation]);
 
-  const handleUpdate = useCallback(([y, p, r]: [number, number, number]) => {
-    applyOrientation({ yaw: toRad(y), pitch: toRad(p), roll: toRad(r) });
-  }, [applyOrientation]);
-
   const handleReset = useCallback(() => {
     applyOrientation({ yaw: 0, pitch: 0, roll: 0 });
     // Clear the saved orientation right away (no debounce) when powered too.
@@ -70,26 +57,7 @@ export function ListenerOrientationWidget({ receiver, color, isPowered }: Listen
 
   return (
     <div className="card-stack--tight">
-      <div className="flex items-end gap-1.5">
-        <PositionWidget
-          label="Orientation (°)"
-          axisLabels={ORIENTATION_AXES}
-          step={LISTENER_ORIENTATION.STEP_DEG}
-          precision={LISTENER_ORIENTATION.PRECISION}
-          position={[toDeg(shown.yaw), toDeg(shown.pitch), toDeg(shown.roll)]}
-          onUpdatePosition={handleUpdate}
-        />
-        {isNonDefault && (
-          <button
-            onClick={handleReset}
-            title="Reset orientation to default"
-            className="w-5 h-5 mb-0.5 flex items-center justify-center rounded border text-[10px] transition-colors hover:opacity-80 shrink-0"
-            style={{ borderColor: `${color}55`, color }}
-          >
-            <RefreshIcon size="0.625rem" />
-          </button>
-        )}
-      </div>
+      <OrientationWidget value={shown} onChange={applyOrientation} onReset={handleReset} accentColor={color} />
       {isPowered && saved && (
         <span className="text-[9px]" style={{ color }}>
           Saved: Y: {formatDeg(stored.yaw)}&deg;&ensp;P: {formatDeg(stored.pitch)}&deg;&ensp;R: {formatDeg(stored.roll)}&deg;

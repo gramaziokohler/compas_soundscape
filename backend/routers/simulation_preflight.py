@@ -32,10 +32,12 @@ from config.constants import (
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import FileResponse
 from models.schemas import JobEnqueueResponse
+from services.custom_materials_service import inline_custom_materials
+from services.directivity_service import any_directional, attach_directivity_specs, directional_run_count
 from services.job_store import job_store
 from services.simulation_preflight_service import ENGINE_PFFDTD, ENGINE_PYROOMACOUSTICS, ENGINES
 from services.simulation_preflight_worker import preflight_payload_path
-from utils.request_parsing import parse_mesh_settings
+from utils.request_parsing import parse_mesh_settings, parse_source_receiver_pairs
 
 router = APIRouter(prefix="/api")
 
@@ -55,6 +57,7 @@ async def preflight_speckle(
     speckle_project_id: str = Form(...),
     speckle_version_id: str = Form(...),
     object_materials: str = Form(...),
+    custom_materials: str = Form("{}"),
     layer_name: str = Form("Acoustics"),
     geometry_object_ids: Optional[str] = Form(None),
     object_scattering: str = Form("{}"),
@@ -65,24 +68,29 @@ async def preflight_speckle(
     fmax: float = Form(PFFDTD_DEFAULT_FMAX),          # PFFDTD only
     ppw: float = Form(PFFDTD_DEFAULT_PPW),            # PFFDTD only
     duration: float = Form(PFFDTD_DEFAULT_DURATION),  # PFFDTD only
+    simulation_mode: str = Form("mono"),              # PFFDTD only: run count of directional sources
+    free_mode: str = Form("off"),                     # PFFDTD only
+    model_id: Optional[str] = Form(None),             # resolves shared-soundscape directivity copies
 ):
     if engine not in _ENGINES:
         raise HTTPException(status_code=400, detail=f"engine must be one of {_ENGINES}")
+    session_id = getattr(getattr(req, "state", None), "session_id", None)
+    user_hash = getattr(getattr(req, "state", None), "user_hash", None)
+    typed_pairs = parse_source_receiver_pairs(source_receiver_pairs)
+    pairs = attach_directivity_specs(typed_pairs, user_hash, session_id, model_id)
     try:
-        pairs = json.loads(source_receiver_pairs)
         materials = json.loads(object_materials)
         object_ids_filter = json.loads(geometry_object_ids) if geometry_object_ids else None
         scattering = json.loads(object_scattering) if object_scattering else {}
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=400, detail=f"Invalid JSON field: {exc}")
-    if not pairs:
-        raise HTTPException(status_code=400, detail="No source-receiver pairs provided")
     if not materials:
         raise HTTPException(status_code=400, detail="Assign materials first")
+    materials = inline_custom_materials(materials, custom_materials)
     settings = parse_mesh_settings(mesh_settings)
+    directional = engine == ENGINE_PFFDTD and any_directional(pairs)
 
     preflight_id = str(uuid.uuid4())
-    session_id = getattr(getattr(req, "state", None), "session_id", None)
     payload = {
         "variant": "pyroomacoustics_preflight",
         "kwargs": dict(
@@ -100,7 +108,13 @@ async def preflight_speckle(
             mesh_settings=settings.model_dump(),
             payload_dir=str(_workspace_dir(req)),
             pffdtd_settings=(
-                {"fmax": fmax, "ppw": ppw, "duration": duration} if engine == ENGINE_PFFDTD else None
+                {
+                    "fmax": fmax, "ppw": ppw, "duration": duration,
+                    # reciprocal runs of directional sources (services/directivity_service.py)
+                    "runs": directional_run_count(pairs, simulation_mode) if directional else 0,
+                    "directional_free_listener": directional and free_mode == "listener",
+                }
+                if engine == ENGINE_PFFDTD else None
             ),
         ),
     }

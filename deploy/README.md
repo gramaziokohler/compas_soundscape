@@ -142,6 +142,20 @@ first order (modes slightly low). Results are band-limited to the chosen max fre
 
 ---
 
+## 0.3 Source directivity presets
+
+The measured source-directivity presets (Genelec 8020, "Human speaking" = B&K HATS 4128C)
+are processed once from the DIRPAT loudspeaker SOFA that ships with the pyroomacoustics fork
+(`<fork>/pyroomacoustics/data/sofa/LSPs_HATS_GuitarCabinets_Akustikmessplatz.sofa`, CC0).
+On API start, missing presets are built by a CPU-worker job (`directivity_preset_build`) into
+`backend/data/directivities/presets/`; the UI lists them as "preparing…" until then, so a CPU
+worker must be running at least once. If the fork's data file is absent, the job downloads
+the SOFA (~90 MB) from phaidra.kug.ac.at into `presets/src/`; set `DIRECTIVITY_SOFA_PATH` in
+`.env` to point at a local copy instead. User imports (SOFA / BRAS CSV) run on the same
+CPU queue and land in `backend/data/directivities/<user_hash>/`.
+
+---
+
 ## 1. Environment file (repo root `.env`)
 
 The backend and the workers load `.env.local` (overrides) then `.env` from the
