@@ -937,6 +937,9 @@ SPECKLE_SUPPORTED_FORMATS = ["3dm", "obj", "ifc"]
 # Bundle → legacy re-materialization after ingestion runs in a background thread
 # pool so ingestion status polls return immediately (stage "materializing").
 SPECKLE_MATERIALIZE_WORKERS = 1
+# Per-request timeout (s) for the shared Speckle GraphQL client. Without it a hung
+# request keeps the gql transport "connected" and blocks every other Speckle call.
+SPECKLE_GRAPHQL_TIMEOUT_S = 60
 SPECKLE_MATERIALIZING_MESSAGE = "Preparing the model for the viewer..."
 
 # Ingestion converters for formats that carry no units (OBJ). Speckle labels their

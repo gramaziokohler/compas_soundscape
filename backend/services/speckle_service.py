@@ -66,6 +66,7 @@ from config.constants import (
     SPECKLE_PROJECT_NAME,
     SPECKLE_SUPPORTED_FORMATS,
     SPECKLE_MATERIALIZE_WORKERS,
+    SPECKLE_GRAPHQL_TIMEOUT_S,
     SPECKLE_MATERIALIZING_MESSAGE,
     SPECKLE_UNITLESS_SOURCE_APPS,
     SPECKLE_UNITLESS_METRE_MAX_EXTENT,
@@ -122,6 +123,29 @@ def _get_redis():
             REDIS_URL, decode_responses=True, socket_connect_timeout=2, socket_timeout=2
         )
     return _redis_client
+
+
+def _serialize_graphql_client(client: SpeckleClient) -> None:
+    """Make a SpeckleClient's sync gql client safe to share across threads.
+
+    gql's sync ``Client.execute`` connects the single transport for the duration of
+    each request, so a second thread calling it concurrently fails with
+    ``TransportAlreadyConnected`` (e.g. ``ensure-ready`` racing ``/latest`` when a
+    model opens). specklepy's resources all call ``execute`` on this one object, so
+    wrapping it with a lock serializes every GraphQL request. The timeout keeps a hung
+    request from holding the lock forever. Blob transfers (``ServerTransport``) use
+    their own HTTP session and are not affected.
+    """
+    httpclient = client.httpclient
+    httpclient.transport.timeout = SPECKLE_GRAPHQL_TIMEOUT_S
+    lock = threading.RLock()
+    unlocked_execute = httpclient.execute
+
+    def execute(*args, **kwargs):
+        with lock:
+            return unlocked_execute(*args, **kwargs)
+
+    httpclient.execute = execute
 
 
 def _normalize_ingestion_progress(value) -> Optional[float]:
@@ -308,6 +332,7 @@ class SpeckleService:
             # Create and authenticate client
             self.client = SpeckleClient(host=SPECKLE_SERVER_URL)
             self.client.authenticate_with_token(token)
+            _serialize_graphql_client(self.client)
             self.auth_token = token  # Store for frontend use
 
             logger.info(f"Authenticated as {self.client.account.userInfo.name}")

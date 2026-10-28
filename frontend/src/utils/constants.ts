@@ -874,7 +874,7 @@ export const SPECKLE_VIEWER_RETRY = {
 // ingestion status until the model version is created (or the job fails).
 export const SPECKLE_INGESTION = {
   POLL_INTERVAL_MS: 1000,       // Delay between status polls (1 s keeps the live % smooth)
-  MAX_ATTEMPTS: 300,            // 5 minutes — large IFC/RVT conversions can be slow
+  MAX_ATTEMPTS: 1800,           // 30 minutes — a 165 MB .3dm took ~7 min to convert on Speckle
 } as const;
 
 // Direct browser → Speckle blob-storage upload (bypasses the Cloudflare tunnel's
