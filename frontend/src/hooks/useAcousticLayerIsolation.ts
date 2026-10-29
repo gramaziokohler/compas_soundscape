@@ -23,6 +23,7 @@ import type React from 'react';
 import { useSpeckleStore, useAcousticLayerStore, useUIStore, discardAcousticSelectionSnapshot, runAsLoad } from '@/store';
 import { getRootNodesForModel, getGeometryLeafIdsFromNode, getExplorerNodeId, countTopLevelLayers, findSingleTopLevelLayer } from '@/hooks/useSpeckleTree';
 import { setAcousticLayerAllIds, setAllModelGeometryIds } from '@/store/speckleStore';
+import { isShareViewActive } from '@/store/shareViewStore';
 import { computeGeometryFaceCounts } from '@/utils/face-count';
 
 /** Find a tree node whose own id matches (supports leaf + nested-node picks). */
@@ -310,6 +311,8 @@ export function useAcousticLayerIsolation(
         }
       }
 
+      // Defining a region is an edit — the share view just shows the model.
+      if (isShareViewActive()) return true;
       console.log('[useAcousticLayerIsolation] No acoustic region — entering selection mode');
       useUIStore.getState().setAcousticLayerSelectionMode(true);
       useUIStore.getState().setShowObjectExplorer(true);

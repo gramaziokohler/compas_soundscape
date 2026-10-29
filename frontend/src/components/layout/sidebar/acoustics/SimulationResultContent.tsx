@@ -653,11 +653,12 @@ export function SimulationResultContent({
         </div>
       )}
 
-      {/* Wave-based field plane: SPL map + pressure-wave animation */}
-      {config.type === 'pffdtd' && simulationId && isExpanded && (
+      {/* Wave-based field plane: SPL map + pressure-wave animation (their files
+          are not served to the share view) */}
+      {config.type === 'pffdtd' && simulationId && isExpanded && canEdit && (
         <PffdtdFreePositioningResults configId={config.id} simulationId={simulationId} />
       )}
-      {config.type === 'pffdtd' && simulationId && isExpanded && !freeSourceRun && (
+      {config.type === 'pffdtd' && simulationId && isExpanded && canEdit && !freeSourceRun && (
         <PffdtdFieldResults
           configId={config.id}
           simulationId={simulationId}
@@ -666,8 +667,8 @@ export function SimulationResultContent({
         />
       )}
 
-      {/* IR Library — uploads / assignments are edits (and need an identity). */}
-      {canEdit && (
+      {/* IR Library — uploads / assignments are edits (and need an identity):
+          the share view only lists the card's IRs. */}
       <ImpulseResponseUpload
         onClearIR={onClearIR}
         refreshTrigger={irRefreshTrigger}
@@ -683,20 +684,19 @@ export function SimulationResultContent({
         onGoToReceiver={onGoToReceiver}
         fpsExitTrigger={fpsExitTrigger}
         forcedActiveGroupId={forcedActiveGroupId}
-        pairDefinitions={pairDefinitions}
+        pairDefinitions={canEdit ? pairDefinitions : undefined}
         availableSourceCount={availableSourceCount}
         availableReceiverCount={availableReceiverCount}
-        allowPairUploads={allowPairUploads}
-        onPairIRUploaded={onPairIRUploaded}
-        onPairAssignmentCleared={onPairAssignmentCleared}
+        allowPairUploads={canEdit && allowPairUploads}
+        onPairIRUploaded={canEdit ? onPairIRUploaded : undefined}
+        onPairAssignmentCleared={canEdit ? onPairAssignmentCleared : undefined}
         singleIRPerListener={singleIRPerListener}
-        onListenerIRUploaded={onListenerIRUploaded}
-        onListenerAssignmentCleared={onListenerAssignmentCleared}
+        onListenerIRUploaded={canEdit ? onListenerIRUploaded : undefined}
+        onListenerAssignmentCleared={canEdit ? onListenerAssignmentCleared : undefined}
         irGain={irGain}
         irNormalizeEnabled={irNormalizeEnabled}
         onIRPeaksChange={onIRPeaksChange}
       />
-      )}
     </div>
   );
 }

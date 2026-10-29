@@ -55,6 +55,8 @@ interface MaterialSelectProps {
    * it is passed to `onChange`, i.e. assigned to this picker's target.
    */
   allowCustom?: boolean;
+  /** Read-only: shows the assigned material, the menu never opens. */
+  disabled?: boolean;
 }
 
 /** Full histogram popup dimensions (75 % of old 260×156). */
@@ -113,6 +115,7 @@ export function MaterialSelect({
   fitContent: fitContentProp,
   alignRight: alignRightProp,
   allowCustom = false,
+  disabled = false,
 }: MaterialSelectProps) {
   const variantDefaults = VARIANT_DEFAULTS[variant];
   const fitContent = fitContentProp ?? variantDefaults.fitContent;
@@ -338,6 +341,7 @@ export function MaterialSelect({
           onChange={onChange}
           options={cardOptions}
           placeholder={placeholder}
+          disabled={disabled}
           forceMenu
           compact
           fitContent={fitContent}

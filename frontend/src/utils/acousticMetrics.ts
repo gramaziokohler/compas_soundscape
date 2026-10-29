@@ -5,9 +5,8 @@
  * Used by both AcousticsSection and usePyroomAcousticsSimulation.
  */
 
-import { apiService } from '@/services/api';
+import { apiService, simulationResultsJsonUrl } from '@/services/api';
 import type { ImpulseResponseMetadata, SourceReceiverIRMapping } from '@/types/audio';
-import { API_BASE_URL } from '@/utils/constants';
 
 /**
  * Acoustic parameters from simulation results
@@ -94,9 +93,7 @@ function aggregateParamList(allParams: any[]): AcousticParameters | null {
  */
 export async function fetchPyroomAcousticMetrics(simulationId: string): Promise<AcousticParameters | null> {
   try {
-    const jsonResponse = await fetch(
-      `${API_BASE_URL}/api/pyroomacoustics/get-result-file/${simulationId}/json`
-    );
+    const jsonResponse = await fetch(simulationResultsJsonUrl(simulationId, 'pyroomacoustics'));
     
     if (!jsonResponse.ok) {
       console.error('[acousticMetrics] Failed to fetch JSON, status:', jsonResponse.status);
@@ -300,12 +297,7 @@ export async function fetchPerReceiverMetrics(
   type: 'pyroomacoustics' | 'pffdtd',
 ): Promise<PerReceiverMetrics> {
   try {
-    const url =
-      type === 'pffdtd'
-        ? `${API_BASE_URL}/api/pffdtd/get-result-file/${simulationId}/json`
-        : `${API_BASE_URL}/api/pyroomacoustics/get-result-file/${simulationId}/json`;
-
-    const response = await fetch(url);
+    const response = await fetch(simulationResultsJsonUrl(simulationId, type));
     if (!response.ok) return {};
     const data = await response.json();
     if (!data.results || !Array.isArray(data.results)) return {};

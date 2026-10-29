@@ -20,6 +20,7 @@ import { HoverOutline } from '@/lib/three/speckle-hover-outline';
 import { PlaybackSchedulerService } from '@/lib/audio/playback-scheduler-service';
 import { useSpeckleStore, useModelVersionStore, findModelVersion } from '@/store';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
+import { isShareViewActive } from '@/store/shareViewStore';
 import { apiService } from '@/services/api';
 import { SPECKLE_PINNED_VERSION_URL, SPECKLE_VIEWER_RETRY } from '@/utils/constants';
 import { getCssColorHex } from '@/utils/utils';
@@ -87,6 +88,11 @@ export function useSpeckleViewerInit({
   // Guards the one-time direct URL read in the init effect below (see comment there).
   const didUrlBootstrapCheckRef = useRef(false);
 
+  // Only matters while there is no model yet: once `modelUrl` is set, the end of
+  // the bootstrap must not re-run the init effect (that would tear down and
+  // re-create the viewer that is already loading the model).
+  const waitForBootstrap = !modelUrl && isBootstrappingModel;
+
   // ============================================================================
   // Effect - Initialize Speckle Viewer
   // ============================================================================
@@ -94,7 +100,7 @@ export function useSpeckleViewerInit({
     if (!containerRef.current) return;
     // Wait for URL bootstrap before creating a sandbox viewer, so `?model_id=`
     // refresh does not flash the placeholder room.
-    if (!modelUrl && isBootstrappingModel) return;
+    if (waitForBootstrap) return;
 
     // `isBootstrappingModel` is set by the PARENT's mount effect, which runs
     // AFTER this child effect — so on the first run it is still `false`. Read the
@@ -106,9 +112,15 @@ export function useSpeckleViewerInit({
       didUrlBootstrapCheckRef.current = true;
       if (!modelUrl && typeof window !== 'undefined') {
         const params = new URLSearchParams(window.location.search);
-        if (params.get('model_id') || params.get('home')) return;
+        // The share page always loads a model (its id is not in the URL).
+        if (params.get('model_id') || params.get('home') || isShareViewActive()) return;
       }
     }
+
+    // Set by this run's cleanup. An async init must stop at its next await once
+    // a newer run owns the container, or it would publish a disposed viewer /
+    // coordinator into the stores (two viewers racing over one canvas).
+    let cancelled = false;
 
     const initViewer = async () => {
       if (modelUrl) setIsLoading(true);
@@ -121,6 +133,7 @@ export function useSpeckleViewerInit({
         existingViewer.dispose();
         setViewer(null);
         await new Promise(resolve => setTimeout(resolve, 100));
+        if (cancelled) return;
       }
 
       // Dispose existing coordinator
@@ -153,6 +166,8 @@ export function useSpeckleViewerInit({
         setViewer(viewer);
         console.log('[useSpeckleViewerInit] Viewer created');
         await viewer.init();
+        // The cleanup disposed this viewer (it was the store's) — stop here.
+        if (cancelled) return;
 
         // Add extensions
         const cameraController = viewer.createExtension(CameraController);
@@ -266,6 +281,7 @@ export function useSpeckleViewerInit({
         console.log('[useSpeckleViewerInit] Extensions created');
 
         const completeAudioStack = (loadedWorldTree: boolean) => {
+          if (cancelled) return;
           console.log('[useSpeckleViewerInit] Viewer ready, initializing SpeckleAudioCoordinator...');
 
           const coordinator = new SpeckleAudioCoordinator(
@@ -326,18 +342,21 @@ export function useSpeckleViewerInit({
           const pinned = findModelVersion(useModelVersionStore.getState().versions, pinnedVersionId);
           setLoadedModelVersionId(pinnedVersionId);
           setLoadedModelVersionCreatedAt(pinned?.created_at ?? null);
-        } else if (speckleData?.model_id) {
+        } else if (speckleData?.model_id && !isShareViewActive()) {
           // Make sure the model's latest version is viewer-safe (bundle uploads are
           // materialized, pre-fix legacy copies are re-materialized). The model URL
           // resolves to the latest version, so this must complete before loading.
+          // (The share view cannot call it — the owner's autosave already did.)
           try {
             const resolved = await apiService.ensureSpeckleModelReady(speckleData.model_id);
+            if (cancelled) return;
             // Record the version actually loaded so the version watcher can detect
             // a newer commit on the model. `created_at` distinguishes a genuine new
             // publish from a re-materialized copy that merely has a different id.
             setLoadedModelVersionId(resolved?.version_id || speckleData.version_id || null);
             setLoadedModelVersionCreatedAt(resolved?.created_at || null);
           } catch (prepErr) {
+            if (cancelled) return;
             console.warn(
               '[useSpeckleViewerInit] ensure-ready failed, loading current version:',
               prepErr
@@ -370,6 +389,7 @@ export function useSpeckleViewerInit({
             }
 
             for (const url of urls) {
+              if (cancelled) return;
               const loader = new SpeckleLoader(viewer.getWorldTree(), url, speckleData?.auth_token);
               await viewer.loadObject(loader, true);
             }
@@ -377,9 +397,11 @@ export function useSpeckleViewerInit({
             completeAudioStack(true);
             return;
           } catch (err) {
+            if (cancelled) return;
             lastError = err as Error;
             if (attempt < SPECKLE_VIEWER_RETRY.MAX_ATTEMPTS - 1) {
               await new Promise(resolve => setTimeout(resolve, SPECKLE_VIEWER_RETRY.RETRY_DELAY_MS));
+              if (cancelled) return;
             }
           }
         }
@@ -388,6 +410,7 @@ export function useSpeckleViewerInit({
         setIsLoading(false);
         setError(`Failed to load model after ${SPECKLE_VIEWER_RETRY.MAX_ATTEMPTS} attempts: ${lastError?.message ?? 'unknown error'}`);
       } catch (err) {
+        if (cancelled) return;
         console.error('[useSpeckleViewerInit] Initialization error:', err);
         setIsLoading(false);
         setError(`Failed to initialize viewer: ${(err as Error).message}`);
@@ -398,6 +421,7 @@ export function useSpeckleViewerInit({
 
     return () => {
       // Cleanup
+      cancelled = true;
       const { areaDrawingManager, coordinator, viewer: v, playbackScheduler, resonanceRoomBoxes } =
         useSpeckleEngineStore.getState();
       if (resonanceRoomBoxes) {
@@ -425,7 +449,7 @@ export function useSpeckleViewerInit({
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modelUrl, onViewerLoaded, refreshKey, isBootstrappingModel]);
+  }, [modelUrl, onViewerLoaded, refreshKey, waitForBootstrap]);
 
   // ============================================================================
   // Effect - Initialize Area Drawing Manager (after viewer is ready)

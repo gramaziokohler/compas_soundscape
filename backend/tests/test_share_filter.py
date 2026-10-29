@@ -11,8 +11,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # backend/
 
+import json  # noqa: E402
+
+import services.share_service as share_module  # noqa: E402
 from models.schemas import SoundscapeData  # noqa: E402
-from services.share_service import filter_soundscape  # noqa: E402
+from services.share_service import PublicShare, ShareService, filter_soundscape  # noqa: E402
 
 
 def _ir(filename):
@@ -54,9 +57,17 @@ def source_data() -> dict:
         "selected_receiver_id": "r-priv",
         "simulation_configs": [
             {"id": "sim-pub", "display_name": "S1", "type": "pyroomacoustics",
+             "current_simulation_id": "run-pub",
+             "speckle_material_assignments": {"obj1": "user_used"},
              "source_receiver_ir_mapping": {"p0": {"r-pub": _ir("ir-pub.wav"), "r-priv": _ir("ir-priv.wav")}}},
             {"id": "sim-priv", "display_name": "S2", "type": "pyroomacoustics",
+             "current_simulation_id": "run-priv",
+             "speckle_material_assignments": {"obj1": "user_private"},
              "source_receiver_ir_mapping": {"p0": {"r-pub": _ir("ir-other.wav")}}},
+        ],
+        "custom_materials": [
+            {"id": "user_used", "name": "Used", "coeffs": [0.1], "absorption": 0.1},
+            {"id": "user_private", "name": "Private", "coeffs": [0.2], "absorption": 0.2},
         ],
         "share_config": {
             "sceneIds": ["s-pub"],
@@ -98,3 +109,34 @@ def test_private_content_and_tokens_are_redacted():
     assert configs[2]["share_hidden"] is True
     assert configs[1]["textInput"] == "public prompt"
     assert out["sound_configs"][1]["parent_usage_original_index"] == 2
+
+
+def test_only_custom_materials_of_shared_simulations_survive():
+    out, _, _ = filter_soundscape(source_data())
+    assert [m["id"] for m in out["custom_materials"]] == ["user_used"]
+
+
+def test_simulation_results_are_allowlisted_and_pruned(tmp_path, monkeypatch):
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    (model_dir / "simulation_run-pub_results.json").write_text(json.dumps({"results": [
+        {"source_id": "p0", "receiver_id": "r-pub", "acoustic_parameters": {"rt60": 1.0}},
+        {"source_id": "p0", "receiver_id": "r-priv", "acoustic_parameters": {"rt60": 2.0}},
+    ]}))
+    (model_dir / "simulation_run-priv_results.json").write_text(json.dumps({"results": []}))
+    monkeypatch.setattr(share_module, "user_model_dir", lambda _ws, _model: model_dir)
+    monkeypatch.setattr(share_module, "TEMP_SIMULATIONS_DIR", str(tmp_path / "temp"))
+
+    payload, _, _ = filter_soundscape(source_data())
+    share = PublicShare(
+        payload=payload,
+        result_runs={"run-pub": "pyroomacoustics"},
+        receiver_ids={"r-pub"},
+    )
+    service = ShareService()
+    monkeypatch.setattr(service, "get_public_share", lambda _share_id: share)
+
+    data = service.simulation_results("share", "run-pub")
+    assert [r["receiver_id"] for r in data["results"]] == ["r-pub"]
+    assert service.simulation_results("share", "run-priv") is None
+    assert service.simulation_results("share", "unknown") is None

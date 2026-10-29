@@ -10,7 +10,9 @@
 import { useMemo } from 'react';
 import { useAcousticMaterialStore } from '@/store';
 import { MaterialSelect, type MaterialOption } from '@/components/ui/MaterialSelect';
-import { NumberField } from '@/components/ui/NumberField';import { OBJECT_EXPLORER_SCATTERING_FIELD_CH } from '@/components/scene/objectExplorerAcousticLayout';
+import { NumberField } from '@/components/ui/NumberField';
+import { OBJECT_EXPLORER_SCATTERING_FIELD_CH } from '@/components/scene/objectExplorerAcousticLayout';
+import { useCanEdit } from '@/hooks/useCanEdit';
 import {
   MATERIAL_SELECT,
   PYROOMACOUSTICS_DEFAULT_SCATTERING,
@@ -44,6 +46,8 @@ export function TreeItemAcousticControls({
   const scatteringAssignments = useAcousticMaterialStore((s) => s.scatteringAssignments);
   const assignMaterialToObjects = useAcousticMaterialStore((s) => s.assignMaterialToObjects);
   const assignScatteringToObjects = useAcousticMaterialStore((s) => s.assignScatteringToObjects);
+  // Share view: materials are shown, never assigned.
+  const canEdit = useCanEdit();
 
   // When this row is selected alongside others, an edit is scoped to the whole
   // selection. The union is always a superset of this row's own geometry, so a
@@ -108,7 +112,8 @@ export function TreeItemAcousticControls({
             : MATERIAL_SELECT.PLACEHOLDER_LABEL}
           isMixed={isMixed}
           showSearch
-          allowCustom
+          allowCustom={canEdit}
+          disabled={!canEdit}
           variant="explorer"
         />
       </div>
@@ -125,6 +130,7 @@ export function TreeItemAcousticControls({
             precision={2}
             placeholder={scatteringMixed ? 'mix' : String(PYROOMACOUSTICS_DEFAULT_SCATTERING)}
             title="Scattering coefficient (0–1)"
+            disabled={!canEdit}
             containerStyle={{ width: `${OBJECT_EXPLORER_SCATTERING_FIELD_CH}ch` }}
             className="!text-xs !py-0.5 !text-primary placeholder:text-primary"
             onCommit={(v) => {

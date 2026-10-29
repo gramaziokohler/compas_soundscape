@@ -15,6 +15,7 @@ import {
   objectExplorerAcousticGridStyle,
 } from '@/components/scene/objectExplorerAcousticLayout';
 import { useViewportScale } from '@/hooks/useViewportScale';
+import { useCanEdit } from '@/hooks/useCanEdit';
 import { clampToViewport, clampToViewportWidth, clampToViewportHeight, getScale } from '@/utils/scale';
 import { UI_SCALE } from '@/utils/constants';
 
@@ -53,8 +54,9 @@ export function ObjectExplorerPanel({ onClose, isVisible, isRightSidebarExpanded
   const hasAcousticRegion = selectedAcousticLayerIds.length > 0;
   const showAcousticColumns = isAcousticMaterialActive && hasAcousticRegion;
   const showScatteringColumn = showAcousticColumns && acousticCardType === 'pyroomacoustics';
-  /** Re-assign is an Acoustics-viewmode action only. */
-  const showReassign = viewMode === 'acoustic' && hasAcousticRegion;
+  const canEdit = useCanEdit();
+  /** Re-assign is an Acoustics-viewmode action only (an edit: never in the share view). */
+  const showReassign = canEdit && viewMode === 'acoustic' && hasAcousticRegion;
 
   // ── Generated card vs live region mismatch ────────────────────────────────
   // The active card snapshots the acoustic region it was generated with. If the

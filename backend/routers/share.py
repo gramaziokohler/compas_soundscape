@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse
 
 from config.constants import PUBLIC_SHARE_PREFIX
 from models.schemas import PublicShareResponse, ShareLinkResponse, SoundscapeData
+from routers.pyroomacoustics import get_materials as get_pyroomacoustics_materials
 from services.metadata_store import ROLE_OWNER, metadata_store
 from services.share_service import ShareNotFound, ShareTokenMissing, share_service
 
@@ -61,6 +62,24 @@ async def get_share_audio(share_id: str, filename: str):
 @router.get("/{share_id}/ir/{filename}")
 async def get_share_ir(share_id: str, filename: str):
     return await _serve_media(share_id, "ir", filename)
+
+
+@router.get("/{share_id}/materials")
+async def get_share_materials(share_id: str):
+    """Built-in absorption database — colors the acoustic view. The custom
+    materials a shared simulation uses travel in the payload's snapshot."""
+    _public_share(share_id)
+    return await get_pyroomacoustics_materials()
+
+
+@router.get("/{share_id}/results/{simulation_id}")
+async def get_share_simulation_results(share_id: str, simulation_id: str) -> dict:
+    """Results JSON of a shared simulation run (acoustic metrics of shared listeners)."""
+    _public_share(share_id)
+    data = share_service.simulation_results(share_id, simulation_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail="Simulation results not found")
+    return data
 
 
 # ── Owner management ─────────────────────────────────────────────────────

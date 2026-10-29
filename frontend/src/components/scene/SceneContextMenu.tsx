@@ -10,6 +10,7 @@ import { ActionMenu, type ActionMenuItem } from '@/components/ui/ActionMenu';
 import { useAudioControlsStore, useReceiversStore, useSpeckleStore } from '@/store';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { notifyError } from '@/store/errorsStore';
+import { useCanEdit } from '@/hooks/useCanEdit';
 import { KEYBOARD_SHORTCUTS } from '@/utils/constants';
 import type { ContextMenuHit } from '@/lib/three/speckle-event-bridge';
 import type { SoundEvent } from '@/types';
@@ -90,6 +91,7 @@ export function SceneContextMenu({
   const mutedSounds = useAudioControlsStore((s) => s.mutedSounds);
   const soloedSounds = useAudioControlsStore((s) => s.soloedSounds);
   const receivers = useReceiversStore((s) => s.receivers);
+  const canEdit = useCanEdit();
 
   const items = useMemo<ActionMenuItem[]>(() => {
     if (hit.kind === 'speckle') {
@@ -173,14 +175,17 @@ export function SceneContextMenu({
         disabled: !receiverId || !onEnterListener,
         onSelect: () => { if (receiverId) onEnterListener?.(receiverId); },
       },
-      {
-        kind: 'action', key: 'simulation',
-        label: excluded ? 'Include in simulation' : 'Exclude from simulation',
-        icon: excluded ? CircleCheck : CircleOff, disabled: !receiver,
-        onSelect: () => {
-          if (receiverId) useReceiversStore.getState().toggleReceiverHiddenForSimulation(receiverId);
-        },
-      },
+      // Share view: including / excluding a listener is an edit.
+      ...(canEdit
+        ? [{
+            kind: 'action' as const, key: 'simulation',
+            label: excluded ? 'Include in simulation' : 'Exclude from simulation',
+            icon: excluded ? CircleCheck : CircleOff, disabled: !receiver,
+            onSelect: () => {
+              if (receiverId) useReceiversStore.getState().toggleReceiverHiddenForSimulation(receiverId);
+            },
+          }]
+        : []),
       {
         kind: 'action', key: 'reveal', label: 'Reveal in sidebar', icon: PanelRight,
         disabled: !receiverId || !onRevealListener,
@@ -194,7 +199,7 @@ export function SceneContextMenu({
       SEPARATOR,
       CLEAR_ITEM,
     ];
-  }, [hit, mutedSounds, soloedSounds, receivers, onOpenExplorer, onRevealSound, onRevealListener, onEnterListener]);
+  }, [hit, mutedSounds, soloedSounds, receivers, canEdit, onOpenExplorer, onRevealSound, onRevealListener, onEnterListener]);
 
   return <ActionMenu x={x} y={y} items={items} onClose={onClose} />;
 }

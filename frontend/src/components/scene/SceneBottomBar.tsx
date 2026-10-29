@@ -328,7 +328,8 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
               dot={showUpdateBadge}
               icon={<RefreshIcon size="0.8rem" />}
             />
-            {!canEdit ? null : isSandbox && !hasHomeProject ? (
+            {/* The share view keeps the Object Explorer (read-only), never Load model. */}
+            {isSandbox && !hasHomeProject ? (canEdit && (
               <BarButton
                 id="load-speckle-model-button"
                 onClick={onToggleLoadModel}
@@ -344,7 +345,7 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
                   </svg>
                 }
               />
-            ) : isSandbox ? null : (
+            )) : isSandbox ? null : (
               <BarButton
                 id={SCENE_BOTTOM_BAR.OBJECT_EXPLORER_BUTTON_ID}
                 onClick={onToggleExplorer}

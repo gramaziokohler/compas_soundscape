@@ -21,9 +21,12 @@ from typing import Optional
 
 from config.constants import (
     PUBLIC_SHARE_PREFIX,
+    SHARE_RESULTS_FILE_PREFIXES,
     SHARE_SCENE_CONFIG_TYPES,
+    SIMULATION_RESULTS_FILE_SUFFIX,
     SOUNDSCAPE_JSON_FILENAME,
     SPECKLE_SHARE_TOKEN,
+    TEMP_SIMULATIONS_DIR,
 )
 from services.metadata_store import metadata_store
 from services.paths import user_audio_dir, user_model_dir
@@ -46,6 +49,10 @@ class PublicShare:
     ir_files: set[str] = field(default_factory=set)
     workspace_id: str = ""
     model_id: str = ""
+    # Simulation run id (``current_simulation_id``) → engine, for the results JSON.
+    result_runs: dict[str, str] = field(default_factory=dict)
+    receiver_ids: set[str] = field(default_factory=set)
+    grid_ids: set[str] = field(default_factory=set)
 
 
 def _listener_allowed(receiver_id: str, receiver_ids: set[str], grid_ids: set[str]) -> bool:
@@ -204,7 +211,13 @@ def filter_soundscape(data: dict) -> tuple[dict, set[str], set[str]]:
 
     # ── Never leak owner data / tokens ───────────────────────────────────
     out["auth_token"] = SPECKLE_SHARE_TOKEN
-    out["custom_materials"] = []
+    # Only the custom materials a shared simulation uses (to color the acoustic view).
+    used_materials = {
+        material_id
+        for sim in simulations
+        for material_id in (sim.get("speckle_material_assignments") or {}).values()
+    }
+    out["custom_materials"] = [m for m in data.get("custom_materials") or [] if m.get("id") in used_materials]
     out["directivities"] = []
 
     shared_scene_ids = {configs[i].get("scene_id") for i in shared_scene_indices}
@@ -255,6 +268,13 @@ class ShareService:
             ir_files=ir_files,
             workspace_id=share["workspace_id"],
             model_id=share["model_id"],
+            result_runs={
+                sim["current_simulation_id"]: sim["type"]
+                for sim in payload.get("simulation_configs") or []
+                if sim.get("current_simulation_id") and sim.get("type") in SHARE_RESULTS_FILE_PREFIXES
+            },
+            receiver_ids={r["id"] for r in payload.get("receivers") or []},
+            grid_ids={g["id"] for g in payload.get("grid_listeners") or []},
         )
         self._cache[share_id] = (mtime, result)
         return result
@@ -276,6 +296,29 @@ class ShareService:
         else:
             return None
         return path if path.is_file() else None
+
+    def simulation_results(self, share_id: str, simulation_id: str) -> Optional[dict]:
+        """Results JSON (acoustic metrics) of a shared simulation run, with its
+        per-pair results pruned to the shared listeners. None when the run is
+        not part of the share or its file is gone."""
+        share = self.get_public_share(share_id)
+        engine = share.result_runs.get(simulation_id)
+        if not engine:
+            return None
+        filename = f"{SHARE_RESULTS_FILE_PREFIXES[engine]}{simulation_id}{SIMULATION_RESULTS_FILE_SUFFIX}"
+        for directory in (user_model_dir(share.workspace_id, share.model_id), Path(TEMP_SIMULATIONS_DIR)):
+            path = directory / filename
+            if path.is_file():
+                break
+        else:
+            return None
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        data["results"] = [
+            r for r in data.get("results") or []
+            if _listener_allowed(r.get("receiver_id") or "", share.receiver_ids, share.grid_ids)
+        ]
+        return data
 
     @staticmethod
     def media_base_urls(share_id: str) -> tuple[str, str]:

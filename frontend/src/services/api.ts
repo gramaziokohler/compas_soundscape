@@ -1,5 +1,5 @@
 import { API_BASE_URL, SHARE_VIEW, SPECKLE_DIRECT_UPLOAD, SPECKLE_INGESTION } from '@/utils/constants';
-import { isShareViewActive } from '@/store/shareViewStore';
+import { isShareViewActive, useShareViewStore } from '@/store/shareViewStore';
 import type { CompasGeometry, SoundEvent, SoundGenerationConfig, FileUploadResponse, JobType, JobRecord, UserPreferences, BugReportPayload, BugReportCreated } from '@/types';
 import { recordFailedRequest } from '@/lib/diagnostics/diagnosticsBuffer';
 import type { TtsCustomVoice, TtsCustomVoiceCreateRequest, TtsDialectsResponse, TtsLanguageMatch } from '@/types/ttsLanguage';
@@ -65,6 +65,22 @@ function handleApiError(error: unknown, context: string): never {
 
   // Unknown errors
   throw new Error(`${context}: An unexpected error occurred`);
+}
+
+/** `/api/public/share/<id>/<path>` while in the share view, else null. */
+function publicShareUrl(path: string): string | null {
+  const { isShareView, shareId } = useShareViewStore.getState();
+  if (!isShareView || !shareId) return null;
+  return `${API_BASE_URL}${SHARE_VIEW.PUBLIC_API_PREFIX}/share/${encodeURIComponent(shareId)}/${path}`;
+}
+
+/**
+ * Results JSON (acoustic metrics) of a simulation run. The share view reads it
+ * through its share-scoped public route (pruned to the shared listeners).
+ */
+export function simulationResultsJsonUrl(simulationId: string, engine: 'pyroomacoustics' | 'pffdtd'): string {
+  return publicShareUrl(`results/${encodeURIComponent(simulationId)}`)
+    ?? `${API_BASE_URL}/api/${engine}/get-result-file/${simulationId}/json`;
 }
 
 /**
@@ -1451,7 +1467,8 @@ export const apiService = {
   }>> {
     try {
       const response = await fetchWithErrorHandling(
-        `${API_BASE_URL}/api/pyroomacoustics/materials`,
+        // The share view colors its acoustic layer from the same database.
+        publicShareUrl('materials') ?? `${API_BASE_URL}/api/pyroomacoustics/materials`,
         undefined,
         'Get Pyroomacoustics materials'
       );
@@ -2100,7 +2117,7 @@ export const apiService = {
   /** Results JSON of a wave-based simulation (metrics + field block); null when expired. */
   async getPffdtdResults(simulationId: string): Promise<PffdtdResultsJson | null> {
     const response = await fetchWithErrorHandling(
-      `${API_BASE_URL}/api/pffdtd/get-result-file/${simulationId}/json`,
+      simulationResultsJsonUrl(simulationId, 'pffdtd'),
       undefined,
       'Get wave-based results'
     );

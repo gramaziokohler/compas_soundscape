@@ -1074,12 +1074,24 @@ login and can only select and play. It also works inside an iframe.
     so it must never be sent.
   - Audio and IRs are served only through `/api/public/share/{id}/audio|ir/{file}`, which is
     allowlisted to the filtered payload.
+  - `custom_materials` keeps only the custom materials a shared simulation assigns.
+  - `/api/public/share/{id}/results/{run_id}` serves a shared run's results JSON (acoustic
+    metrics), with its per-pair results pruned to the shared listeners.
+    `/api/public/share/{id}/materials` serves the built-in absorption database, which colors the
+    acoustic view. The frontend builds both URLs in `services/api.ts`
+    (`simulationResultsJsonUrl`, `getPyroomacousticsMaterials`).
 - In share view, `fetchWithErrorHandling` refuses any other backend call.
+- The viewer init (`useSpeckleViewerInit`) is cancellation-safe. A share load runs it once,
+  with no sandbox viewer and no `ensure-ready`.
+- Simulation cards list their IRs from the restored mapping, not from the per-user IR library.
+- The right-click menu and Object Explorer are available but read-only: no material or
+  scattering edits, no Re-assign, no region-selection prompt, no auto-open.
 - `useCanEdit()` hides every editing control: bottom-bar app, history, model and settings
   buttons, card add / delete / rename / run, card editors, DAW snap / drag / trim / menus, the
-  3D gizmo and context menu, and the undo and delete shortcuts.
+  3D gizmo, card FX (an active FX shows as a read-only badge), and the undo and delete shortcuts.
 - `useShareLinkActivation` activates the rest of a link group when one item is activated:
-  selecting a scene bubble, powering a simulation, or double-clicking a headphone.
+  selecting a scene bubble, powering a simulation, or double-clicking a headphone. The first
+  group is activated only once the model is loaded, so a linked listener really enters FPS.
 - `next.config.ts` sets `frame-ancestors` from `SHARE_FRAME_ANCESTORS`. Deploy steps:
   `deploy/PRODUCTION.md` § Public share links.
 

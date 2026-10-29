@@ -9,6 +9,7 @@ import { resolveSoundAudioUrl } from '@/lib/audio/utils/resolve-sound-url';
 import { isStableAudioFx } from '@/lib/audio/fx/fx-types';
 import { Sparkles } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
+import { useCanEdit } from '@/hooks/useCanEdit';
 import { WaveSurferPlayer } from './WaveSurferPlayer';
 import type { SoundEvent } from '@/types';
 
@@ -63,6 +64,7 @@ export function SoundCardWaveSurfer({
   const fxEnabled = Boolean(event?.fx_enabled);
   const fxChain = useSoundFxStore((s) => (soundId ? s.chains[soundId] : undefined));
   const hasStableAudioFx = Boolean(fxChain?.instances.some((i) => isStableAudioFx(i.type)));
+  const canEdit = useCanEdit();
   const openEditor = useCallback(() => {
     if (soundId) useUIStore.getState().setSoundEditorSoundId(soundId);
   }, [soundId]);
@@ -345,7 +347,15 @@ export function SoundCardWaveSurfer({
   const showLeftHandle = hoveredHandle === 'left' || hoveredHandle === 'pan';
   const showRightHandle = hoveredHandle === 'right' || hoveredHandle === 'pan';
 
-  const fxBadge = soundId ? (
+  // Share view: no FX editing — an active FX only shows as a read-only badge.
+  const fxBadge = !soundId ? null : !canEdit ? (
+    fxEnabled && hasSavedFx ? (
+      <Badge variant="primary" className="fx-badge fx-badge--enabled" title="This sound plays with its effects">
+        {hasStableAudioFx && <Sparkles size={9} className="mr-0.5 inline-block align-text-bottom" />}
+        FX
+      </Badge>
+    ) : null
+  ) : (
     <span className="inline-flex items-center gap-1">
       <Badge
         variant={hasSavedFx ? 'primary' : 'neutral'}
@@ -367,7 +377,7 @@ export function SoundCardWaveSurfer({
         />
       )}
     </span>
-  ) : null;
+  );
 
   const trimClearButton =
     isTrimActive ? (

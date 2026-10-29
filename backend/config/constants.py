@@ -1209,6 +1209,10 @@ PUBLIC_API_PREFIX = "/api/public"
 PUBLIC_SHARE_PREFIX = f"{PUBLIC_API_PREFIX}/share"
 # Analysis-config types that are sound scenes (frontend SoundScene / scene_id).
 SHARE_SCENE_CONFIG_TYPES = ("scenario", "text", "freeform")
+# Results JSON (acoustic metrics) a share viewer may read for a shared simulation:
+# <prefix><simulation_id><suffix>, in the model folder (saved) or TEMP_SIMULATIONS_DIR.
+SHARE_RESULTS_FILE_PREFIXES = {"pyroomacoustics": "simulation_", "pffdtd": "pffdtd_"}
+SIMULATION_RESULTS_FILE_SUFFIX = "_results.json"
 
 # ============================================================================
 # SQLite metadata store (workspaces/users/membership/blob refs)

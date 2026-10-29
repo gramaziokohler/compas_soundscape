@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useSpeckleStore, useAcousticLayerStore, useUIStore } from '@/store';
+import { useCanEdit } from '@/hooks/useCanEdit';
 
 type ViewMode = 'dark' | 'default' | 'acoustic';
 
@@ -25,6 +26,7 @@ export function SceneViewModeToolbar() {
   const isWholeModel = useAcousticLayerStore((s) => s.isWholeModel);
   const hasAcousticRegion = useAcousticLayerStore((s) => s.selectedAcousticLayerIds.length > 0);
   const [hovered, setHovered] = useState<ViewMode | null>(null);
+  const canEdit = useCanEdit();
   const described = VIEW_MODES.find((m) => m.mode === (hovered ?? viewMode));
 
   return (
@@ -85,13 +87,13 @@ export function SceneViewModeToolbar() {
             border: '1px solid var(--color-overlay-border)',
             color: 'var(--color-secondary-hover)',
           }}
-          title="Open the Object Explorer to change the acoustic region"
+          title={canEdit ? 'Open the Object Explorer to change the acoustic region' : 'Open the Object Explorer'}
         >
           {hasAcousticRegion
             ? (isWholeModel
               ? `Acoustic region · whole model · ${acousticFaceCount.toLocaleString()} faces`
               : `Acoustic region · ${acousticGeometryIds.length} surface${acousticGeometryIds.length === 1 ? '' : 's'} · ${acousticFaceCount.toLocaleString()} faces`)
-            : 'No acoustic region yet — pick surfaces'}
+            : canEdit ? 'No acoustic region yet — pick surfaces' : 'No acoustic region'}
         </button>
       )}
     </div>

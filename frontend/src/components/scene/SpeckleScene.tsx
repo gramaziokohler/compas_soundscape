@@ -15,6 +15,7 @@ import { apiService } from '@/services/api';
 import { useSpeckleTree } from '@/hooks/useSpeckleTree';
 import { useAudioControlsStore } from '@/store';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
+import { isShareViewActive } from '@/store/shareViewStore';
 import { Viewer, CameraController, SelectionExtension, FilteringExtension } from '@speckle/viewer';
 import type * as THREE from 'three';
 // Custom hooks (Phase 1-4 refactor)
@@ -361,11 +362,11 @@ export function SpeckleScene({
   // Auto-open the Object Explorer when acoustic material assignment activates,
   // since material/scattering columns live there. Only on the rising edge so a
   // manual close while active is respected — and never re-opens if the user
-  // previously closed it.
+  // previously closed it. The share view cannot assign: the explorer only opens on demand.
   const acousticAssignmentActive = useAcousticMaterialStore((s) => s.isActive);
   const prevAcousticActiveRef = useRef(false);
   useEffect(() => {
-    if (acousticAssignmentActive && !prevAcousticActiveRef.current && !userClosedExplorerRef.current && (viewer_url || speckleData?.url)) {
+    if (acousticAssignmentActive && !prevAcousticActiveRef.current && !userClosedExplorerRef.current && (viewer_url || speckleData?.url) && !isShareViewActive()) {
       useUIStore.getState().setShowObjectExplorer(true);
     }
     prevAcousticActiveRef.current = acousticAssignmentActive;
@@ -1275,8 +1276,9 @@ export function SpeckleScene({
         rightSidebarWidth={rightSidebarWidth ?? UI_RIGHT_SIDEBAR.WIDTH}
       />
 
-      {/* Right-click command menu — acts on the object the right-click selected */}
-      {contextMenu && canEdit && (
+      {/* Right-click command menu — acts on the object the right-click selected
+          (view actions only in the share view, see SceneContextMenu) */}
+      {contextMenu && (
         <SceneContextMenu
           x={contextMenu.x}
           y={contextMenu.y}

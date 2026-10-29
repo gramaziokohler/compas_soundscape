@@ -5,6 +5,7 @@ import { ChevronRight, Trash2 } from "lucide-react";
 import { IRPreviewContent, IRPreviewPanel } from "@/components/audio/IRPreviewPanel";
 import { MiniIRWaveform } from "@/components/audio/MiniIRWaveform";
 import { useUIStore } from "@/store";
+import { isShareViewActive } from "@/store/shareViewStore";
 import { FileDropRow } from "@/components/ui/FileDropRow";
 import { apiService } from "@/services/api";
 import { useApiErrorHandler } from "@/hooks/useApiErrorHandler";
@@ -206,6 +207,9 @@ export function ImpulseResponseUpload({
   useEffect(() => { onLowEnergyIdsChange?.(lowEnergyIRIds); }, [lowEnergyIRIds, onLowEnergyIdsChange]);
 
   const loadImpulseResponses = async () => {
+    // Share view: no IR library (it is per user); the card's mapping carries the
+    // IRs, already pointing at the share's public IR route.
+    if (isShareViewActive()) return;
     setIsLoading(true);
     setError(null);
     try {

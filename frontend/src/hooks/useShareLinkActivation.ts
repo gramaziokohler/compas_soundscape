@@ -6,6 +6,7 @@ import {
   useShareViewStore,
   useUIStore,
 } from '@/store';
+import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import type { ShareItemKind, ShareLink } from '@/types/share';
 import { selectSceneByIndex } from '@/utils/sceneSelection';
 
@@ -46,6 +47,9 @@ export function useShareLinkActivation({
   const isInSoundsStep = useUIStore((s) => s.isInSoundsStep);
   const simulationConfigs = useAcousticsSimulationStore((s) => s.simulationConfigs);
   const activeSimulationIndex = useAcousticsSimulationStore((s) => s.activeSimulationIndex);
+  // The model is loaded (and listener meshes exist) once the coordinator is set:
+  // powering a listener before that marks it active without entering FPS.
+  const isViewerReady = useSpeckleEngineStore((s) => s.coordinator !== null);
 
   const activeSceneId =
     isInSoundsStep && activeSoundParentIndex !== null
@@ -91,10 +95,12 @@ export function useShareLinkActivation({
       return next;
     };
 
-    // First load: wait until the restored content contains the first group.
+    // First load: wait until the model is loaded and the restored content
+    // contains the first group.
     if (!initializedRef.current) {
       const first = links[0];
       const ready =
+        isViewerReady &&
         (!first.sceneId || analysisConfigs.some((c) => c.scene_id === first.sceneId)) &&
         (!first.simulationId || simulationConfigs.some((c) => c.id === first.simulationId));
       if (!ready) return;
@@ -110,5 +116,5 @@ export function useShareLinkActivation({
     if (!changed) return;
     const link = links.find((l) => l[linkKey(changed)] === current[changed]);
     if (link) baselineRef.current = applyLink(link);
-  }, [enabled, links, activeSceneId, activeSimulationId, activeListenerId, analysisConfigs, simulationConfigs]);
+  }, [enabled, links, activeSceneId, activeSimulationId, activeListenerId, analysisConfigs, simulationConfigs, isViewerReady]);
 }

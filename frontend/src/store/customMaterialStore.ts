@@ -20,6 +20,7 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { apiService } from '@/services/api';
+import { isShareViewActive } from '@/store/shareViewStore';
 import { CUSTOM_MATERIAL } from '@/utils/constants';
 import type {
   AcousticMaterial,
@@ -81,6 +82,11 @@ export const useCustomMaterialStore = create<CustomMaterialStoreState>()(
       load: async (force = false) => {
         const { status } = get();
         if (!force && (status === 'loading' || status === 'ready')) return;
+        // The anonymous share view has no library — only the payload's snapshot.
+        if (isShareViewActive()) {
+          set({ status: 'ready', error: null }, false, 'customMaterial/loaded');
+          return;
+        }
         set({ status: 'loading', error: null }, false, 'customMaterial/loadStart');
         try {
           const library = await apiService.listCustomMaterials();
