@@ -13,7 +13,6 @@ import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
 import type { SoundEvent, ReceiverData } from '@/types';
 import type { AuralizationConfig, SourceReceiverIRMapping, AcousticSimulationMode } from '@/types/audio';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
-import { isShareViewActive } from '@/store/shareViewStore';
 // import type { BoundingBoxBounds } from './BoundingBoxManager'; // Bounding-box placement removed
 
 /**
@@ -157,8 +156,7 @@ export class SpeckleAudioCoordinator {
     // Objects arrive already resolved to their drag targets (large-object labels
     // → their invisible marker group), so the surface gumball attaches there.
     this.eventBridge.setOnCustomSelectionChanged((objects: THREE.Object3D[]) => {
-      // Share view: sounds / listeners are never moved — no transform gizmo.
-      if (isShareViewActive()) return;
+      // (Share view: the drag handler highlights only — no transform gizmo.)
       this.dragHandler?.selectObjects(objects);
     });
 

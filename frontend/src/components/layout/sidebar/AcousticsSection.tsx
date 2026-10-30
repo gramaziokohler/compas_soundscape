@@ -2188,9 +2188,11 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     // A reduced bubble card is not rendered at all, so its headless material
     // section (store activation + viewer colors) would unmount with it. Keep the
     // active simulation's materials showing in Acoustics view while no card is
-    // open — exactly as if its card were expanded.
+    // open — exactly as if its card were expanded. The share view's read-only
+    // card has no settings section (where that section lives), so there it
+    // always stays mounted.
     const activeConfig = activeSimulationIndex !== null ? simulationConfigs[activeSimulationIndex] : undefined;
-    const reducedActiveMaterials = expandedCardIndex === null
+    const reducedActiveMaterials = (expandedCardIndex === null || !canEdit)
       && activeSimulationIndex !== null
       && activeConfig
       && (activeConfig.type === 'pyroomacoustics' || activeConfig.type === 'pffdtd') ? (
@@ -2232,7 +2234,8 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             const opened = simulationConfigs[index];
             if (opened?.type === 'resonance') {
               powerOnResonance(opened.id);
-            } else if (opened && viewMode !== 'dark') {
+            } else if (opened && viewMode !== 'dark' && canEdit) {
+              // The share view keeps the viewer's chosen view mode.
               setViewMode('acoustic');
             }
           }}
@@ -2361,10 +2364,19 @@ function AcousticsBubbles({
   useDismissOnSceneClick(onReduce, openIndex !== null);
 
   const isReady = (config: SimulationConfig) => config.state === 'completed' || config.type === 'resonance';
+  const canEdit = useCanEdit();
 
   const handleClick = (index: number) => {
-    if (openIndex === index) onReduce();
-    else onOpen(index);
+    if (openIndex === index) {
+      onReduce();
+      return;
+    }
+    onOpen(index);
+    // Share view: opening a ready card also activates it (resonance powers on in onOpen).
+    const config = simulationConfigs[index];
+    if (!canEdit && config && config.type !== 'resonance' && isReady(config) && activeSimulationIndex !== index) {
+      onSetActiveSimulation?.(index);
+    }
   };
 
   const openConfig = openIndex !== null ? simulationConfigs[openIndex] : undefined;

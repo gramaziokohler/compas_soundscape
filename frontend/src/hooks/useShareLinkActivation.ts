@@ -114,7 +114,10 @@ export function useShareLinkActivation({
     // Only an activation propagates; turning something off never does.
     const changed = KINDS.find((kind) => current[kind] && current[kind] !== baseline[kind]);
     if (!changed) return;
-    const link = links.find((l) => l[linkKey(changed)] === current[changed]);
+    // An item can be in several links: keep one the active items already match, else the first.
+    const candidates = links.filter((l) => l[linkKey(changed)] === current[changed]);
+    const satisfied = candidates.find((l) => KINDS.every((kind) => !l[linkKey(kind)] || l[linkKey(kind)] === current[kind]));
+    const link = satisfied ?? candidates[0];
     if (link) baselineRef.current = applyLink(link);
   }, [enabled, links, activeSceneId, activeSimulationId, activeListenerId, analysisConfigs, simulationConfigs, isViewerReady]);
 }

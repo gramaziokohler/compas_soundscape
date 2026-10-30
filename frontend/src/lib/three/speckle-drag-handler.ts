@@ -42,6 +42,7 @@ import type { Viewer, CameraController } from '@speckle/viewer';
 import { ObjectLayers } from '@speckle/viewer';
 import type { SpeckleSceneAdapter } from './speckle-scene-adapter';
 import { CustomSelectionHighlight } from './custom-selection-highlight';
+import { isShareViewActive } from '@/store/shareViewStore';
 
 /**
  * SpeckleDragHandler class
@@ -337,7 +338,8 @@ export class SpeckleDragHandler {
     this.lastGizmoPosition.copy(this.dummyAnchor.position);
     this.selectionHighlight?.set(unique);
 
-    if (this.transformControls) {
+    // Share view: sounds / listeners are never moved — highlight only, no gizmo.
+    if (this.transformControls && !isShareViewActive()) {
       this.configureGizmoAxes(unique);
       this.transformControls.attach(this.dummyAnchor);
     }

@@ -24,12 +24,21 @@ const LINK_KEY: Record<ShareItemKind, 'sceneId' | 'simulationId' | 'listenerId'>
   listener: 'listenerId',
 };
 
+/** One item of a link: its kind (board column) and id. */
+export interface ShareLinkEnd {
+  kind: ShareItemKind;
+  id: string;
+}
+
 export interface ShareConfigStoreState extends ShareConfig {
   toggleItem: (kind: ShareItemKind, id: string, shared: boolean) => void;
-  /** Group items (one per kind) into a new link; returns its id. */
-  createLink: (members: Partial<Record<ShareItemKind, string>>) => string;
-  /** Set / clear one member of a link. A link left with < 2 members is removed. */
-  updateLink: (linkId: string, kind: ShareItemKind, itemId: string | undefined) => void;
+  /**
+   * Connect two items of different kinds, or disconnect them when a link already
+   * groups both (`b` leaves that link). A connection joins a link of `a` (then of
+   * `b`) that has no item of the other kind yet, else starts a new link — so an
+   * item can belong to several links (one scene, several listeners).
+   */
+  toggleConnection: (a: ShareLinkEnd, b: ShareLinkEnd) => void;
   removeLink: (linkId: string) => void;
   /** Replace from a loaded soundscape (or reset with `null`). */
   restore: (config: Partial<ShareConfig> | null | undefined) => void;
@@ -83,10 +92,40 @@ function withoutDegenerateLinks(links: ShareLink[]): ShareLink[] {
   return links.filter((l) => linkMemberCount(l) >= 2);
 }
 
-/** An item belongs to at most one link: free `itemId` from every link but `keepLinkId`. */
-function releaseItem(links: ShareLink[], kind: ShareItemKind, itemId: string, keepLinkId?: string): ShareLink[] {
+/** Free `itemId` from every link (it is no longer shared). */
+function releaseItem(links: ShareLink[], kind: ShareItemKind, itemId: string): ShareLink[] {
   const field = LINK_KEY[kind];
-  return links.map((l) => (l.id !== keepLinkId && l[field] === itemId ? { ...l, [field]: undefined } : l));
+  return links.map((l) => (l[field] === itemId ? { ...l, [field]: undefined } : l));
+}
+
+/** Same members (ignoring the id) — a connection never duplicates a link. */
+function sameMembers(a: ShareLink, b: ShareLink): boolean {
+  return (Object.values(LINK_KEY) as Array<keyof ShareLink>).every((field) => (a[field] ?? null) === (b[field] ?? null));
+}
+
+/** Links after connecting / disconnecting `a` and `b` (see `toggleConnection`). */
+function toggleConnectionIn(links: ShareLink[], a: ShareLinkEnd, b: ShareLinkEnd): ShareLink[] {
+  if (a.kind === b.kind) return links;
+  const fieldA = LINK_KEY[a.kind];
+  const fieldB = LINK_KEY[b.kind];
+
+  const shared = links.find((l) => l[fieldA] === a.id && l[fieldB] === b.id);
+  if (shared) {
+    const next = withoutDegenerateLinks(links.map((l) => (l.id === shared.id ? { ...l, [fieldB]: undefined } : l)));
+    // The shrunk link may now equal another one: keep the first.
+    return next.filter((l, i) => next.findIndex((o) => sameMembers(o, l)) === i);
+  }
+
+  // Join a link of `a` with a free `b` slot, else a link of `b` with a free `a` slot.
+  const host =
+    links.find((l) => l[fieldA] === a.id && !l[fieldB]) ??
+    links.find((l) => l[fieldB] === b.id && !l[fieldA]);
+  if (host) {
+    const joined: ShareLink = { ...host, [fieldA]: a.id, [fieldB]: b.id };
+    if (links.some((l) => l.id !== host.id && sameMembers(l, joined))) return links;
+    return links.map((l) => (l.id === host.id ? joined : l));
+  }
+  return [...links, { id: newConfigId(), [fieldA]: a.id, [fieldB]: b.id }];
 }
 
 export function linkKey(kind: ShareItemKind): 'sceneId' | 'simulationId' | 'listenerId' {
@@ -108,25 +147,8 @@ export const useShareConfigStore = create<ShareConfigStoreState>()(
         set({ [key]: next, links } as Partial<ShareConfigStoreState>, false, 'share/toggleItem');
       },
 
-      createLink: (members) => {
-        const link: ShareLink = { id: newConfigId() };
-        let links = get().links;
-        (Object.keys(members) as ShareItemKind[]).forEach((kind) => {
-          const itemId = members[kind];
-          if (!itemId) return;
-          links = releaseItem(links, kind, itemId);
-          link[LINK_KEY[kind]] = itemId;
-        });
-        set({ links: withoutDegenerateLinks([...links, link]) }, false, 'share/createLink');
-        return link.id;
-      },
-
-      updateLink: (linkId, kind, itemId) => {
-        const field = LINK_KEY[kind];
-        const released = itemId ? releaseItem(get().links, kind, itemId, linkId) : get().links;
-        const links = released.map((l): ShareLink => (l.id === linkId ? { ...l, [field]: itemId } : l));
-        set({ links: withoutDegenerateLinks(links) }, false, 'share/updateLink');
-      },
+      toggleConnection: (a, b) =>
+        set({ links: toggleConnectionIn(get().links, a, b) }, false, 'share/toggleConnection'),
 
       removeLink: (linkId) => set({ links: get().links.filter((l) => l.id !== linkId) }, false, 'share/removeLink'),
 

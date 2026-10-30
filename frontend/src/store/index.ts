@@ -59,7 +59,7 @@ export type { AudioControlsStoreState } from './audioControlsStore';
 
 // Non-temporal stores
 export { useShareConfigStore, selectShareConfig, pruneShareConfig, linkKey, linkMemberCount, EMPTY_SHARE_CONFIG } from './shareConfigStore';
-export type { ShareConfigStoreState } from './shareConfigStore';
+export type { ShareConfigStoreState, ShareLinkEnd } from './shareConfigStore';
 export { useShareViewStore, selectIsShareView } from './shareViewStore';
 export type { ShareViewStoreState } from './shareViewStore';
 

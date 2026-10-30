@@ -15,6 +15,7 @@ import { useBubbleColumnSpace } from '@/hooks/useBubbleColumnSpace';
 import { useBubbleFrontLayer } from '@/hooks/useBubbleFrontLayer';
 import { columnHeight, windowLayout } from '@/utils/bubbleOverflow';
 import { SIMPLE_MODE } from '@/utils/constants';
+import { useCanEdit } from '@/hooks/useCanEdit';
 
 /** Extra Card props used when a card floats beside its bubble (Simple mode). */
 export interface FloatingCardOptions {
@@ -48,6 +49,11 @@ interface ListenerBubblesProps {
   ) => ReactNode;
 }
 
+/** A single listener can always be powered; a grid only once it has points. */
+function isClickPowerable(item: ListenerItemConfig | undefined): boolean {
+  return !!item && (item.type === 'listener' || item.points.length > 0);
+}
+
 /** A listener is "ready" once it takes part in simulations (grids also need points). */
 function isListenerReady(item: ListenerItemConfig): boolean {
   if (item.hiddenForSimulation) return false;
@@ -68,7 +74,7 @@ export function ListenerBubbles({
   items,
   availableTypes,
   activeIndex,
-  openIndex,
+  openIndex: openIndexProp,
   isFpsMode,
   onTogglePower,
   onToggleHiddenForSimulation,
@@ -82,6 +88,9 @@ export function ListenerBubbles({
   const columnSpace = useBubbleColumnSpace();
   const itemCount = items.length;
   const fpsRowRef = useRef<HTMLDivElement>(null);
+  // Share view: a listener has nothing to edit — a click powers it, no card opens.
+  const canEdit = useCanEdit();
+  const openIndex = canEdit ? openIndexProp : null;
 
   // Acoustics and Listeners share the right edge's height budget.
   useEffect(() => {
@@ -94,7 +103,8 @@ export function ListenerBubbles({
   const size = SIMPLE_MODE.BUBBLE_SIZE;
   const bottom = columnSpace.listenersBottom;
   const layout = windowLayout(itemCount, columnSpace.listeners);
-  const headingBottom = bottom + columnHeight(layout.visibleSlots, layout.overflow) + SIMPLE_MODE.BUBBLE_GAP;
+  // The share view has no "+" under the bubbles: the heading sits right above them.
+  const headingBottom = bottom + columnHeight(layout.visibleSlots, layout.overflow, canEdit) + SIMPLE_MODE.BUBBLE_GAP;
   const openItem = openIndex !== null ? items[openIndex] : undefined;
   // The open card and the docked DAW overlap: whichever was clicked last is on top.
   const frontLayer = useBubbleFrontLayer(openIndex);
@@ -104,6 +114,10 @@ export function ListenerBubbles({
   const isFpsActive = isFpsMode && !!activeItem && openIndex !== activeIndex;
 
   const handleClick = (index: number) => {
+    if (!canEdit) {
+      if (isClickPowerable(items[index])) onTogglePower(activeIndex === index ? null : index);
+      return;
+    }
     onOpenChange(openIndex === index ? null : index);
   };
 
@@ -137,7 +151,9 @@ export function ListenerBubbles({
         items={items.map((item, index) => {
           const active = activeIndex === index;
           const showExit = active && isFpsActive;
-          const action = openIndex === index ? 'click to reduce' : 'click to open';
+          const action = !canEdit
+            ? active ? 'click to turn off' : 'click to listen'
+            : openIndex === index ? 'click to reduce' : 'click to open';
           const powerTitle = item.type === 'grid-listener'
             ? active ? 'Hide grid points' : 'Show grid points'
             : active ? 'Leave first-person view' : 'Listen here (first-person view)';
@@ -159,7 +175,7 @@ export function ListenerBubbles({
               selected={active}
               tone="listener"
               onClick={() => handleClick(index)}
-              onTogglePower={item.type === 'listener' || item.points.length > 0 ? () => onTogglePower(active ? null : index) : undefined}
+              onTogglePower={isClickPowerable(item) ? () => onTogglePower(active ? null : index) : undefined}
               powerTitle={powerTitle}
               onContextMenu={onToggleHiddenForSimulation
                 ? (e) => setItemMenu({ x: e.clientX, y: e.clientY, item })

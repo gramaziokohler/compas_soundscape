@@ -17,9 +17,15 @@ export interface BubbleWindowLayout {
   visibleSlots: number;
 }
 
-/** Height in px of a column rendering `visible` bubbles + the "+" (and arrows when overflowing). */
-export function columnHeight(visible: number, overflow: boolean): number {
-  return visible * SLOT + SIMPLE_MODE.BUBBLE_SIZE + (overflow ? 2 * ARROW_SLOT : 0);
+/**
+ * Height in px of a column rendering `visible` bubbles + the "+" (and arrows when
+ * overflowing). `withAdd` false: no "+" (share view) — and no gap after the last bubble.
+ */
+export function columnHeight(visible: number, overflow: boolean, withAdd = true): number {
+  const bubbles = withAdd
+    ? visible * SLOT + SIMPLE_MODE.BUBBLE_SIZE
+    : Math.max(0, visible * SLOT - SIMPLE_MODE.BUBBLE_GAP);
+  return bubbles + (overflow ? 2 * ARROW_SLOT : 0);
 }
 
 /** Smallest height an overflowing column can shrink to (one bubble, two arrows, "+"). */

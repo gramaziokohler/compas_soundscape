@@ -436,13 +436,15 @@ export const NOTIFICATIONS = {
   BADGE_MAX: 9,                         // counts above this render as "9+"
 } as const;
 
+/** App wordmark (bottom-bar home button; the share view's static brand). */
+export const APP_BRAND = 'Sound is blue';
+
 // Public read-only share view (/share/<share_id>) — backend routers/share.py.
 export const SHARE_VIEW = {
   /** Route segment of the share page (app/share/[shareId]). */
   ROUTE_PREFIX: '/share',
   /** Unauthenticated backend prefix (backend PUBLIC_API_PREFIX); Cloudflare Access bypasses it. */
   PUBLIC_API_PREFIX: '/api/public',
-  HINT: 'Double click on a headphone or click on a circle to select a scene',
   LOAD_FAILED: 'This shared soundscape could not be loaded.',
   BLOCKED_REQUEST: 'Not available in the shared view',
   /** iframe snippet defaults for the embed code. */
@@ -458,7 +460,11 @@ export const SHARE_SETTINGS = {
   SIMULATIONS: 'Acoustic simulations',
   LISTENERS: 'Listeners',
   LINKS: 'Linked groups',
-  LINKS_HINT: 'Click an item, then an item in another column to link them. Click a linked item again to unlink it. Activating one item of a group activates the others.',
+  LINKS_HINT: 'Click an item, then an item in another column to link them; repeat for each link. Click a linked pair again to unlink it. An item can be in several links. Activating one item of a link activates the others.',
+  /** Groups list under the board. */
+  BOARD_NO_LINKS: 'No links yet',
+  BOARD_REMOVE_LINK: 'Remove this link',
+  BOARD_LINK_SEPARATOR: ' → ',
   EMPTY_LIST: 'Nothing to share yet',
   /** Column headings of the link board. */
   BOARD_COLUMNS: { scene: 'Sound scenes', simulation: 'Simulations', listener: 'Listeners' },
@@ -2970,6 +2976,17 @@ export const FPS_HELP_POPUP = {
   GAP: 12,           // px — distance from the anchor (left of the FPS bubble row)
   MOUSE_ICON_SIZE: '14px',
   Z_INDEX: 60,
+} as const;
+
+/** Share view: FPS controls hint above the scene bottom bar (components/scene/FpsControlsHint.tsx). */
+export const FPS_CONTROLS_HINT = {
+  TITLE: 'First-person view',
+  LOCKED: 'Your position is locked at the listener.',
+  ARROW_KEYS: ['↑', '↓', '←', '→'],
+  GAP: 10,           // px above the bottom bar (or the docked DAW)
+  MOUSE_ICON_SIZE: '14px',
+  EXIT_ICON_SIZE: 18, // px — the red "Leave FPS view" button, drawn small
+  Z_INDEX: 205,      // above the docked DAW (200), below bar popovers (210)
 } as const;
 
 export const SHORTCUT_TOOLTIP = {

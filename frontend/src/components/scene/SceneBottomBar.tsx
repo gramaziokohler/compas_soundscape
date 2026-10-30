@@ -13,7 +13,7 @@ import { BugReportButton } from '@/components/scene/BugReportButton';
 import { ModelPill } from '@/components/scene/model-version/ModelPill';
 import { useSceneWorkflowStore, useUIStore, useWorkspaceStore, selectHasSaveTarget, selectIsReadOnlyWorkspace, selectHasNewerSave } from '@/store';
 import { useHomeStageHasWork } from '@/hooks/useHomeStageHasWork';
-import { SCENE_BOTTOM_BAR, SHARE_VIEW, WORKSPACE_MESSAGES } from '@/utils/constants';
+import { APP_BRAND, SCENE_BOTTOM_BAR, WORKSPACE_MESSAGES } from '@/utils/constants';
 import { useCanEdit } from '@/hooks/useCanEdit';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
 
@@ -130,7 +130,8 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
       {/* ── Left: app, mode, history ── */}
       <div className="scene-bottom-bar__group" style={{ justifySelf: 'start' }}>
         {!canEdit ? (
-          <span className="bar-unsaved" role="status">{SHARE_VIEW.HINT}</span>
+          // Share view: the wordmark only — the app home is behind a login.
+          <span className="scene-bottom-bar__brand scene-bottom-bar__brand--static">{APP_BRAND}</span>
         ) : (
         <>
         {isExpert ? (
@@ -147,7 +148,7 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
           onClick={() => { window.location.href = window.location.origin; }}
           title="Home"
         >
-          Sound is blue
+          {APP_BRAND}
         </button>
         <div className="scene-bottom-bar__sep" />
         <UndoRedoToolbar />
@@ -369,7 +370,8 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
                 onSendScenes={() => onSendScenes?.()}
               />
             )}
-            <div className="scene-bottom-bar__sep" />
+            {/* Separates the system buttons, which the share view does not have. */}
+            {canEdit && <div className="scene-bottom-bar__sep" />}
           </>
         )}
         {canEdit && (

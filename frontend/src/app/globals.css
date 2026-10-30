@@ -1245,6 +1245,12 @@ canvas {
 .scene-bottom-bar__brand:hover {
   opacity: 0.75;
 }
+/* Share view: the wordmark is not a link. */
+.scene-bottom-bar__brand--static,
+.scene-bottom-bar__brand--static:hover {
+  cursor: default;
+  opacity: 1;
+}
 .bar-btn {
   position: relative;
   display: flex;
@@ -1978,6 +1984,39 @@ button.mv-row:hover:not(:disabled) {
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
+  color: var(--color-secondary-hover);
+}
+
+/* Share view: FPS controls strip centred above the bottom bar (FpsControlsHint.tsx). */
+.fps-controls-hint {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: calc(100vw - 32px);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  column-gap: 14px;
+  row-gap: 4px;
+  padding: 7px 14px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-strong);
+  border-left: 3px solid var(--color-error);
+  border-radius: 10px;
+  box-shadow: var(--shadow-lg);
+  color: var(--foreground);
+  font-size: 11px;
+  pointer-events: none;
+  animation: bar-hint-in 0.2s ease-out;
+}
+.fps-controls-hint__title {
+  font-weight: 600;
+}
+.fps-controls-hint__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   color: var(--color-secondary-hover);
 }
 

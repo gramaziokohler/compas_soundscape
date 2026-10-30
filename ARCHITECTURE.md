@@ -1047,9 +1047,13 @@ login and can only select and play. It also works inside an iframe.
 - Settings → Share is built by `ShareSettingsSection.tsx` and `ShareLinkBoard.tsx`.
 - It picks scenes, simulations and listeners, and link groups made of at most one scene, one
   simulation and one listener.
-- The link board has three columns. Click an item, then an item in another column, to link
-  them; clicking a linked item again unlinks it. A group left with fewer than two items is
-  removed. Each link is drawn as a faint SVG curve (`utils/shareBoardGeometry.ts`). A scene →
+- The link board has three columns. Click an item, then an item in another column, to connect
+  them. The selection then clears, so the next two clicks make the next link. Clicking a
+  connected pair again disconnects it, and a group left with fewer than two items is removed
+  (`shareConfigStore.toggleConnection`). A connection joins a group of the first item that has
+  no item of that kind yet, otherwise a new group starts. An item can therefore be in several
+  groups, for example one scene with several listeners. Each link is drawn as a faint SVG curve
+  (`utils/shareBoardGeometry.ts`) and listed under the board with a remove button. A scene →
   listener link with no simulation is drawn dashed, passing behind the opaque chips of the
   middle column.
 - The selection lives in `shareConfigStore` and is saved by autosave as `soundscape.json` →
@@ -1092,6 +1096,14 @@ login and can only select and play. It also works inside an iframe.
 - `useShareLinkActivation` activates the rest of a link group when one item is activated:
   selecting a scene bubble, powering a simulation, or double-clicking a headphone. The first
   group is activated only once the model is loaded, so a linked listener really enters FPS.
+  When the item is in several groups, a group the active items already match wins, otherwise
+  the first one is used.
+- Share view player behavior:
+  - A circle click activates its item. An acoustics circle opens and powers its card. A
+    listener circle toggles first-person view and never opens a card (hover menu only).
+  - While in FPS, `FpsControlsHint` lists the controls above the bottom bar.
+  - Opening a simulation card keeps the current view mode.
+  - Waveforms only seek (no trim), and sounds or listeners never get the move gizmo.
 - `next.config.ts` sets `frame-ancestors` from `SHARE_FRAME_ANCESTORS`. Deploy steps:
   `deploy/PRODUCTION.md` § Public share links.
 

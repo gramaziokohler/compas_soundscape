@@ -200,7 +200,10 @@ export function SoundCardWaveSurfer({
     const nearLeft = Math.abs(x - leftPx) <= HANDLE_ZONE;
     const nearRight = Math.abs(x - rightPx) <= HANDLE_ZONE;
 
-    if (nearLeft) {
+    if (!canEdit) {
+      // Share view: no trimming — a press only seeks.
+      dragPhaseRef.current = 'pending-seek';
+    } else if (nearLeft) {
       dragPhaseRef.current = 'pending-left';
     } else if (nearRight) {
       dragPhaseRef.current = 'pending-right';
@@ -212,7 +215,7 @@ export function SoundCardWaveSurfer({
 
     e.currentTarget.setPointerCapture(e.pointerId);
     e.preventDefault();
-  }, [localTrimStart, localTrimEnd]);
+  }, [localTrimStart, localTrimEnd, canEdit]);
 
   const handlePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const wrapper = waveformWrapperRef.current;
@@ -225,6 +228,7 @@ export function SoundCardWaveSurfer({
     const phase = dragPhaseRef.current;
 
     if (phase === 'none') {
+      if (!canEdit) return; // no trim handles to reveal
       const leftPx = localTrimStart * width;
       const rightPx = localTrimEnd * width;
       const isTrimActive = localTrimStart > 0 || localTrimEnd < 1;
@@ -289,7 +293,7 @@ export function SoundCardWaveSurfer({
       trimStartRef.current = newStart;
       trimEndRef.current = newEnd;
     }
-  }, [localTrimStart, localTrimEnd]);
+  }, [localTrimStart, localTrimEnd, canEdit]);
 
   const handlePointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const phase = dragPhaseRef.current;
@@ -323,7 +327,7 @@ export function SoundCardWaveSurfer({
 
     // Keep the handle revealed only while the pointer is still over a border.
     const wrapper = waveformWrapperRef.current;
-    if (wrapper) {
+    if (wrapper && canEdit) {
       const rect = wrapper.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const nearLeft = Math.abs(x - trimStartRef.current * rect.width) <= HANDLE_ZONE;
@@ -332,7 +336,7 @@ export function SoundCardWaveSurfer({
     } else {
       setHoveredHandle(null);
     }
-  }, [commitTrim, soundId]);
+  }, [commitTrim, soundId, canEdit]);
 
   const handlePointerLeave = useCallback(() => {
     if (dragPhaseRef.current === 'none') {
@@ -380,7 +384,7 @@ export function SoundCardWaveSurfer({
   );
 
   const trimClearButton =
-    isTrimActive ? (
+    isTrimActive && canEdit ? (
       <button
         onClick={() => {
           setLocalTrimStart(0);
