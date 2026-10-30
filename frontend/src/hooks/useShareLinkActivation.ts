@@ -26,7 +26,7 @@ interface UseShareLinkActivationArgs {
 /**
  * Share view: activating one item of a link group (selecting a scene bubble,
  * powering a simulation, double-clicking a headphone) activates the group's
- * other items. On load the first group is activated.
+ * other items. Nothing is activated on load — the player opens idle.
  *
  * Changes made by the hook itself are recorded as the new baseline, so they
  * never re-trigger it.
@@ -47,8 +47,7 @@ export function useShareLinkActivation({
   const isInSoundsStep = useUIStore((s) => s.isInSoundsStep);
   const simulationConfigs = useAcousticsSimulationStore((s) => s.simulationConfigs);
   const activeSimulationIndex = useAcousticsSimulationStore((s) => s.activeSimulationIndex);
-  // The model is loaded (and listener meshes exist) once the coordinator is set:
-  // powering a listener before that marks it active without entering FPS.
+  // The model is loaded (and listener meshes exist) once the coordinator is set.
   const isViewerReady = useSpeckleEngineStore((s) => s.coordinator !== null);
 
   const activeSceneId =
@@ -59,13 +58,14 @@ export function useShareLinkActivation({
     activeSimulationIndex !== null ? simulationConfigs[activeSimulationIndex]?.id ?? null : null;
 
   const baselineRef = useRef<ActiveItems>({ scene: null, simulation: null, listener: null });
-  const initializedRef = useRef(false);
   const activateListenerRef = useRef(activateListener);
   activateListenerRef.current = activateListener;
 
   useEffect(() => {
     const current: ActiveItems = { scene: activeSceneId, simulation: activeSimulationId, listener: activeListenerId };
-    if (!enabled || links.length === 0) {
+    // Until the model is loaded nothing propagates (a listener powered before its
+    // mesh exists is marked active without entering FPS).
+    if (!enabled || links.length === 0 || !isViewerReady) {
       baselineRef.current = current;
       return;
     }
@@ -94,20 +94,6 @@ export function useShareLinkActivation({
       }
       return next;
     };
-
-    // First load: wait until the model is loaded and the restored content
-    // contains the first group.
-    if (!initializedRef.current) {
-      const first = links[0];
-      const ready =
-        isViewerReady &&
-        (!first.sceneId || analysisConfigs.some((c) => c.scene_id === first.sceneId)) &&
-        (!first.simulationId || simulationConfigs.some((c) => c.id === first.simulationId));
-      if (!ready) return;
-      initializedRef.current = true;
-      baselineRef.current = applyLink(first);
-      return;
-    }
 
     const baseline = baselineRef.current;
     baselineRef.current = current;

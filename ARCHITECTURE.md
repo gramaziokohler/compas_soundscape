@@ -1094,14 +1094,19 @@ login and can only select and play. It also works inside an iframe.
   buttons, card add / delete / rename / run, card editors, DAW snap / drag / trim / menus, the
   3D gizmo, card FX (an active FX shows as a read-only badge), and the undo and delete shortcuts.
 - `useShareLinkActivation` activates the rest of a link group when one item is activated:
-  selecting a scene bubble, powering a simulation, or double-clicking a headphone. The first
-  group is activated only once the model is loaded, so a linked listener really enters FPS.
-  When the item is in several groups, a group the active items already match wins, otherwise
-  the first one is used.
+  selecting a scene bubble, powering a simulation, or double-clicking a headphone. Nothing
+  propagates until the model is loaded, so a linked listener really enters FPS. When the item
+  is in several groups, a group the active items already match wins, otherwise the first one
+  is used.
 - Share view player behavior:
+  - The player opens idle at the reset camera view: no scene, simulation or listener is active,
+    and no link group is applied on load.
   - A circle click activates its item. An acoustics circle opens and powers its card. A
     listener circle toggles first-person view and never opens a card (hover menu only).
-  - While in FPS, `FpsControlsHint` lists the controls above the bottom bar.
+  - While in FPS, `FpsControlsHint` lists the controls above the bottom bar (it replaces the
+    editor's `FpsHelpPopup`). It shows on each FPS entry until closed. Closing it shrinks it into
+    the "Leave FPS view" button and marks the `fps-controls` one-time hint seen (localStorage).
+  - The bottom bar has no Refresh scene button.
   - Opening a simulation card keeps the current view mode.
   - Waveforms only seek (no trim), and sounds or listeners never get the move gizmo.
 - `next.config.ts` sets `frame-ancestors` from `SHARE_FRAME_ANCESTORS`. Deploy steps:

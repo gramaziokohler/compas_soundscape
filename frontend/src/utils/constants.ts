@@ -2987,6 +2987,13 @@ export const FPS_CONTROLS_HINT = {
   MOUSE_ICON_SIZE: '14px',
   EXIT_ICON_SIZE: 18, // px — the red "Leave FPS view" button, drawn small
   Z_INDEX: 205,      // above the docked DAW (200), below bar popovers (210)
+  /** One-time hint id (useOneTimeHint) — closing the strip hides it for good. */
+  HINT_ID: 'fps-controls',
+  /** DOM id of the listener column's "Leave FPS view" button the strip shrinks into. */
+  EXIT_BUTTON_ID: 'fps-exit-button',
+  CLOSE_LABEL: 'Hide these controls',
+  CLOSE_ANIMATION_MS: 420,
+  CLOSE_END_SCALE: 0.04,
 } as const;
 
 export const SHORTCUT_TOOLTIP = {

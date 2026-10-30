@@ -208,6 +208,8 @@ export function BubbleAddButton({ label, id, onClick, active = false, size = SIM
 }
 
 export interface BubbleExitButtonProps {
+  /** DOM id of the button (e.g. so a hint can animate toward it). */
+  id?: string;
   /** Hover label, e.g. "Leave FPS view". */
   label: string;
   onClick: () => void;
@@ -226,10 +228,11 @@ export interface BubbleExitButtonProps {
  * <BubbleExitButton label="Leave FPS view" labelSide="left" onClick={exitFps} />
  * ```
  */
-export function BubbleExitButton({ label, onClick, size = SIMPLE_MODE.EXIT_BUTTON_SIZE, labelSide = "left" }: BubbleExitButtonProps) {
+export function BubbleExitButton({ id, label, onClick, size = SIMPLE_MODE.EXIT_BUTTON_SIZE, labelSide = "left" }: BubbleExitButtonProps) {
   return (
     <div className="bubble-wrap" style={{ width: size, height: size }}>
       <button
+        id={id}
         type="button"
         className="bubble bubble--exit backdrop-blur-lg backdrop-saturate-150"
         style={{ width: size, height: size }}

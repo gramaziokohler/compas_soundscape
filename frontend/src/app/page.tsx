@@ -386,6 +386,11 @@ function HomeContent() {
           res.ir_base_url || undefined,
           suppressOrchestrateBakeRef,
         );
+        // The player opens idle: no scene powered (simulations and listeners
+        // already restore inactive), so the model shows at the reset view.
+        const ui = useUIStore.getState();
+        ui.setActiveSoundParentIndex(null);
+        ui.setIsInSoundsStep(false);
         console.log('[page:bootstrap] Shared soundscape restored:', shareId);
       }).catch((err) => {
         console.error('[page:bootstrap] Failed to load shared soundscape:', err);

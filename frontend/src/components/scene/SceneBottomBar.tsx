@@ -81,7 +81,7 @@ export interface SceneBottomBarProps {
  *            a low-output hint pops above it when playback is too quiet
  *   right  — view: Simple / Detailed interface toggle (Detailed mode only — always
  *            available in Settings → Display), volume, show/hide sounds & listeners,
- *            render style dropdown, reset view, refresh, Object Explorer, then the model
+ *            render style dropdown, reset view, refresh (not in the share view), Object Explorer, then the model
  *            pill (open model / no-model soundscape → versions, upload, switch) or load model;
  *            then help & system: shortcuts, notifications, settings
  * The docked DAW opens above it; sidebars stop at its top edge. In Simple mode
@@ -322,13 +322,15 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
                 </Icon>
               }
             />
-            <BarButton
-              onClick={onRefreshScene}
-              title={showUpdateBadge ? 'New model version available — refresh scene' : 'Refresh scene'}
-              warning={showUpdateBadge}
-              dot={showUpdateBadge}
-              icon={<RefreshIcon size="0.8rem" />}
-            />
+            {canEdit && (
+              <BarButton
+                onClick={onRefreshScene}
+                title={showUpdateBadge ? 'New model version available — refresh scene' : 'Refresh scene'}
+                warning={showUpdateBadge}
+                dot={showUpdateBadge}
+                icon={<RefreshIcon size="0.8rem" />}
+              />
+            )}
             {/* The share view keeps the Object Explorer (read-only), never Load model. */}
             {isSandbox && !hasHomeProject ? (canEdit && (
               <BarButton

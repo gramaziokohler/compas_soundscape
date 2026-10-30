@@ -14,7 +14,7 @@ import { useDismissOnSceneClick } from '@/hooks/useDismissOnSceneClick';
 import { useBubbleColumnSpace } from '@/hooks/useBubbleColumnSpace';
 import { useBubbleFrontLayer } from '@/hooks/useBubbleFrontLayer';
 import { columnHeight, windowLayout } from '@/utils/bubbleOverflow';
-import { SIMPLE_MODE } from '@/utils/constants';
+import { FPS_CONTROLS_HINT, SIMPLE_MODE } from '@/utils/constants';
 import { useCanEdit } from '@/hooks/useCanEdit';
 
 /** Extra Card props used when a card floats beside its bubble (Simple mode). */
@@ -164,7 +164,7 @@ export function ListenerBubbles({
               className="flex items-center"
               style={{ gap: SIMPLE_MODE.BUBBLE_GAP }}
             >
-            {showExit && <BubbleExitButton label="Leave FPS view" labelSide="left" onClick={onExitFps} />}
+            {showExit && <BubbleExitButton id={FPS_CONTROLS_HINT.EXIT_BUTTON_ID} label="Leave FPS view" labelSide="left" onClick={onExitFps} />}
             <Bubble
               label={item.name}
               detail={`${active ? 'Active' : item.type === 'grid-listener' ? 'Grid listener' : 'Listener'} — ${action}`}
@@ -186,7 +186,8 @@ export function ListenerBubbles({
         })}
       />
 
-      <FpsHelpPopup active={isFpsActive} anchorRef={fpsRowRef} />
+      {/* The share view has its own FPS strip (FpsControlsHint) instead. */}
+      {canEdit && <FpsHelpPopup active={isFpsActive} anchorRef={fpsRowRef} />}
 
       {addMenu && (
         <ContextMenu
