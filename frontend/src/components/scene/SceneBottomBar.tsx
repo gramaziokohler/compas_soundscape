@@ -13,7 +13,7 @@ import { BugReportButton } from '@/components/scene/BugReportButton';
 import { ModelPill } from '@/components/scene/model-version/ModelPill';
 import { useSceneWorkflowStore, useUIStore, useWorkspaceStore, selectHasSaveTarget, selectIsReadOnlyWorkspace, selectHasNewerSave } from '@/store';
 import { useHomeStageHasWork } from '@/hooks/useHomeStageHasWork';
-import { APP_BRAND, SCENE_BOTTOM_BAR, WORKSPACE_MESSAGES } from '@/utils/constants';
+import { APP_BRAND, MODEL_VERSION_WATCH, SCENE_BOTTOM_BAR, WORKSPACE_MESSAGES } from '@/utils/constants';
 import { useCanEdit } from '@/hooks/useCanEdit';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
 
@@ -55,6 +55,8 @@ export interface SceneBottomBarProps {
   onResetZoom: () => void;
   onRefreshScene: () => void;
   showUpdateBadge: boolean;
+  /** Waiting for the new model version to be loadable before the page reloads. */
+  isPreparingUpdate?: boolean;
   showObjectExplorer: boolean;
   onToggleExplorer: () => void;
   showLoadModelPanel: boolean;
@@ -98,7 +100,7 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
     enableAutoSave, isSavingSoundscape, onSaveSoundscape, onLoadLatestSoundscape, isLoadingLatestSoundscape = false,
     hasTimeline, isPlaying, currentTimeMs, durationMs, showTimeline,
     onPlay, onPause, onStop, onToggleTimeline,
-    audioOrchestrator, onResetZoom, onRefreshScene, showUpdateBadge,
+    audioOrchestrator, onResetZoom, onRefreshScene, showUpdateBadge, isPreparingUpdate = false,
     showObjectExplorer, onToggleExplorer, showLoadModelPanel, onToggleLoadModel, onUploadNewVersion, onSendScenes,
     showAdvancedSettings, onToggleSettings,
   } = props;
@@ -326,7 +328,12 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
             {canEdit && (
               <BarButton
                 onClick={onRefreshScene}
-                title={showUpdateBadge ? 'New model version available — refresh scene' : 'Refresh scene'}
+                title={
+                  isPreparingUpdate
+                    ? MODEL_VERSION_WATCH.PREPARING_TITLE
+                    : showUpdateBadge ? 'New model version available — refresh scene' : 'Refresh scene'
+                }
+                disabled={isPreparingUpdate}
                 warning={showUpdateBadge}
                 dot={showUpdateBadge}
                 icon={<RefreshIcon size="0.8rem" />}

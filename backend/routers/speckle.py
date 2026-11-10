@@ -18,6 +18,7 @@ from models.schemas import (
     ModelVersionImpactRequest,
     ModelVersionImpactResponse,
     SpeckleIngestionStatusResponse,
+    SpeckleLatestReadyResponse,
     SpeckleModelVersionsResponse,
     SpeckleProjectModelsResponse,
 )
@@ -133,6 +134,26 @@ async def get_model_latest_version(model_id: str):
     result = await run_in_threadpool(
         speckle_service.get_model_latest_version, model_id
     )
+
+    if result is None:
+        raise HTTPException(status_code=404, detail="Model version not available")
+
+    return result
+
+
+@router.post("/models/{model_id}/prepare-latest", response_model=SpeckleLatestReadyResponse)
+async def prepare_model_latest_version(model_id: str):
+    """
+    Non-blocking readiness probe for the model's latest version.
+
+    Returns ``ready`` with the viewer-loadable version ids, or ``preparing``
+    while a fresh bundle upload is materialized in the background (started by
+    this call when nothing else did). The version watcher and the
+    "load new version" flow poll it until ``ready`` before reloading.
+    """
+    _ensure_authenticated()
+
+    result = await run_in_threadpool(speckle_service.prepare_latest_version, model_id)
 
     if result is None:
         raise HTTPException(status_code=404, detail="Model version not available")

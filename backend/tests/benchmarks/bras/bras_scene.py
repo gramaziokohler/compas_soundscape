@@ -192,3 +192,28 @@ def build_pairs_data(pairs: list[MeasuredPair], spec_by_source: dict[str, Option
             entry["source_directivity_spec"] = spec_by_source[p.source_id]
         out.append(entry)
     return out
+
+
+def apply_label_positions(pairs: list[MeasuredPair], labels: dict, tol_m: float = 1e-3) -> tuple[list[MeasuredPair], list[dict]]:
+    """Pairs with the positions of the model's text labels (the BRAS documentation: "the correct
+    position and orientation is always given in the label"), and what differed from the SOFA file."""
+    out, notes, seen = [], [], set()
+    for p in pairs:
+        pos = {}
+        for dev_id, sofa_pos in ((p.source_id, p.source_position), (p.receiver_id, p.receiver_position)):
+            label = labels.get(dev_id)
+            if label is None:
+                raise KeyError(f"No label for {dev_id} in the model (labels: {sorted(labels)})")
+            pos[dev_id] = np.asarray(label.position, np.float64)
+            dev = float(np.linalg.norm(pos[dev_id] - sofa_pos))
+            if dev > tol_m and (dev_id, tuple(np.round(sofa_pos, 4))) not in seen:
+                seen.add((dev_id, tuple(np.round(sofa_pos, 4))))
+                notes.append({"id": dev_id, "sofa": np.round(sofa_pos, 4).tolist(), "label": pos[dev_id].tolist(),
+                              "deviation_m": round(dev, 4)})
+        out.append(MeasuredPair(p.source_id, p.receiver_id, pos[p.source_id], pos[p.receiver_id], p.ir, p.fs))
+    return out, notes
+
+
+def onset_time(ir: np.ndarray, fs: float, threshold: float = 0.1) -> float:
+    """First sample above ``threshold`` x the IR's peak (s)."""
+    return float(np.argmax(np.abs(ir) > threshold * np.abs(ir).max()) / fs)

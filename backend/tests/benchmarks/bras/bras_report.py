@@ -46,8 +46,10 @@ def _table(header: list, rows: list) -> list[str]:
     return ["| " + " | ".join(header) + " |", "|" + "---|" * len(header)] + ["| " + " | ".join(r) + " |" for r in rows]
 
 
-def report_markdown(info: dict, results: list[PairResult], avg: dict) -> str:
+def report_markdown(info: dict, results: list[PairResult], avg: dict, second: dict | None = None) -> str:
+    """``second``: ``{"results", "average", "gain_db", "notes"}`` of the pyroomacoustics comparison."""
     s = info
+    pra = {r.key: r for r in second["results"]} if second else {}
     lines = [f"# {s['scene_label']}: PFFDTD vs measured, fmax {s['fmax_hz']:g} Hz", "",
              f"Scene `{s['scene']}`, generated {time.strftime('%Y-%m-%d %H:%M')}.", "", "## Inputs", ""]
     lines += _table(["Input", "File"], [[k, f"`{v}`"] for k, v in s["inputs"].items()])
@@ -70,20 +72,31 @@ def report_markdown(info: dict, results: list[PairResult], avg: dict) -> str:
               f"- Comparison: {s['window']}; bands {s['band'][0]:g} to {s['band'][1]:g} Hz, "
               f"1/{s['bands_per_octave']} octave level differences, curves smoothed to 1/{s['smoothing']} octave.",
               f"- Level: one global gain of {s['gain_db']:+.2f} dB, fitted on the direct sound of {s['gain_pair']}.",
+              *[f"- {n}" for n in s.get("notes", [])],
               "", "## Results", "",
-              f"Mean |dL| over all pairs and bands: **{avg['mean_abs_dl_db']:.2f} dB** ({len(results)} pairs).", ""]
+              f"Mean |dL| over all pairs and bands, PFFDTD: **{avg['mean_abs_dl_db']:.2f} dB** ({len(results)} pairs).", ""]
+    if second:
+        lines[-1:] = [f"Same for pyroomacoustics: **{second['average']['mean_abs_dl_db']:.2f} dB** "
+                      f"({len(second['results'])} pairs; its own global gain {second['gain_db']:+.2f} dB).",
+                      *[f"- {n}" for n in second.get("notes", [])], ""]
     rows = [[r.key, f"{r.distance_m:.2f}", "yes" if r.line_of_sight else "no", _fmt(r.offaxis_deg, ".0f"),
-             f"{r.mean_abs_dl_db:.2f}", f"{r.max_abs_dl_db:.2f}", _fmt(r.direct_level_db)] for r in results]
+             f"{r.mean_abs_dl_db:.2f}", f"{r.max_abs_dl_db:.2f}", _fmt(r.direct_level_db)]
+            + ([_fmt(pra[r.key].mean_abs_dl_db if r.key in pra else None, ".2f"),
+                _fmt(pra[r.key].max_abs_dl_db if r.key in pra else None, ".2f")] if second else []) for r in results]
     lines += _table(["Pair", "Distance (m)", "Line of sight", "Off-axis (deg)", "Mean abs dL (dB)",
-                     "Max abs dL (dB)", "Direct level, sim - meas (dB)"], rows)
+                     "Max abs dL (dB)", "Direct level, sim - meas (dB)"]
+                    + (["pyroomacoustics mean abs dL (dB)", "pyroomacoustics max abs dL (dB)"] if second else []), rows)
     lines += ["", "Per band (simulated - measured, dB):", ""]
     rows = [[f"{b:g}", f"{a:+.2f}", f"{m:+.2f}", f"{lo:+.2f}", f"{hi:+.2f}"] for b, a, m, lo, hi in
             zip(avg["bands_hz"], avg["dl_of_average_db"], avg["dl_mean_db"], avg["dl_min_db"], avg["dl_max_db"])]
-    lines += _table(["Band (Hz)", "Average response", "Mean over pairs", "Min", "Max"], rows)
+    if second:
+        rows = [row + [f"{m:+.2f}"] for row, m in zip(rows, second["average"]["dl_mean_db"])]
+    lines += _table(["Band (Hz)", "Average response", "Mean over pairs", "Min", "Max"]
+                    + (["pyroomacoustics mean over pairs"] if second else []), rows)
     lines += ["", "## Files", ""] + [f"- `{f}`" for f in s["files"]] + [""]
     return "\n".join(lines)
 
 
-def write_report(path: Path, info: dict, results: list[PairResult], avg: dict) -> Path:
-    path.write_text(report_markdown(info, results, avg), encoding="utf-8")
+def write_report(path: Path, info: dict, results: list[PairResult], avg: dict, second: dict | None = None) -> Path:
+    path.write_text(report_markdown(info, results, avg, second), encoding="utf-8")
     return path

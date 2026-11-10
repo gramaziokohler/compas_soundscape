@@ -24,7 +24,7 @@
 import { useCanEdit } from '@/hooks/useCanEdit';
 import { useShareLinkedSimulations } from '@/hooks/useShareLinkedSimulations';
 import React, { useCallback, useEffect, useState, useRef, useMemo } from 'react';
-import { Power, ChevronDown, ChevronRight, Eye } from 'lucide-react';
+import { Power, ChevronDown, ChevronRight, Eye, Copy } from 'lucide-react';
 import { CardSection, type CardTypeOption } from '@/components/ui/CardSection';
 import { Card } from '@/components/ui/Card';
 import { Notice } from '@/components/ui/Notice';
@@ -33,6 +33,7 @@ import { Bubble, BubbleAddButton, BubbleHeading } from '@/components/ui/Bubble';
 import { SimulationTypeIcon } from '@/components/ui/BubbleIcons';
 import { ContextMenu, type ContextMenuItem } from '@/components/ui/ContextMenu';
 import { buildSavedVisibilityRows } from '@/utils/savedObjectVisibility';
+import { buildCopyMaterialsRows } from '@/utils/copyMaterialAssignments';
 import { useDismissOnSceneClick } from '@/hooks/useDismissOnSceneClick';
 import { useOnFloatingPanelsCollapse } from '@/hooks/useOnFloatingPanelsCollapse';
 import { useBubbleColumnSpace } from '@/hooks/useBubbleColumnSpace';
@@ -108,6 +109,7 @@ import {
   SIMULATION_STATUS_MISS_TOLERANCE,
   RESONANCE_AUDIO,
   SIMPLE_MODE,
+  COPY_MATERIALS,
 } from '@/utils/constants';
 import { groupSoundsByPosition, collapseVariantsToOne } from '@/utils/positionKey';
 import { isSoundSilenced } from '@/lib/audio/utils/mute-solo';
@@ -2083,6 +2085,19 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       });
     }
     if (canEdit && onUpdateSimulationConfig) {
+      const copyRows = buildCopyMaterialsRows({ configs: simulationConfigs, sourceIndex: index, onUpdate: handleUpdateConfig });
+      if (copyRows.length > 0) {
+        customButtons.push({
+          key: 'copy-materials',
+          icon: <Copy className="h-3 w-3" />,
+          label: COPY_MATERIALS.LABEL,
+          subItems: copyRows.map((row) => ({
+            key: row.key,
+            label: row.label,
+            onClick: (e) => { e.stopPropagation(); row.onClick(); },
+          })),
+        });
+      }
       for (const row of buildSavedVisibilityRows({
         saved: config.savedObjectVisibility,
         onSave: (snapshot) => handleUpdateConfig(index, { savedObjectVisibility: snapshot }),
@@ -2347,11 +2362,16 @@ function AcousticsBubbles({
   const simMenuItems = useMemo<ContextMenuItem[]>(() => {
     if (!simMenu || !onUpdateConfig) return [];
     const { index } = simMenu;
-    return buildSavedVisibilityRows({
-      saved: simulationConfigs[index]?.savedObjectVisibility,
-      onSave: (snapshot) => onUpdateConfig(index, { savedObjectVisibility: snapshot }),
-      onClear: () => onUpdateConfig(index, { savedObjectVisibility: undefined }),
-    });
+    const copyRows = buildCopyMaterialsRows({ configs: simulationConfigs, sourceIndex: index, onUpdate: onUpdateConfig })
+      .map((row) => ({ ...row, label: `${COPY_MATERIALS.LABEL} ${row.label}` }));
+    return [
+      ...buildSavedVisibilityRows({
+        saved: simulationConfigs[index]?.savedObjectVisibility,
+        onSave: (snapshot) => onUpdateConfig(index, { savedObjectVisibility: snapshot }),
+        onClear: () => onUpdateConfig(index, { savedObjectVisibility: undefined }),
+      }),
+      ...copyRows,
+    ];
   }, [simMenu, simulationConfigs, onUpdateConfig]);
   const columnSpace = useBubbleColumnSpace();
   // Share view: only the simulations linked to the powered scene (null = all).

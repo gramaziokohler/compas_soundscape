@@ -5,7 +5,13 @@ import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { useLiveVersionImpact } from '@/hooks/useVersionImpact';
 import { formatRelativeTime } from '@/components/scene/modelBrowserShared';
 import { CloseIcon } from '@/components/ui/Card';
+import { MODEL_VERSION_WATCH } from '@/utils/constants';
 import type { SpeckleModelVersion } from '@/types/speckle-models';
+
+interface ModelVersionBannerProps {
+  /** Load the latest version robustly (wait until loadable, then reload the page). */
+  onLoadLatest?: () => void;
+}
 
 function byline(v: SpeckleModelVersion | null): string {
   if (!v) return '';
@@ -22,9 +28,10 @@ function byline(v: SpeckleModelVersion | null): string {
  *    on since the soundscape was last saved);
  *  - "vN was published …" with Load vN, while a newer version exists.
  */
-export function ModelVersionBanner() {
+export function ModelVersionBanner({ onLoadLatest }: ModelVersionBannerProps) {
   const banner = useModelVersionStore((s) => s.banner);
   const versions = useModelVersionStore((s) => s.versions);
+  const isPreparingLatest = useModelVersionStore((s) => s.isPreparingLatest);
   const loadedVersionId = useSpeckleEngineStore((s) => s.loadedModelVersionId);
   const loadedFrom = banner?.kind === 'loaded' ? banner.fromVersionId : null;
   const loadedTo = banner?.kind === 'loaded' ? banner.toVersionId : null;
@@ -45,9 +52,12 @@ export function ModelVersionBanner() {
         <button
           type="button"
           className="mv-btn mv-btn--primary"
-          onClick={() => store.switchToVersion(banner.versionId, loadedVersionId)}
+          disabled={isPreparingLatest}
+          onClick={() =>
+            onLoadLatest ? onLoadLatest() : store.switchToVersion(banner.versionId, loadedVersionId)
+          }
         >
-          Load {label}
+          {isPreparingLatest ? MODEL_VERSION_WATCH.PREPARING_TITLE : `Load ${label}`}
         </button>
         <button type="button" className="mv-btn" style={{ padding: 3, border: 'none' }} aria-label="Dismiss" onClick={store.dismissBanner}>
           <CloseIcon />

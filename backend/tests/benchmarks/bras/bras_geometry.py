@@ -7,7 +7,7 @@ tiny corner markers (same bbox, so the same grid).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from fnmatch import fnmatch
 from pathlib import Path
 
@@ -25,11 +25,17 @@ LABEL_KEYS = ("usemtl", "group")
 @dataclass
 class SceneMesh:
     vertices: np.ndarray       # (V, 3) metres, Z up (SOFA frame)
-    faces: np.ndarray          # (F, 3)
-    labels: list               # OBJ label per face (as read)
+    faces: np.ndarray          # (F, 3); may be empty (a scene with the floor only)
+    labels: list               # source label per face (OBJ usemtl / group, SKP material)
     materials: list            # scene material key per face
-    bmin: np.ndarray           # object bbox (no ground)
+    bmin: np.ndarray           # object bbox (no ground); ``GeometryInput.empty_bbox`` without faces
     bmax: np.ndarray
+    dropped: dict = field(default_factory=dict)   # SKP: material -> {"tris", "area_m2"} not mapped by the scene
+    skp: object = None         # the SkpModel (labels with positions / orientations), when read from .skp
+
+    @property
+    def empty(self) -> bool:
+        return len(self.faces) == 0
 
 
 def read_obj(path: Path | str) -> tuple[np.ndarray, np.ndarray, dict]:
@@ -89,7 +95,73 @@ def check_bbox(bmin: np.ndarray, bmax: np.ndarray, expected) -> None:
                          f"{expected}: check up_axis / scale")
 
 
+def triangle_areas(vertices: np.ndarray, faces: np.ndarray) -> np.ndarray:
+    t = np.asarray(vertices, np.float64)[np.asarray(faces, np.int64).reshape(-1, 3)]
+    return 0.5 * np.linalg.norm(np.cross(t[:, 1] - t[:, 0], t[:, 2] - t[:, 0]), axis=1)
+
+
+def extrude(vertices: np.ndarray, faces: np.ndarray, vector) -> tuple[np.ndarray, np.ndarray]:
+    """Closed slab from an open sheet: the faces, their copy moved by ``vector`` and the side walls
+    along the sheet's boundary edges (a material drawn as one face, e.g. an absorber layer)."""
+    faces = np.asarray(faces, np.int64).reshape(-1, 3)
+    used, inv = np.unique(faces, return_inverse=True)
+    f = inv.reshape(-1, 3)
+    v = np.asarray(vertices, np.float64)[used]
+    n = len(v)
+    edges = np.vstack([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]])
+    key, counts = np.unique(np.sort(edges, axis=1), axis=0, return_counts=True)
+    walls = [t for a, b in key[counts == 1] for t in ([a, b, b + n], [a, b + n, a + n])]
+    return np.vstack([v, v + np.asarray(vector, np.float64)]), np.vstack([f, f[:, ::-1] + n, np.array(walls, np.int64).reshape(-1, 3)])
+
+
+def _empty_or_bbox(geom: GeometryInput, v: np.ndarray, f: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    if len(f):
+        used = np.unique(f)
+        return v[used].min(axis=0), v[used].max(axis=0)
+    if geom.empty_bbox is None:
+        raise ValueError(f"{geom.path}: no face is mapped to a material; give GeometryInput.empty_bbox "
+                         "if the scene really has no object (floor only)")
+    return np.asarray(geom.empty_bbox[0], np.float64), np.asarray(geom.empty_bbox[1], np.float64)
+
+
+def load_skp_mesh(geom: GeometryInput, materials: dict) -> SceneMesh:
+    """Visible faces of the .skp whose material a scene pattern matches; everything else (icons,
+    supports, the finite floor patch, unpainted faces) is dropped and summarised in ``dropped``."""
+    from benchmarks.bras.bras_skp import read_skp
+
+    model = read_skp(geom.skp)
+    keys = [resolve_material(name, materials) if name else None for name in model.materials]
+    areas = triangle_areas(model.vertices, model.faces) if len(model.faces) else np.zeros(0)
+    dropped: dict = {}
+    for name, key, area in zip(model.materials, keys, areas):
+        if key is None:
+            d = dropped.setdefault(name or "(no material)", {"tris": 0, "area_m2": 0.0})
+            d["tris"] += 1
+            d["area_m2"] += float(area)
+    parts_v, parts_f, labels, mats, offset = [], [], [], [], 0
+    for name in sorted({n for n, k in zip(model.materials, keys) if k is not None}):
+        sel = np.array([n == name and k is not None for n, k in zip(model.materials, keys)])
+        used, inv = np.unique(model.faces[sel], return_inverse=True)
+        v, f = model.vertices[used], inv.reshape(-1, 3)
+        vec = next((vec for pat, vec in geom.extrude.items() if fnmatch(name, pat)), None)
+        if vec is not None:
+            v, f = extrude(v, f, vec)
+        parts_v.append(v)
+        parts_f.append(f + offset)
+        offset += len(v)
+        labels += [name] * len(f)
+        mats += [resolve_material(name, materials)] * len(f)
+    v = np.vstack(parts_v) * float(geom.scale) if parts_v else np.zeros((0, 3))
+    f = np.vstack(parts_f) if parts_f else np.zeros((0, 3), np.int64)
+    bmin, bmax = _empty_or_bbox(geom, v, f)
+    if geom.expected_bbox is not None:
+        check_bbox(bmin, bmax, geom.expected_bbox)
+    return SceneMesh(v, f, labels, mats, bmin, bmax, dropped, model)
+
+
 def load_scene_mesh(geom: GeometryInput, materials: dict) -> SceneMesh:
+    if geom.skp is not None:
+        return load_skp_mesh(geom, materials)
     v, f, tags = read_obj(geom.obj)
     v = to_zup(v, geom.up_axis) * float(geom.scale)
     labels = tags.get(geom.material_key, tags["usemtl"])
@@ -100,7 +172,7 @@ def load_scene_mesh(geom: GeometryInput, materials: dict) -> SceneMesh:
     if missing:
         raise ValueError(f"{geom.obj}: no material pattern matches the labels {missing}; add them to the "
                          f"scene's materials (or a '*' default)")
-    bmin, bmax = v[np.unique(f)].min(axis=0), v[np.unique(f)].max(axis=0)
+    bmin, bmax = _empty_or_bbox(geom, v, f)
     if geom.expected_bbox is not None:
         check_bbox(bmin, bmax, geom.expected_bbox)
     return SceneMesh(v, f, list(labels), keys, bmin, bmax)
@@ -183,7 +255,9 @@ def geometry_dict(parts: list, coeffs: dict) -> dict:
 
 
 def scene_geometry(mesh: SceneMesh, coeffs: dict, ground=None, bounds=None, h: float = 0.0) -> dict:
-    """The objects (+ the floor) for the measured-scene run."""
+    """The objects (+ the floor) for the measured-scene run; without objects, the control geometry."""
+    if mesh.empty:
+        return control_scene_geometry(mesh, coeffs, ground, bounds, h)
     parts = [(mesh.vertices, mesh.faces, mesh.materials)]
     if ground is not None:
         gv, gf = ground_mesh(bounds[0], bounds[1], ground.z, h)
@@ -194,7 +268,8 @@ def scene_geometry(mesh: SceneMesh, coeffs: dict, ground=None, bounds=None, h: f
 def control_scene_geometry(mesh: SceneMesh, coeffs: dict, ground=None, bounds=None, h: float = 0.0) -> dict:
     """The empty-domain control: corner markers (+ the same floor)."""
     mv, mf = control_markers(mesh.bmin, mesh.bmax)
-    parts = [(mv, mf, [mesh.materials[0]] * len(mf))]
+    marker_key = mesh.materials[0] if mesh.materials else (ground.material if ground is not None else next(iter(coeffs)))
+    parts = [(mv, mf, [marker_key] * len(mf))]
     if ground is not None:
         gv, gf = ground_mesh(bounds[0], bounds[1], ground.z, h)
         parts.append((gv, gf, [ground.material] * len(gf)))

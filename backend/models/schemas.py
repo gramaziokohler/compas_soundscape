@@ -356,6 +356,19 @@ class SpeckleModelVersionsResponse(BaseModel):
     total_count: int
 
 
+class SpeckleLatestReadyResponse(BaseModel):
+    """POST /api/speckle/models/{model_id}/prepare-latest — non-blocking readiness probe.
+
+    ``ready``: ``version_id`` / ``object_id`` are the viewer-loadable latest version.
+    ``preparing``: the latest version is a fresh bundle upload still being
+    materialized in the background (ids are null) — probe again.
+    """
+    status: Literal["ready", "preparing"]
+    version_id: Optional[str] = None
+    object_id: Optional[str] = None
+    created_at: Optional[str] = None
+
+
 class ModelVersionTolerance(BaseModel):
     """Changes at or below these thresholds do not invalidate results."""
     distance_m: float = Field(..., ge=0, le=MODEL_VERSION_TOLERANCE_MAX_DISTANCE_M)

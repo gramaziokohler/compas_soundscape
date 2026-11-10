@@ -6,7 +6,8 @@ CLI (from backend/, with backend/ and backend/tests on PYTHONPATH):
     python -m benchmarks.bras.bras_benchmark --scene RS2_1m_rigid --fmax 500 --pairs all
     python -m benchmarks.bras.bras_benchmark --scene RS2_1m_rigid --all-stages --pairs all
 
-Outputs: ../compas_soundscape_benchmarks/bras/<scene>/f<fmax>/ (outside the repo; BRAS_OUTPUT_ROOT) (report.md, results.json, plots/, animation/).
+Every reference scene in one go: ``run_all.py``.
+Outputs: <BRAS_OUTPUT_ROOT>/<scene>/f<fmax>/ (report.md, results.json, plots/, animation/).
 """
 from __future__ import annotations
 
@@ -14,17 +15,18 @@ import argparse
 import os
 import shutil
 import sys
-from dataclasses import dataclass, replace
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
 
 from benchmarks.bras import bras_constants as K
-from benchmarks.bras.bras_analysis import analyze_run, average_response, metric_band
+from benchmarks.bras.bras_analysis import analyze_broadband_run, analyze_run, average_response, metric_band
 from benchmarks.bras.bras_animation import animation_source, export_animation, load_bundle
-from benchmarks.bras.bras_directivity import load_or_build_balloon, measured_spec
-from benchmarks.bras.bras_domain import domain_plan
+from benchmarks.bras.bras_directivity import balloon_cache_path, load_or_build_balloon, measured_spec
+from benchmarks.bras.bras_domain import DomainPlan, domain_plan
 from benchmarks.bras.bras_geometry import (
     SceneMesh,
     control_scene_geometry,
@@ -32,11 +34,13 @@ from benchmarks.bras.bras_geometry import (
     material_table,
     scene_geometry,
 )
+from benchmarks.bras.bras_pra import PraConfig, simulate_pra
 from benchmarks.bras.bras_plots import plot_animation_preview, plot_average, plot_overview, plot_pair
 from benchmarks.bras.bras_report import write_report, write_results
 from benchmarks.bras.bras_runner import RunConfig, simulate
 from benchmarks.bras.bras_scene import (
     MeasuredPair,
+    apply_label_positions,
     build_pairs_data,
     check_orientations,
     load_sofa_pairs,
@@ -48,7 +52,8 @@ from benchmarks.bras.bras_scene import (
 )
 from benchmarks.bras.bras_source_phase import SourcePhase
 from benchmarks.bras.bras_source_phase import load_or_build as load_source_phase
-from benchmarks.bras.scenes import SCENES, Scene, get_scene, missing_inputs
+from benchmarks.bras.scenes import SCENES, Scene, SourceInput, get_scene, missing_inputs
+from config.constants import PFFDTD_SEED_CLEARANCE_CELLS
 from services.directivity_formats import FORMAT_BRAS_CSV
 
 
@@ -59,6 +64,9 @@ class SceneData:
     measured: list[MeasuredPair]
     balloon: Optional[dict]
     phase: Optional[SourcePhase]
+    source: SourceInput = None            # the scene's source with the orientations of the model's labels
+    position_notes: list = field(default_factory=list)   # label vs SOFA positions that differ
+    positions_from: str = "sofa"
 
 
 @dataclass
@@ -70,6 +78,31 @@ class RunOptions:
     material_mode: str = "csv"
     animation: bool = True
     force: bool = False
+    pra: bool = True                      # also run pyroomacoustics (when the scene enables it)
+
+
+@dataclass
+class RunPlan:
+    """Everything a run needs, decided without the GPU (also what ``run_all --dry-run`` prints)."""
+    pairs: list
+    geoms: dict
+    domain: DomainPlan
+    padding_m: float
+    coeffs: dict
+    scene_geo: dict
+    ctl_geo: dict
+    fit: Optional[dict]
+    source_label: str
+    pairs_data: list
+    moved: list                           # seeds raised to the solver's clearance above the floor
+    cfg: RunConfig
+    engine_runs: int                      # GPU runs of the IRs (scene + control)
+    est_s: float                          # rough GPU time, IR runs + animation
+    sim_pairs: list = field(default_factory=list)   # the pairs at their simulated positions (see ``moved``)
+
+    @property
+    def bounds(self) -> tuple:
+        return self.domain.bmin, self.domain.bmax
 
 
 def _env_flag(name: str) -> bool:
@@ -82,14 +115,20 @@ def load_scene(scene: Scene) -> SceneData:
         raise FileNotFoundError(f"{scene.name}: missing inputs {[str(p) for p in missing]} (paths in scenes.py)")
     mesh = load_scene_mesh(scene.geometry, scene.materials)
     measured = load_sofa_pairs(scene.measurements)
-    check_orientations(unique_sources(measured), scene.source)
-    src = scene.source
+    labels = mesh.skp.labels if mesh.skp is not None else {}
+    src, notes, positions_from = scene.source, [], "sofa"
+    if scene.positions == "labels" or (scene.positions == "auto" and labels):
+        measured, notes = apply_label_positions(measured, labels)
+        positions_from = "labels"
+    if not src.orientations and labels:
+        src = replace(src, orientations={k: v.orientation for k, v in labels.items() if v.orientation is not None})
+    check_orientations(unique_sources(measured), src)
     balloon = load_or_build_balloon(src.directivity, src.directivity_format) if src.directivity else None
     phase = None
     phase_on = os.environ.get(K.ENV_SOURCE_PHASE, "on").strip().lower() not in ("off", "0", "no", "false")
     if src.directivity and src.phase and phase_on and src.directivity_format == FORMAT_BRAS_CSV:
         phase = load_source_phase(src.directivity)
-    return SceneData(scene, mesh, measured, balloon, phase)
+    return SceneData(scene, mesh, measured, balloon, phase, src, notes, positions_from)
 
 
 def options_from_env(data: SceneData) -> RunOptions:
@@ -103,7 +142,8 @@ def options_from_env(data: SceneData) -> RunOptions:
     else:
         pairs = [p.strip() for p in raw.split(",") if p.strip()] if raw else list(data.scene.smoke_pairs)
     return RunOptions(fmax=fmax, ppw=ppw, pair_keys=pairs, directional=not _env_flag(K.ENV_OMNI),
-                      material_mode=os.environ.get(K.ENV_MATERIAL, "csv"), force=_env_flag(K.ENV_FORCE))
+                      material_mode=os.environ.get(K.ENV_MATERIAL, "csv"), force=_env_flag(K.ENV_FORCE),
+                      pra=os.environ.get(K.ENV_PRA, "on").strip().lower() not in ("off", "0", "no", "false"))
 
 
 def output_dir(scene: Scene, fmax: float) -> Path:
@@ -123,45 +163,117 @@ def _material_rows(data: SceneData, coeffs: dict, ground_faces: int) -> list[dic
     return rows
 
 
-def run_benchmark(data: SceneData, opts: RunOptions) -> dict:
+def _plan_domain(data: SceneData, opts: RunOptions, points: np.ndarray, ground_z) -> tuple[DomainPlan, float]:
+    """The scene's padding, else the stage's own, else smaller steps, until the grid fits the GPU."""
+    scene, mesh, bt = data.scene, data.mesh, data.scene.band_test
+    tries = [float(scene.padding_m)]
+    if opts.fmax in bt.padding_m:
+        tries.append(float(bt.padding_m[opts.fmax]))
+    tries += [p for p in K.PADDING_FALLBACKS_M if p < min(tries)]
+    plan = None
+    for padding in tries:
+        plan = domain_plan(mesh.bmin, mesh.bmax, points, opts.fmax, opts.ppw, bt.duration_s, padding, ground_z)
+        if plan.fits_gpu:
+            return plan, padding
+    raise RuntimeError(f"{scene.name}: domain needs {plan.gpu_gb:.1f} GB > budget {plan.gpu_budget_gb:.1f} GB even "
+                       f"with {tries[-1]:g} m of padding (lower ppw / fmax)")
+
+
+def _raise_to_clearance(pairs: list[MeasuredPair], ground_z, h: float) -> tuple[list[MeasuredPair], list]:
+    """Simulated positions: a seed closer to the floor than the solver's clearance is raised to it
+    (the BRAS floor microphones sit 6 mm above the tiles; the measured positions stay as they are)."""
+    if ground_z is None:
+        return pairs, []
+    z_min = ground_z + (PFFDTD_SEED_CLEARANCE_CELLS + K.CLEARANCE_MARGIN_CELLS) * h
+    moved, out = {}, []
+    for p in pairs:
+        pos = []
+        for dev_id, x in ((p.source_id, p.source_position), (p.receiver_id, p.receiver_position)):
+            x = np.asarray(x, np.float64)
+            if x[2] < z_min:
+                moved[dev_id] = (round(float(x[2]), 4), round(float(z_min), 4))
+                x = np.array([x[0], x[1], z_min])
+            pos.append(x)
+        out.append(MeasuredPair(p.source_id, p.receiver_id, pos[0], pos[1], p.ir, p.fs))
+    return out, [{"id": k, "z_m": a, "simulated_z_m": b} for k, (a, b) in sorted(moved.items())]
+
+
+def plan_run(data: SceneData, opts: RunOptions) -> RunPlan:
     scene, mesh, bt = data.scene, data.mesh, data.scene.band_test
     pairs = select_pairs(data.measured, opts.pair_keys)
     ground_z = scene.ground.z if scene.ground is not None else None
     c_meas = speed_of_sound(scene.temperature_c)
-    geoms = {p.key: pair_geometry(p, mesh.vertices, mesh.faces, scene.source, c_meas) for p in pairs}
+    geoms = {p.key: pair_geometry(p, mesh.vertices, mesh.faces, data.source, c_meas) for p in pairs}
     points = np.vstack([np.vstack([p.source_position, p.receiver_position]) for p in pairs])
-    # the stage's reduced padding only when the full padding does not fit this GPU (PFFDTD_GPU_MEMORY_GB)
-    padding = float(scene.padding_m)
-    plan = domain_plan(mesh.bmin, mesh.bmax, points, opts.fmax, opts.ppw, bt.duration_s, padding, ground_z)
-    if not plan.fits_gpu and opts.fmax in bt.padding_m:
-        padding = float(bt.padding_m[opts.fmax])
-        plan = domain_plan(mesh.bmin, mesh.bmax, points, opts.fmax, opts.ppw, bt.duration_s, padding, ground_z)
-    if not plan.fits_gpu:
-        raise RuntimeError(f"{scene.name}: domain needs {plan.gpu_gb:.1f} GB > budget {plan.gpu_budget_gb:.1f} GB "
-                           "(lower ppw / fmax or the padding)")
+    plan, padding = _plan_domain(data, opts, points, ground_z)
     bounds = (plan.bmin, plan.bmax)
     coeffs = material_table(scene, opts.material_mode)
     scene_geo = scene_geometry(mesh, coeffs, scene.ground, bounds, plan.h)
     ctl_geo = control_scene_geometry(mesh, coeffs, scene.ground, bounds, plan.h)
     fit = data.balloon["fit"] if (opts.directional and data.balloon is not None) else None
-    label = Path(scene.source.directivity).stem if scene.source.directivity else "omni"
-    specs = {sid: measured_spec(fit, source_forward(sid, pos, scene.source), label)
-             for sid, pos in unique_sources(pairs).items()} if fit else {}
-    pairs_data = build_pairs_data(pairs, specs)
+    label = Path(data.source.directivity).stem if data.source.directivity else "omni"
+    sim_pairs, moved = _raise_to_clearance(pairs, ground_z, plan.h)
+    balloon_file = balloon_cache_path(data.source.directivity) if fit else None
+    specs = {sid: measured_spec(fit, source_forward(sid, pos, data.source), label, balloon_file)
+             for sid, pos in unique_sources(sim_pairs).items()} if fit else {}
+    cfg = RunConfig(scene=scene.name, fmax=opts.fmax, ppw=opts.ppw, grid_spacing=plan.h, duration=bt.duration_s,
+                    pair_keys=[p.key for p in pairs], directional=fit is not None, material_mode=opts.material_mode,
+                    padding_m=padding)
+    # a directional job runs once per microphone (reciprocity), an omni one once per loudspeaker
+    per_geometry = len({p.receiver_id for p in pairs}) if fit else len({p.source_id for p in pairs})
+    engine_runs = per_geometry * (1 if mesh.empty else 2)
+    est = engine_runs * plan.est_runtime_s
+    if opts.animation and animation_source(pairs, scene.animation) is not None:
+        est += 2 * plan.est_runtime_s * (1.0 + scene.animation.duration_ms * 1e-3 / bt.duration_s)
+    return RunPlan(pairs, geoms, plan, padding, coeffs, scene_geo, ctl_geo, fit, label,
+                   build_pairs_data(sim_pairs, specs), moved, cfg, engine_runs, est, sim_pairs)
+
+
+def _notes(data: SceneData, rp: RunPlan) -> list[str]:
+    notes = [f"Positions from the {'model labels' if data.positions_from == 'labels' else 'SOFA file'}."]
+    for n in data.position_notes:
+        notes.append(f"{n['id']}: label {n['label']} m, SOFA file {n['sofa']} m ({n['deviation_m'] * 100:.1f} cm apart).")
+    for m in rp.moved:
+        notes.append(f"{m['id']} is {m['z_m'] * 1e3:.0f} mm above the floor; simulated at {m['simulated_z_m'] * 1e3:.0f} mm "
+                     "(the solver needs 3 cells of clearance).")
+    if data.mesh.dropped:
+        left = ", ".join(f"{k} ({v['tris']} triangles)" for k, v in sorted(data.mesh.dropped.items(),
+                                                                         key=lambda kv: -kv[1]["area_m2"])[:6])
+        notes.append(f"Left out of the model (no material mapped): {left}.")
+    if data.mesh.empty:
+        notes.append("No object in this scene: the simulation is the floor alone.")
+    return notes
+
+
+def run_benchmark(data: SceneData, opts: RunOptions) -> dict:
+    scene, mesh, bt = data.scene, data.mesh, data.scene.band_test
+    rp = plan_run(data, opts)
+    plan, bounds, pairs, fit = rp.domain, rp.bounds, rp.pairs, rp.fit
+    ground_z = scene.ground.z if scene.ground is not None else None
     out = output_dir(scene, opts.fmax)
     print(f"[bras] {scene.name} f{opts.fmax:g}: h = {plan.h * 1e3:.2f} mm, grid {plan.shape} "
           f"({plan.nodes / 1e6:.0f} M nodes, {plan.gpu_gb:.1f} GB), ~{plan.est_runtime_s:.0f} s per engine run", flush=True)
 
-    cfg = RunConfig(scene=scene.name, fmax=opts.fmax, ppw=opts.ppw, grid_spacing=plan.h, duration=bt.duration_s,
-                    pair_keys=[p.key for p in pairs], directional=fit is not None, material_mode=opts.material_mode,
-                    padding_m=padding)
     runs = out / "runs"
-    plate = simulate(cfg, scene_geo, pairs_data, bounds, opts.force, out_root=runs)
-    control = simulate(replace(cfg, control=True), ctl_geo, pairs_data, bounds, opts.force, out_root=runs)
+    # pyroomacoustics on the CPU, in a thread, while the GPU runs PFFDTD
+    pool = ThreadPoolExecutor(max_workers=1)
+    pra_future = None
+    if opts.pra and scene.pra.enabled:
+        pra_cfg = PraConfig(scene.name, scene.pra.max_order, scene.pra.ray_tracing, [p.key for p in pairs],
+                            fit is not None, opts.material_mode)
+        pra_future = pool.submit(simulate_pra, pra_cfg, rp.scene_geo, rp.pairs_data, runs, opts.force)
+    plate = simulate(rp.cfg, rp.scene_geo, rp.pairs_data, bounds, opts.force, out_root=runs)
+    # without objects the scene run already is the empty-domain run
+    control = plate if mesh.empty else simulate(replace(rp.cfg, control=True), rp.ctl_geo, rp.pairs_data, bounds,
+                                                opts.force, out_root=runs)
     phase = data.phase if fit is not None else None
-    gain_db, results = analyze_run(pairs, plate.irs, control.irs, geoms, bt, opts.fmax, bounds, scene.gain_pair,
+    gain_db, results = analyze_run(pairs, plate.irs, control.irs, rp.geoms, bt, opts.fmax, bounds, scene.gain_pair,
                                    phase, ground_z)
     avg = average_response(results, bt, opts.fmax)
+    second = _second_engine(pra_future, pairs, rp, bt, opts.fmax, scene) if pra_future is not None else None
+    pool.shutdown()
+    pra_by_key = {r.key: r for r in second["results"]} if second and second["results"] else {}
+    pra_avg = second["average"] if pra_by_key else None
 
     plots = out / "plots"
     shutil.rmtree(plots, ignore_errors=True)
@@ -169,41 +281,64 @@ def run_benchmark(data: SceneData, opts: RunOptions) -> dict:
     band = metric_band(bt, opts.fmax)
     files = []
     for r in results:
-        files.append(plot_pair(r, band, opts.fmax, bt.smoothing_fraction, plots / f"pair_{r.key}.png", scene.label))
-    files.append(plot_average(avg, band, opts.fmax, bt.smoothing_fraction, len(results), plots / "average.png", scene.label))
+        files.append(plot_pair(r, band, opts.fmax, bt.smoothing_fraction, plots / f"pair_{r.key}.png", scene.label,
+                               pra_by_key.get(r.key)))
+    files.append(plot_average(avg, band, opts.fmax, bt.smoothing_fraction, len(results), plots / "average.png",
+                              scene.label, pra_avg))
     files.append(plot_overview(results, plots / "overview.png", scene.label))
-    anim_files = write_animation(cfg, data, pairs, results, scene_geo, ctl_geo, bounds, ground_z, out, opts, phase)
+    anim_files = write_animation(rp, data, results, ground_z, out, opts, phase)
 
+    c_meas = speed_of_sound(scene.temperature_c)
     info = {
         "scene": scene.name, "scene_label": scene.label, "fmax_hz": opts.fmax,
-        "inputs": {"Geometry (OBJ)": scene.geometry.obj, "Measurements (SOFA)": scene.measurements,
-                   "Loudspeaker directivity": scene.source.directivity or "omni"},
-        "materials": _material_rows(data, coeffs, 2 if scene.ground is not None else 0),
-        "chamber": "hemi-anechoic" if scene.ground is not None else "anechoic",
+        "inputs": {"Geometry": scene.geometry.path, "Measurements (SOFA)": scene.measurements,
+                   "Loudspeaker directivity": data.source.directivity or "omni"},
+        "materials": _material_rows(data, rp.coeffs, 2 if scene.ground is not None else 0),
+        "chamber": scene.chamber or ("hemi-anechoic" if scene.ground is not None else "anechoic"),
         "temperature_c": scene.temperature_c, "humidity": scene.humidity, "c_measured": c_meas,
         "ground": (f"reflective floor at z = {scene.ground.z:g} m ({scene.ground.material})" if scene.ground is not None
                    else "no floor"),
         "n_faces": int(len(mesh.faces)), "bbox": f"{np.round(mesh.bmin, 3).tolist()} to {np.round(mesh.bmax, 3).tolist()} m",
-        "source_model": (f"{label}, imported as the app does (first-order pattern per octave band), "
+        "source_model": (f"{rp.source_label}, imported as the app does (first-order pattern per octave band), "
                          + ("loudspeaker phase applied" if phase is not None else "zero phase")) if fit else "omnidirectional",
-        "grid": plan.as_dict(), "padding_m": padding, "duration_s": bt.duration_s,
-        "wall_s": plate.wall_s + control.wall_s,
+        "grid": plan.as_dict(), "padding_m": rp.padding_m, "duration_s": bt.duration_s,
+        "wall_s": plate.wall_s + (0.0 if mesh.empty else control.wall_s),
         "window": f"{bt.pre_ms:g} ms before to {bt.gate_ms:g} ms after the direct sound (half-Hann fades)",
         "band": band, "bands_per_octave": bt.bands_per_octave, "smoothing": bt.smoothing_fraction,
-        "gain_db": gain_db, "gain_pair": scene.gain_pair,
+        "gain_db": gain_db, "gain_pair": scene.gain_pair, "notes": _notes(data, rp),
         "files": [Path(f).relative_to(out).as_posix() for f in files + anim_files] + ["results.json"],
     }
-    write_results(out / "results.json", {"info": info, "average": {k: v for k, v in avg.items() if k not in ("f", "meas_db", "sim_db")},
-                                         "pairs": [r.as_dict() for r in results]})
-    write_report(out / "report.md", info, results, avg)
+    strip = ("f", "meas_db", "sim_db")
+    payload = {"info": info, "average": {k: v for k, v in avg.items() if k not in strip},
+               "pairs": [r.as_dict() for r in results]}
+    if second:
+        payload["pyroomacoustics"] = {"gain_db": second["gain_db"], "notes": second["notes"],
+                                      "average": {k: v for k, v in (second["average"] or {}).items() if k not in strip},
+                                      "pairs": [r.as_dict() for r in second["results"]]}
+    write_results(out / "results.json", payload)
+    write_report(out / "report.md", info, results, avg, second if pra_by_key else None)
     return {"info": info, "gain_db": gain_db, "results": results, "average": avg, "plan": plan, "out_dir": out,
-            "animation_files": anim_files}
+            "animation_files": anim_files, "pyroomacoustics": second}
 
 
-def write_animation(cfg: RunConfig, data: SceneData, pairs, results, scene_geo, ctl_geo, bounds, ground_z,
-                    out: Path, opts: RunOptions, phase) -> list[Path]:
+def _second_engine(future, pairs, rp: RunPlan, bt, fmax: float, scene: Scene) -> dict:
+    """The pyroomacoustics comparison (same windows, bands and gain rule), or why there is none."""
+    run = future.result()
+    spec = scene.pra
+    notes = [f"pyroomacoustics: image sources up to order {spec.max_order}"
+             + (" + ray tracing" if spec.ray_tracing else "") + ", the measured loudspeaker balloon, no diffraction; "
+             f"{run.wall_s:.0f} s on the CPU."]
+    if run.error:
+        return {"results": [], "average": None, "gain_db": 0.0, "notes": notes + [f"It failed: {run.error}"]}
+    if run.no_path:
+        notes.append("No sound path (pair left out): " + ", ".join(run.no_path) + ".")
+    gain_db, results = analyze_broadband_run(pairs, run.irs, run.fs, rp.geoms, bt, fmax, scene.gain_pair)
+    return {"results": results, "average": average_response(results, bt, fmax), "gain_db": gain_db, "notes": notes}
+
+
+def write_animation(rp: RunPlan, data: SceneData, results, ground_z, out: Path, opts: RunOptions, phase) -> list[Path]:
     """Animation bundle of the scene's loudspeaker, its MP4 and a preview PNG (empty list when off)."""
-    spec = data.scene.animation
+    spec, pairs = data.scene.animation, rp.pairs
     if not opts.animation or animation_source(pairs, spec) is None:
         return []
     from benchmarks.bras.bras_render import render  # matplotlib animation writers only when needed
@@ -213,7 +348,8 @@ def write_animation(cfg: RunConfig, data: SceneData, pairs, results, scene_geo, 
               next(p for p in pairs if p.source_id == sid))
     sim = next(r for r in results if r.key == hl.key).curves["sim_full"]
     irs = {"measured": (hl.fs, hl.ir), "simulated": (K.ANALYSIS_FS, sim)}
-    meta = export_animation(cfg, scene_geo, ctl_geo, pairs, spec, bounds, out, data.scene.label,
+    # the forward animation runs need the simulated (clearance-safe) positions too
+    meta = export_animation(rp.cfg, rp.scene_geo, rp.ctl_geo, rp.sim_pairs, spec, rp.bounds, out, data.scene.label,
                             (data.mesh.bmin, data.mesh.bmax), ground_z, pair_irs=irs, force=opts.force,
                             sim_source_phase=phase is not None)
     if meta is None:
@@ -239,7 +375,7 @@ def main(argv=None) -> int:
     if args.list:
         for name, sc in SCENES.items():
             miss = missing_inputs(sc)
-            print(f"{name:20s} {sc.label}" + (f"  [missing: {', '.join(Path(p).name for p in miss)}]" if miss else ""))
+            print(f"{name:24s} {sc.label}" + (f"  [missing: {', '.join(Path(p).name for p in miss)}]" if miss else ""))
         return 0
     data = load_scene(get_scene(args.scene))
     bt = data.scene.band_test

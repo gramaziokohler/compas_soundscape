@@ -19,7 +19,14 @@ DIRECTIVITY_STEP_DEG = 5                        # BRAS 1 deg balloon kept every 
 # stage so they own boundary nodes (a scene with none crashes the cut cells), tiny vs a wavelength
 CONTROL_MARKER_EDGE_M = 0.05
 GROUND_BELOW_CELLS = 2                          # domain extends this many cells under a ground plane
+GROUND_TOL_M = 1e-3                             # objects may dip this far under the floor (model rounding)
 GROUND_INSET_CELLS = 1                          # ground plane stops this far inside the domain faces
+CLEARANCE_MARGIN_CELLS = 0.5                    # seeds near the floor go to (PFFDTD_SEED_CLEARANCE_CELLS + this) cells
+PADDING_FALLBACKS_M = (2.5, 2.0, 1.5)           # tried in turn when a scene's padding does not fit the GPU
+
+# ── pyroomacoustics (second engine, image sources) ────────────────────────────
+PRA_INT16_SCALE = 32767.0                       # the app writes its pyroomacoustics IRs as int16 = IR x 32767
+ENV_PRA = "BRAS_PRA"                            # on (default) | off
 
 # ── Analysis ──────────────────────────────────────────────────────────────────
 FADE_IN_S = 0.001
@@ -29,6 +36,7 @@ EDGE_SUBTRACT_KEEP_S = 0.005                    # control run kept this long aft
 PLOT_FMIN_HZ = 50.0
 NFFT = 2 ** 15
 XCORR_MAX_LAG_S = 0.5e-3                        # direct-sound alignment search
+BROADBAND_MAX_LAG_S = 3.0e-3                    # same, for IRs that carry the loudspeaker's own delay (pyroomacoustics)
 
 # ── Sanity checks of the benchmark tests (not acceptance criteria) ────────────
 DIRECT_LEVEL_TOL_DB = 2.0                       # line-of-sight pairs, after the global gain

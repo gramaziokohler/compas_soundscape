@@ -16,7 +16,7 @@ import type {
 import type { ModalAnalysisRequest, ModalAnalysisResult } from '@/types/modal';
 import type {
   SpeckleProjectModelsResponse,
-  SpeckleModelLatestVersion,
+  SpeckleLatestReady,
   SpeckleModelVersionsResponse,
   SpeckleIngestionStatus,
   SpeckleUploadProgress,
@@ -2238,22 +2238,21 @@ export const apiService = {
   },
 
   /**
-   * Read the latest version summary for a single Speckle model.
-   *
-   * Side-effect free (unlike ensure-ready) — safe to poll to detect that a
-   * newer commit was published.
+   * Non-blocking readiness probe of a model's latest version. Starts the
+   * background materialization of a fresh bundle upload when needed and
+   * reports `preparing` until the version is viewer-loadable.
    */
-  async getModelLatestVersion(modelId: string): Promise<SpeckleModelLatestVersion | null> {
+  async prepareModelLatestVersion(modelId: string): Promise<SpeckleLatestReady | null> {
     const response = await fetchWithErrorHandling(
-      `${API_BASE_URL}/api/speckle/models/${encodeURIComponent(modelId)}/latest`,
-      undefined,
-      'Get latest model version'
+      `${API_BASE_URL}/api/speckle/models/${encodeURIComponent(modelId)}/prepare-latest`,
+      { method: 'POST' },
+      'Prepare latest model version'
     );
 
     if (response.status === 404) return null;
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ detail: 'Failed to get latest model version' }));
-      throw new Error(error.detail || 'Failed to get latest model version');
+      const error = await response.json().catch(() => ({ detail: 'Failed to prepare the latest model version' }));
+      throw new Error(error.detail || 'Failed to prepare the latest model version');
     }
 
     return response.json();

@@ -1061,6 +1061,11 @@ export const SPECKLE_INGESTION_PHASE_LABELS: Record<string, string> = {
 // Watches the open model for a newer published version (useModelVersionSession → banner).
 export const MODEL_VERSION_WATCH = {
   POLL_INTERVAL_MS: 60000,      // Check the model's latest version every 60 s
+  // "Load new version": wait until the latest version is viewer-loadable, then reload the page.
+  READY_POLL_INTERVAL_MS: 3000, // Readiness probe interval while the backend materializes it
+  READY_MAX_ATTEMPTS: 120,      // ≈ 6 min before giving up
+  PREPARING_TITLE: 'Preparing the new model version…',
+  NOT_READY_ERROR: 'The new model version is still not ready to load — try again in a moment.',
 } as const;
 
 /** Speckle model URL pinned to a version: `.../models/<modelId>@<versionId>` (group 1 = version). */
@@ -2667,6 +2672,14 @@ export const SAVED_OBJECT_VISIBILITY = {
   CLEAR_LABEL: 'Clear saved visibility',
   TOAST_ALL_VISIBLE: 'Saved object visibility: all visible',
   CLEARED_TOAST: 'Saved object visibility cleared',
+} as const;
+
+/** "Copy materials to …" rows of the simulation card menus (both modes). */
+export const COPY_MATERIALS = {
+  /** Expert card parent row (targets as sub-items) / Simple bubble row prefix. */
+  LABEL: 'Copy materials to',
+  /** Simulation types whose cards hold Speckle material assignments. */
+  TYPES: ['pyroomacoustics', 'pffdtd', 'import-irs'] as const,
 } as const;
 
 export const SIMPLE_MODE = {

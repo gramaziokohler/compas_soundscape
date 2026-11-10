@@ -332,11 +332,8 @@ function HomeContent() {
   const { hasInflightJobs, recoveryResolved, recoveredSomething } = useJobRecovery({ domainReady: domainRestored });
 
   // 3. Model version watcher — offer to switch when a newer version is published
+  //    (the switch itself is `handleSwitchToLatestVersion`, next to the autosave refs).
   const modelVersion = useModelVersionSession();
-  // Switching does a full page reload; no async work to await here.
-  const handleSwitchToLatestVersion = useCallback(() => {
-    modelVersion.switchToLatest();
-  }, [modelVersion]);
 
   // Loading the Home stage starts from a clean layout: sidebars collapsed and
   // every floating panel (settings, object explorer, timeline) hidden. Auto-save
@@ -2032,6 +2029,32 @@ function HomeContent() {
   /** True when the Home stage holds any work (it starts empty on every load). */
   const homeHasImportableWork = homeStageHasWork;
 
+  /** True when a real Speckle model (not the Home sandbox) is the open project. */
+  const hasOpenSpeckleModel = () => {
+    const modelId = useUIStore.getState().globalSpeckleData?.model_id;
+    return !!modelId && modelId !== SANDBOX_MODEL_ID;
+  };
+
+  /**
+   * Save the open soundscape right away (skipping the 3 s debounce) before it is
+   * swapped out by a model switch or a page reload. Best-effort.
+   */
+  const flushPendingAutosave = async (context: string) => {
+    if (autosaveTimerRef.current) {
+      clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+    }
+    if (!autosaveEnabledRef.current || !selectHasSaveTarget(useUIStore.getState())) return;
+    if (selectIsReadOnlyWorkspace(useWorkspaceStore.getState())) return;
+    if (useShareViewStore.getState().isShareView) return;
+    lastSaveSourceRef.current = 'autosave';
+    try {
+      await saveSoundscapeRef.current?.();
+    } catch (err) {
+      console.warn(`[page.tsx] Could not save before ${context}:`, err);
+    }
+  };
+
   /** Empty every domain store so a model opens without the Home elements. */
   const resetDomainForFreshModel = () => {
     // Swapping models invalidates the autosave fingerprint — force the next save.
@@ -2180,7 +2203,12 @@ function HomeContent() {
   // Load an existing Speckle model directly (no upload needed)
   const handleSpeckleModelSelect = useCallback(async (speckleData: SpeckleModelSelectPayload, isUpload = false) => {
     console.log('[page.tsx] Speckle model selected:', speckleData.url);
-    if (homeHasImportableWork()) {
+    if (hasOpenSpeckleModel()) {
+      // Model → model: the current elements belong to the open model's own
+      // soundscape (saved with it), so there is nothing to import — save it and
+      // open the new model on its own soundscape, without the import prompt.
+      await flushPendingAutosave('opening another model');
+    } else if (homeHasImportableWork()) {
       // Attaching a model to a saved No-model project whose model has no soundscape
       // yet: move the whole soundscape onto the model as-is (scenes, cards, events,
       // DAW state, listeners). No reset, no merge — ids and parent links stay intact.
@@ -2419,18 +2447,24 @@ function HomeContent() {
   ]);
 
   // Model browser selection. With a model already open ("Open another model…"),
-  // flush its pending autosave first — the switch resets every domain store.
+  // handleSpeckleModelSelect flushes its autosave and skips the Home import prompt.
   const handleOpenSpeckleModel = useCallback(async (speckleData: SpeckleModelSelectPayload) => {
-    if (useUIStore.getState().globalSpeckleData && autosaveEnabledRef.current) {
-      lastSaveSourceRef.current = 'autosave';
-      try {
-        await saveSoundscapeRef.current?.();
-      } catch (err) {
-        console.warn('[page.tsx] Could not save before opening another model:', err);
-      }
-    }
     await handleSpeckleModelSelect(speckleData);
   }, [handleSpeckleModelSelect]);
+
+  // Refresh button / "vN was published" → Load: wait until the latest version is
+  // loadable by the viewer, flush the pending autosave, then reload the page so
+  // the viewer, world tree and version store all start clean on the new version.
+  const { reloadToLatest } = modelVersion;
+  const handleSwitchToLatestVersion = useCallback(async () => {
+    try {
+      await reloadToLatest(() => flushPendingAutosave('loading the new model version'));
+    } catch (error) {
+      handleApiError(error, 'Failed to load the new model version');
+    }
+    // flushPendingAutosave only touches refs and live stores.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reloadToLatest, handleApiError]);
 
   // Model pill "Upload new version…": add the file to the OPEN model (whatever its
   // file name), then load the new latest in place — the banner reports its impact.

@@ -1103,10 +1103,11 @@ login and can only select and play. It also works inside an iframe.
     and no link group is applied on load.
   - A circle click activates its item. An acoustics circle opens and powers its card. A
     listener circle toggles first-person view and never opens a card (hover menu only).
-  - While a scene is on, the Acoustics column lists only the simulations sharing a link group
-    with it (`hooks/useShareLinkedSimulations.ts`; several groups → several simulations). A scene
-    linked to no simulation shows them all. On a scene switch, an active simulation that is no
-    longer listed is switched off.
+  - While a scene is on, the Acoustics and Listeners columns list only the simulations /
+    listeners sharing a link group with it (`hooks/useShareLinkedIds.ts`; several groups →
+    several items). A scene linked to no item of a kind shows all of that kind. On a scene
+    switch, an active simulation or powered listener that is no longer listed is switched off
+    (`useShareLinkedSimulations`, `ListenerBubbles`).
   - While in FPS, `FpsControlsHint` lists the controls above the bottom bar (it replaces the
     editor's `FpsHelpPopup`). It shows on each FPS entry until closed. Closing it shrinks it into
     the "Leave FPS view" button and marks the `fps-controls` one-time hint seen (localStorage).

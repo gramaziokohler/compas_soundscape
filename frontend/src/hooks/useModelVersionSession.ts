@@ -4,13 +4,22 @@ import { useCallback, useEffect, useRef } from 'react';
 import { apiService } from '@/services/api';
 import { useUIStore, useModelVersionStore } from '@/store';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
+import { isShareViewActive } from '@/store/shareViewStore';
 import { MODEL_VERSION_WATCH, SANDBOX_MODEL_ID } from '@/utils/constants';
+import { waitForLoadableLatestVersion } from '@/utils/speckleLatestVersion';
 
 export interface ModelVersionSession {
   /** True while a newer version than the loaded one exists (Refresh-scene warning). */
   hasUpdate: boolean;
-  /** Load the latest version in place. */
-  switchToLatest: () => void;
+  /** True while `reloadToLatest` waits for the new version to be loadable. */
+  isPreparingLatest: boolean;
+  /**
+   * Wait until the model's latest version is loadable by the viewer, run
+   * `beforeReload` (flush the autosave), then reload the page so everything
+   * (viewer, world tree, version store) starts clean on the new version.
+   * Throws when the version never becomes ready.
+   */
+  reloadToLatest: (beforeReload?: () => Promise<void>) => Promise<void>;
 }
 
 /**
@@ -19,13 +28,15 @@ export interface ModelVersionSession {
  *  - resets the store when another model opens (or none);
  *  - reports each version the viewer loads, which raises the "vN was loaded"
  *    banner when it differs from the last session / previous version;
- *  - polls the model's latest version (side-effect-free `/latest`) and raises
- *    the "vN was published" banner — never a blocking modal.
+ *  - polls the model's latest version (non-blocking `prepare-latest`, which also
+ *    materializes a fresh upload in the background) and raises the "vN was
+ *    published" banner once that version is loadable — never a blocking modal.
  */
 export function useModelVersionSession(): ModelVersionSession {
   const globalSpeckleData = useUIStore((s) => s.globalSpeckleData);
   const loadedVersionId = useSpeckleEngineStore((s) => s.loadedModelVersionId);
   const versions = useModelVersionStore((s) => s.versions);
+  const isPreparingLatest = useModelVersionStore((s) => s.isPreparingLatest);
 
   const modelId: string | null =
     globalSpeckleData?.model_id && globalSpeckleData.model_id !== SANDBOX_MODEL_ID
@@ -57,13 +68,16 @@ export function useModelVersionSession(): ModelVersionSession {
   }, [modelId, loadedVersionId]);
 
   useEffect(() => {
-    if (!modelId || !loadedVersionId) return;
+    // The public share view may only call /api/public/* (and never edits).
+    if (!modelId || !loadedVersionId || isShareViewActive()) return;
     let cancelled = false;
     const poll = async () => {
       if (document.hidden) return;
       try {
-        const remote = await apiService.getModelLatestVersion(modelId);
-        if (cancelled || !remote?.version_id || remote.version_id === loadedVersionId) return;
+        const remote = await apiService.prepareModelLatestVersion(modelId);
+        // A fresh upload still materializing is not announced until it is loadable.
+        if (cancelled || remote?.status !== 'ready' || !remote.version_id) return;
+        if (remote.version_id === loadedVersionId) return;
         const store = useModelVersionStore.getState();
         if (!store.versions.some((v) => v.id === remote.version_id)) await store.fetchVersions();
         if (cancelled) return;
@@ -88,13 +102,33 @@ export function useModelVersionSession(): ModelVersionSession {
   const latestId = versions[0]?.id ?? null;
   const hasUpdate = !!modelId && !!latestId && !!loadedVersionId && latestId !== loadedVersionId;
 
-  const switchToLatest = useCallback(() => {
-    const latest = useModelVersionStore.getState().versions[0];
-    if (!latest) return;
-    useModelVersionStore
-      .getState()
-      .switchToVersion(latest.id, useSpeckleEngineStore.getState().loadedModelVersionId);
+  const reloadToLatest = useCallback(async (beforeReload?: () => Promise<void>) => {
+    const store = useModelVersionStore.getState();
+    const speckle = useUIStore.getState().globalSpeckleData;
+    const targetModelId = store.modelId;
+    if (!targetModelId || !speckle?.url || store.isPreparingLatest) return;
+
+    const modelChanged = () => useModelVersionStore.getState().modelId !== targetModelId;
+    store.setPreparingLatest(true);
+    let reloading = false;
+    try {
+      const versionId = await waitForLoadableLatestVersion(
+        targetModelId,
+        speckle.url,
+        speckle.auth_token,
+        modelChanged,
+      );
+      // Another model was opened while waiting — nothing to reload into.
+      if (!versionId || modelChanged()) return;
+      console.log('[useModelVersionSession] latest version ready, reloading page:', versionId);
+      await beforeReload?.();
+      reloading = true;
+      window.location.reload();
+    } finally {
+      // While the page unloads the button stays in its "preparing" state.
+      if (!reloading) useModelVersionStore.getState().setPreparingLatest(false);
+    }
   }, []);
 
-  return { hasUpdate, switchToLatest };
+  return { hasUpdate, isPreparingLatest, reloadToLatest };
 }

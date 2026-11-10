@@ -734,6 +734,60 @@ class SpeckleService:
             logger.warning(f"get_model_latest_version failed for model {model_id}: {exc}")
             return None
 
+    def prepare_latest_version(self, model_id: str) -> Optional[Dict]:
+        """Non-blocking: is the model's latest version loadable by the viewer yet?
+
+        A fresh upload (app or Speckle web) lands as a bundle-only version; this
+        starts — or keeps waiting on — its background materialization (the same
+        de-duplicated driver the ingestion poll uses) instead of blocking the
+        request like ``ensure_model_ready``. Returns
+        ``{status: "ready"|"preparing", version_id, object_id, created_at}`` or
+        ``None`` when unauthenticated / the model has no version.
+        """
+        if not self.client or not self.project_id:
+            logger.error("Not authenticated or no project selected.")
+            return None
+
+        try:
+            mwv = self.client.model.get_with_versions(
+                model_id=model_id, project_id=self.project_id, versions_limit=1
+            )
+            versions = list(mwv.versions.items) if mwv and mwv.versions else []
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"prepare_latest_version failed for model {model_id}: {exc}")
+            return None
+        if not versions:
+            return None
+
+        latest = versions[0]
+        ref = getattr(latest, "referenced_object", None) or ""
+        created_at = (
+            latest.created_at.isoformat() if getattr(latest, "created_at", None) else None
+        )
+
+        if ref.startswith("bundle."):
+            legacy = self._poll_materialization(latest.id)
+            if not legacy:
+                return {
+                    "status": "preparing",
+                    "version_id": None,
+                    "object_id": None,
+                    "created_at": created_at,
+                }
+            return {
+                "status": "ready",
+                "version_id": legacy["version_id"],
+                "object_id": legacy["object_id"],
+                "created_at": legacy.get("created_at") or created_at,
+            }
+
+        return {
+            "status": "ready",
+            "version_id": latest.id,
+            "object_id": ref,
+            "created_at": created_at,
+        }
+
     def get_ingestion_status(self, ingestion_id: str) -> Optional[Dict]:
         """
         Read the current status of a Speckle file ingestion job (single, non-blocking probe).

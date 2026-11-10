@@ -135,11 +135,12 @@ def _gated(x, win):
     return gate(x, FS, win[0], win[1], K.FADE_IN_S, K.FADE_OUT_S)
 
 
-def align_shift_s(meas: np.ndarray, sim: np.ndarray, geom: PairGeometry, bt: BandTest) -> float:
+def align_shift_s(meas: np.ndarray, sim: np.ndarray, geom: PairGeometry, bt: BandTest,
+                  max_lag_s: float = K.XCORR_MAX_LAG_S) -> float:
     """Shift (s) that puts the simulated direct sound on the measured one."""
     shift0 = geom.t_direct - geom.d_direct / PFFDTD_SPEED_OF_SOUND
     win = windows(geom, bt)["direct"]
-    lag = xcorr_lag_s(_gated(meas, win), _gated(fractional_shift(sim, shift0, FS), win), FS, K.XCORR_MAX_LAG_S)
+    lag = xcorr_lag_s(_gated(meas, win), _gated(fractional_shift(sim, shift0, FS), win), FS, max_lag_s)
     return shift0 - lag
 
 
@@ -180,25 +181,47 @@ def analyze_run(measured: list[MeasuredPair], sims: dict, ctls: Optional[dict], 
                 fmax: float, bounds: tuple, gain_pair: str, phase: Optional[SourcePhase] = None,
                 ground_z: Optional[float] = None) -> tuple[float, list[PairResult]]:
     """Global gain (``gain_pair``'s direct sound, else the first line-of-sight pair) and every pair's result."""
-    prepared, shifts, meas_bl = {}, {}, {}
+    prepared = {}
     for p in measured:
         g = geoms[p.key]
         echo = edge_echo_delay_s(p.source_position, p.receiver_position, *bounds, ground_z=ground_z)
         floor = floor_delay_s(p.source_position, p.receiver_position, ground_z)
         sim = prepare_sim(sims[p.key], None if ctls is None else ctls[p.key], g.d_direct, echo, len(p.ir), phase, floor)
+        prepared[p.key] = sim
+    return _compare(measured, prepared, geoms, bt, fmax, gain_pair, K.XCORR_MAX_LAG_S)
+
+
+def _compare(measured: list[MeasuredPair], sims: dict, geoms: dict, bt: BandTest, fmax: float, gain_pair: str,
+             max_lag_s: float) -> tuple[float, list[PairResult]]:
+    """Align each simulated IR (measured rate and length) on the direct sound, fit the one global
+    gain and analyse every pair that has a simulated IR."""
+    pairs = [p for p in measured if p.key in sims]
+    meas_bl, shifts, aligned = {}, {}, {}
+    for p in pairs:
         meas_bl[p.key] = bandlimit_like_sim(p.ir, FS, fmax)
-        shifts[p.key] = align_shift_s(meas_bl[p.key], sim, g, bt)
-        prepared[p.key] = fractional_shift(sim, shifts[p.key], FS)
-    los = [p for p in measured if geoms[p.key].line_of_sight]
-    ref = next((p for p in measured if p.key == gain_pair and geoms[p.key].line_of_sight), los[0] if los else measured[0])
-    gain_db = -direct_level_db(meas_bl[ref.key], prepared[ref.key], geoms[ref.key], bt, fmax)
+        shifts[p.key] = align_shift_s(meas_bl[p.key], sims[p.key], geoms[p.key], bt, max_lag_s)
+        aligned[p.key] = fractional_shift(sims[p.key], shifts[p.key], FS)
+    los = [p for p in pairs if geoms[p.key].line_of_sight]
+    ref = next((p for p in pairs if p.key == gain_pair and geoms[p.key].line_of_sight), los[0] if los else pairs[0])
+    gain_db = -direct_level_db(meas_bl[ref.key], aligned[ref.key], geoms[ref.key], bt, fmax)
     g = 10.0 ** (gain_db / 20.0)
     results = []
-    for p in measured:
-        r = analyze_pair(meas_bl[p.key], prepared[p.key] * g, geoms[p.key], bt, fmax)
+    for p in pairs:
+        r = analyze_pair(meas_bl[p.key], aligned[p.key] * g, geoms[p.key], bt, fmax)
         r.align_shift_ms = round(shifts[p.key] * 1e3, 3)
         results.append(r)
     return gain_db, results
+
+
+def analyze_broadband_run(measured: list[MeasuredPair], irs: dict, fs: float, geoms: dict, bt: BandTest, fmax: float,
+                          gain_pair: str) -> tuple[float, list[PairResult]]:
+    """Same comparison for a broadband engine (pyroomacoustics): its IRs get the solver's band
+    limits, as the measured ones do. No domain edge to remove, and the loudspeaker's own response
+    (its delay included, hence the wider alignment search) is already in the IRs. Pairs the engine
+    has no IR for are left out."""
+    n = {p.key: len(p.ir) for p in measured}
+    sims = {k: bandlimit_like_sim(_fit_length(resample_ir(x, fs, FS), n[k]), FS, fmax) for k, x in irs.items() if k in n}
+    return _compare(measured, sims, geoms, bt, fmax, gain_pair, K.BROADBAND_MAX_LAG_S)
 
 
 def average_response(results: list[PairResult], bt: BandTest, fmax: float) -> dict:

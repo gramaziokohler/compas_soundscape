@@ -39,11 +39,12 @@ def test_scene_inputs(scene_data):
     keys = [p.key for p in scene_data.measured]
     assert keys and scene.gain_pair in keys and set(scene.smoke_pairs) <= set(keys)
     assert all(m in scene.materials for m in mesh.materials)
+    from benchmarks.bras.bras_scene import onset_time
     c = speed_of_sound(scene.temperature_c)
     for p in scene_data.measured:
-        g = pair_geometry(p, mesh.vertices, mesh.faces, scene.source, c)
+        g = pair_geometry(p, mesh.vertices, mesh.faces, scene_data.source, c)
         if g.line_of_sight:
-            onset = np.argmax(np.abs(p.ir) > 0.1 * np.abs(p.ir).max()) / p.fs
+            onset = onset_time(p.ir, p.fs)
             assert abs(onset - g.t_direct) < K.ONSET_TOL_S, (p.key, onset, g.t_direct)
 
 

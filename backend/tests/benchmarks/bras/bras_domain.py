@@ -12,7 +12,7 @@ from typing import Optional
 
 import numpy as np
 
-from benchmarks.bras.bras_constants import GROUND_BELOW_CELLS
+from benchmarks.bras.bras_constants import GROUND_BELOW_CELLS, GROUND_TOL_M
 from config.constants import PFFDTD_SPEED_OF_SOUND
 from utils.pffdtd_grid import plan_grid
 
@@ -45,7 +45,7 @@ def alignment_box(obj_bmin, obj_bmax, ground_z: Optional[float]) -> tuple[np.nda
     """The box the grid is aligned to: the objects, extended down to the floor."""
     lo, hi = np.asarray(obj_bmin, np.float64).copy(), np.asarray(obj_bmax, np.float64).copy()
     if ground_z is not None:
-        if ground_z > lo[2] + 1e-9:
+        if ground_z > lo[2] + GROUND_TOL_M:
             raise ValueError(f"Ground at z = {ground_z} m is above the objects' bottom ({lo[2]:.3f} m)")
         lo[2] = ground_z
     return lo, hi

@@ -85,6 +85,8 @@ export interface ModelVersionStoreState {
   /** Simulation card to expand (consumed by AcousticsSection); `seq` re-triggers. */
   revealSimulation: { configId: string | null; seq: number } | null;
   isUploadingVersion: boolean;
+  /** True while "load new version" waits for the latest version to be loadable before reloading the page. */
+  isPreparingLatest: boolean;
 
   /** Reset for a newly opened model (or none). */
   resetForModel: (modelId: string | null, modelName?: string | null) => void;
@@ -108,6 +110,7 @@ export interface ModelVersionStoreState {
   /** Expand a simulation card (null = the most relevant one) so its materials are editable. */
   requestRevealSimulation: (configId: string | null) => void;
   setUploadingVersion: (uploading: boolean) => void;
+  setPreparingLatest: (preparing: boolean) => void;
 }
 
 /** Stable key of an impact request (versions + tolerance + region + points). */
@@ -175,6 +178,7 @@ const initialModelState = {
   rerunQueue: [] as string[],
   revealSimulation: null as { configId: string | null; seq: number } | null,
   isUploadingVersion: false,
+  isPreparingLatest: false,
 };
 
 export const useModelVersionStore = create<ModelVersionStoreState>()(
@@ -340,6 +344,9 @@ export const useModelVersionStore = create<ModelVersionStoreState>()(
 
       setUploadingVersion: (uploading) =>
         set({ isUploadingVersion: uploading }, false, 'modelVersion/setUploading'),
+
+      setPreparingLatest: (preparing) =>
+        set({ isPreparingLatest: preparing }, false, 'modelVersion/setPreparingLatest'),
     }),
     { name: 'modelVersionStore' },
   ),

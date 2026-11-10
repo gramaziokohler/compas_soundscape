@@ -58,7 +58,7 @@ def _write_obj(path, quads_by_label, key="usemtl"):
 def test_scene_registry():
     assert get_scene("RS2_1m_rigid").gain_pair in get_scene("RS2_1m_rigid").smoke_pairs
     for sc in SCENES.values():
-        assert sc.gain_pair and sc.band_test.stages and "*" in sc.materials
+        assert sc.gain_pair and sc.band_test.stages and sc.materials and sc.geometry.path is not None
     with pytest.raises(KeyError):
         get_scene("nope")
 

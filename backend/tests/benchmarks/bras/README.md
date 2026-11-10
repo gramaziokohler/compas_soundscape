@@ -13,18 +13,26 @@ new scene. Copy an entry of `SCENES` and set:
 
 | Field | What to link / set |
 | --- | --- |
-| `geometry.obj` | OBJ of the objects only (plate, wedge, blocks...). `up_axis="y"` for SketchUp / Rhino exports |
-| `materials` | OBJ material (`usemtl`) or group name, as a pattern, mapped to a BRAS material CSV. `"*"` covers the rest. Several materials are fine, e.g. `{"*RockFon*": ROCKFON, "*": MDF_25MM}` |
-| `measurements` | SOFA GeneralFIR (`RS*_RIRs_*.sofa`): measured IRs plus every source and receiver position |
-| `source` | Directivity file (BRAS `*_IR_front_pole.csv` or SOFA) and the loudspeaker orientations: `aim_point`, or `orientations={"LS1": (phi, theta)}` from the scene description |
+| `geometry.skp` | The BRAS SketchUp model, read directly (`bras_skp.py`): visible faces in metres, their material names, and the text labels. An OBJ of the objects (`geometry.obj`) still works |
+| `materials` | Material name in the model, as a pattern, mapped to a BRAS material CSV. Faces of a `.skp` whose material is not listed are left out (icons, supporting structure, the finite floor patch). Several materials are fine |
+| `measurements` | SOFA GeneralFIR (`RS*_RIRs_*.sofa`): the measured IRs. Positions come from the model's labels, which the BRAS documentation names as authoritative (the RS1 SOFA files disagree with them by up to 24 cm) |
+| `source` | Directivity file (BRAS `*_IR_front_pole.csv` or SOFA). Loudspeaker orientations are read from the model's labels; `orientations` or `aim_point` override or cross-check them |
 | `ground` | Hemi-anechoic chambers (RS1, RS5-RS7): a reflective floor spanning the whole domain, with its material key |
 | `temperature_c`, `humidity` | Chamber conditions (the speed of sound for the measured arrivals) |
 | `band_test` | See below |
 | `gain_pair`, `smoke_pairs`, `animation` | Level calibration pair, default pairs, animated loudspeaker and highlighted microphone |
 
-`BRAS_ROOT` relocates the database; `python -m benchmarks.bras.bras_benchmark --list` shows the
-scenes and any missing file. The RS2 entries other than `RS2_1m_rigid` need their OBJs exported
-from the `.skp` files first, with one material per surface type.
+`BRAS_ROOT` relocates the database. Reading `.skp` uses the SketchUp C library that Rhino 7/8 ships
+(`Plug-ins/SketchUpAPI.dll`, or `SKETCHUP_API_DLL`); it is Windows only.
+
+All RS1-RS7 setups of the documentation are registered (13 scenes). Notes that follow the documentation:
+
+- Hidden objects of a model are not used (the RS1 rigid model hides the absorber and the diffusor).
+- The supporting structures are left out, as the documentation allows.
+- RS2 and RS3 use `mat_MDF25mmA_plane`, RS4 and RS5 `mat_MDF25mmB_plane`, RS1 diffusor / RS6 / RS7 `mat_MDF12mm_plane`,
+  the absorbers `mat_RockFonSonarG_00deg`, the RWTH chamber floor `mat_Tiles`.
+- The RS2 absorber is drawn as one face; `extrude` turns it into the 20 mm slab.
+- Microphones 6 mm above the floor (RS5, RS6) are simulated at the solver's clearance (3.5 cells); the report says so.
 
 ## 2. Define the frequency-band test: `BandTest`
 
@@ -57,6 +65,22 @@ BRAS_SCENE=RS2_1m_rigid BRAS_FMAX=2500 BRAS_FULL=1 python -m pytest tests/benchm
 | `BRAS_ANIMATION=off` or `=LS3` | Skip the animation / animate another loudspeaker |
 | `BRAS_SOURCE_PHASE=off` | Compare the zero-phase solver output |
 | `BRAS_FORCE=1` | Ignore cached simulations |
+
+### Every reference scene in one go
+
+```bash
+python tests/benchmarks/bras/run_all.py --dry-run
+```
+
+```bash
+python tests/benchmarks/bras/run_all.py
+```
+
+The dry run reads every input, plans every grid and runs the app's geometry preflight without the GPU, and
+writes `plan.md` to the output root. The real run goes through the scenes and stages in sequence; each
+benchmark writes its report, plots and MP4 as it finishes, `index.md` lists them all, a failing scene does
+not stop the rest, and finished simulations are cached, so an interrupted run resumes.
+Options: `--scenes "RS1*" RS5`, `--stages 500`, `--pairs smoke`, `--no-animation`, `--force`.
 
 Or the CLI (with `backend/` and `backend/tests` on `PYTHONPATH`):
 `python -m benchmarks.bras.bras_benchmark --scene RS2_1m_rigid --all-stages --pairs all`.

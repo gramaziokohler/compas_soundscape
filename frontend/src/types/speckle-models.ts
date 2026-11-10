@@ -52,6 +52,18 @@ export interface SpeckleModelLatestVersion {
   message?: string;
 }
 
+/**
+ * Response from POST /api/speckle/models/{model_id}/prepare-latest.
+ * `ready`: ids are the viewer-loadable latest version. `preparing`: a fresh
+ * upload is still being materialized on the backend (ids are null).
+ */
+export interface SpeckleLatestReady {
+  status: 'ready' | 'preparing';
+  version_id: string | null;
+  object_id: string | null;
+  created_at?: string | null;
+}
+
 /** One user-visible model version (GET /api/speckle/models/{model_id}/versions). */
 export interface SpeckleModelVersion {
   /** Viewer-loadable version id (never a bundle). */

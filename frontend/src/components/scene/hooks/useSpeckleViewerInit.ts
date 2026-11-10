@@ -24,6 +24,7 @@ import { isShareViewActive } from '@/store/shareViewStore';
 import { apiService } from '@/services/api';
 import { SPECKLE_PINNED_VERSION_URL, SPECKLE_VIEWER_RETRY } from '@/utils/constants';
 import { getCssColorHex } from '@/utils/utils';
+import { isLoadableVersion, withModelVersion } from '@/utils/speckleLatestVersion';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
 
 interface ViewerInitProps {
@@ -337,6 +338,11 @@ export function useSpeckleViewerInit({
         // A pinned older version (`models/<id>@<versionId>`, chosen in the model
         // menu) is already a loadable legacy version — `ensure-ready` only heals
         // the LATEST version, so skip it and record the pinned version as loaded.
+        // URL the viewer actually loads. Following the latest, it is pinned to the
+        // exact version `ensure-ready` resolved, so the recorded loaded version is
+        // always the rendered one (an unpinned URL could resolve to a newer, still
+        // materializing bundle and leave the "new version" badge stuck on).
+        let loadUrl = modelUrl;
         const pinnedVersionId = modelUrl.match(SPECKLE_PINNED_VERSION_URL)?.[1] ?? null;
         if (pinnedVersionId) {
           const pinned = findModelVersion(useModelVersionStore.getState().versions, pinnedVersionId);
@@ -344,24 +350,29 @@ export function useSpeckleViewerInit({
           setLoadedModelVersionCreatedAt(pinned?.created_at ?? null);
         } else if (speckleData?.model_id && !isShareViewActive()) {
           // Make sure the model's latest version is viewer-safe (bundle uploads are
-          // materialized, pre-fix legacy copies are re-materialized). The model URL
-          // resolves to the latest version, so this must complete before loading.
+          // materialized, pre-fix legacy copies are re-materialized) before loading.
           // (The share view cannot call it — the owner's autosave already did.)
+          let resolved: { version_id?: string | null; object_id?: string | null; created_at?: string | null } | null = null;
           try {
-            const resolved = await apiService.ensureSpeckleModelReady(speckleData.model_id);
-            if (cancelled) return;
+            resolved = await apiService.ensureSpeckleModelReady(speckleData.model_id);
+          } catch (prepErr) {
+            console.warn('[useSpeckleViewerInit] ensure-ready failed, probing the latest version:', prepErr);
+            // Non-blocking fallback: use the latest version only if it is already loadable.
+            resolved = await apiService.prepareModelLatestVersion(speckleData.model_id).catch(() => null);
+          }
+          if (cancelled) return;
+          if (isLoadableVersion(resolved) && resolved?.version_id) {
+            loadUrl = withModelVersion(modelUrl, resolved.version_id);
             // Record the version actually loaded so the version watcher can detect
             // a newer commit on the model. `created_at` distinguishes a genuine new
             // publish from a re-materialized copy that merely has a different id.
-            setLoadedModelVersionId(resolved?.version_id || speckleData.version_id || null);
-            setLoadedModelVersionCreatedAt(resolved?.created_at || null);
-          } catch (prepErr) {
-            if (cancelled) return;
-            console.warn(
-              '[useSpeckleViewerInit] ensure-ready failed, loading current version:',
-              prepErr
-            );
-            setLoadedModelVersionId(speckleData.version_id || null);
+            setLoadedModelVersionId(resolved.version_id);
+            setLoadedModelVersionCreatedAt(resolved.created_at || null);
+          } else {
+            // Unknown which version the URL resolves to — never record a stale id
+            // (it would keep the "new version" badge on with nothing to switch to).
+            console.warn('[useSpeckleViewerInit] latest version not loadable yet, loading the model URL as-is');
+            setLoadedModelVersionId(null);
             setLoadedModelVersionCreatedAt(null);
           }
         } else {
@@ -379,7 +390,7 @@ export function useSpeckleViewerInit({
 
             let urls: string[] = [];
             try {
-              urls = await UrlHelper.getResourceUrls(modelUrl, speckleData?.auth_token);
+              urls = await UrlHelper.getResourceUrls(loadUrl, speckleData?.auth_token);
             } finally {
               console.error = originalError;
             }

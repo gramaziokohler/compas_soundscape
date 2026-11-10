@@ -37,7 +37,8 @@ def load_or_build_balloon(path: Path | str, fmt: str, step_deg: int = DIRECTIVIT
     return load_npz(cache)
 
 
-def measured_spec(fit: dict, forward, label: str) -> dict:
+def measured_spec(fit: dict, forward, label: str, path=None) -> dict:
     """``source_directivity_spec`` of a loudspeaker pointing along ``forward`` (roll 0, upright)."""
     yaw, pitch = yaw_pitch_from_forward(np.asarray(forward, np.float64))
-    return {"kind": "measured", "id": f"bench_{label}", "label": label, "fit": fit, "yaw": yaw, "pitch": pitch, "roll": 0.0}
+    return {"kind": "measured", "id": f"bench_{label}", "label": label, "fit": fit, "yaw": yaw, "pitch": pitch, "roll": 0.0,
+            **({"path": str(path)} if path is not None else {})}   # the balloon file: pyroomacoustics uses its IRs

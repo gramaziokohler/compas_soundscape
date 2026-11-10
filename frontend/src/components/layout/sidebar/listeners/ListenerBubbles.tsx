@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, type ReactNode } from 'react';
+import { useState, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import type { CardType, CustomMenuItem } from '@/types/card';
 import type { CardTypeOption } from '@/components/ui/CardSection';
 import type { ListenerItemConfig } from './listenerItems';
@@ -16,6 +16,8 @@ import { useBubbleFrontLayer } from '@/hooks/useBubbleFrontLayer';
 import { columnHeight, windowLayout } from '@/utils/bubbleOverflow';
 import { FPS_CONTROLS_HINT, SIMPLE_MODE } from '@/utils/constants';
 import { useCanEdit } from '@/hooks/useCanEdit';
+import { useShareLinkedIds } from '@/hooks/useShareLinkedIds';
+import { useActiveSceneId } from '@/hooks/useActiveSceneId';
 
 /** Extra Card props used when a card floats beside its bubble (Simple mode). */
 export interface FloatingCardOptions {
@@ -86,11 +88,28 @@ export function ListenerBubbles({
   const [addMenu, setAddMenu] = useState<{ x: number; y: number } | null>(null);
   const [itemMenu, setItemMenu] = useState<{ x: number; y: number; item: ListenerItemConfig } | null>(null);
   const columnSpace = useBubbleColumnSpace();
-  const itemCount = items.length;
   const fpsRowRef = useRef<HTMLDivElement>(null);
   // Share view: a listener has nothing to edit — a click powers it, no card opens.
   const canEdit = useCanEdit();
   const openIndex = canEdit ? openIndexProp : null;
+
+  // Share view: only the listeners linked to the powered scene (null = all).
+  const linkedIds = useShareLinkedIds('listener');
+  const shown = useMemo(
+    () => items.map((item, index) => ({ item, index })).filter(({ item }) => !linkedIds || linkedIds.has(item.id)),
+    [items, linkedIds],
+  );
+  const itemCount = shown.length;
+
+  // On a scene switch, leave a powered listener that is no longer listed
+  // (useShareLinkActivation then powers the newly linked one).
+  const activeSceneId = useActiveSceneId();
+  useEffect(() => {
+    const active = activeIndex !== null ? items[activeIndex] : undefined;
+    if (linkedIds && active && !linkedIds.has(active.id)) onTogglePower(null);
+    // Only on a scene change: a link group activated from a simulation may power any listener.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSceneId]);
 
   // Acoustics and Listeners share the right edge's height budget.
   useEffect(() => {
@@ -112,6 +131,8 @@ export function ListenerBubbles({
   // Exit button + help popup beside the powered bubble while its card is closed
   // (the open card shows the FPS notice itself).
   const isFpsActive = isFpsMode && !!activeItem && openIndex !== activeIndex;
+  // The column scrolls by bubble position, which differs from the item index once filtered.
+  const activePosition = shown.findIndex((s) => s.index === activeIndex);
 
   const handleClick = (index: number) => {
     if (!canEdit) {
@@ -128,7 +149,7 @@ export function ListenerBubbles({
         id={SIMPLE_MODE.LISTENERS_COLUMN_ID}
         className="transition-all duration-300"
         availablePx={columnSpace.listeners}
-        focusIndex={activeIndex}
+        focusIndex={activePosition >= 0 ? activePosition : null}
         direction="up"
         align="flex-end"
         labelSide="left"
@@ -148,7 +169,7 @@ export function ListenerBubbles({
             }}
           />
         }
-        items={items.map((item, index) => {
+        items={shown.map(({ item, index }) => {
           const active = activeIndex === index;
           const showExit = active && isFpsActive;
           const action = !canEdit

@@ -207,7 +207,7 @@ interface SpeckleSceneProps {
   /** True when a newer version of the open model exists but is not loaded yet. */
   hasNewModelVersion?: boolean;
 
-  /** Load the latest published version of the open model (in place). */
+  /** Load the latest published version of the open model (waits until it is loadable, then reloads the page). */
   onSwitchToLatest?: () => void;
 
   /** Upload a file as a new version of the open model (model pill menu). */
@@ -405,6 +405,7 @@ export function SpeckleScene({
   const pinnedVersionId = useModelVersionStore((s) => s.pinnedVersionId);
   const viewerReloadNonce = useModelVersionStore((s) => s.viewerReloadNonce);
   const isUploadingVersion = useModelVersionStore((s) => s.isUploadingVersion);
+  const isPreparingLatest = useModelVersionStore((s) => s.isPreparingLatest);
   const baseModelUrl = viewer_url || speckleData?.url;
   const modelUrl = baseModelUrl && pinnedVersionId ? `${baseModelUrl}@${pinnedVersionId}` : baseModelUrl;
 
@@ -1242,6 +1243,7 @@ export function SpeckleScene({
         onResetZoom={handleResetZoom}
         onRefreshScene={handleRefreshScene}
         showUpdateBadge={!!hasNewModelVersion}
+        isPreparingUpdate={isPreparingLatest}
         showObjectExplorer={showObjectExplorer}
         onToggleExplorer={handleToggleExplorer}
         showLoadModelPanel={showLoadModelPanel}
@@ -1260,7 +1262,7 @@ export function SpeckleScene({
             style={{ top: 12, zIndex: 45, paddingLeft: 16, paddingRight: 16 }}
           >
             <div style={{ maxWidth: 760, width: '100%', display: 'flex', justifyContent: 'center' }}>
-              <ModelVersionBanner />
+              <ModelVersionBanner onLoadLatest={onSwitchToLatest} />
             </div>
           </div>
           <ModelVersionReviewPanel
