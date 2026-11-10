@@ -302,8 +302,13 @@ export interface AudioControlsStoreState {
   /**
    * Called once after orchestrate pipeline sends configs to sound generation.
    * Sets iterationLinks (variant + entity per iteration) from orchestrateMeta.
+   *
+   * `preserveExisting: true` is the passive mode (re-syncs after unrelated
+   * edits): it only fills iterations that have no link yet and never overwrites
+   * a variant/entity the user picked in the DAW. Only an authoritative
+   * orchestrator result (fresh generation, re-orchestrate) may overwrite them.
    */
-  setOrchestrateIterationLinks: (configs: SoundGenerationConfig[]) => void;
+  setOrchestrateIterationLinks: (configs: SoundGenerationConfig[], opts?: { preserveExisting?: boolean }) => void;
   /**
    * Re-bakes all orchestrate schedule timestamps from the dependency graph.
    * Safe to call repeatedly — only updates when values change.
@@ -1005,7 +1010,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             'audio/toggleMasterMute',
           ),
 
-        setOrchestrateIterationLinks: (configs) => {
+        setOrchestrateIterationLinks: (configs, opts) => {
           const { _generatedSounds, iterationLinks } = get();
 
           // Build configIndex → primary generated sound ID
@@ -1056,6 +1061,19 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
           });
 
           if (Object.keys(freshLinks).length === 0) return;
+
+          if (opts?.preserveExisting) {
+            // Passive re-sync: fill only iterations without a link. A user's DAW
+            // variant/entity pick always wins over the authored orchestrateMeta.
+            const missing = Object.entries(freshLinks).filter(([k]) => iterationLinks[k] === undefined);
+            if (missing.length === 0) return;
+            set(
+              { iterationLinks: { ...iterationLinks, ...Object.fromEntries(missing) } },
+              false,
+              'audio/setOrchestrateIterationLinks/fill',
+            );
+            return;
+          }
 
           // Remove stale keys for sound IDs that are being re-linked so that
           // an old tts_8_0_Kore-2 from a previous (3-variant) generation doesn't

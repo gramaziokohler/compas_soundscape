@@ -1177,7 +1177,8 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           audioStore.syncGeneratedSounds(newGenerated);
           audioStore.pruneSounds(removedSoundIds);
           if (newConfigs.some((c) => c.orchestrateMeta)) {
-            audioStore.setOrchestrateIterationLinks(newConfigs);
+            // Deleting a card must not reset the DAW variant picks of the others.
+            audioStore.setOrchestrateIterationLinks(newConfigs, { preserveExisting: true });
             audioStore.bakeOrchestrateSchedule();
           }
         },

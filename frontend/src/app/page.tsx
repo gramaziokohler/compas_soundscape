@@ -593,6 +593,41 @@ function HomeContent() {
         void saveSoundscapeRef.current?.();
       }, 3000);
     };
+    // Refresh / tab close: the 3s debounce (and an in-flight save) would drop the
+    // last edits. Flush the pending save right away and, while content differs
+    // from the last saved fingerprint, ask the browser to confirm leaving (a
+    // keepalive/beacon save is not an option: the payload exceeds their 64 KB cap).
+    const hasUnsavedChanges = () => {
+      if (!selectHasSaveTarget(useUIStore.getState())) return false;
+      if (!autosaveEnabledRef.current) return false;
+      if (selectIsReadOnlyWorkspace(useWorkspaceStore.getState())) return false;
+      if (useShareViewStore.getState().isShareView) return false;
+      // Nothing saved yet on this page (fresh load): the pending save only
+      // re-writes what was just loaded.
+      const baseline = lastSavedSignatureRef.current;
+      if (baseline === null) return false;
+      const signature = computeSaveSignatureRef.current?.() ?? null;
+      return signature !== null && signature !== baseline;
+    };
+    const flushAutosaveNow = () => {
+      if (autosaveTimerRef.current) {
+        clearTimeout(autosaveTimerRef.current);
+        autosaveTimerRef.current = null;
+      }
+      lastSaveSourceRef.current = 'autosave';
+      void saveSoundscapeRef.current?.();
+    };
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!hasUnsavedChanges()) return;
+      flushAutosaveNow();
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden' && hasUnsavedChanges()) flushAutosaveNow();
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    document.addEventListener('visibilitychange', onVisibilityChange);
     const unsubSoundscape = useSoundscapeStore.subscribe(() => scheduleAutosave('soundscapeStore'));
     const unsubAudio = useAudioControlsStore.subscribe(() => scheduleAutosave('audioControlsStore'));
     const unsubReceivers = useReceiversStore.subscribe(() => scheduleAutosave('receiversStore'));
@@ -603,6 +638,8 @@ function HomeContent() {
     const unsubAcousticLayer = useAcousticLayerStore.subscribe(() => scheduleAutosave('acousticLayerStore'));
     const unsubShare = useShareConfigStore.subscribe(() => scheduleAutosave('shareConfigStore'));
     return () => {
+      window.removeEventListener('beforeunload', onBeforeUnload);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
       unsubUI();
       unsubSoundscape();
       unsubAudio();
@@ -751,8 +788,14 @@ function HomeContent() {
       if (!audioStore._generationInProgress) {
         audioStore.bakeOrchestrateSchedule();
       }
-      // Re-derived from the generated configs — never its own undo step.
-      runWithoutUndo(() => audioStore.setOrchestrateIterationLinks(soundGen.soundConfigs));
+      // Re-derived from the generated configs — never its own undo step. Passive:
+      // this effect also fires on unrelated edits (sphere move, rename, FX…) and
+      // after a restore, so it only fills missing links and never overwrites a
+      // variant the user picked in the DAW (authoritative re-stamps happen in
+      // the generation / re-orchestrate pipeline).
+      runWithoutUndo(() =>
+        audioStore.setOrchestrateIterationLinks(soundGen.soundConfigs, { preserveExisting: true }),
+      );
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [soundGen.generatedSounds]);
@@ -2667,6 +2710,11 @@ function HomeContent() {
       // Reads live store state, so the freshly-persisted analysis audio filenames
       // from step 2 are included.
       const payload = buildSavePayload(modelId, modelName, uploadedFilenames);
+      // Fingerprint of exactly what this save sends (built from the same live
+      // state, same moment). Edits made while the request is in flight must NOT
+      // be baselined as saved — otherwise the pending autosave sees "no change"
+      // and the edit never reaches disk.
+      const sentSignature = computeSaveSignatureRef.current?.() ?? null;
 
       // Optimistic-concurrency token for shared workspaces. The backend rejects
       // the save with 409 if another member has written since we last loaded.
@@ -2679,9 +2727,9 @@ function HomeContent() {
         // Our own save is what is shown now.
         markSoundscapeLoaded(result.revision);
       }
-      // Re-baseline from live stores (after step-2 side effects) so the next
-      // autosave does not re-save identical content.
-      lastSavedSignatureRef.current = computeSaveSignatureRef.current?.() ?? null;
+      // Re-baseline to what was actually sent (after step-2 side effects) so the
+      // next autosave skips identical content but still saves mid-flight edits.
+      lastSavedSignatureRef.current = sentSignature;
       console.log('[page.tsx] Soundscape saved:', result.message);
     } catch (err) {
       const conflictRevision = (err as { conflictRevision?: number }).conflictRevision;
