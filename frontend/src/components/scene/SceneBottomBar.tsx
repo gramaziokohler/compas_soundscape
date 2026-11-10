@@ -218,6 +218,7 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
             />
             <ShortcutTooltip shortcut="PLAY_PAUSE" label={isPlaying ? 'Pause' : 'Play the scene'}>
               <button
+                id={SCENE_BOTTOM_BAR.PLAY_BUTTON_ID}
                 type="button"
                 className="bar-play"
                 onClick={isPlaying ? onPause : onPlay}

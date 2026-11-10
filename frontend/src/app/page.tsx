@@ -6,6 +6,7 @@ import { SpeckleScene } from "@/components/scene/SpeckleScene";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { RightSidebar } from "@/components/layout/RightSidebar";
 import { SimpleSoundscapes } from "@/components/simple/SimpleSoundscapes";
+import { ShareTutorial } from "@/components/share/ShareTutorial";
 import { HomeSceneComposer } from "@/components/simple/HomeSceneComposer";
 import { registerSendToSoundGeneration } from "@/store/sceneWorkflowStore";
 import type { SidebarProps } from "@/types/components";
@@ -4046,6 +4047,8 @@ function HomeContent() {
         )}
         {/* Home new-scene panel — stays open across a Simple ↔ Expert switch */}
         {!isShareView && <HomeSceneComposer />}
+        {/* Share view: first-load mini tutorial (turn a scene on → play → switch simulations / listeners) */}
+        {isShareView && <ShareTutorial />}
 
       {/* Advanced Settings floating panel */}
       <AdvancedSettingsPanel

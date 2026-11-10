@@ -1106,6 +1106,12 @@ login and can only select and play. It also works inside an iframe.
   - While in FPS, `FpsControlsHint` lists the controls above the bottom bar (it replaces the
     editor's `FpsHelpPopup`). It shows on each FPS entry until closed. Closing it shrinks it into
     the "Leave FPS view" button and marks the `fps-controls` one-time hint seen (localStorage).
+  - On the first model load, `ShareTutorial` (`components/share/`, state in
+    `hooks/useShareTutorial.ts`, anchors tracked by `hooks/useAnchorRect.ts`) shows numbered tips
+    one at a time: turn a scene on → press Play → switch acoustic simulations → switch listeners.
+    Steps already done or with nothing to point at are left out. A tip moves on when its action is
+    done, on click, or after `SHARE_TUTORIAL.STEP_DURATION_MS`; × skips the tour. Shown once per
+    browser (`share-tutorial` one-time hint, localStorage).
   - The bottom bar has no Refresh scene button.
   - Opening a simulation card keeps the current view mode.
   - Waveforms only seek (no trim), and sounds or listeners never get the move gizmo.

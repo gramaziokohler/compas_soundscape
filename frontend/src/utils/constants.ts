@@ -2675,7 +2675,8 @@ export const SIMPLE_MODE = {
   /** DOM ids of the bubble columns (SectionHighlight targets from SimulationSummaryBar). */
   SOUNDSCAPES_COLUMN_ID: 'simple-soundscapes-column',
   LISTENERS_COLUMN_ID: 'simple-listeners-column',
-  BUBBLE_SIZE: 36,              // px — scene / simulation bubble diameter
+  ACOUSTICS_COLUMN_ID: 'simple-acoustics-column',
+  BUBBLE_SIZE: 36,             // px — scene / simulation bubble diameter
   EXIT_BUTTON_SIZE: 26,         // px — "Leave FPS view" button beside the active listener
   FLYOUT_POWER_SIZE: 26,        // px — power button inside a bubble's hover flyout
   POWER_ICON_SIZE: 13,          // px — power glyph in the flyout / panel header
@@ -2770,6 +2771,8 @@ export const SCENE_BOTTOM_BAR = {
   DAW_CONTROLS_SLOT_ID: 'scene-bottom-bar-daw-controls',
   /** Object Explorer toggle — Simple-mode SectionHighlight target for materials. */
   OBJECT_EXPLORER_BUTTON_ID: 'scene-bottom-bar-object-explorer',
+  /** Play / pause button — anchor of the share-view tutorial's "press play" tip. */
+  PLAY_BUTTON_ID: 'scene-play-button',
 } as const;
 
 // Viewport render styles (bottom-bar dropdown → useSpeckleRenderStyle →
@@ -2994,6 +2997,29 @@ export const FPS_CONTROLS_HINT = {
   CLOSE_LABEL: 'Hide these controls',
   CLOSE_ANIMATION_MS: 420,
   CLOSE_END_SCALE: 0.04,
+} as const;
+
+/** Share view: first-load numbered coach-mark tour (components/share/ShareTutorial.tsx). */
+export const SHARE_TUTORIAL = {
+  /** One-time hint id (useOneTimeHint) — the tour shows once per browser. */
+  HINT_ID: 'share-tutorial',
+  START_DELAY_MS: 1000,    // after the model is loaded and the scenes are known
+  STEP_DURATION_MS: 9000,  // a tip hides (and the tour moves on) after this long
+  ANCHOR_WAIT_MS: 9000,    // a step whose anchor is missing (e.g. Play not shown yet) is skipped after this
+  ANCHOR_POLL_MS: 250,     // anchor re-measure interval while a tip is shown
+  GAP: 14,                 // px — between the tip and its anchor
+  WIDTH: 240,              // px
+  VIEWPORT_MARGIN: 16,     // px — keep the tip this far inside the window
+  POWER_ICON_SIZE: 12,     // px — inline ⏻ glyph in the first tip
+  Z_INDEX: 205,            // above the docked DAW (200), below bar popovers (210)
+  SKIP_LABEL: 'Skip tutorial',
+  STEPS: {
+    /** `afterIcon` follows an inline power glyph (the button in the circle's hover flyout). */
+    scene: { title: 'Turn on a sound scene', message: 'Hover a circle and press', afterIcon: ', or just click the circle.' },
+    play: { title: 'Then press play', message: 'Listen to the activated sound scene (or press Space).' },
+    acoustics: { title: 'Switch acoustic simulations', message: 'Hear how the space changes the sound.' },
+    listeners: { title: 'Switch listeners', message: 'Hear the scene from another spot in the model.' },
+  },
 } as const;
 
 export const SHORTCUT_TOOLTIP = {

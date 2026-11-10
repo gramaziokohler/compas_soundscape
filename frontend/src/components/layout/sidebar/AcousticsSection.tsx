@@ -2392,6 +2392,7 @@ function AcousticsBubbles({
         Acoustics
       </BubbleHeading>
       <BubbleScrollColumn
+        id={SIMPLE_MODE.ACOUSTICS_COLUMN_ID}
         availablePx={columnSpace.acoustics}
         focusIndex={focusIndex}
         align="flex-end"

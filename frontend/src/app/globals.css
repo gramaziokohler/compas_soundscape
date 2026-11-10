@@ -2020,6 +2020,133 @@ button.mv-row:hover:not(:disabled) {
   color: var(--color-secondary-hover);
 }
 
+/* Share view: first-load numbered tour tips (components/share/ShareTutorial.tsx).
+   Fixed beside their anchor; position + width come from SHARE_TUTORIAL. */
+.share-tutorial-tip {
+  position: fixed;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 8px 10px 10px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 10px;
+  box-shadow: var(--shadow-lg);
+  color: var(--foreground);
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+.share-tutorial-tip--right,
+.share-tutorial-tip--left {
+  transform: translateY(-50%);
+}
+.share-tutorial-tip--right { animation: share-tutorial-in-right 0.25s ease-out; }
+.share-tutorial-tip--left  { animation: share-tutorial-in-left 0.25s ease-out; }
+.share-tutorial-tip--above { animation: share-tutorial-in-above 0.25s ease-out; }
+@keyframes share-tutorial-in-right {
+  from { opacity: 0; transform: translate(-6px, -50%); }
+  to   { opacity: 1; transform: translate(0, -50%); }
+}
+@keyframes share-tutorial-in-left {
+  from { opacity: 0; transform: translate(6px, -50%); }
+  to   { opacity: 1; transform: translate(0, -50%); }
+}
+@keyframes share-tutorial-in-above {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+/* Arrow toward the anchor: a rotated square sharing the tip's fill and border. */
+.share-tutorial-tip::before {
+  content: '';
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-strong);
+}
+.share-tutorial-tip--right::before {
+  left: -6px;
+  top: calc(50% - 5px);
+  border-top: none;
+  border-right: none;
+  transform: rotate(45deg);
+}
+.share-tutorial-tip--left::before {
+  right: -6px;
+  top: calc(50% - 5px);
+  border-bottom: none;
+  border-left: none;
+  transform: rotate(45deg);
+}
+.share-tutorial-tip--above::before {
+  bottom: -6px;
+  left: calc(var(--share-tutorial-arrow-x, 50%) - 5px);
+  border-top: none;
+  border-left: none;
+  transform: rotate(45deg);
+}
+.share-tutorial-tip__badge {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  color: var(--color-on-blue);
+  font-size: 11px;
+  font-weight: 700;
+  animation: share-tutorial-pulse 1.6s ease-out infinite;
+}
+@keyframes share-tutorial-pulse {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-primary) 55%, transparent); }
+  100% { box-shadow: 0 0 0 8px color-mix(in srgb, var(--color-primary) 0%, transparent); }
+}
+.share-tutorial-tip__body {
+  flex: 1;
+  min-width: 0;
+}
+.share-tutorial-tip__title {
+  font-size: 12px;
+  font-weight: 600;
+  margin: 1px 0 2px;
+}
+.share-tutorial-tip__message {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--color-secondary-hover);
+  margin: 0;
+}
+.share-tutorial-tip__power {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin: 0 1px;
+  vertical-align: -3px;
+  border-radius: 50%;
+  border: 1px solid var(--color-border-strong);
+  color: var(--color-primary);
+}
+/* Step out of the way while the visitor follows the tip: hovering the column it
+   points at opens bubble flyouts (power buttons) exactly where the tip sits.
+   Ids mirror SIMPLE_MODE.*_COLUMN_ID and SCENE_BOTTOM_BAR.PLAY_BUTTON_ID. */
+body:has(#simple-soundscapes-column .bubble-wrap:hover) .share-tutorial-tip[data-step='scene'],
+body:has(#simple-acoustics-column .bubble-wrap:hover) .share-tutorial-tip[data-step='acoustics'],
+body:has(#simple-listeners-column .bubble-wrap:hover) .share-tutorial-tip[data-step='listeners'],
+body:has(#scene-play-button:hover) .share-tutorial-tip[data-step='play'] {
+  opacity: 0.12;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .share-tutorial-tip,
+  .share-tutorial-tip__badge {
+    animation: none;
+  }
+}
+
 /* ==========================================================================
    Card design system — shared presentation classes (token-only)
    ========================================================================== */
