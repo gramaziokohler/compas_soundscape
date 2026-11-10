@@ -2010,6 +2010,10 @@ button.mv-row:hover:not(:disabled) {
   pointer-events: none;
   animation: bar-hint-in 0.2s ease-out;
 }
+/* The strip lets clicks through to the 3D view — except its close button. */
+.fps-controls-hint .bar-hint__close {
+  pointer-events: auto;
+}
 .fps-controls-hint__title {
   font-weight: 600;
 }

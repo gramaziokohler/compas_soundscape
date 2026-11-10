@@ -9,6 +9,7 @@ import {
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import type { ShareItemKind, ShareLink } from '@/types/share';
 import { selectSceneByIndex } from '@/utils/sceneSelection';
+import { useActiveSceneId } from '@/hooks/useActiveSceneId';
 
 type ActiveItems = Record<ShareItemKind, string | null>;
 
@@ -43,17 +44,12 @@ export function useShareLinkActivation({
 }: UseShareLinkActivationArgs): void {
   const links = useShareViewStore((s) => s.links);
   const analysisConfigs = useAnalysisStore((s) => s.analysisConfigs);
-  const activeSoundParentIndex = useUIStore((s) => s.activeSoundParentIndex);
-  const isInSoundsStep = useUIStore((s) => s.isInSoundsStep);
+  const activeSceneId = useActiveSceneId();
   const simulationConfigs = useAcousticsSimulationStore((s) => s.simulationConfigs);
   const activeSimulationIndex = useAcousticsSimulationStore((s) => s.activeSimulationIndex);
   // The model is loaded (and listener meshes exist) once the coordinator is set.
   const isViewerReady = useSpeckleEngineStore((s) => s.coordinator !== null);
 
-  const activeSceneId =
-    isInSoundsStep && activeSoundParentIndex !== null
-      ? analysisConfigs[activeSoundParentIndex]?.scene_id ?? null
-      : null;
   const activeSimulationId =
     activeSimulationIndex !== null ? simulationConfigs[activeSimulationIndex]?.id ?? null : null;
 

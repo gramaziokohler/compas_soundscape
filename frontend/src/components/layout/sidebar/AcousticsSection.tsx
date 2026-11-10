@@ -22,6 +22,7 @@
 'use client';
 
 import { useCanEdit } from '@/hooks/useCanEdit';
+import { useShareLinkedSimulations } from '@/hooks/useShareLinkedSimulations';
 import React, { useCallback, useEffect, useState, useRef, useMemo } from 'react';
 import { Power, ChevronDown, ChevronRight, Eye } from 'lucide-react';
 import { CardSection, type CardTypeOption } from '@/components/ui/CardSection';
@@ -2353,7 +2354,20 @@ function AcousticsBubbles({
     });
   }, [simMenu, simulationConfigs, onUpdateConfig]);
   const columnSpace = useBubbleColumnSpace();
-  const simulationCount = simulationConfigs.length;
+  // Share view: only the simulations linked to the powered scene (null = all).
+  const linkedIds = useShareLinkedSimulations();
+  const shown = useMemo(
+    () => simulationConfigs
+      .map((config, index) => ({ config, index }))
+      .filter(({ config }) => !linkedIds || linkedIds.has(config.id)),
+    [simulationConfigs, linkedIds],
+  );
+  const simulationCount = shown.length;
+  // An open card whose simulation was just filtered out closes.
+  const openHidden = openIndex !== null && !shown.some((s) => s.index === openIndex);
+  useEffect(() => {
+    if (openHidden) onReduce();
+  }, [openHidden, onReduce]);
 
   // Acoustics and Listeners share the right edge's height budget.
   useEffect(() => {
@@ -2384,7 +2398,10 @@ function AcousticsBubbles({
   const frontLayer = useBubbleFrontLayer(openIndex);
   const columnTop = SIMPLE_MODE.RIGHT_TOP_OFFSET + BUBBLE_LABEL_HEIGHT;
   const runningIndex = simulationConfigs.findIndex((c) => simRuntime(c).isRunning);
-  const focusIndex = openIndex ?? activeSimulationIndex ?? (runningIndex >= 0 ? runningIndex : null);
+  const focusConfigIndex = openIndex ?? activeSimulationIndex ?? (runningIndex >= 0 ? runningIndex : null);
+  // The column scrolls by bubble position, which differs from the config index once filtered.
+  const focusPosition = shown.findIndex((s) => s.index === focusConfigIndex);
+  const focusIndex = focusPosition >= 0 ? focusPosition : null;
 
   return (
     <>
@@ -2398,7 +2415,7 @@ function AcousticsBubbles({
         align="flex-end"
         labelSide="left"
         style={{ right: SIMPLE_MODE.EDGE_MARGIN, top: columnTop, zIndex: SIMPLE_MODE.Z_INDEX }}
-        items={simulationConfigs.map((config, index) => {
+        items={shown.map(({ config, index }) => {
           const rt = simRuntime(config);
           const label = config.display_name || CARD_TYPE_LABELS[config.type] || 'Simulation';
           const isActive = config.type === 'resonance'
