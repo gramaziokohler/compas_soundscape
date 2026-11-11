@@ -100,8 +100,6 @@ class BandTest:
     gate_ms: float = 17.0                 # analysis window: pre_ms before to gate_ms after the direct sound
     pre_ms: float = 2.0
     duration_s: float = 0.05              # simulated IR length (longest direct path + gate + margin)
-    padding_m: dict = field(default_factory=dict)  # fmax -> free air (m) when Scene.padding_m does not fit the GPU
-                                          # (PFFDTD_GPU_MEMORY_GB); the domain-edge echo is removed anyway
 
 
 @dataclass(frozen=True)
@@ -137,7 +135,6 @@ class Scene:
     smoke_pairs: tuple = ("LS1-MP1",)     # default pairs (all of them with BRAS_FULL=1)
     animation: AnimationSpec = field(default_factory=AnimationSpec)
     ground: Optional[GroundPlane] = None  # hemi-anechoic chamber floor (RS1, RS5-RS7)
-    padding_m: float = 3.0                # free air around everything (the domain edge echo is removed)
     positions: str = "auto"               # "labels" (.skp text labels, authoritative per the BRAS documentation),
                                           # "sofa", or "auto" = labels when the model has them
     chamber: str = ""                     # for the report
@@ -163,12 +160,11 @@ FLOOR = GroundPlane(z=0.0, material="floor")                                 # k
 GENELEC = SourceInput(directivity=GENELEC_8020C)   # orientations: the (phi, theta) of each LS label in the .skp
 
 # Band test: two stages; the final one compares 125 Hz - 2 kHz (0.8 x 2.5 kHz). 27.456 points per
-# wavelength at 500 Hz = 25 mm cells (the plate thickness). Padding is reduced automatically when the
-# grid does not fit the GPU (PFFDTD_GPU_MEMORY_GB).
+# wavelength at 500 Hz = 25 mm cells (the plate thickness). The free air per domain face is computed
+# from the scene (bras_domain.edge_padding_m); a grid that does not fit the GPU (PFFDTD_GPU_MEMORY_GB)
+# is coarsened first (bras_constants.PPW_MIN).
 RS_STAGES = {500.0: 27.456, 2500.0: 10.0}
 RS_BANDS = BandTest(stages=RS_STAGES, fmin_hz=125.0)
-RS2_BANDS = BandTest(stages=RS_STAGES, fmin_hz=125.0, padding_m={2500.0: 2.5})
-RS2_2M_BANDS = BandTest(stages=RS_STAGES, fmin_hz=125.0, padding_m={2500.0: 2.3})   # the 2 x 2 m plate: larger domain
 # RS3: flutter between two plates 10 m apart (29 ms per round trip): a 100 ms window holds three round trips
 RS3_BANDS = BandTest(stages=RS_STAGES, fmin_hz=125.0, gate_ms=100.0, duration_s=0.14)
 
@@ -178,10 +174,10 @@ RS2_SOURCE = SourceInput(directivity=GENELEC_8020C, aim_point=(0.0, 0.0, 1.02))
 RS2_RIGID = {"MDF12mm": MDF_25MM}
 RS2_MATERIALS = {"MDF12mm": MDF_25MM, "Plaster_Mortar_White": ROCKFON}
 RS2_ABSORBER_SLAB = {"Plaster_Mortar_White": (-0.020, 0.0, 0.0)}   # 20 mm RockFon, drawn as its front face only
-RS2_COMMON = dict(source=RS2_SOURCE, temperature_c=17.6, humidity=47.0, gain_pair="LS1-MP1", band_test=RS2_BANDS,
+RS2_COMMON = dict(source=RS2_SOURCE, temperature_c=17.6, humidity=47.0, gain_pair="LS1-MP1", band_test=RS_BANDS,
                   smoke_pairs=("LS1-MP1", "LS4-MP4"), animation=AnimationSpec(source="LS1", receiver="MP1"),
                   chamber=TU_BERLIN)
-RS2_2M = {**RS2_COMMON, "band_test": RS2_2M_BANDS}
+RS2_2M = {**RS2_COMMON}
 # RS1 (RWTH, 20.3 degC, 41.5 %): loudspeakers and microphones at 30 / 45 / 60 deg above a 4.2 x 4.2 m
 # sample on the floor; all in the plane y = 2.985.
 RS1_COMMON = dict(source=GENELEC, temperature_c=20.3, humidity=41.5, ground=FLOOR, gain_pair="LS3-MP3",

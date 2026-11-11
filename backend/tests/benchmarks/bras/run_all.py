@@ -32,6 +32,7 @@ import numpy as np  # noqa: E402
 
 from benchmarks.bras import bras_constants as K  # noqa: E402
 from benchmarks.bras.bras_benchmark import RunOptions, SceneData, load_scene, output_dir, plan_run, run_benchmark  # noqa: E402
+from benchmarks.bras.bras_domain import describe_padding  # noqa: E402
 from benchmarks.bras.bras_scene import onset_time  # noqa: E402
 from benchmarks.bras.scenes import RS_SCENES, SCENES, missing_inputs  # noqa: E402
 
@@ -55,7 +56,8 @@ def stage_options(data: SceneData, stages: list[str], pairs: str, args) -> list[
     keys = [p.key for p in data.measured] if pairs == "all" else list(data.scene.smoke_pairs)
     return [RunOptions(fmax=f, ppw=bt.stages[f], pair_keys=keys, directional=not args.omni,
                        animation=not args.no_animation, force=args.force,
-                       pra=not args.no_pra) for f in fmaxes if f in bt.stages]
+                       pra=not args.no_pra, high_order=not args.first_order,
+                       gain_pair=args.gain_pair) for f in fmaxes if f in bt.stages]
 
 
 def preflight_errors(rp) -> list[str]:
@@ -121,8 +123,9 @@ def describe_stage(data: SceneData, opts: RunOptions) -> tuple[list[str], float,
     errors = preflight_errors(rp)
     lines = [f"- **fmax {opts.fmax:g} Hz**: compared {bt.fmin_hz:g} to {bt.fmax_fraction * opts.fmax:g} Hz, window "
              f"{bt.gate_ms:g} ms; h = {d.h * 1e3:.2f} mm ({d.ppw_effective:.1f} points per wavelength), "
-             f"{d.nodes / 1e6:.0f} M nodes, {d.gpu_gb:.1f} of {d.gpu_budget_gb:.1f} GB, padding {rp.padding_m:g} m; "
-             f"{len(rp.pairs)} pairs, {rp.engine_runs} GPU runs + animation, about {rp.est_s / 60:.0f} min"]
+             f"{d.nodes / 1e6:.0f} M nodes, {d.gpu_gb:.1f} of {d.gpu_budget_gb:.1f} GB; "
+             f"{len(rp.pairs)} pairs, {rp.engine_runs} GPU runs + animation, about {rp.est_s / 60:.0f} min",
+             f"  - {describe_padding(rp.padding)}"]
     for m in rp.moved:
         lines.append(f"  - {m['id']} at {m['z_m'] * 1e3:.0f} mm above the floor is simulated at {m['simulated_z_m'] * 1e3:.0f} mm")
     lines += [f"  - PREFLIGHT ERROR: {e}" for e in errors]
@@ -222,6 +225,9 @@ def main(argv=None) -> int:
     ap.add_argument("--no-pra", action="store_true", help="skip the pyroomacoustics curve")
     ap.add_argument("--omni", action="store_true", help="omnidirectional loudspeakers")
     ap.add_argument("--force", action="store_true", help="ignore cached simulations")
+    ap.add_argument("--first-order", action="store_true",
+                    help="PFFDTD with the app's first-order directivity fit (default: the whole measured balloon)")
+    ap.add_argument("--gain-pair", default="on_axis", help="on_axis (default), scene, or a pair key")
     args = ap.parse_args(argv)
     names = select_scenes(args.scenes)
     return dry_run(names, args) if args.dry_run else run(names, args)

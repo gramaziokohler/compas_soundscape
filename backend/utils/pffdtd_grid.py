@@ -100,7 +100,7 @@ def plan_grid(extents, fmax: float, ppw: float, duration: float, domain_extents=
         mis = _misalignment(extents, h).tolist()
     sized = extents if domain_extents is None else np.asarray(domain_extents, np.float64)
     shape = tuple(int(math.ceil(L / h)) + PFFDTD_GRID_PADDING_CELLS for L in sized)
-    nodes = int(np.prod(shape))
+    nodes = math.prod(shape)  # Python ints: np.prod is int32 on Windows with numpy < 2 and overflows past 2^31 nodes
     Ts = h * PFFDTD_COURANT_CART / PFFDTD_SPEED_OF_SOUND
     steps = int(math.ceil(duration / Ts))
     return GridPlan(

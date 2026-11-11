@@ -72,6 +72,7 @@ class MeshPrepOptions:
     coplanar_distance_m: float
     detect_two_sided: bool
     quality_factor: float
+    drop_unreached_faces: bool = False
 
     @classmethod
     def from_settings(cls, settings: Optional[MeshPrepSettings]) -> "MeshPrepOptions":
@@ -83,6 +84,7 @@ class MeshPrepOptions:
             coplanar_distance_m=s.coplanar_distance_mm / 1000.0,
             detect_two_sided=s.detect_two_sided,
             quality_factor=SIM_MESH_VISIBILITY_QUALITY_FACTORS[s.visibility_quality],
+            drop_unreached_faces=s.drop_unreached_faces,
         )
 
 
@@ -229,12 +231,16 @@ class SimulationMeshService:
         )
 
         # ── Coplanar merge into simulated walls ──────────────────────────────
+        # Faces the air never reaches stay in the mesh (diagnostics, PFFDTD export) but, with
+        # drop_unreached_faces, become no wall: the image source model would mirror in them.
+        simulated = (face_class != FACE_CLASS_SKIPPED) if options.drop_unreached_faces else np.ones(len(tri), bool)
+        stats["unreached_faces_dropped"] = int((~simulated).sum())
         if options.merge_coplanar:
             key_index: dict[tuple, int] = {}
             keys = np.array([
                 key_index.setdefault(
                     (_material_key(face_material[f]), float(np.nan_to_num(face_scat[f], nan=-1.0)),
-                     bool(orient.two_sided[f]), int(face_object[f])),
+                     bool(orient.two_sided[f]), int(face_object[f]), bool(simulated[f])),
                     len(key_index),
                 )
                 for f in range(len(tri))
@@ -245,6 +251,7 @@ class SimulationMeshService:
             )
         else:
             walls = [MergedWall(verts[t].copy(), np.array([f])) for f, t in enumerate(tri)]
+        walls = [w for w in walls if simulated[w.faces].all()]   # unreached faces never merge with others
 
         stats.update({
             "components": int(n_comp),

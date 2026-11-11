@@ -289,7 +289,9 @@ Rules:
   the geometry bbox. The grid edge is a first-order ABC: it echoes at oblique incidence (≈ −12…−22 dB re
   the direct sound for a 3 m padding), so free-field comparisons need gating or an empty-domain control
   run to subtract. `grid_spacing` fixes h when the caller planned the grid (e.g. a floor spanning
-  the padded domain). Measured benchmark: `backend/tests/benchmarks/bras/` (BRAS reference scenes;
+  the padded domain). The subtraction misses edge waves that also meet an object, so size the padding
+  per face so those arrive after the analysis window (`bras_domain.edge_padding_m`: image-source bound
+  via any object point). Measured benchmark: `backend/tests/benchmarks/bras/` (BRAS reference scenes;
   inputs linked in `scenes.py`, README there).
 - **Oblique walls use conformal cut cells** (`SimSpec.conformal`, default on, Cartesian only;
   `python/voxelizer/cut_cells.py` + `cut_cell_geom.py`). Each cut cell gets its air volume fraction

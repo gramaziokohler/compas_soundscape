@@ -53,7 +53,7 @@ from config.constants import (
     PYROOMACOUSTICS_SIMULATION_MODE_FOA,
 )
 from models.schemas import MeshPrepSettings
-from services.pffdtd_directivity import job_source_directivities
+from services.pffdtd_directivity import high_order_enabled, job_source_directivities
 from services.pffdtd_free import FreeOptions, job_block as free_job_block, reset_store as reset_free_store, results_block as free_results_block
 from services.pyroomacoustics_directivity import directivity_result_entry
 from services.pffdtd_scene_export import bounding_box, build_scene
@@ -409,7 +409,8 @@ def _run_from_geometry(
             entry.update({"channel_ordering": "ACN", "normalization_convention": "SN3D", "format": "AmbiX",
                           "encoding_method": "pressure_gradient", "channel_names": CHANNELS_FOA})
         if spec_by_sid.get(sid):
-            entry["source_directivity"] = {**directivity_result_entry(spec_by_sid[sid]), "approximation": "first_order_per_band"}
+            approx = "high_order_measured" if (spec_by_sid[sid].get("high_order") and high_order_enabled()) else "first_order_per_band"
+            entry["source_directivity"] = {**directivity_result_entry(spec_by_sid[sid]), "approximation": approx}
         try:
             params = AcousticMeasurement.calculate_acoustic_parameters_from_rir(ir[0].astype(np.float64), AUDIO_SAMPLE_RATE)
             if params:

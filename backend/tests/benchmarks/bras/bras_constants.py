@@ -22,10 +22,26 @@ GROUND_BELOW_CELLS = 2                          # domain extends this many cells
 GROUND_TOL_M = 1e-3                             # objects may dip this far under the floor (model rounding)
 GROUND_INSET_CELLS = 1                          # ground plane stops this far inside the domain faces
 CLEARANCE_MARGIN_CELLS = 0.5                    # seeds near the floor go to (PFFDTD_SEED_CLEARANCE_CELLS + this) cells
-PADDING_FALLBACKS_M = (2.5, 2.0, 1.5)           # tried in turn when a scene's padding does not fit the GPU
+# Free air per domain face, from geometry and arrival times (bras_domain.edge_padding_m): no edge
+# wave that meets an object may reach a microphone before the window ends (gate + fade + this)
+EDGE_RINGING_S = 0.001                          # the edge pulse's low-pass pre-ringing (zero phase at fmax)
+PADDING_MARGIN_M = 0.1                          # added to every computed face padding
+PADDING_MIN_M = 0.5                             # never less free air than this (seed clearance, control markers)
+# When that domain does not fit the GPU (PFFDTD_GPU_MEMORY_GB): a coarser grid first, down to this many
+# points per wavelength at fmax (10 at the compared band's top, 0.8 x fmax); only then less padding,
+# and the report flags the run as not edge-clean
+PPW_MIN = 8.0
 
 # ── pyroomacoustics (second engine, image sources) ────────────────────────────
 PRA_INT16_SCALE = 32767.0                       # the app writes its pyroomacoustics IRs as int16 = IR x 32767
+PRA_CLOSED_ROOM = True                         # pyroomacoustics: fully absorbing shell around the open scene (bras_geometry.enclosed_geometry)
+PRA_SHELL_KEY = "anechoic_shell"               # material / object key of that shell
+PRA_SHELL_MARGIN_M = 1.0                       # the shell sits this far beyond the padded domain
+# Mesh preparation for the pyroomacoustics runs (MeshPrepSettings). The BRAS RockFon absorbers are
+# tiled panels with ~1 mm slits between them: welding at 2 mm closes the slits, and the panel sides
+# left inside the slab (never reached by the air) are dropped, else the image source model mirrors
+# in them and repeats the absorber reflection (+10 dB on the RS1 specular pairs).
+PRA_MESH_SETTINGS = {"weld_tolerance_mm": 2.0, "drop_unreached_faces": True}
 ENV_PRA = "BRAS_PRA"                            # on (default) | off
 
 # ── Analysis ──────────────────────────────────────────────────────────────────
@@ -52,6 +68,8 @@ ENV_MATERIAL = "BRAS_MATERIAL"                  # csv (default) | rigid
 ENV_FORCE = "BRAS_FORCE"                        # 1 = ignore cached simulations
 ENV_ANIMATION = "BRAS_ANIMATION"                # off | a loudspeaker id (default: the scene's)
 ENV_SOURCE_PHASE = "BRAS_SOURCE_PHASE"          # on (default) | off
+ENV_HIGH_ORDER = "BRAS_HIGH_ORDER"              # on (default): PFFDTD uses the whole measured balloon | off: first-order fit
+ENV_GAIN_PAIR = "BRAS_GAIN_PAIR"                # on_axis (default) | scene (the scene's gain_pair) | a pair key
 MATERIAL_MODES = ("csv", "rigid")
 
 # ── Wave animation (omni pulse, the app's on-demand animation mode) ───────────

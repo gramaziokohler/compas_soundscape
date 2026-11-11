@@ -37,8 +37,15 @@ def load_or_build_balloon(path: Path | str, fmt: str, step_deg: int = DIRECTIVIT
     return load_npz(cache)
 
 
-def measured_spec(fit: dict, forward, label: str, path=None) -> dict:
-    """``source_directivity_spec`` of a loudspeaker pointing along ``forward`` (roll 0, upright)."""
+def measured_spec(fit: dict, forward, label: str, path=None, high_order=None) -> dict:
+    """``source_directivity_spec`` of a loudspeaker pointing along ``forward`` (roll 0, upright).
+
+    ``high_order`` (a dict of directional_ho parameters, ``{}`` for the defaults) makes PFFDTD use the
+    whole measured balloon instead of the first-order fit (services/pffdtd_directivity.py; the job
+    needs PFFDTD_HIGH_ORDER_DIRECTIVITY=1). pyroomacoustics always uses the balloon's IRs (``path``)."""
     yaw, pitch = yaw_pitch_from_forward(np.asarray(forward, np.float64))
-    return {"kind": "measured", "id": f"bench_{label}", "label": label, "fit": fit, "yaw": yaw, "pitch": pitch, "roll": 0.0,
+    spec = {"kind": "measured", "id": f"bench_{label}", "label": label, "fit": fit, "yaw": yaw, "pitch": pitch, "roll": 0.0,
             **({"path": str(path)} if path is not None else {})}   # the balloon file: pyroomacoustics uses its IRs
+    if high_order is not None and path is not None:
+        spec.update(high_order=dict(high_order) or True, balloon_npz=str(path))
+    return spec

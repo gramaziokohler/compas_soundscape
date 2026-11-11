@@ -21,7 +21,7 @@ from pathlib import Path
 import numpy as np
 from scipy.io import wavfile
 
-from benchmarks.bras.bras_constants import AIR_ABSORPTION, PRA_INT16_SCALE, SIMULATION_MODE
+from benchmarks.bras.bras_constants import AIR_ABSORPTION, PRA_INT16_SCALE, PRA_MESH_SETTINGS, SIMULATION_MODE
 from config.constants import PFFDTD_SPEED_OF_SOUND, PYROOMACOUSTICS_RAY_TRACING_N_RAYS
 
 MANIFEST = "manifest.json"
@@ -62,7 +62,7 @@ def frac_delay_lead() -> int:
 
 
 def _hash(cfg: PraConfig, geometry: dict, pairs_data: list) -> str:
-    payload = json.dumps([asdict(cfg), geometry, pairs_data], sort_keys=True, default=str)
+    payload = json.dumps([asdict(cfg), geometry, pairs_data, PRA_MESH_SETTINGS], sort_keys=True, default=str)
     return hashlib.sha1(payload.encode()).hexdigest()
 
 
@@ -93,7 +93,7 @@ def _run_compute_loop(loop, sim_id: str, cfg: PraConfig, geometry: dict, pairs_d
         simulation_name=f"BRAS {cfg.tag()}", pairs_data=pairs_data, vertices=geometry["vertices"],
         faces=geometry["faces"], object_face_ranges=geometry["object_face_ranges"],
         face_material_map={int(k): v for k, v in geometry["face_materials"].items()}, face_scattering_map=None,
-        mesh_settings=None, simulation_mode=SIMULATION_MODE, max_order=cfg.max_order, ray_tracing=cfg.ray_tracing,
+        mesh_settings=dict(PRA_MESH_SETTINGS), simulation_mode=SIMULATION_MODE, max_order=cfg.max_order, ray_tracing=cfg.ray_tracing,
         air_absorption=AIR_ABSORPTION, n_rays=PYROOMACOUSTICS_RAY_TRACING_N_RAYS, sound_speed=PFFDTD_SPEED_OF_SOUND,
         rir_dir=run_dir / "rir", tmp_dir=run_dir, entry_meta={}, parallel=True,
     )

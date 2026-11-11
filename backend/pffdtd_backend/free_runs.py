@@ -25,7 +25,8 @@ from typing import Callable
 
 import numpy as np
 
-from pffdtd_backend.directional import compose, probe_row_ranges
+from pffdtd_backend.directional import compose
+from pffdtd_backend import directional_ho
 from pffdtd_backend.engine import run_engine
 from pffdtd_backend.free_grid import FreeGrid, candidate_grid
 from pffdtd_backend.free_ir import AXES, FREE_META, FREE_POINTS, dipole_points, reciprocal_channels, run_file, to_wav_ir
@@ -104,8 +105,12 @@ def run_reciprocal(job: dict, watch, emit: Callable, on_voxelised: Callable, vox
     listeners = np.asarray(job["receivers"], np.float64)
     # Directional sources (pffdtd_backend/directional.py) are 7-probe receiver sets; omni ones one probe.
     directivities = list(job.get("source_directivities") or [None] * len(sources))
-    probe_sets = [probe_positions(s, bool(spec), offset_m) for s, spec in zip(sources, directivities)]
-    rows = probe_row_ranges([bool(spec) for spec in directivities])
+    # (high-order sources, benchmark only: a ball of probes, pffdtd_backend/directional_ho.py)
+    ho = [spec.get("high_order") if spec else None for spec in directivities]
+    probe_sets = [directional_ho.probe_positions(s, h, o["radius_cells"]) if o else probe_positions(s, bool(spec), offset_m)
+                  for s, spec, o in zip(sources, directivities, ho)]
+    starts = np.cumsum([0] + [len(ps) for ps in probe_sets])
+    rows = [(int(starts[i]), len(ps)) for i, ps in enumerate(probe_sets)]
     probes = np.vstack(probe_sets)
     channels = ["W", *AXES] if foa else ["W"]
     runs = [(li, ch) for li in range(len(listeners)) for ch in channels]
@@ -152,7 +157,15 @@ def run_reciprocal(job: dict, watch, emit: Callable, on_voxelised: Callable, vox
         per_source = np.empty((sources.shape[0], r_out.shape[1]))
         for si, ((row0, n_rows), spec_i) in enumerate(zip(rows, directivities)):
             block = r_out[row0:row0 + n_rows]
-            if spec_i:
+            if ho[si]:
+                o = {**ho[si], "f_top_hz": float(ho[si].get("top_fraction", 1.25)) * float(job["fmax"])}
+                offsets = probe_sets[si] - sources[si][None, :]
+                per_source[si] = directional_ho.compose_ho(block, offsets, o, 1.0 / Ts, c)
+                if o.get("dump_dir"):  # raw probes for offline calibration
+                    Path(o["dump_dir"]).mkdir(parents=True, exist_ok=True)
+                    np.savez_compressed(Path(o["dump_dir"]) / f"probes_{work_dir.name}_src{si}_lis{li}_{ch}.npz", probes=block.astype(np.float32),
+                                        offsets=offsets, Ts=Ts, c=c, source=sources[si], listener=listeners[li])
+            elif spec_i:
                 chs = foa_channels(block, Ts, offset_m, c)  # [W, Y, Z, X]
                 per_source[si] = compose(chs[0], chs[[3, 1, 2]], spec_i, 1.0 / Ts)
             else:

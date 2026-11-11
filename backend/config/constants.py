@@ -596,6 +596,11 @@ SIM_MESH_COPLANAR_ANGLE_DEG_MAX = 10.0
 SIM_MESH_COPLANAR_DISTANCE_MM_DEFAULT = 1.0
 SIM_MESH_COPLANAR_DISTANCE_MM_MAX = 20.0
 SIM_MESH_DETECT_TWO_SIDED_DEFAULT = True
+# Leave the faces the air never reaches (class "skipped": seams between touching parts, faces
+# inside solids) out of the simulated walls. Off by default: they have no air path, but the
+# image source model still mirrors sources in them, so on models with internal seams (tiled
+# absorber panels) they add spurious reflections. Used by the BRAS benchmark.
+SIM_MESH_DROP_UNREACHED_FACES_DEFAULT = False
 SIM_MESH_VISIBILITY_QUALITY_DEFAULT = "standard"
 SIM_MESH_VISIBILITY_QUALITY_FACTORS = {"fast": 0.4, "standard": 1.0, "thorough": 2.5}
 SIM_MESH_ENCLOSING_OBJECT_MIN_FACES = 4        # Loose-face objects smaller than this are never "closed boxes"
@@ -943,6 +948,17 @@ PFFDTD_DEFAULT_AIR_ABSORPTION = True
 # grid spacing may shrink by up to this fraction to put the bounding-box planes on cell faces
 PFFDTD_ALIGN_SEARCH_FRACTION = 0.15
 PFFDTD_FOA_OFFSET_CELLS = 1.0        # pressure-gradient probes at +/- this many cells
+# High-order measured directivity (pffdtd_backend/directional_ho.py): a ball of probes per
+# directional source instead of 7. Benchmark only: off unless this env variable is "1"
+# (tests/benchmarks/bras sets it); the app keeps the first-order fit. Calibrated on the RS2 free-field
+# control runs (12.5 mm grid): radius 4, order 4, floor 0.005 reproduce the balloon within 0.03 dB
+# broadband relative between pairs (first-order fit: up to 0.9 dB), 0.5 dB per octave.
+PFFDTD_HIGH_ORDER_DIRECTIVITY_ENV = "PFFDTD_HIGH_ORDER_DIRECTIVITY"
+PFFDTD_HO_PROBE_RADIUS_CELLS = 4.0   # probe ball radius (grid cells)
+PFFDTD_HO_MAX_ORDER = 4              # spherical-harmonic order cap
+PFFDTD_HO_BESSEL_FLOOR = 0.005       # keep order l while max |j_l(k r)| over the ball >= this
+PFFDTD_HO_BALLOON_ORDER = 8          # order of the balloon's projection (world frame)
+PFFDTD_HO_TOP_FRACTION = 1.25        # compose up to this x fmax (the IR is low-passed at fmax)
 # sources/receivers need this clearance: trilinear stencil (1 cell) + FOA probes (1 cell) + margin
 PFFDTD_SEED_CLEARANCE_CELLS = 3.0
 PFFDTD_LOWCUT_HZ = 10.0              # removes the (non-decaying) uniform-pressure mode

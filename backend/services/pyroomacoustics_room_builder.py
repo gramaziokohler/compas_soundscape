@@ -48,6 +48,29 @@ def _fit_bands(values, n_bands: int) -> list[float]:
     return values[:n_bands]
 
 
+def _octave_centres(n_bands: int) -> np.ndarray:
+    """Centre frequencies of pra's octave bands (base frequency x 2^k)."""
+    return float(pra.constants.get("octave_bands_base_freq")) * 2.0 ** np.arange(n_bands)
+
+
+def _to_octave_bands(coeffs, center_freqs, n_bands: int) -> list[float]:
+    """Coefficients given at ``center_freqs`` -> pra's ``n_bands`` octave bands, by frequency.
+
+    Each octave gets the mean of the input bands centred in it (three for 1/3-octave data,
+    one for octave data, so octave materials map unchanged); an octave without any gets the
+    value interpolated on a log-frequency axis, held constant beyond the given range.
+    """
+    f = np.asarray(center_freqs, np.float64)
+    c = np.asarray(coeffs, np.float64)
+    order = np.argsort(f)
+    f, c = f[order], c[order]
+    out = []
+    for fc in _octave_centres(n_bands):
+        inside = (f >= fc / np.sqrt(2.0)) & (f < fc * np.sqrt(2.0))
+        out.append(float(c[inside].mean()) if inside.any() else float(np.interp(np.log2(fc), np.log2(f), c)))
+    return out
+
+
 def _absorption_bands(material, n_bands: int) -> tuple[list[float], list[float]]:
     """Per-band absorption + the material's own scattering for a material id / coeff dict."""
     value = material
@@ -58,10 +81,14 @@ def _absorption_bands(material, n_bands: int) -> tuple[list[float], list[float]]
         # User materials arrive inlined as {"id", "coeffs", "center_freqs"}; pra takes only the bands.
         value = {"coeffs": value["coeffs"], "center_freqs": value["center_freqs"]}
     mat = pra.Material(energy_absorption=value)
-    return (
-        _fit_bands(mat.energy_absorption["coeffs"], n_bands),
-        _fit_bands(mat.scattering["coeffs"], n_bands),
-    )
+    ea = mat.energy_absorption
+    # Map by frequency: taking the first n_bands values would give pra's 125 Hz-16 kHz octaves
+    # the lowest bands of finer data (1/3-octave from 20 Hz -> the 20-100 Hz absorption).
+    if ea.get("center_freqs") is not None and len(ea["center_freqs"]) == len(ea["coeffs"]):
+        absorption = _to_octave_bands(ea["coeffs"], ea["center_freqs"], n_bands)
+    else:
+        absorption = _fit_bands(ea["coeffs"], n_bands)
+    return absorption, _fit_bands(mat.scattering["coeffs"], n_bands)
 
 
 def build_room(
