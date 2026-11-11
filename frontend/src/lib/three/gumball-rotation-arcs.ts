@@ -7,13 +7,15 @@
  * plane it rotates and sitting between the arrows. Arcs always face the camera's
  * quadrant so they are never hidden behind the anchor.
  *
- * - Drag an arc → rotates the selected object's orientation about that world axis
- *   (live store writes; one undo step per gesture, see undoRedoRegistry).
+ * - Drag an arc → rotates the selection about that world axis through the center
+ *   of the selection's bounding box (the gizmo anchor): positions orbit the pivot
+ *   and every orientable object (listener, directional sound) turns with it.
+ *   Live store writes; one undo step per gesture, see undoRedoRegistry.
  * - Click an arc (quick press, no move) → numeric prompt "Rotate Z [ ] °".
  * - Holding the press without moving does nothing.
  *
- * Arcs are shown only while the gizmo is attached to a single object whose
- * orientation can be edited (listener, or a sound with a directional pattern).
+ * Arcs show for any multi-selection, and for a single object with an editable
+ * orientation (a lone omni sound has nothing to rotate).
  *
  * Usage (SpeckleDragHandler):
  * ```ts
@@ -77,19 +79,35 @@ export interface GumballRotationArcsDeps {
   canvas: HTMLCanvasElement;
   getCamera: () => THREE.Camera | null;
   getTransformControls: () => TransformControls | null;
-  /** Gizmo anchor (its world position is the rotation pivot / arc center). */
+  /** Gizmo anchor = selection bounding-box center = rotation pivot / arc center. */
   getAnchor: () => THREE.Object3D;
-  /** Orientation of the current single selection, or null when it cannot rotate. */
-  getTarget: () => OrientationTarget | null;
+  /** Objects the gizmo is attached to. */
+  getSelection: () => THREE.Object3D[];
+  /** Orientation accessor of one object, or null when it has none (omni sound). */
+  resolveOrientation: (object: THREE.Object3D) => OrientationTarget | null;
+  /** Move one object to a rotated position (surface markers re-snap or stay). */
+  placeObject: (object: THREE.Object3D, position: THREE.Vector3) => void;
+  /** Commit the objects' current positions (same path as the end of a gizmo drag). */
+  commitPositions: (objects: THREE.Object3D[]) => void;
   /** Freeze / release Speckle's camera controls around a drag. */
   setCameraEnabled: (enabled: boolean) => void;
   requestRender: () => void;
 }
 
+/** State of the selection when a rotation starts; every step rotates from it. */
+interface RotationSnapshot {
+  pivot: THREE.Vector3;
+  items: Array<{
+    object: THREE.Object3D;
+    startPosition: THREE.Vector3;
+    orientation: OrientationTarget | null;
+    startOrientation: YawPitchRoll | null;
+  }>;
+}
+
 interface ArcDrag {
   axis: GumballAxis;
-  target: OrientationTarget;
-  start: YawPitchRoll;
+  snapshot: RotationSnapshot;
   plane: THREE.Plane;
   prev: THREE.Vector3;
   angle: number;
@@ -172,7 +190,7 @@ export class GumballRotationArcs {
     const camera = this.deps.getCamera();
     const tc = this.deps.getTransformControls();
     const visible = !!camera && !!tc && !!tc.object && tc.mode === 'translate'
-      && (this.drag !== null || this.deps.getTarget() !== null);
+      && (this.drag !== null || this.canRotateSelection());
     this.group.visible = visible;
     if (!visible || !camera || !tc) {
       if (this.hovered) this.setHovered(null);
@@ -226,6 +244,58 @@ export class GumballRotationArcs {
     }
   }
 
+  // ── Rotation ──────────────────────────────────────────────────────────────
+
+  /**
+   * Several objects always rotate (their positions orbit the pivot); a single one
+   * only when it has an orientation (an omni sound spun about its center is a no-op).
+   */
+  private canRotateSelection(): boolean {
+    const selection = this.deps.getSelection();
+    if (selection.length > 1) return true;
+    return selection.length === 1 && this.deps.resolveOrientation(selection[0]) !== null;
+  }
+
+  private takeSnapshot(): RotationSnapshot | null {
+    const selection = this.deps.getSelection();
+    if (selection.length === 0) return null;
+    return {
+      pivot: this.deps.getAnchor().getWorldPosition(new THREE.Vector3()),
+      items: selection.map((object) => {
+        const orientation = this.deps.resolveOrientation(object);
+        return {
+          object,
+          startPosition: object.position.clone(),
+          orientation,
+          startOrientation: orientation ? orientation.get() : null,
+        };
+      }),
+    };
+  }
+
+  /** Rotate the snapshot by `angle` about the world axis through its pivot. */
+  private applyRotation(snapshot: RotationSnapshot, axis: GumballAxis, angle: number): void {
+    const axisVec = GUMBALL_AXIS_VECTORS[axis];
+    const q = new THREE.Quaternion().setFromAxisAngle(axisVec, angle);
+    const moved: THREE.Object3D[] = [];
+    for (const item of snapshot.items) {
+      const next = item.startPosition.clone().sub(snapshot.pivot).applyQuaternion(q).add(snapshot.pivot);
+      if (next.distanceToSquared(item.object.position) > 1e-12) {
+        this.deps.placeObject(item.object, next);
+        moved.push(item.object);
+      }
+    }
+    // Positions first: store-driven re-syncs triggered by the orientation writes
+    // below then read the rotated positions instead of snapping objects back.
+    if (moved.length > 0) this.deps.commitPositions(moved);
+    for (const item of snapshot.items) {
+      if (item.orientation && item.startOrientation) {
+        item.orientation.set(rotateOrientation(item.startOrientation, axisVec, angle));
+      }
+    }
+    this.deps.requestRender();
+  }
+
   // ── Pointer handling ──────────────────────────────────────────────────────
 
   private toNdc(e: PointerEvent): THREE.Vector2 {
@@ -253,13 +323,13 @@ export class GumballRotationArcs {
   }
 
   /** Point on the arc's rotation plane under the pointer, relative to the pivot. */
-  private planeVector(e: PointerEvent, plane: THREE.Plane): THREE.Vector3 | null {
+  private planeVector(e: PointerEvent, plane: THREE.Plane, pivot: THREE.Vector3): THREE.Vector3 | null {
     const camera = this.deps.getCamera();
     if (!camera) return null;
     this.raycaster.setFromCamera(this.toNdc(e), camera);
     const hit = this.raycaster.ray.intersectPlane(plane, new THREE.Vector3());
     if (!hit) return null;
-    const v = hit.sub(this.group.position);
+    const v = hit.sub(pivot);
     return v.lengthSq() > 1e-12 ? v : null;
   }
 
@@ -272,12 +342,12 @@ export class GumballRotationArcs {
     if (e.button !== 0 || this.drag) return;
     const axis = this.hitTest(this.toNdc(e));
     if (!axis) return;
-    const target = this.deps.getTarget();
-    if (!target) return;
+    const snapshot = this.takeSnapshot();
+    if (!snapshot) return;
 
     const axisVec = GUMBALL_AXIS_VECTORS[axis];
-    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(axisVec, this.group.position);
-    const prev = this.planeVector(e, plane);
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(axisVec, snapshot.pivot);
+    const prev = this.planeVector(e, plane, snapshot.pivot);
     if (!prev) return;
 
     // Own this press: keep it away from TransformControls, box-select and the camera.
@@ -286,7 +356,7 @@ export class GumballRotationArcs {
     if (tc) tc.enabled = false;
     this.deps.setCameraEnabled(false);
     this.gesture.begin(e);
-    this.drag = { axis, target, start: target.get(), plane, prev, angle: 0, downX: e.clientX, downY: e.clientY, moved: false };
+    this.drag = { axis, snapshot, plane, prev, angle: 0, downX: e.clientX, downY: e.clientY, moved: false };
     this.setHovered(axis);
     this.deps.canvas.style.cursor = 'grabbing';
     window.addEventListener('pointermove', this.onDragMove, true);
@@ -305,14 +375,13 @@ export class GumballRotationArcs {
       if (dx * dx + dy * dy <= GUMBALL.CLICK_MAX_MOVE_PX * GUMBALL.CLICK_MAX_MOVE_PX) return;
       drag.moved = true;
     }
-    const current = this.planeVector(e, drag.plane);
+    const current = this.planeVector(e, drag.plane, drag.snapshot.pivot);
     if (!current) return;
     const axisVec = GUMBALL_AXIS_VECTORS[drag.axis];
     const cross = new THREE.Vector3().crossVectors(drag.prev, current);
     drag.angle += Math.atan2(cross.dot(axisVec), drag.prev.dot(current));
     drag.prev = current;
-    drag.target.set(rotateOrientation(drag.start, axisVec, drag.angle));
-    this.deps.requestRender();
+    this.applyRotation(drag.snapshot, drag.axis, drag.angle);
   };
 
   private onDragEnd = (e: PointerEvent): void => {
@@ -323,7 +392,7 @@ export class GumballRotationArcs {
     if (isClick) {
       const { clientX, clientY } = e;
       // Defer so the click / focus events of this release settle first.
-      setTimeout(() => this.openPrompt(drag.axis, drag.target, clientX, clientY), 0);
+      setTimeout(() => this.openPrompt(drag.axis, clientX, clientY), 0);
     }
   };
 
@@ -350,15 +419,15 @@ export class GumballRotationArcs {
     this.deps.requestRender();
   }
 
-  private openPrompt(axis: GumballAxis, target: OrientationTarget, clientX: number, clientY: number): void {
+  private openPrompt(axis: GumballAxis, clientX: number, clientY: number): void {
     openGumballNumericPrompt({
       clientX,
       clientY,
       label: `Rotate ${axis}`,
       unit: GUMBALL.ANGLE_UNIT,
       onSubmit: (degrees) => {
-        target.set(rotateOrientation(target.get(), GUMBALL_AXIS_VECTORS[axis], degrees * DEG));
-        this.deps.requestRender();
+        const snapshot = this.takeSnapshot();
+        if (snapshot) this.applyRotation(snapshot, axis, degrees * DEG);
       },
     });
   }

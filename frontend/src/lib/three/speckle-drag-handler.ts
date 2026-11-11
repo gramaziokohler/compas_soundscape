@@ -46,6 +46,7 @@ import { isShareViewActive } from '@/store/shareViewStore';
 import { GumballRotationArcs, GUMBALL_AXIS_VECTORS, type GumballAxis } from './gumball-rotation-arcs';
 import { attachTranslateClickPrompt } from './gumball-translate-prompt';
 import { resolveOrientationTarget } from './audio-object-orientation';
+import { selectionPivot } from './gumball-selection-bounds';
 
 /**
  * SpeckleDragHandler class
@@ -157,8 +158,10 @@ export class SpeckleDragHandler {
       getCamera: () => this.viewer.getRenderer().renderingCamera ?? null,
       getTransformControls: () => this.transformControls,
       getAnchor: () => this.dummyAnchor,
-      getTarget: () =>
-        this.selectedObjects.length === 1 ? resolveOrientationTarget(this.selectedObjects[0]) : null,
+      getSelection: () => this.selectedObjects,
+      resolveOrientation: resolveOrientationTarget,
+      placeObject: (object, position) => this.placeRotatedObject(object, position),
+      commitPositions: (objects) => this.onDragEndCallback?.(objects, this.dummyAnchor.position.clone()),
       setCameraEnabled: (enabled) => this.setCameraEnabledAfterDrag(enabled),
       requestRender: () => this.viewer.requestRender(),
     });
@@ -213,6 +216,19 @@ export class SpeckleDragHandler {
     this.onAnchorChanged();
     this.onDragEndCallback?.(this.selectedObjects, this.dummyAnchor.position.clone());
     this.viewer.requestRender();
+  }
+
+  /**
+   * Move one object to a position computed by the rotation arcs. A surface marker
+   * is re-snapped onto its surface and stays put when no surface lies there
+   * (same rule as a multi-selection translate).
+   */
+  private placeRotatedObject(object: THREE.Object3D, position: THREE.Vector3): void {
+    const previous = object.position.clone();
+    object.position.copy(position);
+    if (this.isSurfaceMarker(object) && !this.snapMarkerToSurface(object, object.position, false)) {
+      object.position.copy(previous);
+    }
   }
 
   /**
@@ -389,19 +405,9 @@ export class SpeckleDragHandler {
     this.rotationArcs?.update();
   }
 
-  /** Gizmo anchor point for one object. */
-  private objectCenter(object: THREE.Object3D): THREE.Vector3 {
-    // Invisible marker proxy — its own position IS the anchor (an empty group
-    // has no AABB, so Box3.getCenter would be NaN).
-    if (object.userData?.isSurfaceMarker) return object.position.clone();
-    return new THREE.Box3().setFromObject(object).getCenter(new THREE.Vector3());
-  }
-
-  /** Average of the selected objects' centers (the object's own center for a single selection). */
+  /** Gizmo anchor / rotation pivot: center of the selection's (union) bounding box. */
   private computeSelectionCenter(): THREE.Vector3 {
-    const center = new THREE.Vector3();
-    for (const object of this.selectedObjects) center.add(this.objectCenter(object));
-    return center.divideScalar(Math.max(1, this.selectedObjects.length));
+    return selectionPivot(this.selectedObjects);
   }
 
   /**
@@ -504,7 +510,8 @@ export class SpeckleDragHandler {
   public syncAnchorToSelection(): void {
     if (this.selectedObjects.length === 0) return;
     this.selectionHighlight?.update();
-    if (!this.isDragging) {
+    // Keep the anchor (= rotation pivot) fixed during translate and rotate drags.
+    if (!this.getIsDragging()) {
       const center = this.computeSelectionCenter();
       if (this.dummyAnchor.position.distanceTo(center) > 0.0001) {
         this.dummyAnchor.position.copy(center);

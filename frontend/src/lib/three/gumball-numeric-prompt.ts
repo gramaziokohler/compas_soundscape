@@ -96,10 +96,16 @@ export function openGumballNumericPrompt(opts: GumballNumericPromptOptions): () 
   );
 
   let closed = false;
+  // A press anywhere outside the box cancels it. Blur alone is not enough: the
+  // Speckle canvas prevents default on pointerdown, so the input keeps focus.
+  const onOutsidePointerDown = (e: PointerEvent) => {
+    if (!(e.target instanceof Node) || !box.contains(e.target)) close();
+  };
   const close = () => {
     if (closed) return;
     closed = true;
     input.removeEventListener('blur', close);
+    document.removeEventListener('pointerdown', onOutsidePointerDown, true);
     box.remove();
     if (closeCurrent === close) closeCurrent = null;
   };
@@ -124,6 +130,7 @@ export function openGumballNumericPrompt(opts: GumballNumericPromptOptions): () 
     }
   });
   input.addEventListener('blur', close);
+  document.addEventListener('pointerdown', onOutsidePointerDown, true);
 
   document.body.appendChild(box);
 

@@ -262,6 +262,7 @@ compas_soundscape/
 │       │       ├── gumball-translate-prompt.ts  # Click (not drag/hold) on a gizmo arrow → "Move X [ ] m" prompt
 │       │       ├── gumball-numeric-prompt.ts    # Floating number input used by every gumball handle
 │       │       ├── gumball-click-gesture.ts     # Click vs drag/hold detection for gumball handles
+│       │       ├── gumball-selection-bounds.ts  # Gizmo anchor / rotation pivot = center of the selection's bounding box
 │       │       ├── audio-object-orientation.ts  # Gizmo object → store yaw/pitch/roll (listener, directional sound)
 │       │       ├── speckle-event-bridge.ts      # Speckle event bridge (click, Shift/Ctrl multi-select, box-select)
 │       │       ├── custom-object-box-select.ts  # Screen-rect projection + selectable sound/listener collection for box-select
