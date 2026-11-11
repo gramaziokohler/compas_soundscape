@@ -157,13 +157,17 @@ export function useSpeckleSoundHighlight({
         }
         dragTargetSphereRef.current = attachTarget;
       } else {
-        // No highlighted sphere: detach the gizmo from ANY attached sound sphere.
-        // This covers gizmos attached by the event bridge click handler (where
-        // dragTargetSphereRef is never set), so collapsing the card clears the
-        // gizmo even when it wasn't attached by this effect. Receiver gizmos are
-        // untouched (only 'sound' is deselected).
+        // No highlighted sphere: detach the gizmo from ANY attached sound sphere
+        // once the highlight is dropped (card collapsed / changed, or the sphere
+        // this effect attached to is gone). This covers gizmos attached by the
+        // event bridge click handler (where dragTargetSphereRef is never set).
+        // A sphere selected by a plain scene click with no card highlighted
+        // (Simple mode) keeps its gizmo through unrelated re-runs — e.g. the
+        // position sync after dragging it — until the user clicks elsewhere.
+        // Receiver gizmos are untouched (only 'sound' is deselected).
+        const highlightDropped = cardChanged || dragTargetSphereRef.current !== null;
         const attached = dragHandler.getSelectedObjects()?.[0];
-        if (attached?.userData.customObjectType === 'sound') {
+        if (highlightDropped && attached?.userData.customObjectType === 'sound') {
           dragHandler.deselectObjects();
         }
         dragTargetSphereRef.current = null;

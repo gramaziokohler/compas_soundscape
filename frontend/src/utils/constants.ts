@@ -1795,7 +1795,13 @@ export const CAMERA_CONFIG = {
   INIT_X: 15,
   INIT_Y: 10,
   INIT_Z: 15,
-  FRAME_MULTIPLIER: 0.95
+  FRAME_MULTIPLIER: 0.95,
+  /**
+   * Upper bound (m) on the Speckle viewer's near clipping plane. The EMPIRIC near plane is
+   * ~1% of the scene's largest dimension, so a 300 m model clips everything within ~3 m of
+   * the camera. Lower values cost depth precision (no logarithmic depth buffer).
+   */
+  SPECKLE_MAX_NEAR_PLANE: 0.1,
 } as const;
 
 // First-person focal-length control (mouse wheel over the 3D canvas).

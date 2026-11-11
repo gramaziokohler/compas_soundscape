@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo, useRef, type ReactNode } from 'react';
+import { useState, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from 'react';
 import type { CardType, CustomMenuItem } from '@/types/card';
 import type { CardTypeOption } from '@/components/ui/CardSection';
 import type { ListenerItemConfig } from './listenerItems';
@@ -89,6 +89,9 @@ export function ListenerBubbles({
   const [itemMenu, setItemMenu] = useState<{ x: number; y: number; item: ListenerItemConfig } | null>(null);
   const columnSpace = useBubbleColumnSpace();
   const fpsRowRef = useRef<HTMLDivElement>(null);
+  const rowRefs = useRef(new Map<string, HTMLDivElement>());
+  // Distance (px) from the column bottom to the open bubble's bottom edge.
+  const [panelLift, setPanelLift] = useState(0);
   // Share view: a listener has nothing to edit — a click powers it, no card opens.
   const canEdit = useCanEdit();
   const openIndex = canEdit ? openIndexProp : null;
@@ -133,6 +136,28 @@ export function ListenerBubbles({
   const isFpsActive = isFpsMode && !!activeItem && openIndex !== activeIndex;
   // The column scrolls by bubble position, which differs from the item index once filtered.
   const activePosition = shown.findIndex((s) => s.index === activeIndex);
+  const openPosition = shown.findIndex((s) => s.index === openIndex);
+  const focusPosition = openPosition >= 0 ? openPosition : activePosition;
+
+  // The open card lines up with its bubble. Re-measured whenever the column's
+  // rows change (scrolling the window re-slices them). offsetTop is relative to
+  // the fixed column and ignores the window's slide transform.
+  const openItemId = openItem?.id ?? null;
+  useLayoutEffect(() => {
+    if (openItemId === null) return;
+    const column = document.getElementById(SIMPLE_MODE.LISTENERS_COLUMN_ID);
+    if (!column) return;
+    const measure = () => {
+      const row = rowRefs.current.get(openItemId);
+      setPanelLift(row && row.offsetParent === column
+        ? Math.max(0, column.offsetHeight - row.offsetTop - row.offsetHeight)
+        : 0);
+    };
+    measure();
+    const observer = new MutationObserver(measure);
+    observer.observe(column, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, [openItemId, itemCount, layout.visibleSlots, layout.overflow]);
 
   const handleClick = (index: number) => {
     if (!canEdit) {
@@ -149,7 +174,7 @@ export function ListenerBubbles({
         id={SIMPLE_MODE.LISTENERS_COLUMN_ID}
         className="transition-all duration-300"
         availablePx={columnSpace.listeners}
-        focusIndex={activePosition >= 0 ? activePosition : null}
+        focusIndex={focusPosition >= 0 ? focusPosition : null}
         direction="up"
         align="flex-end"
         labelSide="left"
@@ -181,7 +206,11 @@ export function ListenerBubbles({
           return (
             <div
               key={item.id}
-              ref={showExit ? fpsRowRef : undefined}
+              ref={(el) => {
+                if (el) rowRefs.current.set(item.id, el);
+                else rowRefs.current.delete(item.id);
+                if (showExit) fpsRowRef.current = el;
+              }}
               className="flex items-center"
               style={{ gap: SIMPLE_MODE.BUBBLE_GAP }}
             >
@@ -235,20 +264,29 @@ export function ListenerBubbles({
       )}
 
       {openItem && openIndex !== null && (
+        // Bottom-aligned box over the panel's allowed area. The spacer under the
+        // card lifts it level with its bubble and shrinks first when the card is
+        // too tall, so the card slides down instead of leaving the screen.
         <div
-          className="bubble-card-host"
-          onPointerDownCapture={frontLayer.onPointerDownCapture}
+          className="fixed flex flex-col justify-end pointer-events-none"
           style={{
             right: SIMPLE_MODE.EDGE_MARGIN + size + SIMPLE_MODE.PANEL_GAP,
             bottom,
             width: SIMPLE_MODE.PANEL_WIDTH,
-            maxHeight: SIMPLE_MODE.PANEL_MAX_HEIGHT,
+            height: SIMPLE_MODE.PANEL_MAX_HEIGHT,
             zIndex: frontLayer.zIndex,
           }}
         >
-          {renderCard(openItem, openIndex, true, () => onOpenChange(null), {
-            onReduce: () => onOpenChange(null),
-          })}
+          <div
+            className="bubble-card-host pointer-events-auto"
+            onPointerDownCapture={frontLayer.onPointerDownCapture}
+            style={{ position: 'relative', maxHeight: '100%', flexShrink: 0 }}
+          >
+            {renderCard(openItem, openIndex, true, () => onOpenChange(null), {
+              onReduce: () => onOpenChange(null),
+            })}
+          </div>
+          <div aria-hidden style={{ height: panelLift, flexShrink: 1, minHeight: 0 }} />
         </div>
       )}
     </>

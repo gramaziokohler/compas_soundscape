@@ -22,7 +22,7 @@ import { useSpeckleStore, useModelVersionStore, findModelVersion } from '@/store
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { isShareViewActive } from '@/store/shareViewStore';
 import { apiService } from '@/services/api';
-import { SPECKLE_PINNED_VERSION_URL, SPECKLE_VIEWER_RETRY } from '@/utils/constants';
+import { CAMERA_CONFIG, SPECKLE_PINNED_VERSION_URL, SPECKLE_VIEWER_RETRY } from '@/utils/constants';
 import { getCssColorHex } from '@/utils/utils';
 import { isLoadableVersion, withModelVersion } from '@/utils/speckleLatestVersion';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
@@ -173,6 +173,17 @@ export function useSpeckleViewerInit({
         // Add extensions
         const cameraController = viewer.createExtension(CameraController);
         cameraController.options = { nearPlaneCalculation: NearPlaneCalculation.EMPIRIC };
+        // Assigned on the instance so the controller's own per-frame `this.updateCameraPlanes()`
+        // calls go through the clamp too.
+        const updateCameraPlanes = cameraController.updateCameraPlanes.bind(cameraController);
+        cameraController.updateCameraPlanes = (targetVolume, offsetScale) => {
+          updateCameraPlanes(targetVolume, offsetScale);
+          const camera = viewer.getRenderer().renderingCamera;
+          if (camera && camera.near > CAMERA_CONFIG.SPECKLE_MAX_NEAR_PLANE) {
+            camera.near = CAMERA_CONFIG.SPECKLE_MAX_NEAR_PLANE;
+            camera.updateProjectionMatrix();
+          }
+        };
         const selectionExtension = viewer.createExtension(SelectionExtension);
         const filteringExtension = viewer.createExtension(FilteringExtension);
 
