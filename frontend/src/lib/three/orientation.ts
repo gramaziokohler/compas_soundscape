@@ -35,3 +35,29 @@ export function forwardVector(yaw: number, pitch: number): THREE.Vector3 {
 export function orientationQuaternion(yaw: number, pitch: number, roll: number): THREE.Quaternion {
   return new THREE.Quaternion().setFromRotationMatrix(rotationMatrix(yaw, pitch, roll));
 }
+
+/** Yaw / pitch / roll in radians (listener convention, see file header). */
+export interface YawPitchRoll {
+  yaw: number;
+  pitch: number;
+  roll: number;
+}
+
+const WORLD_TO_SOURCE_BASE = SOURCE_TO_WORLD_BASE.clone().invert();
+
+/**
+ * Inverse of `orientationQuaternion`. `B⁻¹·M = Rz(-yaw)·Ry(-pitch)·Rx(roll)`, which
+ * is exactly THREE's 'ZYX' Euler order (matrix = Rz·Ry·Rx).
+ */
+export function orientationFromQuaternion(q: THREE.Quaternion): YawPitchRoll {
+  const local = WORLD_TO_SOURCE_BASE.clone().multiply(new THREE.Matrix4().makeRotationFromQuaternion(q));
+  const e = new THREE.Euler().setFromRotationMatrix(local, 'ZYX');
+  return { yaw: -e.z || 0, pitch: -e.y || 0, roll: e.x || 0 };
+}
+
+/** Rotate an orientation by `angle` radians about a WORLD axis (right-hand rule). */
+export function rotateOrientation(o: YawPitchRoll, worldAxis: THREE.Vector3, angle: number): YawPitchRoll {
+  const start = orientationQuaternion(o.yaw, o.pitch, o.roll);
+  const rot = new THREE.Quaternion().setFromAxisAngle(worldAxis.clone().normalize(), angle);
+  return orientationFromQuaternion(rot.multiply(start));
+}

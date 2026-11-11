@@ -4,8 +4,10 @@ import { TransformControls } from 'three/examples/jsm/controls/TransformControls
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { useAcousticsSimulationStore, useUIStore } from '@/store';
 import type { BoundingBoxBounds } from '@/lib/three/BoundingBoxManager';
-import { RESONANCE_AUDIO } from '@/utils/constants';
+import { GUMBALL, RESONANCE_AUDIO } from '@/utils/constants';
 import { clampRoomBounds } from '@/lib/audio/utils/resonance-rooms';
+import { ClickGesture } from '@/lib/three/gumball-click-gesture';
+import { openGumballNumericPrompt } from '@/lib/three/gumball-numeric-prompt';
 
 interface BoundingBoxGumballProps {
   isViewerReady: boolean;
@@ -38,6 +40,9 @@ export function useSpeckleBoundingBoxGumball({
     let dragStartAnchor: THREE.Vector3 | null = null;
     let baseBoundsAtDragStart: BoundingBoxBounds | null = null;
     let isMoveHandle = false;
+    // Click (no drag, no hold) on a face arrow → "Offset <face> [ ] m" prompt.
+    const clickGesture = new ClickGesture();
+    let pressedFace: { normal: THREE.Vector3; label: string } | null = null;
 
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
@@ -143,6 +148,41 @@ export function useSpeckleBoundingBoxGumball({
       canvas.style.cursor = dragging ? 'grabbing' : 'default';
     });
 
+    /** Preview / commit new room bounds (drag frames and typed offsets). */
+    const applyRoomBounds = (nextBounds: BoundingBoxBounds) => {
+      const bbm = getManager();
+      if (!bbm) return;
+      const bounds = clampRoomBounds(nextBounds);
+      const cfg = useAcousticsSimulationStore.getState().simulationConfigs.find((c) => c.id === editCardId);
+      const materials = cfg && cfg.type === 'resonance' ? cfg.room.materials : undefined;
+      bbm.updateBoundingBox(bounds, {
+        roomMaterials: materials,
+        visible: true,
+        editable: true,
+        label: cfg?.display_name,
+      });
+      if (dragAxis && dragAxis !== 'xy') {
+        bbm.showDimensionLabel(bounds, dragAxis);
+      }
+      useAcousticsSimulationStore.getState().setResonanceRoomBounds(editCardId, bounds);
+      viewer.requestRender(8);
+      viewer.requestRender();
+    };
+
+    /** Offset one face along its outward normal by a typed distance (m). */
+    const openFaceOffsetPrompt = (face: { normal: THREE.Vector3; label: string }, clientX: number, clientY: number) => {
+      openGumballNumericPrompt({
+        clientX,
+        clientY,
+        label: `Offset ${face.label}`,
+        unit: GUMBALL.DISTANCE_UNIT,
+        onSubmit: (distance) => {
+          const bounds = getManager()?.currentBounds;
+          if (bounds) applyRoomBounds(moveDraggedFace(bounds, face.normal, distance));
+        },
+      });
+    };
+
     transformControls.addEventListener('objectChange', () => {
       const bbm = getManager();
       if (!dragStartAnchor || !baseBoundsAtDragStart || !bbm) return;
@@ -171,21 +211,7 @@ export function useSpeckleBoundingBoxGumball({
         return;
       }
 
-      previewBounds = clampRoomBounds(previewBounds);
-      const cfg = useAcousticsSimulationStore.getState().simulationConfigs.find((c) => c.id === editCardId);
-      const materials = cfg && cfg.type === 'resonance' ? cfg.room.materials : undefined;
-      bbm.updateBoundingBox(previewBounds, {
-        roomMaterials: materials,
-        visible: true,
-        editable: true,
-        label: cfg?.display_name,
-      });
-      if (dragAxis && dragAxis !== 'xy') {
-        bbm.showDimensionLabel(previewBounds, dragAxis);
-      }
-      useAcousticsSimulationStore.getState().setResonanceRoomBounds(editCardId, previewBounds);
-      viewer.requestRender(8);
-      viewer.requestRender();
+      applyRoomBounds(previewBounds);
     });
 
     const getIntersectedGumball = () => {
@@ -239,6 +265,8 @@ export function useSpeckleBoundingBoxGumball({
 
       isMoveHandle = !!hit.userData.isMoveHandle;
       const normal: THREE.Vector3 = hit.userData.faceNormal;
+      clickGesture.begin(e);
+      pressedFace = isMoveHandle ? null : { normal: normal.clone(), label: String(hit.userData.faceLabel ?? '') };
       dragNormal = isMoveHandle ? null : normal.clone();
       if (isMoveHandle) {
         dragAxis = 'xy';
@@ -272,7 +300,16 @@ export function useSpeckleBoundingBoxGumball({
     const onPointerUp = (e: PointerEvent) => {
       if (!isDragging) return;
       e.stopPropagation();
+      const clickedFace = clickGesture.end(e) ? pressedFace : null;
+      const clickBounds = baseBoundsAtDragStart;
+      pressedFace = null;
       transformControls.pointerUp(getControlPointer(e, 0));
+      if (clickedFace) {
+        // Undo the click's sub-threshold jitter, then ask for an exact offset.
+        if (clickBounds) applyRoomBounds(clickBounds);
+        const { clientX, clientY } = e;
+        setTimeout(() => openFaceOffsetPrompt(clickedFace, clientX, clientY), 0);
+      }
       isDragging = false;
       dragAxis = null;
       dragNormal = null;

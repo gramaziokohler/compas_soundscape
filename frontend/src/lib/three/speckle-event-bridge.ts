@@ -947,6 +947,9 @@ export class SpeckleEventBridge {
       return false;
     }
 
+    // Rotation arcs (own pickers, not part of TransformControls).
+    if (this.dragHandler.hitTestRotationArc(this.mouse)) return true;
+
     // Delegate hit-testing to TransformControls' own `pointerHover()`, which raycasts
     // against `_gizmo.picker[this.mode]` (the small set of handle meshes for the
     // CURRENT mode only) using the library's own up-to-date matrices. Our previous
@@ -1206,6 +1209,11 @@ export class SpeckleEventBridge {
 
     const canvas = this.viewer.getRenderer().renderer.domElement;
     const rect = canvas.getBoundingClientRect();
+    const arcNdc = new THREE.Vector2(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    if (this.dragHandler.hitTestRotationArc(arcNdc)) return true;
     const savedMouse = this.mouse.clone();
     const savedLayers = this.raycaster.layers.mask;
     this.mouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;

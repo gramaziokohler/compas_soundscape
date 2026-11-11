@@ -43,6 +43,9 @@ import { ObjectLayers } from '@speckle/viewer';
 import type { SpeckleSceneAdapter } from './speckle-scene-adapter';
 import { CustomSelectionHighlight } from './custom-selection-highlight';
 import { isShareViewActive } from '@/store/shareViewStore';
+import { GumballRotationArcs, GUMBALL_AXIS_VECTORS, type GumballAxis } from './gumball-rotation-arcs';
+import { attachTranslateClickPrompt } from './gumball-translate-prompt';
+import { resolveOrientationTarget } from './audio-object-orientation';
 
 /**
  * SpeckleDragHandler class
@@ -57,6 +60,9 @@ export class SpeckleDragHandler {
 
   // Transform controls and gizmo
   private transformControls: TransformControls | null = null;
+  /** Rhino-style rotation arcs shown with the translate arrows (single orientable selection). */
+  private rotationArcs: GumballRotationArcs | null = null;
+  private detachTranslatePrompt: (() => void) | null = null;
   private dummyAnchor: THREE.Object3D = new THREE.Object3D();
   private lastGizmoPosition: THREE.Vector3 = new THREE.Vector3();
   private isInitialized: boolean = false;
@@ -117,21 +123,13 @@ export class SpeckleDragHandler {
       this.isDragging = val;
 
       if (val) {
-        this.cameraController.enabled = !val;
+        this.setCameraEnabledAfterDrag(false);
         this.justFinishedDragging = false;
         if (this.onDragStartCallback) {
           this.onDragStartCallback(this.selectedObjects);
         }
       } else {
-        setTimeout(() => {
-          // Don't re-enable Speckle's camera while the FPS camera is locked to
-          // a listener — re-enabling would let the (FlyControls-based) FPS
-          // controller overwrite the direct FPS camera writes and corrupt the
-          // view. The coordinator supplies the lock predicate.
-          if (!(this.onCameraLockedCheck?.() ?? false)) {
-            this.cameraController.enabled = !val;
-          }
-        }, 100);
+        this.setCameraEnabledAfterDrag(true);
 
         this.justFinishedDragging = true;
         setTimeout(() => {
@@ -150,6 +148,20 @@ export class SpeckleDragHandler {
 
     const scene = this.viewer.getRenderer().scene;
     scene.add(this.transformControls as any);
+
+    this.detachTranslatePrompt = attachTranslateClickPrompt(this.transformControls, (axis, distance, origin) =>
+      this.applyNumericTranslation(axis, distance, origin),
+    );
+    this.rotationArcs = new GumballRotationArcs(scene, {
+      canvas: this.viewer.getRenderer().renderer.domElement,
+      getCamera: () => this.viewer.getRenderer().renderingCamera ?? null,
+      getTransformControls: () => this.transformControls,
+      getAnchor: () => this.dummyAnchor,
+      getTarget: () =>
+        this.selectedObjects.length === 1 ? resolveOrientationTarget(this.selectedObjects[0]) : null,
+      setCameraEnabled: (enabled) => this.setCameraEnabledAfterDrag(enabled),
+      requestRender: () => this.viewer.requestRender(),
+    });
 
     requestAnimationFrame(() => {
       if (!this.transformControls) return;
@@ -170,6 +182,37 @@ export class SpeckleDragHandler {
     });
 
     this.isInitialized = true;
+  }
+
+  /**
+   * Freeze Speckle's camera for a gizmo drag, or release it shortly after. Never
+   * re-enables it while the FPS camera is locked to a listener — re-enabling would
+   * let the (FlyControls-based) FPS controller overwrite the direct FPS camera
+   * writes and corrupt the view. The coordinator supplies the lock predicate.
+   */
+  private setCameraEnabledAfterDrag(enabled: boolean): void {
+    if (!enabled) {
+      this.cameraController.enabled = false;
+      return;
+    }
+    setTimeout(() => {
+      if (!(this.onCameraLockedCheck?.() ?? false)) {
+        this.cameraController.enabled = true;
+      }
+    }, 100);
+  }
+
+  /**
+   * Move the selection so the gizmo sits at `origin + axis * distance` (typed in
+   * the click-to-type prompt) and commit it like the end of a drag.
+   */
+  private applyNumericTranslation(axis: GumballAxis, distance: number, origin: THREE.Vector3): void {
+    if (this.selectedObjects.length === 0) return;
+    this.dummyAnchor.position.copy(origin).addScaledVector(GUMBALL_AXIS_VECTORS[axis], distance);
+    this.dummyAnchor.updateMatrixWorld();
+    this.onAnchorChanged();
+    this.onDragEndCallback?.(this.selectedObjects, this.dummyAnchor.position.clone());
+    this.viewer.requestRender();
   }
 
   /**
@@ -343,6 +386,7 @@ export class SpeckleDragHandler {
       this.configureGizmoAxes(unique);
       this.transformControls.attach(this.dummyAnchor);
     }
+    this.rotationArcs?.update();
   }
 
   /** Gizmo anchor point for one object. */
@@ -447,6 +491,7 @@ export class SpeckleDragHandler {
       this.transformControls.showZ = true;
       this.transformControls.detach();
     }
+    this.rotationArcs?.update();
   }
 
   /**
@@ -459,13 +504,20 @@ export class SpeckleDragHandler {
   public syncAnchorToSelection(): void {
     if (this.selectedObjects.length === 0) return;
     this.selectionHighlight?.update();
-    if (this.isDragging) return;
-    const center = this.computeSelectionCenter();
-    if (this.dummyAnchor.position.distanceTo(center) > 0.0001) {
-      this.dummyAnchor.position.copy(center);
-      this.dummyAnchor.updateMatrixWorld();
-      this.lastGizmoPosition.copy(center);
+    if (!this.isDragging) {
+      const center = this.computeSelectionCenter();
+      if (this.dummyAnchor.position.distanceTo(center) > 0.0001) {
+        this.dummyAnchor.position.copy(center);
+        this.dummyAnchor.updateMatrixWorld();
+        this.lastGizmoPosition.copy(center);
+      }
     }
+    this.rotationArcs?.update();
+  }
+
+  /** Axis of the rotation arc under the NDC pointer (event-bridge gizmo hit test). */
+  public hitTestRotationArc(ndc: THREE.Vector2): GumballAxis | null {
+    return this.rotationArcs?.hitTest(ndc) ?? null;
   }
 
   public setOnDragStart(callback: (objects: THREE.Object3D[]) => void): void {
@@ -490,11 +542,11 @@ export class SpeckleDragHandler {
   }
 
   public getIsDragging(): boolean {
-    return this.isDragging;
+    return this.isDragging || (this.rotationArcs?.isDragging() ?? false);
   }
 
   public getJustFinishedDragging(): boolean {
-    return this.justFinishedDragging;
+    return this.justFinishedDragging || (this.rotationArcs?.getJustFinishedDragging() ?? false);
   }
 
   public getSelectedObjects(): THREE.Object3D[] {
@@ -520,6 +572,11 @@ export class SpeckleDragHandler {
   public dispose(): void {
     this.deselectObjects();
     this.selectionHighlight = null;
+
+    this.detachTranslatePrompt?.();
+    this.detachTranslatePrompt = null;
+    this.rotationArcs?.dispose();
+    this.rotationArcs = null;
 
     if (this.transformControls) {
       const scene = this.adapter.getScene();

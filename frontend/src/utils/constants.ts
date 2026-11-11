@@ -1952,6 +1952,36 @@ export const LISTENER_ORIENTATION = {
   EPSILON_RAD: 1e-4,
 } as const;
 
+// Sound / listener gizmo extras (lib/three/gumball-*.ts): Rhino-style rotation
+// arcs and click-to-type numeric entry (also used by the Resonance room gumball).
+export const GUMBALL = {
+  /** A press released within this time (ms)... */
+  CLICK_MAX_MS: 300,
+  /** ...and moved less than this (px) is a click → numeric prompt. Longer = hold. */
+  CLICK_MAX_MOVE_PX: 4,
+  /** Arc radius in TransformControls gizmo units (translate arrow tips sit at 0.6). */
+  ROTATION_ARC_RADIUS: 0.42,
+  /** Arc span inside its quadrant, clear of the translate arrows' pickers. */
+  ROTATION_ARC_START_DEG: 25,
+  ROTATION_ARC_END_DEG: 65,
+  /** Visible tube thickness / invisible picking-tube thickness (gizmo units). */
+  ROTATION_ARC_TUBE: 0.014,
+  ROTATION_ARC_PICK_TUBE: 0.05,
+  ROTATION_ARC_OPACITY: 0.9,
+  /** Hide an arc when its plane is this close to edge-on (|eye · axis|). */
+  ROTATION_ARC_EDGE_ON_DOT: 0.12,
+  /** Same colors as TransformControls' arrows so arcs match their axis. */
+  AXIS_COLORS: { X: 0xff0000, Y: 0x00ff00, Z: 0x0000ff },
+  /** TransformControls' hover color. */
+  HOVER_COLOR: 0xffff00,
+  RENDER_ORDER: 10001,
+  /** Numeric prompt placement / formatting. */
+  PROMPT_OFFSET_PX: 14,
+  PROMPT_INPUT_WIDTH_PX: 72,
+  DISTANCE_UNIT: 'm',
+  ANGLE_UNIT: '°',
+} as const;
+
 export const GRID_RECEIVERS = {
   DEFAULT_GRID_SPACING: 0.5, // Meters between receivers
   MIN_GRID_SPACING: 0.1,

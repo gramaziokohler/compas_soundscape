@@ -394,6 +394,7 @@ export class BoundingBoxManager {
       hitMesh.userData = {
          isGumballHit: true,
          faceName: faceConfig.material,
+         faceLabel: faceConfig.name,
          faceNormal: faceConfig.normal,
          originalColor: colorNormal,
          hoverColor: colorHover,
