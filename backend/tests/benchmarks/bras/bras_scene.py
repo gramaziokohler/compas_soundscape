@@ -153,6 +153,21 @@ def check_orientations(sources: dict[str, np.ndarray], src: SourceInput) -> None
 
 # ── Path geometry ─────────────────────────────────────────────────────────────
 
+LOS_JITTER_M = 1e-3   # a segment exactly on a seam between triangles slips through both: test 4 shifted copies too
+
+
+def segment_blocked(a, b, vertices: np.ndarray, faces: np.ndarray, jitter_m: float = LOS_JITTER_M) -> bool:
+    """Is the segment a-b blocked? Also tests copies shifted by ``jitter_m`` sideways and up/down,
+    so a path along an edge shared by two triangles (BRAS labels sit on such seams) is caught."""
+    a, b = np.asarray(a, np.float64), np.asarray(b, np.float64)
+    d = (b - a) / np.linalg.norm(b - a)
+    side = np.cross(d, [0.0, 0.0, 1.0])
+    side = side / np.linalg.norm(side) if np.linalg.norm(side) > 1e-9 else np.array([1.0, 0.0, 0.0])
+    up = np.cross(side, d)
+    shifts = [np.zeros(3)] + [s * jitter_m * v for v in (side, up) for s in (1.0, -1.0)]
+    return any(segment_hits_mesh(a + o, b + o, vertices, faces) for o in shifts)
+
+
 def segment_hits_mesh(a, b, vertices: np.ndarray, faces: np.ndarray, eps: float = 1e-9) -> bool:
     """Does the open segment a-b cross any triangle (Moller-Trumbore, vectorised)?"""
     a, b = np.asarray(a, np.float64), np.asarray(b, np.float64)
@@ -179,7 +194,7 @@ def pair_geometry(pair: MeasuredPair, vertices, faces, src: SourceInput, c: floa
     if fwd is not None:
         off = math.degrees(math.acos(float(np.clip(np.dot(fwd, (r - s) / d), -1.0, 1.0))))
     return PairGeometry(pair.key, pair.source_id, pair.receiver_id, d, d / c,
-                        not segment_hits_mesh(s, r, vertices, faces), off)
+                        not segment_blocked(s, r, vertices, faces), off)
 
 
 def build_pairs_data(pairs: list[MeasuredPair], spec_by_source: dict[str, Optional[dict]]) -> list[dict]:

@@ -13,7 +13,8 @@ from pathlib import Path
 
 import numpy as np
 
-from benchmarks.bras.bras_constants import CONTROL_MARKER_EDGE_M, GROUND_INSET_CELLS, MATERIAL_MODES
+from benchmarks.bras.bras_constants import (CONTROL_MARKER_EDGE_M, GROUND_INSET_CELLS, MATERIAL_MODES, PRA_SHELL_KEY,
+                                            PRA_SHELL_MARGIN_M)
 from benchmarks.bras.scenes import RIGID, GeometryInput, MaterialInput, Scene
 
 BBOX_TOL_M = 1e-3
@@ -263,6 +264,28 @@ def scene_geometry(mesh: SceneMesh, coeffs: dict, ground=None, bounds=None, h: f
         gv, gf = ground_mesh(bounds[0], bounds[1], ground.z, h)
         parts.append((gv, gf, [ground.material] * len(gf)))
     return geometry_dict(parts, coeffs)
+
+
+def enclosed_geometry(geometry: dict, bounds, margin_m: float = PRA_SHELL_MARGIN_M) -> dict:
+    """``geometry`` inside a fully absorbing box (alpha = 1) ``margin_m`` beyond ``bounds``.
+
+    pyroomacoustics only tests the walls off the convex hull of all walls for obstruction
+    (``find_non_convex_walls``), which assumes sources and receivers inside a closed room. In an
+    open scene they lie outside that hull, so a hull wall (the top of the RS1 absorber, a plate)
+    never blocks a path and the floor reflects through the objects. The shell makes the scene a
+    closed room: the hull is the shell, every object face is checked again, and the shell itself
+    reflects nothing. ``margin_m`` keeps it off the floor's edges (no coplanar faces).
+    """
+    lo = np.asarray(bounds[0], np.float64) - margin_m
+    hi = np.asarray(bounds[1], np.float64) + margin_m
+    sv, sf = box(lo, hi)
+    offset = len(geometry["vertices"])
+    start = len(geometry["faces"])
+    shell = {"coeffs": [1.0] * len(CONSTANT_ALPHA_BANDS_HZ), "center_freqs": list(CONSTANT_ALPHA_BANDS_HZ)}
+    faces = list(geometry["faces"]) + (sf + offset).tolist()
+    return {"vertices": list(geometry["vertices"]) + sv.tolist(), "faces": faces,
+            "object_face_ranges": {**geometry["object_face_ranges"], PRA_SHELL_KEY: [start, len(faces) - 1]},
+            "face_materials": {**geometry["face_materials"], **{i: shell for i in range(start, len(faces))}}}
 
 
 def control_scene_geometry(mesh: SceneMesh, coeffs: dict, ground=None, bounds=None, h: float = 0.0) -> dict:

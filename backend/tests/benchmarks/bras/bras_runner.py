@@ -38,13 +38,14 @@ class RunConfig:
     material_mode: str = "csv"
     control: bool = False
     padding_m: float = 3.0
+    high_order: bool = False         # measured balloon at high order (pffdtd_backend/directional_ho.py)
     extra: dict = field(default_factory=dict)
 
     def tag(self) -> str:
         pairs = "+".join(k.replace("-", "") for k in self.pair_keys)
         if len(pairs) > 16:  # the tag is in the run folder and every WAV name: stay under Windows MAX_PATH
             pairs = f"p{len(self.pair_keys)}_" + hashlib.sha1(pairs.encode()).hexdigest()[:6]
-        src = "dir" if self.directional else "omni"
+        src = ("dirho" if self.high_order else "dir") if self.directional else "omni"
         mat = "ctl" if self.control else self.material_mode
         return f"{self.scene}_f{self.fmax:g}_ppw{self.ppw:g}_{src}_{pairs}_{mat}"
 

@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 
 from benchmarks.bras.bras_analysis import PairResult
+from benchmarks.bras.bras_domain import describe_padding
 
 REPORT_OCTAVES_HZ = [125, 250, 500, 1000, 2000, 4000]
 
@@ -60,14 +61,16 @@ def report_markdown(info: dict, results: list[PairResult], avg: dict, second: di
     lines += _table(head, rows)
 
     g = s["grid"]
-    lines += ["", "## Setup", "",
-              f"- Chamber: {s['chamber']}, {s['temperature_c']:g} degC, {s['humidity']:g} % RH "
+    lines += ["", "## Setup", ""]
+    if s.get("setup_plot"):
+        lines += [f"![Setup: geometry, positions, PFFDTD voxels, pyroomacoustics walls, materials]({s['setup_plot']})", ""]
+    lines += [f"- Chamber: {s['chamber']}, {s['temperature_c']:g} degC, {s['humidity']:g} % RH "
               f"(speed of sound {s['c_measured']:.1f} m/s); {s['ground']}.",
               f"- Geometry: {s['n_faces']} triangles, objects bbox {s['bbox']}.",
               f"- Source: {s['source_model']}.",
               f"- Grid: h = {g['h'] * 1e3:.2f} mm ({g['ppw_effective']:.1f} points per wavelength at {s['fmax_hz']:g} Hz), "
               f"{g['shape']} = {g['nodes'] / 1e6:.0f} M nodes, domain {g['bmin']} to {g['bmax']} m "
-              f"({s['padding_m']:g} m of free air around everything).",
+              f"({describe_padding(s['padding'])}).",
               f"- Simulated IR length {s['duration_s'] * 1e3:.0f} ms, air absorption on; runtime {s['wall_s']:.0f} s.",
               f"- Comparison: {s['window']}; bands {s['band'][0]:g} to {s['band'][1]:g} Hz, "
               f"1/{s['bands_per_octave']} octave level differences, curves smoothed to 1/{s['smoothing']} octave.",

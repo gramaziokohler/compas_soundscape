@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from benchmarks.bras.bras_analysis import band_centres, edge_echo_delay_s, floor_delay_s, prepare_sim
-from benchmarks.bras.bras_domain import alignment_box, gate_padding_m, padded_bounds
+from benchmarks.bras.bras_domain import alignment_box, edge_padding_m, face_padding, gate_padding_m, padded_bounds
 from benchmarks.bras.bras_geometry import (
     box,
     check_bbox,
@@ -193,3 +193,84 @@ def test_edge_echo_removal_keeps_the_floor_reflection():
     out = prepare_sim(sim, ctl, 2.0, echo, 4000, physical_delay_s=floor)
     ref = prepare_sim(_impulses(n, fs, direct_and_floor + scatter), None, 2.0, echo, 4000)
     assert np.abs(out - ref).max() < 1e-9
+
+
+def test_enclosed_geometry_adds_an_absorbing_shell_around_the_domain():
+    from benchmarks.bras import bras_constants as K
+    from benchmarks.bras.bras_geometry import enclosed_geometry
+
+    geo = {"vertices": [[0, 0, 0], [1, 0, 0], [1, 1, 0]], "faces": [[0, 1, 2]],
+           "object_face_ranges": {"floor": [0, 0]}, "face_materials": {0: {"coeffs": [0.02], "center_freqs": [1000.0]}}}
+    out = enclosed_geometry(geo, ([-2, -2, -1], [3, 3, 2]), margin_m=0.5)
+    a, b = out["object_face_ranges"][K.PRA_SHELL_KEY]
+    assert (a, b) == (1, 12) and out["faces"][0] == [0, 1, 2]
+    shell = np.array(out["vertices"])[np.array(out["faces"][a:b + 1]).ravel()]
+    np.testing.assert_allclose(shell.min(0), [-2.5, -2.5, -1.5])
+    np.testing.assert_allclose(shell.max(0), [3.5, 3.5, 2.5])
+    assert all(out["face_materials"][i]["coeffs"] == [1.0] * 6 for i in range(a, b + 1))
+    assert out["face_materials"][0]["coeffs"] == [0.02]
+
+
+def test_closed_room_blocks_the_floor_reflection_through_an_object():
+    """pyroomacoustics only lets walls off the convex hull obstruct: in an open scene the floor
+    reflects through a slab lying on it, inside the absorbing shell it does not."""
+    pra = pytest.importorskip("pyroomacoustics")
+    from benchmarks.bras.bras_geometry import box
+
+    def walls(enclosed):
+        q = lambda p: np.array(p, float).T
+        L = 20.0
+        out = [pra.wall_factory(q([[-L, -L, 0], [-L, L, 0], [L, L, 0], [L, -L, 0]]), [0.02], [0.0])]
+        v, f = box([3.4, 0.9, 0.0], [7.6, 5.1, 0.3])   # outward-wound box: flip for pyroomacoustics
+        out += [pra.wall_factory(q(v[t[::-1]]), [0.6], [0.0]) for t in f]
+        if enclosed:
+            v, f = box([-L - 1, -L - 1, -1.0], [L + 1, L + 1, 10.0])
+            out += [pra.wall_factory(q(v[t]), [1.0], [0.0]) for t in f]
+        return out
+
+    found = {}
+    for enclosed in (False, True):
+        room = pra.Room(walls(enclosed), fs=16000, max_order=1, air_absorption=False)
+        room.add_source([4.0, 3.0, 2.6]); room.add_microphone([7.0, 3.0, 2.6]); room.image_source_model()
+        imgs = room.sources[0].images[:, room.visibility[0][0].astype(bool)]
+        found[enclosed] = sorted(round(float(z), 2) for z in imgs[2])
+    assert -2.6 in found[False]                 # the open scene keeps the floor image (z = -2.6)
+    assert -2.6 not in found[True] and -2.0 in found[True]   # closed: only the slab top (z = 0.3) reflects
+
+
+def test_edge_padding_pure_echo_matches_the_parallel_face_formula():
+    """No object: only the pure edge echo counts; a face parallel to the pair needs gate_padding_m."""
+    c, keep = 343.0, 0.01
+    s, r = np.array([0.0, 0.0, 1.0]), np.array([4.0, 0.0, 1.0])
+    lo, hi = edge_padding_m([(s, r)], 0.017, None, None, keep_s=keep, c=c)
+    assert hi[2] == pytest.approx(gate_padding_m(4.0, keep, c), abs=0.011)   # above: parallel to the pair
+    assert lo[2] == pytest.approx(gate_padding_m(4.0, keep, c), abs=0.011)
+    assert hi[0] < hi[2] and lo[0] < lo[2]      # beyond the ends an echo comes back much later
+
+
+def test_edge_padding_keeps_object_paths_out_of_the_window():
+    """With an object, a path face -> object -> microphone arrives after the window at the computed
+    padding and inside it with 3 cm less (monotone bisection on the image-source bound)."""
+    c, window = 343.0, 0.02
+    s, r = np.array([0.0, 0.0, 0.5]), np.array([3.0, 0.0, 0.5])
+    verts = np.array([[1.4, -0.1, 0.0], [1.6, -0.1, 0.0], [1.5, 0.1, 0.4]])
+    lo, hi = edge_padding_m([(s, r)], window, (verts, np.array([[0, 1, 2]])), ground_z=0.0, c=c, sample_m=0.02)
+    assert lo[2] == 0.0                          # under the floor: shielded
+    top = 0.5 + hi[2]                            # devices are the highest points
+
+    def earliest(plane):
+        x = np.array([verts[0] + u * (verts[1] - verts[0]) + v * (verts[2] - verts[0])
+                      for u in np.linspace(0, 1, 81) for v in np.linspace(0, 1, 81) if u + v <= 1 + 1e-9])
+        sm = s.copy(); sm[2] = 2 * plane - s[2]
+        return (np.linalg.norm(x - sm, axis=1) + np.linalg.norm(x - r, axis=1)).min() - 3.0
+    assert earliest(top) >= c * window
+    assert earliest(top - 0.03 - 2 * 0.02) < c * window
+
+
+def test_face_padding_accepts_one_number_or_per_face():
+    lo, hi = face_padding(2.0)
+    assert lo.tolist() == [2.0] * 3 and hi.tolist() == [2.0] * 3
+    lo, hi = face_padding(([1, 2, 0], [3, 4, 5]))
+    assert lo.tolist() == [1, 2, 0] and hi.tolist() == [3, 4, 5]
+    bmin, bmax = padded_bounds([0, 0, 0], [1, 1, 1], np.zeros((1, 3)), 0.1, ([0.5, 0.5, 0.0], [0.2, 0.3, 1.0]), ground_z=0.0)
+    assert bmin[0] == pytest.approx(-0.5) and bmax[0] == pytest.approx(1.2) and bmax[2] == pytest.approx(2.0)
