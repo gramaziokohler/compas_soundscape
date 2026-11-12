@@ -48,7 +48,9 @@ def _table(header: list, rows: list) -> list[str]:
 
 
 def report_markdown(info: dict, results: list[PairResult], avg: dict, second: dict | None = None) -> str:
-    """``second``: ``{"results", "average", "gain_db", "notes"}`` of the pyroomacoustics comparison."""
+    """``second``: ``{"results", "average", "gain_db", "notes"}`` of the geometric-acoustics comparison."""
+    from benchmarks.bras.bras_pra import ENGINE_LABEL
+
     s = info
     pra = {r.key: r for r in second["results"]} if second else {}
     lines = [f"# {s['scene_label']}: PFFDTD vs measured, fmax {s['fmax_hz']:g} Hz", "",
@@ -79,7 +81,7 @@ def report_markdown(info: dict, results: list[PairResult], avg: dict, second: di
               "", "## Results", "",
               f"Mean |dL| over all pairs and bands, PFFDTD: **{avg['mean_abs_dl_db']:.2f} dB** ({len(results)} pairs).", ""]
     if second:
-        lines[-1:] = [f"Same for pyroomacoustics: **{second['average']['mean_abs_dl_db']:.2f} dB** "
+        lines[-1:] = [f"Same for {ENGINE_LABEL}: **{second['average']['mean_abs_dl_db']:.2f} dB** "
                       f"({len(second['results'])} pairs; its own global gain {second['gain_db']:+.2f} dB).",
                       *[f"- {n}" for n in second.get("notes", [])], ""]
     rows = [[r.key, f"{r.distance_m:.2f}", "yes" if r.line_of_sight else "no", _fmt(r.offaxis_deg, ".0f"),
@@ -88,14 +90,14 @@ def report_markdown(info: dict, results: list[PairResult], avg: dict, second: di
                 _fmt(pra[r.key].max_abs_dl_db if r.key in pra else None, ".2f")] if second else []) for r in results]
     lines += _table(["Pair", "Distance (m)", "Line of sight", "Off-axis (deg)", "Mean abs dL (dB)",
                      "Max abs dL (dB)", "Direct level, sim - meas (dB)"]
-                    + (["pyroomacoustics mean abs dL (dB)", "pyroomacoustics max abs dL (dB)"] if second else []), rows)
+                    + ([f"{ENGINE_LABEL} mean abs dL (dB)", f"{ENGINE_LABEL} max abs dL (dB)"] if second else []), rows)
     lines += ["", "Per band (simulated - measured, dB):", ""]
     rows = [[f"{b:g}", f"{a:+.2f}", f"{m:+.2f}", f"{lo:+.2f}", f"{hi:+.2f}"] for b, a, m, lo, hi in
             zip(avg["bands_hz"], avg["dl_of_average_db"], avg["dl_mean_db"], avg["dl_min_db"], avg["dl_max_db"])]
     if second:
         rows = [row + [f"{m:+.2f}"] for row, m in zip(rows, second["average"]["dl_mean_db"])]
     lines += _table(["Band (Hz)", "Average response", "Mean over pairs", "Min", "Max"]
-                    + (["pyroomacoustics mean over pairs"] if second else []), rows)
+                    + ([f"{ENGINE_LABEL} mean over pairs"] if second else []), rows)
     lines += ["", "## Files", ""] + [f"- `{f}`" for f in s["files"]] + [""]
     return "\n".join(lines)
 

@@ -26,6 +26,7 @@ from services.pyroomacoustics_worker import (
 )
 from services.sed_worker import run_sed_analysis
 from services.simulation_preflight_worker import run_simulation_preflight
+from services.acoustic_paths_service import run_acoustic_paths
 from workers._subprocess_common import MultiSlotSubprocessRunner
 from config.constants import JOB_TYPE_PYROOMACOUSTICS, JOB_TYPE_QUEUE
 
@@ -33,6 +34,7 @@ _TARGET_FNS = {
     "pyroomacoustics_speckle": run_pyroomacoustics_simulation,
     "pyroomacoustics_geometry": run_pyroomacoustics_simulation_from_geometry,
     "pyroomacoustics_preflight": run_simulation_preflight,
+    "acoustic_paths": run_acoustic_paths,  # reflections / rays / diffraction edges for the 3D view
     "pffdtd_voxel_preview": run_pffdtd_voxel_preview,  # voxelise only (compas-pffdtd subprocess)
     "sed": run_sed_analysis,
     "loop": run_loop_analysis,

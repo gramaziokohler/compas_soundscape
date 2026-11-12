@@ -26,6 +26,7 @@ import { useSpeckleAreaDrawing } from '@/components/scene/hooks/useSpeckleAreaDr
 import { useSpeckleAnalysisPreview } from '@/components/scene/hooks/useSpeckleAnalysisPreview';
 import { useSpeckleSimulationPreflight } from '@/components/scene/hooks/useSpeckleSimulationPreflight';
 import { useSpecklePffdtdOverlays } from '@/components/scene/hooks/useSpecklePffdtdOverlays';
+import { useSpeckleAcousticPaths } from '@/components/scene/hooks/useSpeckleAcousticPaths';
 import { useSpecklePffdtdFreeGrid } from '@/components/scene/hooks/useSpecklePffdtdFreeGrid';
 import { useSpeckleSelection } from '@/components/scene/hooks/useSpeckleSelection';
 import { useSpeckleTimeline } from '@/components/scene/hooks/useSpeckleTimeline';
@@ -482,6 +483,7 @@ export function SpeckleScene({
   useSpeckleSimulationPreflight({ isViewerReady });
   useSpecklePffdtdOverlays({ isViewerReady });
   useSpecklePffdtdFreeGrid({ isViewerReady });
+  useSpeckleAcousticPaths({ isViewerReady });
 
   // ── Object Selection ──
   useSpeckleSelection({

@@ -2455,6 +2455,7 @@ export const PYROOMACOUSTICS_SIMULATION_MODE_FOA = "foa"; // First-Order Ambison
 export const PYROOMACOUSTICS_SIMULATION_MODE_NAMES = {
   [PYROOMACOUSTICS_SIMULATION_MODE_MONO]: "Mono (1-ch)",
   [PYROOMACOUSTICS_SIMULATION_MODE_FOA]: "FOA (4-ch)",
+  hoa: "HOA (9/16-ch)",
 } as const;
 
 // Simulation Mode Descriptions (for tooltips/UI help)
@@ -2494,6 +2495,126 @@ export const PYROOMACOUSTICS_DEFAULT_ENABLE_GRID = false; // Grid simulation dis
 
 // One process per emitter room (up to the backend's PYROOMACOUSTICS_MAX_PROCESSES)
 export const PYROOMACOUSTICS_DEFAULT_PARALLEL = true;
+
+// ----------------------------------------------------------------------------
+// compas_acoustics engine (mirrors backend/config/constants.py ACOUSTICS_* / CA_*)
+// ----------------------------------------------------------------------------
+export const PYROOMACOUSTICS_SIMULATION_MODE_HOA = "hoa"; // Higher-order ambisonics, (order+1)^2 channels
+
+/** Settings of the geometric (ray-tracing) card that only the compas_acoustics engine runs. */
+export const GA_ENGINE = {
+  AUTO: 'auto',
+  COMPAS_ACOUSTICS: 'compas_acoustics',
+  PYROOMACOUSTICS: 'pyroomacoustics',
+  NAMES: {
+    auto: 'Automatic',
+    compas_acoustics: 'compas_acoustics',
+    pyroomacoustics: 'pyroomacoustics (legacy)',
+  } as Record<string, string>,
+  DIFFRACTION_OFF: 'off',
+  DIFFRACTION_NAMES: {
+    off: 'Off',
+    udfa: 'UDFA (fast)',
+    btms: 'BTMS (reference)',
+  } as Record<string, string>,
+  DIFFRACTION_HINTS: {
+    off: 'No sound bends around edges.',
+    udfa: 'First-order universal diffraction filter: sound reaches behind obstacles and around corners.',
+    btms: 'Biot-Tolstoy-Medwin-Svensson line integrals, first and second order. Slower; ambisonic output only.',
+  } as Record<string, string>,
+  TAIL_DEFAULT: 'auto',
+  TAIL_NAMES: {
+    auto: 'Automatic',
+    reference: 'Ray-traced (this card\'s rays)',
+    ray_tracing: 'Ray-traced (engine defaults)',
+    eyring: 'Statistical (Eyring)',
+    sabine: 'Statistical (Sabine)',
+  } as Record<string, string>,
+  TAIL_HINTS: {
+    auto: 'Ray-traced when ray tracing is on, Eyring otherwise.',
+    reference: 'The late reverberation follows the energy decay of a ray-traced run with this card\'s rays.',
+    ray_tracing: 'As above, with the engine\'s own ray count and duration.',
+    eyring: 'Diffuse-field decay from the room volume and absorption. No rays; best for evenly absorbing rooms.',
+    sabine: 'Sabine decay. No rays; only for lightly absorbing rooms.',
+  } as Record<string, string>,
+  AMBISONIC_ORDER_DEFAULT: 2,
+  AMBISONIC_ORDER_MAX: 3,
+  N_SLOPES_MAX: 3,
+  SEED_DEFAULT: 42,
+  SEED_MAX: 9999,
+  AIR_TEMPERATURE_MIN_C: 0,
+  AIR_TEMPERATURE_MAX_C: 30,
+  AIR_TEMPERATURE_DEFAULT_C: 20,
+  AIR_HUMIDITY_DEFAULT: 50,
+} as const;
+
+/** Hybrid wave + geometric card (mirrors HYBRID_* in backend/config/constants.py). */
+export const HYBRID = {
+  CROSSOVER_MODE_DEFAULT: 'schroeder' as 'schroeder' | 'manual',
+  CROSSOVER_HZ_DEFAULT: 200,
+  CROSSOVER_HZ_MIN: 40,
+  CROSSOVER_HZ_MAX: 2000,
+  CROSSOVER_HZ_STEP: 5,
+  CROSSOVER_FACTOR_DEFAULT: 1,
+  CROSSOVER_FACTOR_MIN: 0.5,
+  CROSSOVER_FACTOR_MAX: 4,
+  CROSSOVER_FACTOR_STEP: 0.25,
+  /** The wave solver runs to this x the crossover. */
+  WAVE_FMAX_MARGIN: 1.5,
+  WAVE_FMAX_CAP_DEFAULT: 1000,
+  WAVE_FMAX_CAP_MIN: 100,
+  WAVE_FMAX_CAP_MAX: 4000,
+  WAVE_FMAX_CAP_STEP: 50,
+  LEVEL_MATCH_DEFAULT: false,
+  DEFAULT_PPW: 12,
+  /** |wave - rays| level in the crossover octave above which the join is flagged (dB). */
+  MISMATCH_WARNING_DB: 4,
+  /** Eyring estimate inputs when no run exists yet: mean absorption assumed for the read-out. */
+  ESTIMATE_MEAN_ABSORPTION: 0.2,
+} as const;
+
+/** Sound paths in the 3D view: reflections, billiard rays, diffraction edges (acousticPathsStore). */
+export const ACOUSTIC_PATHS = {
+  POLL_INTERVAL_MS: 800,
+  RENDER_ORDER: 9850,
+  REFLECTION_ORDER_MAX: 6,
+  REFLECTION_ORDER_DEFAULT: 2,
+  RAYS_MIN: 20,
+  RAYS_MAX: 2000,
+  RAYS_STEP: 20,
+  RAYS_DEFAULT: 200,
+  RAY_ORDER_MAX: 30,
+  RAY_ORDER_DEFAULT: 8,
+  /** Reflection lines fade with order: opacity = BASE * FALLOFF^order. */
+  PATH_OPACITY: 0.95,
+  PATH_OPACITY_FALLOFF: 0.72,
+  /** Level window of the reflection lines (dB below the strongest path maps to the faintest line). */
+  LEVEL_RANGE_DB: 40,
+  EDGE_OPACITY: 0.95,
+  EDGE_EXCLUDED_OPACITY: 0.35,
+  EDGE_DASH_SIZE_M: 0.12,
+  EDGE_GAP_SIZE_M: 0.08,
+  /** Pick tolerance (px) when clicking a diffraction edge in the 3D view. */
+  EDGE_PICK_PX: 8,
+  /** A press that moves less than this (px) is a click on an edge, not a camera drag. */
+  CLICK_SLOP_PX: 4,
+  PARTICLE_SIZE_M: 0.09,
+  /** Length (ms of travel) of the fading tail behind each billiard particle. */
+  PARTICLE_TRAIL_MS: 6,
+  /** Slow-motion factors of the billiard animation: 1 s of sound takes 1/speed s. */
+  PLAYBACK_SPEEDS: [0.005, 0.01, 0.02, 0.05] as readonly number[],
+  PLAYBACK_SPEED_DEFAULT: 0.01,
+  COLOR_VARS: {
+    DIRECT: '--color-foreground',
+    /** Reflection order 1..n cycles through these. */
+    ORDERS: ['--color-primary', '--color-material-start', '--color-material-mid', '--color-material-end', '--color-info', '--color-success'],
+    EDGE: '--color-warning',
+    EDGE_USED: '--color-error',
+    EDGE_EXCLUDED: '--color-secondary-hover',
+    DIFFRACTED: '--color-warning',
+    PARTICLE: '--color-primary',
+  },
+} as const;
 
 // ============================================================================
 // Simulation mesh preparation + geometry preflight
@@ -2715,7 +2836,7 @@ export const COPY_MATERIALS = {
   /** Expert card parent row (targets as sub-items) / Simple bubble row prefix. */
   LABEL: 'Copy materials to',
   /** Simulation types whose cards hold Speckle material assignments. */
-  TYPES: ['pyroomacoustics', 'pffdtd', 'import-irs'] as const,
+  TYPES: ['pyroomacoustics', 'pffdtd', 'hybrid', 'import-irs'] as const,
 } as const;
 
 export const SIMPLE_MODE = {

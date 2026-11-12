@@ -157,6 +157,13 @@ class ImpulseResponseService:
             target_channels = original_channels
         elif original_channels >= 16:
             target_channels = 16  # Extract TOA (first 16 channels)
+        elif original_channels >= 9:
+            # Second-order ambisonics (9 channels, ACN): kept as third order with silent
+            # third-order channels, which decodes identically. Cutting it to 4 lost the order.
+            audio_data = np.vstack([
+                audio_data[:9], np.zeros((16 - 9, audio_data.shape[1]), dtype=audio_data.dtype),
+            ])
+            original_channels = target_channels = 16
         elif original_channels >= 4:
             target_channels = 4   # Extract FOA (first 4 channels)
         else:
@@ -191,7 +198,10 @@ class ImpulseResponseService:
         
         # Save processed IR
         # Transpose back to (samples, channels) for soundfile
-        sf.write(output_path, audio_data.T, sample_rate, subtype='PCM_16')
+        # 16-bit unless the IR exceeds full scale: a simulated IR is at 1/r re 1 m, above 1.0
+        # within a metre of the source, and PCM would clip it.
+        subtype = 'FLOAT' if self._compute_peak(audio_data) > 1.0 else 'PCM_16'
+        sf.write(output_path, audio_data.T, sample_rate, subtype=subtype)
         
         # Get file size
         file_size = os.path.getsize(output_path)

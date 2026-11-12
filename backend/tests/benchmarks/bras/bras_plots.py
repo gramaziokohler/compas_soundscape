@@ -58,7 +58,9 @@ def _save(fig, path: Path) -> Path:
     return path
 
 
-SECOND_LABEL = "Simulated (pyroomacoustics)"
+from benchmarks.bras.bras_pra import ENGINE_LABEL  # noqa: E402
+
+SECOND_LABEL = f"Simulated ({ENGINE_LABEL})"
 BAR_W = 0.7
 
 
@@ -69,7 +71,7 @@ def _dl_bars(ax, bands, first, second=None) -> np.ndarray:
         ax.bar(x, first, BAR_W, color=STYLE["simulated"], label="PFFDTD")
     else:
         ax.bar(x - BAR_W / 4, first, BAR_W / 2 - 0.03, color=STYLE["simulated"], label="PFFDTD")
-        ax.bar(x + BAR_W / 4, second, BAR_W / 2 - 0.03, color=STYLE["second"], label="pyroomacoustics")
+        ax.bar(x + BAR_W / 4, second, BAR_W / 2 - 0.03, color=STYLE["second"], label=ENGINE_LABEL)
         ax.legend(fontsize=7, frameon=False)
     ax.axhline(0.0, color=STYLE["axis"], lw=0.8)
     ax.set_xticks(x)
@@ -111,7 +113,7 @@ def plot_pair(res: PairResult, band: tuple, fmax: float, smoothing: int, path: P
     a1.legend(fontsize=7, frameon=False, loc="upper right")
     title = f"Frequency response (1/{smoothing} oct), mean |dL| {res.mean_abs_dl_db:.1f} dB"
     if second is not None:
-        title += f" (pyroomacoustics {second.mean_abs_dl_db:.1f} dB)"
+        title += f" ({ENGINE_LABEL} {second.mean_abs_dl_db:.1f} dB)"
     _response(a2, c["f"], c["meas_db"], c["sim_db"], band, fmax, title,
               None if second is None else second.curves["sim_db"])
     _dl_bars(a3, res.bands_hz, res.dl_db, None if second is None else second.dl_db)
@@ -136,7 +138,7 @@ def plot_average(avg: dict, band: tuple, fmax: float, smoothing: int, n_pairs: i
                 capsize=3, label="Min to max over pairs (PFFDTD)")
     title = f"Mean level difference per band, mean |dL| {avg['mean_abs_dl_db']:.1f} dB"
     if second is not None:
-        title += f" (pyroomacoustics {second['mean_abs_dl_db']:.1f} dB)"
+        title += f" ({ENGINE_LABEL} {second['mean_abs_dl_db']:.1f} dB)"
     a2.set_title(title, fontsize=10)
     a2.legend(fontsize=7, frameon=False)
     for ax in (a1, a2):

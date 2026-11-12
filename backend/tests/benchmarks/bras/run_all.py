@@ -33,6 +33,7 @@ import numpy as np  # noqa: E402
 from benchmarks.bras import bras_constants as K  # noqa: E402
 from benchmarks.bras.bras_benchmark import RunOptions, SceneData, load_scene, output_dir, plan_run, run_benchmark  # noqa: E402
 from benchmarks.bras.bras_domain import describe_padding  # noqa: E402
+from benchmarks.bras.bras_pra import ENGINE_LABEL  # noqa: E402
 from benchmarks.bras.bras_scene import onset_time  # noqa: E402
 from benchmarks.bras.scenes import RS_SCENES, SCENES, missing_inputs  # noqa: E402
 
@@ -166,7 +167,7 @@ def dry_run(names: list[str], args) -> int:
 
 def write_index(rows: list[dict]) -> Path:
     lines = ["# BRAS reference scenes vs PFFDTD", "",
-             "| Scene | fmax (Hz) | Pairs | Mean abs dL, PFFDTD (dB) | Mean abs dL, pyroomacoustics (dB) | Report | Average response "
+             f"| Scene | fmax (Hz) | Pairs | Mean abs dL, PFFDTD (dB) | Mean abs dL, {ENGINE_LABEL} (dB) | Report | Average response "
              "| Animation | Time (min) |", "|---|---|---|---|---|---|---|---|---|"]
     for r in rows:
         if r.get("error"):
@@ -222,7 +223,7 @@ def main(argv=None) -> int:
     ap.add_argument("--pairs", default="all", choices=("all", "smoke"), help="every measured pair, or the smoke pairs")
     ap.add_argument("--dry-run", action="store_true", help="plan and check everything without simulating")
     ap.add_argument("--no-animation", action="store_true")
-    ap.add_argument("--no-pra", action="store_true", help="skip the pyroomacoustics curve")
+    ap.add_argument("--no-pra", action="store_true", help="skip the geometric-acoustics (compas_acoustics / pyroomacoustics) curve")
     ap.add_argument("--omni", action="store_true", help="omnidirectional loudspeakers")
     ap.add_argument("--force", action="store_true", help="ignore cached simulations")
     ap.add_argument("--first-order", action="store_true",

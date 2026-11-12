@@ -12,6 +12,8 @@
  * section below); simulation runs and their results are never undone.
  */
 
+import { isEngineSimulation, type HybridSimulationConfig } from '@/types/acoustics';
+import { defaultHybridSettings } from '@/lib/acoustics/hybrid';
 import { create } from 'zustand';
 import { temporal } from 'zundo';
 import { devtools } from 'zustand/middleware';
@@ -58,7 +60,7 @@ const SIM_RUN_KEYS = [
   'simulationResults', 'currentSimulationId', 'currentSimulationRunId',
   'importedIRIds', 'importedIRMetadata', 'sourceReceiverIRMapping',
   'simulationPositions', 'savedSettings', 'generatedSignature', 'simulatedVersionId',
-  'queuePosition', 'queueTotal', 'runProblems',
+  'queuePosition', 'queueTotal', 'runProblems', 'hybridInfo',
 ] as const;
 /** Transient execution fields of cards without a backend run (import-irs). */
 const EXECUTION_KEYS = ['isRunning', 'progress', 'status', 'error', 'currentSimulationRunId'] as const;
@@ -68,7 +70,7 @@ const SIM_VIEW_KEYS = [
 ] as const;
 
 function liveOnlyKeys(config: SimulationConfig): readonly string[] {
-  const runKeys = config.type === 'pyroomacoustics' || config.type === 'pffdtd'
+  const runKeys = isEngineSimulation(config)
     ? SIM_RUN_KEYS
     : EXECUTION_KEYS;
   return [...runKeys, ...SIM_VIEW_KEYS];
@@ -277,6 +279,24 @@ export const useAcousticsSimulationStore = create<AcousticsSimulationStoreState>
                 error: null,
                 simulationResults: null,
               } satisfies PffdtdSimulationConfig;
+              break;
+
+            case 'hybrid':
+              newConfig = {
+                id,
+                display_name: name,
+                type: 'hybrid',
+                state: 'before-simulation',
+                createdAt: timestamp,
+                simulationInstanceId: `hybrid_${timestamp}`,
+                settings: defaultHybridSettings(),
+                faceToMaterialMap: new Map(),
+                isRunning: false,
+                progress: 0,
+                status: 'Idle',
+                error: null,
+                simulationResults: null,
+              } satisfies HybridSimulationConfig;
               break;
 
             case 'import-irs':

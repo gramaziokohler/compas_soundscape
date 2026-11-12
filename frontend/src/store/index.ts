@@ -165,6 +165,8 @@ export { useSceneHighlightStore } from './sceneHighlightStore';
 export type { SceneHighlightStoreState } from './sceneHighlightStore';
 
 export { useSimulationPreflightStore } from './simulationPreflightStore';
+export { useAcousticPathsStore } from './acousticPathsStore';
+export type { AcousticPathsStoreState, RunAcousticPathsArgs } from './acousticPathsStore';
 export type { SimulationPreflightStoreState, RunPreflightArgs } from './simulationPreflightStore';
 
 export { usePffdtdVisualsStore } from './pffdtdVisualsStore';

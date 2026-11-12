@@ -442,6 +442,82 @@ WINDOWS_ILLEGAL_FILENAME_CHARS = r'<>:"/\|?*'  # Windows illegal filename charac
 # Simulation Modes
 PYROOMACOUSTICS_SIMULATION_MODE_MONO = "mono"  # Single microphone (1 channel)
 PYROOMACOUSTICS_SIMULATION_MODE_FOA = "foa"  # First-Order Ambisonics (4 channels: W, X, Y, Z)
+PYROOMACOUSTICS_SIMULATION_MODE_HOA = "hoa"  # Higher-order ambisonics, (order+1)^2 channels (compas_acoustics engine only)
+
+# Geometric-acoustics engine behind /api/pyroomacoustics/*:
+#   "compas_acoustics" — gramaziokohler/compas_acoustics (bouiz fork, branch engine-integration):
+#       mono = Mono (ISM + ray tracing, optional UDFA diffraction), FOA/HOA = Ambisonics hybrid
+#       (ISM early part + directional FDN late part, UDFA/BTMS diffraction)
+#   "pyroomacoustics" — the legacy direct pyroomacoustics path (patched fork, room per emitter)
+# A request may name its engine; ACOUSTICS_ENGINE (env) sets the default.
+ACOUSTICS_ENGINE_COMPAS_ACOUSTICS = "compas_acoustics"
+ACOUSTICS_ENGINE_PYROOMACOUSTICS = "pyroomacoustics"
+ACOUSTICS_ENGINES = (ACOUSTICS_ENGINE_COMPAS_ACOUSTICS, ACOUSTICS_ENGINE_PYROOMACOUSTICS)
+def _default_acoustics_engine() -> str:
+    """ACOUSTICS_ENGINE (env), else compas_acoustics when it is installed, else the legacy engine
+    (so a host whose env has not been updated yet keeps simulating)."""
+    import importlib.util
+    chosen = os.environ.get("ACOUSTICS_ENGINE")
+    if chosen:
+        return chosen
+    installed = importlib.util.find_spec("compas_acoustics") is not None
+    return ACOUSTICS_ENGINE_COMPAS_ACOUSTICS if installed else ACOUSTICS_ENGINE_PYROOMACOUSTICS
+
+
+ACOUSTICS_ENGINE_DEFAULT = _default_acoustics_engine()
+
+# compas_acoustics engine settings
+CA_DIFFRACTION_OFF = "off"
+CA_DIFFRACTION_MODELS = (CA_DIFFRACTION_OFF, "udfa", "btms")  # btms: ambisonic output only
+CA_DIFFRACTION_DEFAULT = CA_DIFFRACTION_OFF
+CA_AMBISONIC_ORDER_DEFAULT = 2  # "hoa" mode order when the request names none
+CA_AMBISONIC_ORDER_MAX = 3      # the frontend decodes up to 3rd order (16 channels)
+CA_AMBISONIC_NORMALIZATION = "SN3D"  # AmbiX: ACN order + SN3D, as the legacy FOA output
+CA_AIR_TEMPERATURE_RANGE_C = (0.0, 30.0)  # Cramer's range in compas_acoustics.AirConditions
+CA_AIR_HUMIDITY_DEFAULT = 50.0  # % relative humidity
+CA_HYBRID_SCATTERING_SPLIT = False  # Ambisonics(scattering=True): specular vs scattered early part
+CA_TAILS = ("auto", "reference", "ray_tracing", "eyring", "sabine")  # ambisonic late field (EngineSettings.tail)
+CA_TAIL_DEFAULT = "auto"
+CA_N_SLOPES_MAX = 3
+CA_SEED_DEFAULT = 42
+
+# Hybrid wave-based + geometric simulation (services/hybrid_job.py, utils/hybrid_crossover.py)
+HYBRID_CROSSOVER_MODES = ("schroeder", "manual")
+HYBRID_CROSSOVER_FACTOR_DEFAULT = 1.0   # x the Schroeder frequency
+HYBRID_CROSSOVER_FACTOR_MIN = 0.5
+HYBRID_CROSSOVER_FACTOR_MAX = 4.0       # 4 f_s: the modal overlap is high enough for rays everywhere
+HYBRID_CROSSOVER_MIN_HZ = 40.0
+HYBRID_CROSSOVER_MAX_HZ = 2000.0
+HYBRID_CROSSOVER_FALLBACK_HZ = 200.0    # when the room's decay time or volume is unknown
+# The wave solver runs to this x the crossover: its response is low-passed at its fmax, and the
+# 4th-order low branch is -14 dB there (cost of the wave run grows with fmax^4).
+HYBRID_WAVE_FMAX_MARGIN = 1.5
+HYBRID_WAVE_FMAX_CAP_DEFAULT = 1000.0   # Hz; a higher crossover is lowered to this / margin
+HYBRID_WAVE_DURATION_T60_FACTOR = 1.2   # wave run length when not given: this x T60
+HYBRID_LEVEL_MATCH_MAX_DB = 6.0
+# The wave grid of a hybrid run is refined beyond its points-per-wavelength when needed: a low
+# crossover (large rooms: Schroeder ~40 Hz) would otherwise give half-metre cells, too coarse for
+# the room's shape and for sources near a surface (the solver needs PFFDTD_SEED_CLEARANCE_CELLS).
+HYBRID_WAVE_MAX_CELL_M = 0.15
+HYBRID_WAVE_SEED_CLEARANCE_MARGIN = 1.15   # cells of clearance asked for = this x the solver's minimum
+HYBRID_PROGRESS_GA_END = 40.0
+HYBRID_PROGRESS_WAVE_END = 94.0
+
+# Sound paths for the 3D view (services/acoustic_paths_service.py)
+ACOUSTIC_PATHS_KINDS = ("reflections", "rays", "diffraction")
+ACOUSTIC_PATHS_DIR = str(BACKEND_DIR / "temp" / "simulations" / "paths")  # + /<workspace id>/paths_<id>.json
+ACOUSTIC_PATHS_DECIMALS = 4
+ACOUSTIC_PATHS_MAX_REFLECTION_PATHS = 20000
+ACOUSTIC_PATHS_REFLECTION_ORDER_MAX = 6
+ACOUSTIC_PATHS_RAYS_DEFAULT = 200
+ACOUSTIC_PATHS_RAYS_MAX = 2000
+ACOUSTIC_PATHS_RAY_ORDER_DEFAULT = 8
+ACOUSTIC_PATHS_RAY_ORDER_MAX = 30
+ACOUSTIC_PATHS_MAX_EXCLUDED_EDGES = 5000
+CA_BAND_METRICS = True          # also store compas_acoustics Analyser per-band metrics per pair
+# compas_acoustics writes responses at 1/(4 pi r) ("package scale"); the app's IRs (legacy engine,
+# PFFDTD, saved soundscapes, playback gains) are at 1/r. Multiplied by this at export.
+CA_TO_APP_LEVEL_SCALE = 4.0 * 3.141592653589793
 
 # Default Simulation Settings
 # Hybrid ISM + ray tracing (max_order=3, air absorption on) is the validated

@@ -1,4 +1,8 @@
-"""Runs the app's pyroomacoustics worker on the benchmark scene (image sources, geometrical acoustics).
+"""Runs the app's geometric-acoustics worker on the benchmark scene (image sources, geometrical acoustics).
+
+The engine is the app's default (``ACOUSTICS_ENGINE``: compas_acoustics, or the legacy
+pyroomacoustics path); ``BRAS_GA_ENGINE`` overrides it for the benchmark and
+``BRAS_GA_DIFFRACTION`` (off | udfa) turns on compas_acoustics' edge diffraction.
 
 ``services.pyroomacoustics_worker._run_pyroomacoustics_compute_loop`` is the compute path of both
 the Speckle and the direct-geometry jobs: simulation-mesh preparation, one room per emitter, the
@@ -13,19 +17,26 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 from scipy.io import wavfile
 
 from benchmarks.bras.bras_constants import AIR_ABSORPTION, PRA_INT16_SCALE, PRA_MESH_SETTINGS, SIMULATION_MODE
-from config.constants import PFFDTD_SPEED_OF_SOUND, PYROOMACOUSTICS_RAY_TRACING_N_RAYS
+from config.constants import (ACOUSTICS_ENGINE_COMPAS_ACOUSTICS, ACOUSTICS_ENGINE_DEFAULT, ACOUSTICS_ENGINE_PYROOMACOUSTICS,
+                              CA_DIFFRACTION_OFF, PFFDTD_SPEED_OF_SOUND, PYROOMACOUSTICS_RAY_TRACING_N_RAYS)
 
 MANIFEST = "manifest.json"
 NO_PATH = "No sound path"
+ENGINE = os.environ.get("BRAS_GA_ENGINE", ACOUSTICS_ENGINE_DEFAULT).strip().lower()
+DIFFRACTION = os.environ.get("BRAS_GA_DIFFRACTION", CA_DIFFRACTION_OFF).strip().lower()
+ENGINE_LABELS = {ACOUSTICS_ENGINE_COMPAS_ACOUSTICS: "compas_acoustics", ACOUSTICS_ENGINE_PYROOMACOUSTICS: "pyroomacoustics"}
+ENGINE_LABEL = ENGINE_LABELS.get(ENGINE, ENGINE)   # the second engine's name in plots and reports
 
 
 @dataclass
@@ -36,11 +47,26 @@ class PraConfig:
     pair_keys: list
     directional: bool = True
     material_mode: str = "csv"
+    engine: str = ENGINE
+    # compas_acoustics only: the chamber's air (speed of sound, ISO 9613-1 absorption) and edge diffraction
+    temperature_c: Optional[float] = None
+    humidity: Optional[float] = None
+    diffraction: str = DIFFRACTION
+
+    def __post_init__(self):
+        if self.engine not in ENGINE_LABELS:
+            raise ValueError(f"Unknown geometric-acoustics engine {self.engine!r}; one of {sorted(ENGINE_LABELS)}")
+        if self.engine == ACOUSTICS_ENGINE_PYROOMACOUSTICS:   # the legacy engine has neither: keep its cache keys
+            self.temperature_c = self.humidity = None
+            self.diffraction = CA_DIFFRACTION_OFF
 
     def tag(self) -> str:
         pairs = hashlib.sha1("+".join(self.pair_keys).encode()).hexdigest()[:6]
         mode = "ism+rt" if self.ray_tracing else "ism"
-        return f"{self.scene}_pra_{mode}{self.max_order}_{'dir' if self.directional else 'omni'}_p{len(self.pair_keys)}_{pairs}"
+        engine = "pra" if self.engine == ACOUSTICS_ENGINE_PYROOMACOUSTICS else "ca"
+        if self.diffraction != CA_DIFFRACTION_OFF:
+            mode += f"+{self.diffraction}"
+        return f"{self.scene}_{engine}_{mode}{self.max_order}_{'dir' if self.directional else 'omni'}_p{len(self.pair_keys)}_{pairs}"
 
 
 @dataclass
@@ -52,17 +78,25 @@ class PraRun:
     wall_s: float
     no_path: list = field(default_factory=list)   # pairs the engine found no sound path for
     error: str = ""
+    config: dict = field(default_factory=dict)    # the PraConfig the run used
 
 
-def frac_delay_lead() -> int:
-    """Samples every pyroomacoustics RIR is late by (half its fractional-delay filter)."""
+def frac_delay_lead(engine: str = ENGINE) -> int:
+    """Samples every pyroomacoustics RIR is late by (half its fractional-delay filter);
+    compas_acoustics already removes it."""
+    if engine != ACOUSTICS_ENGINE_PYROOMACOUSTICS:
+        return 0
     import pyroomacoustics as pra
 
     return int(pra.constants.get("frac_delay_length")) // 2
 
 
 def _hash(cfg: PraConfig, geometry: dict, pairs_data: list) -> str:
-    payload = json.dumps([asdict(cfg), geometry, pairs_data, PRA_MESH_SETTINGS], sort_keys=True, default=str)
+    config = asdict(cfg)
+    if cfg.engine == ACOUSTICS_ENGINE_PYROOMACOUSTICS:   # same hash as before the engine became a setting
+        for k in ("engine", "temperature_c", "humidity", "diffraction"):
+            config.pop(k)
+    payload = json.dumps([config, geometry, pairs_data, PRA_MESH_SETTINGS], sort_keys=True, default=str)
     return hashlib.sha1(payload.encode()).hexdigest()
 
 
@@ -96,7 +130,15 @@ def _run_compute_loop(loop, sim_id: str, cfg: PraConfig, geometry: dict, pairs_d
         mesh_settings=dict(PRA_MESH_SETTINGS), simulation_mode=SIMULATION_MODE, max_order=cfg.max_order, ray_tracing=cfg.ray_tracing,
         air_absorption=AIR_ABSORPTION, n_rays=PYROOMACOUSTICS_RAY_TRACING_N_RAYS, sound_speed=PFFDTD_SPEED_OF_SOUND,
         rir_dir=run_dir / "rir", tmp_dir=run_dir, entry_meta={}, parallel=True,
+        engine=cfg.engine, diffraction=cfg.diffraction, air_temperature=cfg.temperature_c,
+        **({"air_humidity": cfg.humidity} if cfg.humidity is not None else {}),
     )
+
+
+def _silent(irs: dict, no_path: list) -> tuple[dict, list]:
+    """Pairs whose IR is all zeros have no sound path (compas_acoustics returns silence instead of failing)."""
+    silent = [k for k, x in irs.items() if not np.any(x)]
+    return {k: x for k, x in irs.items() if k not in silent}, list(no_path) + [k for k in silent if k not in no_path]
 
 
 def simulate_pra(cfg: PraConfig, geometry: dict, pairs_data: list, out_root: Path, force: bool = False) -> PraRun:
@@ -108,7 +150,8 @@ def simulate_pra(cfg: PraConfig, geometry: dict, pairs_data: list, out_root: Pat
     if manifest_path.exists() and not force:
         manifest = json.loads(manifest_path.read_text())
         if manifest.get("hash") == digest and all((run_dir / "rir" / n).exists() for n in manifest["wavs"].values()):
-            return PraRun(run_dir, _load(run_dir, manifest), manifest["fs"], True, manifest["wall_s"], manifest["no_path"])
+            irs, no_path = _silent(_load(run_dir, manifest), manifest["no_path"])
+            return PraRun(run_dir, irs, manifest["fs"], True, manifest["wall_s"], no_path, config=asdict(cfg))
     shutil.rmtree(run_dir, ignore_errors=True)
     (run_dir / "rir").mkdir(parents=True)
     t0 = time.time()
@@ -138,8 +181,9 @@ def simulate_pra(cfg: PraConfig, geometry: dict, pairs_data: list, out_root: Pat
                 no_path.append(f"{blocked['source_id']}-{blocked['receiver_id']}")
                 pending.remove(blocked)
     except Exception as exc:  # the comparison goes on without this engine
-        return PraRun(run_dir, {}, fs, False, time.time() - t0, no_path, f"{type(exc).__name__}: {exc}")
-    manifest = {"hash": digest, "tag": cfg.tag(), "config": asdict(cfg), "wavs": wavs, "fs": fs, "lead": frac_delay_lead(),
+        return PraRun(run_dir, {}, fs, False, time.time() - t0, no_path, f"{type(exc).__name__}: {exc}", asdict(cfg))
+    manifest = {"hash": digest, "tag": cfg.tag(), "config": asdict(cfg), "wavs": wavs, "fs": fs, "lead": frac_delay_lead(cfg.engine),
                 "wall_s": time.time() - t0, "no_path": no_path}
     manifest_path.write_text(json.dumps(manifest, indent=2))
-    return PraRun(run_dir, _load(run_dir, manifest), fs, False, manifest["wall_s"], no_path)
+    irs, no_path = _silent(_load(run_dir, manifest), no_path)
+    return PraRun(run_dir, irs, fs, False, manifest["wall_s"], no_path, config=asdict(cfg))

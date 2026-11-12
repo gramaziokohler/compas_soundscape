@@ -21,6 +21,11 @@
 
 'use client';
 
+import { GA_ENGINE } from '@/utils/constants';
+import { resolveEngine, usesCompasAcoustics } from '@/lib/acoustics/geometric-engine';
+import { isEngineSimulation, isGeometricSimulation } from '@/types/acoustics';
+import { useAcousticPathsStore, type RunAcousticPathsArgs } from '@/store';
+import { runHybridSimulation } from './acoustics/runHybridSimulation';
 import { useCanEdit } from '@/hooks/useCanEdit';
 import { useShareLinkedSimulations } from '@/hooks/useShareLinkedSimulations';
 import React, { useCallback, useEffect, useState, useRef, useMemo } from 'react';
@@ -425,8 +430,20 @@ export function AcousticsSection(props: AcousticsSectionProps) {
 
   // Only fetch materials when a card of that type exists
   // Wave-based (PFFDTD) cards share the pyroomacoustics absorption database and `pyroom_` ids.
-  const hasPyroomCard = simulationConfigs.some(c => c.type === 'pyroomacoustics' || c.type === 'pffdtd');
+  const hasPyroomCard = simulationConfigs.some(c => isEngineSimulation(c));
   const pffdtdStatus = usePffdtdStatus();
+  // compas_acoustics engine capabilities (which engine runs, what it offers)
+  const engineCapabilities = useAcousticPathsStore((s) => s.capabilities);
+  useEffect(() => { void useAcousticPathsStore.getState().loadCapabilities(); }, []);
+  const compasAcousticsAvailable = engineCapabilities
+    ? !!engineCapabilities.engines[GA_ENGINE.COMPAS_ACOUSTICS]?.available
+    : true; // unknown (older backend): let the run decide
+  /** Why a hybrid (wave + rays) run cannot start here; null when it can. */
+  const hybridUnavailableReason = !pffdtdStatus.available
+    ? pffdtdStatus.reason ?? 'Wave solver unavailable'
+    : !compasAcousticsAvailable
+      ? 'The compas_acoustics engine is not installed on the server'
+      : null;
   const hasImportIrsCard = simulationConfigs.some(c => c.type === 'import-irs');
 
   const { materials: builtInPyroomMaterials } = useAcousticsMaterials({
@@ -514,7 +531,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     onAddSimulationConfig(mode);
 
     // Check for large layers to exclude
-    if (geometryData && geometryData.face_entity_map && (mode === 'pyroomacoustics' || mode === 'pffdtd')) {
+    if (geometryData && geometryData.face_entity_map && (mode === 'pyroomacoustics' || mode === 'pffdtd' || mode === 'hybrid')) {
       const layerFaceCounts = new Map<string, number>();
 
       geometryData.face_entity_map.forEach((entityIndex, faceIndex) => {
@@ -609,7 +626,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     const fields = speckleCardFields(config);
     return buildSimulationGeometryRequest({
       materialAssignments: fields.speckleMaterialAssignments,
-      scatteringAssignments: config.type === 'pyroomacoustics' ? fields.speckleScatteringAssignments : undefined,
+      scatteringAssignments: isGeometricSimulation(config) ? fields.speckleScatteringAssignments : undefined,
       layerName: fields.speckleLayerName,
       persistedGeometryIds: fields.speckleGeometryObjectIds,
       speckleUrl: speckleData.url,
@@ -626,8 +643,15 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       const built = buildCardRequest(config);
       if (!built.ok) return built;
       const engine: SimulationEngine = 'pyroomacoustics';
-      const pySettings = config.type === 'pyroomacoustics' ? config.settings : null;
+      const pySettings = isGeometricSimulation(config) ? config.settings : null;
       const extra = { maxOrder: pySettings?.max_order, rayTracing: pySettings?.ray_tracing };
+      // Engine-specific checks (ambisonic output in an open model, BTMS in mono, ...)
+      const geometricEngine = !pySettings
+        ? undefined
+        : config.type === 'hybrid' ? GA_ENGINE.COMPAS_ACOUSTICS : resolveEngine(pySettings, engineCapabilities);
+      const engineExtra = pySettings
+        ? { geometricEngine, simulationMode: pySettings.simulation_mode, diffraction: pySettings.diffraction ?? GA_ENGINE.DIFFRACTION_OFF }
+        : {};
       return {
         ok: true,
         args: {
@@ -635,13 +659,46 @@ export function AcousticsSection(props: AcousticsSectionProps) {
           engine,
           request: built.request,
           meshSettings: simulationMeshSettings,
-          signature: simulationRequestSignature(engine, built.request, simulationMeshSettings, extra),
+          signature: simulationRequestSignature(engine, built.request, simulationMeshSettings, extra) + JSON.stringify(engineExtra),
           ...extra,
+          ...engineExtra,
         },
       };
     },
-    [buildCardRequest, simulationMeshSettings],
+    [buildCardRequest, simulationMeshSettings, engineCapabilities],
   );
+
+  /** Sound-path trace of a geometric card: same geometry inputs as its run. */
+  const pathOptions = useAcousticPathsStore((s) => s.options);
+  const buildPathsArgs = useCallback(
+    (config: SimulationConfig): { ok: true; args: RunAcousticPathsArgs } | { ok: false; error: string } => {
+      if (!isGeometricSimulation(config)) return { ok: false, error: 'Sound paths need a ray-tracing or hybrid card' };
+      const built = buildCardRequest(config);
+      if (!built.ok) return built;
+      const excludedEdges = config.settings.excluded_edges ?? [];
+      return {
+        ok: true,
+        args: {
+          configId: config.id,
+          request: built.request,
+          meshSettings: simulationMeshSettings,
+          excludedEdges,
+          signature: simulationRequestSignature('pyroomacoustics', built.request, simulationMeshSettings)
+            + JSON.stringify([pathOptions, excludedEdges]),
+        },
+      };
+    },
+    [buildCardRequest, simulationMeshSettings, pathOptions],
+  );
+
+  const runPathsForCard = useCallback((config: SimulationConfig) => {
+    const prepared = buildPathsArgs(config);
+    if (!prepared.ok) {
+      notifyError(prepared.error, 'warning');
+      return;
+    }
+    void useAcousticPathsStore.getState().runPaths(prepared.args);
+  }, [buildPathsArgs]);
 
   /** "Check geometry" button of a card. */
   const runPreflightForCard = useCallback((config: SimulationConfig) => {
@@ -842,9 +899,25 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     const config = simulationConfigs[index];
     if (!config) return;
 
-    if (config.type === 'pyroomacoustics' || config.type === 'pffdtd') logSimulationLaunch(index, config);
+    if (isEngineSimulation(config)) logSimulationLaunch(index, config);
     if (config.type === 'pyroomacoustics') {
       await runPyroomSimulation(index);
+    } else if (config.type === 'hybrid') {
+      const built = buildCardRequest(config);
+      if (!built.ok) {
+        handleUpdateConfig(index, { error: built.error });
+        return;
+      }
+      await runHybridSimulation({
+        index,
+        config,
+        request: built.request,
+        update: handleUpdateConfig,
+        pollIntervals: pollIntervalsRef.current,
+        receivers: allReceivers,
+        gridListenerSnapshot: buildGridListenerSnapshot(gridListeners),
+        onIRImported,
+      });
     } else if (config.type === 'pffdtd') {
       const built = buildCardRequest(config);
       if (!built.ok) {
@@ -878,7 +951,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     if (!config) return;
     setPreflightBlockedIndex((cur) => (cur === index ? null : cur));
 
-    if (config.type === 'pyroomacoustics') {
+    if (isGeometricSimulation(config)) {
       const prepared = buildPreflightArgs(config);
       if (prepared.ok) {
         const store = useSimulationPreflightStore.getState();
@@ -928,10 +1001,14 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       removeInflightJob(config.currentSimulationRunId);
       if (config.type === 'pyroomacoustics') {
         apiService.cancelPyroomacousticsSimulation(config.currentSimulationRunId).catch(console.error);
-      } else if (config.type === 'pffdtd') {
+      } else if (config.type === 'pffdtd' || config.type === 'hybrid') {
         apiService.cancelPffdtdSimulation(config.currentSimulationRunId).catch(console.error);
       }
     }
+
+    // Stop a sound-path trace still in flight for this card
+    const pathsStore = useAcousticPathsStore.getState();
+    if (config && pathsStore.entries[config.id]?.status === 'running') pathsStore.cancelPaths(config.id);
 
     // Stop a pre-simulation geometry check still in flight for this card
     const preflightStore = useSimulationPreflightStore.getState();
@@ -1211,7 +1288,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   // The powered-on card takes priority over the expanded one.
   const isAutoHideCandidate = (config: SimulationConfig | undefined): config is SimulationConfig =>
     !!config
-    && (config.type === 'pyroomacoustics' || config.type === 'pffdtd')
+    && isEngineSimulation(config)
     && config.state === 'completed'
     && !(config as { isRunning?: boolean }).isRunning
     && !editingCardIds.has(config.id);
@@ -1336,8 +1413,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   useEffect(() => {
     if (!revealSimulation || revealSimulation.seq === lastRevealSeqRef.current) return;
     lastRevealSeqRef.current = revealSimulation.seq;
-    const isGeometryCard = (c: SimulationConfig | undefined) =>
-      c?.type === 'pyroomacoustics' || c?.type === 'pffdtd';
+    const isGeometryCard = (c: SimulationConfig | undefined) => isEngineSimulation(c);
     let index = revealSimulation.configId
       ? simulationConfigs.findIndex((c) => c.id === revealSimulation.configId)
       : -1;
@@ -1427,6 +1503,14 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         ? 'Wave-based simulation needs a loaded model. Load one from the Home stage first.'
         : pffdtdStatus.reason ?? undefined,
     },
+    {
+      type: 'hybrid',
+      label: CARD_TYPE_LABELS['hybrid'],
+      enabled: !isSandbox && hybridUnavailableReason === null,
+      disabledTooltip: isSandbox
+        ? 'Hybrid simulation needs a loaded model. Load one from the Home stage first.'
+        : hybridUnavailableReason ?? undefined,
+    },
     { type: 'import-irs', label: CARD_TYPE_LABELS['import-irs'], enabled: true },
   ];
 
@@ -1464,13 +1548,14 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     const singleIRMode = config.type === 'import-irs' && (config as any).irImportMode === 'single';
 
     // Simulation action button state
-    const isSimulationType = config.type === 'pyroomacoustics' || config.type === 'pffdtd';
+    const isSimulationType = isEngineSimulation(config);
     const hasReceivers = allReceivers.length > 0;
     const hasSounds = activeSoundscapeData.length > 0;
-    const solverUnavailable = config.type === 'pffdtd' && !pffdtdStatus.available;
+    const solverUnavailable = (config.type === 'pffdtd' && !pffdtdStatus.available)
+      || (config.type === 'hybrid' && hybridUnavailableReason !== null);
     const actionButtonDisabled = isSimulationType && (!hasValidGeometry || !hasReceivers || !hasSounds || solverUnavailable);
     const actionButtonDisabledReason = solverUnavailable
-      ? pffdtdStatus.reason ?? 'Wave solver unavailable'
+      ? (config.type === 'hybrid' ? hybridUnavailableReason : pffdtdStatus.reason) ?? 'Wave solver unavailable'
       : !hasValidGeometry
       ? 'No geometry loaded'
       : !hasReceivers
@@ -1480,14 +1565,27 @@ export function AcousticsSection(props: AcousticsSectionProps) {
           : undefined;
 
     // Choose Materials based on Type
-    const currentMaterials = config.type === 'pyroomacoustics' || config.type === 'pffdtd'
+    const currentMaterials = isEngineSimulation(config)
         ? pyroomMaterials
         : config.type === 'import-irs'
         ? pyroomMaterials
         : [];
 
     // Input signature of this card right now (marks an older preflight / voxel preview as outdated)
-    const hasGeometryCheck = config.type === 'pyroomacoustics';
+    const hasGeometryCheck = isGeometricSimulation(config);
+    // Sound paths (reflections, billiard, diffraction edges) need the compas_acoustics engine
+    const pathsControl = isGeometricSimulation(config) ? (() => {
+      const prepared = buildPathsArgs(config);
+      const onCa = config.type === 'hybrid' || usesCompasAcoustics(config.settings, engineCapabilities);
+      return {
+        currentSignature: prepared.ok ? prepared.args.signature : null,
+        onRun: () => runPathsForCard(config),
+        disabled: !hasValidGeometry || !hasReceivers || !hasSounds,
+        unavailableReason: !compasAcousticsAvailable
+          ? 'Sound paths need the compas_acoustics engine, which is not installed on the server.'
+          : !onCa ? 'Sound paths need the compas_acoustics engine (Additional settings → Engine).' : null,
+      };
+    })() : undefined;
     const preflightSignature = (() => {
       if (config.type === 'pffdtd') {
         const prepared = buildVoxelPreviewArgs(config);
@@ -1525,6 +1623,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
               onDismissBlocked: () => setPreflightBlockedIndex(null),
               disabled: isRunning,
             } : undefined}
+            paths={pathsControl}
             voxelPreview={config.type === 'pffdtd' ? {
               currentSignature: preflightSignature,
               onRun: () => runVoxelPreviewForCard(config),
@@ -2049,7 +2148,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
           )}
           {soundSectionMismatchWarning}
           {/* Simulated on another model version: outdated above tolerance (still playable) */}
-          {(config.type === 'pyroomacoustics' || config.type === 'pffdtd') && (
+          {isEngineSimulation(config) && (
             <SimulationOutdatedNotice config={config} onRerun={() => void runSimulation(index)} />
           )}
           {runProblems}
@@ -2128,6 +2227,9 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       } else if (config.type === 'pffdtd') {
         const v = serviceVersions.pffdtd;
         versionLine = v ? `${v.name} ${v.version}` : undefined;
+      } else if (config.type === 'hybrid') {
+        const v = serviceVersions.pffdtd;
+        versionLine = v ? `${v.name} ${v.version} + compas_acoustics` : 'compas_acoustics';
       }
       return versionLine;
     })();
@@ -2192,7 +2294,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             actionButtonColor='primary'
             color="primary"
             version={cardVersion}
-            headerBadge={(config.type === 'pyroomacoustics' || config.type === 'pffdtd') && isCompleted
+            headerBadge={isEngineSimulation(config) && isCompleted
               ? <SimulationVersionBadge config={config} />
               : undefined}
             collapsedInfo={importIrsCollapsedInfo}
@@ -2211,13 +2313,13 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     const reducedActiveMaterials = (expandedCardIndex === null || !canEdit)
       && activeSimulationIndex !== null
       && activeConfig
-      && (activeConfig.type === 'pyroomacoustics' || activeConfig.type === 'pffdtd') ? (
+      && isEngineSimulation(activeConfig) ? (
         <SpeckleSurfaceMaterialsSection
           key={activeConfig.id ?? activeSimulationIndex}
           viewerRef={viewerRef}
           worldTree={localWorldTree}
           availableMaterials={pyroomMaterials}
-          cardType={activeConfig.type}
+          cardType={activeConfig.type === 'hybrid' ? 'pyroomacoustics' : activeConfig.type}
           filteringEnabled={filteringEnabled}
           isReadOnly
           isActive

@@ -58,6 +58,9 @@ export interface RunPreflightArgs {
   /** PFFDTD: output mode / free mode (run count and refusal of directional sources). */
   simulationMode?: string;
   freeMode?: string;
+  /** Geometric engine behind 'pyroomacoustics' and its diffraction model (engine-specific checks). */
+  geometricEngine?: string;
+  diffraction?: string;
 }
 
 export interface SimulationPreflightStoreState {
@@ -114,7 +117,7 @@ export const useSimulationPreflightStore = create<SimulationPreflightStoreState>
         hoveredIssueId: null,
         focusSeq: 0,
 
-        runPreflight: async ({ configId, engine, request, meshSettings, signature, maxOrder, rayTracing, simulationMode, freeMode }) => {
+        runPreflight: async ({ configId, engine, request, meshSettings, signature, maxOrder, rayTracing, simulationMode, freeMode, geometricEngine, diffraction }) => {
           stopPoller(configId);
           patch(configId, {
             ...EMPTY_ENTRY,
@@ -140,6 +143,8 @@ export const useSimulationPreflightStore = create<SimulationPreflightStoreState>
               modelId: request.modelId,
               simulationMode,
               freeMode,
+              geometricEngine,
+              diffraction,
             });
             patch(configId, { jobId: job_id, statusText: 'Queued...' }, 'preflight/queued');
 

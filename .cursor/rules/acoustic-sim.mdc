@@ -57,6 +57,112 @@ POST /api/jobs/{job_id}/cancel   # kills the child process
 GET /api/pyroomacoustics/get-result-file/{simulation_id}/{file_type}  # download WAV / JSON
 ```
 
+### Engine: compas_acoustics (default) or legacy pyroomacoustics
+
+Step 5 above is the **legacy** engine. Since the compas_acoustics migration
+(`docs/compas_acoustics_migration_plan.md`), the default engine is
+[compas_acoustics](https://github.com/bouiz/compas_acoustics/tree/engine-integration)
+(`ACOUSTICS_ENGINE_DEFAULT`, env `ACOUSTICS_ENGINE`). Each request may also set `engine`
+(form field / `settings.engine`). Steps 1–3 are shared; after them,
+`services/compas_acoustics_engine.simulate_pairs()` replaces step 5:
+
+- **Geometry:** `SimulationMesh` → `compas_acoustics.geometry.PreparedMesh` (same layout: the
+  preparation was ported to CA verbatim) → `RoomGeometry.from_prepared(check_inside=False)`.
+  One-sided walls become the boundary and two-sided walls become obstacles. The mean-free-path air
+  volume is used when the model does not close. Everything is recentred.
+- **Materials:** pra ids, `PYROOMACOUSTICS_CUSTOM_MATERIALS`, inlined user materials and bare
+  absorptions all map onto CA's 125 Hz–8 kHz bands. A per-object scattering overrides the
+  material's; without either, scattering is 0.05.
+- **Mono** uses `ca.Mono`: ISM + ray tracing, `n_jobs = PYROOMACOUSTICS_MAX_PROCESSES` when
+  parallel, `reciprocity=True` (CA swaps the roles only when every source is omni and there are
+  more sources than listeners), and `diffraction="udfa"` when asked.
+- **FOA (`foa`) / HOA (`hoa` + `ambisonic_order` 2–3)** use `ca.Ambisonics`: a hybrid of an ISM
+  early part and a directional FDN tail shaped by a ray-traced `Mono` reference that uses the
+  request's ray settings. Diffraction is `udfa` or `btms`. Output is AmbiX ACN/SN3D in the
+  listener frame (forward −Y, left +X, up +Z), the same as the legacy FOA. With ray tracing off,
+  the tail follows Eyring.
+- **Air:** CA derives the speed of sound from temperature and humidity. The request's
+  `sound_speed` becomes the temperature (343 m/s ≈ 20 °C), clamped to 0–30 °C. `air_temperature`
+  and `air_humidity` override it.
+- **Level:** CA writes 1/(4πr). The adapter multiplies by `CA_TO_APP_LEVEL_SCALE` (4π), so IRs stay
+  at the app's 1/r level (legacy engine, PFFDTD, saved soundscapes, playback gains).
+- **Export:** both engines write **float32** WAVs through `_export_pair()` (the old int16 export
+  wrapped above 1.0 near a source). CA results also carry `acoustic_parameters_bands` per pair
+  (CA `Analyser`: per-band EDT/T20/T30/C50/C80/D50/DRR/Ts/STI + reliability), plus header blocks
+  `engine` and `compas_acoustics` (method, seed, air, closed, volume, notes).
+- **Routing rules** (`validate_engine_settings`): BTMS needs ambisonic output. HOA and diffraction
+  need compas_acoustics. Preflight adds `ca_hybrid_open_model` (warning) and
+  `ca_hybrid_no_volume` (error) for ambisonic output in a model that does not close.
+- **Install:** `compas_acoustics[hybrid]` (requirements.txt, git URL). The `[worker]` extra is never
+  installed, because tensorflow pins protobuf < 6 and compas_pb needs ≥ 6.31. spharpy needs
+  scipy ≥ 1.17.
+
+### Engine settings, sound paths and edge selection (compas_acoustics)
+
+- **Settings** live on the card as optional `GeometricEngineSettings` (`types/acoustics.ts`):
+  `engine`, `diffraction`, `ambisonic_order`, `tail`, `n_slopes`, `seed`, `scattering_split`,
+  `air_temperature`, `air_humidity`, `excluded_edges`. Absent means default, so older saved cards
+  load unchanged. `lib/acoustics/geometric-engine.ts` is the single place that decides what is
+  sent (`engineFormFields`), saved (`pickGeometricEngineSettings`) and summarised. The UI is
+  `GeometricEngineSettings.tsx`, shared by the ray-tracing and hybrid cards.
+- **Capabilities:** `GET /api/acoustics/engines` says which engine is the default and what each
+  offers. `ACOUSTICS_ENGINE_DEFAULT` falls back to `pyroomacoustics` when compas_acoustics is not
+  installed. The card disables what the engine cannot run and lists what the run will adjust.
+- **Tail** (`CA_TAILS`, ambisonic output only): `auto` (ray-traced reference when ray tracing is
+  on, else Eyring), `reference`, `ray_tracing`, `eyring`, `sabine`.
+- **Sound paths:** `POST /api/acoustics/paths-speckle` (CPU job, variant `acoustic_paths`) →
+  `GET /api/acoustics/paths/{id}`. `services/acoustic_paths_service.py` prepares the same mesh as
+  the run and returns reflections (`SpecularReflections`), billiard rays (`RayField`) and the
+  diffracting edges with the first-order diffracted paths. Coordinates are model coordinates.
+  Frontend: `acousticPathsStore` (transient, not undoable), `AcousticPathsPanel.tsx`,
+  `lib/three/acoustic-paths-overlay.ts`, `useSpeckleAcousticPaths.ts`. Pure helpers (filters,
+  particle positions, edge picking) are in `lib/acoustics/acoustic-paths.ts`.
+- **Edge selection:** switched-off edges are the card setting `excluded_edges`
+  (`[[x1,y1,z1,x2,y2,z2], ...]`, model coordinates), saved and undoable. Edges are matched **by
+  position** (`edge_excluded`, 2 cm, either direction, pieces of a split edge), never by index, so
+  a changed weld or merge does not shift the selection. Clicking an edge in 3D is a primary-button
+  press and release without a drag (pointer events; same on Windows and macOS).
+- **compas_acoustics is not modified for this.** It has no edge selection and builds display paths
+  from `RoomGeometry.from_scene`, so the wrapper swaps two of its functions while it runs:
+  `diffraction_edge_filter` wraps `hybrid.diffraction.diffraction_edges`, and `scene_geometry`
+  replaces `RoomGeometry.from_scene` with the prepared room. Both depend on compas_acoustics
+  internals: `tests/test_acoustic_paths.py` fails if an upgrade breaks them.
+- **Per-band metrics:** `acoustic_parameters_bands` per pair → `BandMetricsTable.tsx`
+  (`lib/acoustics/band-metrics.ts`).
+- **IR import** (`impulse_response_service`): 9–15 channels are kept as second order, stored as
+  third order with silent third-order channels (they used to be cut to 4). An IR above full scale
+  is stored as float WAV instead of clipped 16-bit.
+
+### Hybrid simulation (wave below a crossover, rays above) — card type `hybrid`
+
+One job on the PFFDTD queue (`JOB_TYPE_PFFDTD`, payload `variant: "hybrid"`,
+`services/hybrid_job.py`), enqueued by `POST /api/hybrid/run-simulation-speckle`:
+
+1. **Geometric part first** (compas_acoustics, mono or FOA; no HOA).
+2. **Crossover** (`utils/hybrid_crossover.plan_crossover`): `crossover_factor ×` the Schroeder
+   frequency `2000·√(T60/V)`, with T60 the median reliable RT60 of the geometric IRs (Eyring's
+   prediction otherwise) and V the prepared air volume; or a manual frequency. The wave solver runs
+   to `HYBRID_WAVE_FMAX_MARGIN` (1.5) × the crossover, never above `wave_fmax_cap`: a binding cap
+   lowers the crossover and says so. Limits 40–2000 Hz, fallback 200 Hz when the room is unknown.
+3. **Wave part** (`pffdtd_job._run_from_geometry` to that fmax), then each pair is joined with a
+   **4th-order Linkwitz-Riley** crossover (`combine`): causal (no pre-ringing before the direct
+   sound), branches in phase, flat sum for coherent parts.
+
+- **Preconditions the join relies on** (checked by `tests/test_hybrid_pipeline.py`): same sample
+  rate, same time origin (both keep the propagation delay), same level (free field at 1 m).
+  `overlap_mismatch_db` (wave minus rays in the crossover octave) is reported per pair; the card
+  warns above 4 dB. `level_match` scales the wave part to the rays there (±6 dB), off by default.
+- **FOA frames differ between the engines:** PFFDTD encodes along the world axes, the geometric
+  engines in the listener frame (front = world −Y, left = world +X). The hybrid job converts the
+  wave part with `world_to_listener_foa` before joining. The standalone wave-based card does not.
+- **Results** use the PFFDTD file names, results JSON and `/api/pffdtd/get-result-file`, plus a
+  `hybrid` header (crossover, Schroeder frequency, T60, volume, notes) and a per-pair `hybrid`
+  block. The frontend tracks the run as a `pffdtd` in-flight job (`runHybridSimulation.ts`), so
+  refresh recovery is shared; the crossover comes back as `hybridInfo` on the card.
+- Frontend: `HybridSimulationSettings.tsx`, `lib/acoustics/hybrid.ts` (defaults, plan, form
+  fields, read-outs). Type guards `isEngineSimulation` / `isGeometricSimulation` replace the
+  `type === 'pyroomacoustics' || type === 'pffdtd'` checks: use them for any new card logic.
+
 ### Room Creation — Prepared Mesh, Not ShoeBox
 
 Rooms are built from the walls of a prepared `SimulationMesh`

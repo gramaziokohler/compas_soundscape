@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from services.job_store import Job
 from services.pffdtd_animation_job import run_pffdtd_animation
+from services.hybrid_job import run_hybrid_simulation
 from services.pffdtd_job import run_pffdtd_simulation
 from workers._subprocess_common import MultiSlotSubprocessRunner
 from config.constants import JOB_TYPE_PFFDTD, JOB_TYPE_PFFDTD_ANIMATION, JOB_TYPE_QUEUE
@@ -25,4 +26,6 @@ class PffdtdRunner(MultiSlotSubprocessRunner):
         kwargs = dict(job.payload.get("kwargs", {}))
         if job.type == JOB_TYPE_PFFDTD_ANIMATION:
             return run_pffdtd_animation, kwargs
+        if job.payload.get("variant") == "hybrid":  # wave + geometric (services/hybrid_job.py)
+            return run_hybrid_simulation, kwargs
         return run_pffdtd_simulation, kwargs

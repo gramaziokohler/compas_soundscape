@@ -72,6 +72,9 @@ backend/
   services/                # Business logic, ML model wrappers, external API clients
     job_store.py           # Redis-backed job store (AsyncJobStore + WorkerJobStore)
     io_jobs.py             # LLM/model-analysis/TTS asyncio jobs + SSE keepalive helper
+    compas_acoustics_engine.py  # Default geometric-acoustics engine (compas_acoustics: Mono, FOA/HOA hybrid, diffraction)
+    acoustic_paths_service.py   # Reflection paths, billiard rays, diffraction edges for the 3D view
+    hybrid_job.py               # Hybrid simulation: PFFDTD below the crossover, compas_acoustics above
     runtime_config.py      # Redis-persisted runtime config (e.g. Speckle token)
   workers/                 # Resident worker processes (GPU / CPU / SA3 / PFFDTD)
     worker_main.py         # python -m workers.worker_main --role gpu|cpu|sa3|pffdtd

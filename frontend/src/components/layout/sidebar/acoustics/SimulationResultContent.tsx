@@ -14,6 +14,8 @@ import { useCanEdit } from '@/hooks/useCanEdit';
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { ImpulseResponseUpload } from '@/components/audio/ImpulseResponseUpload';
 import type { SimulationConfig } from '@/types/acoustics';
+import { BandMetricsTable } from './BandMetricsTable';
+import { hybridRunSummary } from '@/lib/acoustics/hybrid';
 import type { ImpulseResponseMetadata, SourceReceiverIRMapping } from '@/types/audio';
 import { Notice } from '@/components/ui/Notice';
 import { Spinner } from '@/components/ui/Spinner';
@@ -297,7 +299,8 @@ export function SimulationResultContent({
   const sourceReceiverIRMapping: SourceReceiverIRMapping | undefined = simulationConfig.sourceReceiverIRMapping;
   const simulationId: string | undefined = simulationConfig.currentSimulationId;
   const simType: 'pyroomacoustics' | 'pffdtd' | undefined =
-    config.type === 'pyroomacoustics' || config.type === 'pffdtd' ? config.type : undefined;
+    // hybrid results are written and served like the wave-based ones
+    config.type === 'pyroomacoustics' ? 'pyroomacoustics' : config.type === 'pffdtd' || config.type === 'hybrid' ? 'pffdtd' : undefined;
   // Wave-based IRs carry no content above the grid's max frequency.
   const bandLimitHz = config.type === 'pffdtd' ? config.settings.fmax : null;
   // Import-irs cards carry per-IR metrics in their mapping — no simulation to fetch.
@@ -639,6 +642,16 @@ export function SimulationResultContent({
         <MetricsLoading />
       ) : (
         shownParams && <AcousticMetricsPanel params={shownParams} />
+      )}
+
+      {/* Per-octave-band metrics (compas_acoustics engine runs) */}
+      {config.type === 'pyroomacoustics' && simulationId && isExpanded && !canUseGrid && (
+        <BandMetricsTable simulationId={simulationId} />
+      )}
+      {config.type === 'hybrid' && config.hybridInfo && (
+        <p className="text-[11px]" style={{ color: 'var(--color-on-blue-muted)' }}>
+          {hybridRunSummary(config.hybridInfo)}
+        </p>
       )}
 
       {bandLimitHz !== null && (

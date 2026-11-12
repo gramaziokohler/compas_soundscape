@@ -20,8 +20,13 @@ import {
   PYROOMACOUSTICS_DEFAULT_PARALLEL,
   PYROOMACOUSTICS_SIMULATION_MODE_MONO,
   PYROOMACOUSTICS_SIMULATION_MODE_FOA,
+  PYROOMACOUSTICS_SIMULATION_MODE_HOA,
   PYROOMACOUSTICS_SIMULATION_MODE_NAMES
 } from '@/utils/constants';
+import { useAcousticPathsStore } from '@/store';
+import { usesCompasAcoustics } from '@/lib/acoustics/geometric-engine';
+import { GeometricEngineSettings } from './GeometricEngineSettings';
+import type { GeometricEngineSettings as EngineSettings } from '@/types/acoustics';
 import { useMemo, useState } from 'react';
 import { useFileUploadStore, useAcousticLayerStore } from '@/store';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
@@ -87,6 +92,9 @@ export function PyroomAcousticsSimulationSettings({
     if (config.settings.n_rays > nextMax) handleSettingChange('n_rays', nextMax);
   };
 
+  const capabilities = useAcousticPathsStore((s) => s.capabilities);
+  const hoaAvailable = usesCompasAcoustics(config.settings, capabilities);
+
   const isModified = useIsFieldModified();
   const isSettingModified = (field: keyof PyroomAcousticsSimulationConfig['settings']) =>
     isModified(`settings.${field}`);
@@ -123,6 +131,14 @@ export function PyroomAcousticsSimulationSettings({
             {
               value: PYROOMACOUSTICS_SIMULATION_MODE_FOA,
               label: PYROOMACOUSTICS_SIMULATION_MODE_NAMES[PYROOMACOUSTICS_SIMULATION_MODE_FOA],
+            },
+            {
+              value: PYROOMACOUSTICS_SIMULATION_MODE_HOA,
+              label: PYROOMACOUSTICS_SIMULATION_MODE_NAMES[PYROOMACOUSTICS_SIMULATION_MODE_HOA],
+              disabled: !hoaAvailable,
+              title: hoaAvailable
+                ? 'Higher-order ambisonics (order 2 or 3, under Additional settings)'
+                : 'Needs the compas_acoustics engine',
             },
           ]}
         />
@@ -182,6 +198,14 @@ export function PyroomAcousticsSimulationSettings({
           disabled={config.isRunning}
         />
       </div>
+
+      {/* compas_acoustics engine: diffraction, reverb tail, air, seed */}
+      <GeometricEngineSettings
+        settings={config.settings}
+        onChange={(field, value) => handleSettingChange(field as keyof PyroomAcousticsSimulationConfig['settings'], value)}
+        isModified={(field: keyof EngineSettings) => isSettingModified(field)}
+        disabled={config.isRunning}
+      />
 
       <AcousticMaterialsSummary modified={isModified('materials')} />
 

@@ -1,5 +1,7 @@
 'use client';
 
+import type { HybridSimulationConfig } from '@/types/acoustics';
+import { ambisonicOrder, engineSummaryRows } from '@/lib/acoustics/geometric-engine';
 import { useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight, RotateCcw } from 'lucide-react';
 import type { CardBaseConfig, CardType } from '@/types/card';
@@ -211,6 +213,7 @@ const SIMULATION_TYPES: CardType[] = [
   'resonance',
   'pyroomacoustics',
   'pffdtd',
+  'hybrid',
   'import-irs',
 ];
 
@@ -266,7 +269,10 @@ export function getSettingsRows(config: CardBaseConfig): SettingsRow[] {
 
   if (config.type === 'pyroomacoustics') {
     const s = (config as PyroomAcousticsSimulationConfig).settings;
-    rows.push({ label: 'Simulation Mode', value: s.simulation_mode === 'foa' ? 'FOA' : 'Mono' });
+    rows.push({
+      label: 'Simulation Mode',
+      value: s.simulation_mode === 'hoa' ? `HOA (order ${ambisonicOrder(s.simulation_mode, s)})` : s.simulation_mode === 'foa' ? 'FOA' : 'Mono',
+    });
     rows.push({ label: 'Max Order (ISM)', value: String(s.max_order) });
     if (s.ray_tracing) {
       rows.push({ label: 'Ray Tracing', value: 'Yes' });
@@ -274,6 +280,29 @@ export function getSettingsRows(config: CardBaseConfig): SettingsRow[] {
     }
     if (s.air_absorption) rows.push({ label: 'Air Absorption', value: 'Yes' });
     rows.push({ label: 'Parallel', value: s.parallel === false ? 'No' : 'Yes' });
+    rows.push(...engineSummaryRows(s));
+    return rows;
+  }
+
+  if (config.type === 'hybrid') {
+    const hybrid = config as unknown as HybridSimulationConfig;
+    const s = hybrid.settings;
+    rows.push({ label: 'Simulation Mode', value: s.simulation_mode === 'foa' ? 'FOA' : 'Mono' });
+    rows.push({
+      label: 'Crossover',
+      value: s.crossover_mode === 'manual'
+        ? `${s.crossover_hz} Hz`
+        : `${s.crossover_factor === 1 ? '' : `${s.crossover_factor} × `}Schroeder frequency`,
+    });
+    if (hybrid.hybridInfo) rows.push({ label: 'Joined At', value: `${Math.round(hybrid.hybridInfo.crossover_hz)} Hz` });
+    rows.push({ label: 'Wave Solver Up To', value: `${s.wave_fmax_cap} Hz` });
+    rows.push({ label: 'Points per Wavelength', value: String(s.ppw) });
+    rows.push({ label: 'Wave IR Length', value: s.duration === null ? 'From the decay' : `${s.duration} s` });
+    if (s.level_match) rows.push({ label: 'Level Match', value: 'Yes' });
+    rows.push({ label: 'Max Order (ISM)', value: String(s.max_order) });
+    if (s.ray_tracing) rows.push({ label: 'Rays', value: s.n_rays.toLocaleString() });
+    if (s.air_absorption) rows.push({ label: 'Air Absorption', value: 'Yes' });
+    rows.push(...engineSummaryRows(s));
     return rows;
   }
 
