@@ -1,3 +1,29 @@
+# Status (2026-11-12)
+
+| Phase | State |
+| --- | --- |
+| Step 1: compas_acoustics changes (M1–M7) | Done, pushed to `bouiz/compas_acoustics`, branch `engine-integration`. One later change is local only: `compas_pb` moved to a `worker` extra. |
+| 1–2: engine adapter, FOA/HOA, diffraction | Done on branch `compas-acoustics-engine` (not committed). `services/compas_acoustics_engine.py`. |
+| 3: measured directivity | Passed through to compas_acoustics by the adapter; not re-validated end to end. |
+| 4: visualisations | Reflection paths, billiard rays, diffraction edges and edge selection done. The energy map (`EnergyMap`) is not. |
+| Hybrid wave + rays card | Done: `services/hybrid_job.py`, card type `hybrid`. |
+| 5: retire the legacy path and the pyroomacoustics fork | Not started. The legacy engine is still the fallback. |
+
+Open items:
+
+- **Install on the production host.** Needs the services stopped from an administrator terminal
+  (see `deploy/PRODUCTION.md`). Until then the backend falls back to the legacy engine and the
+  paths / hybrid endpoints answer "not installed".
+- **No live check yet** of the new panels, the 3D overlay or the hybrid card.
+- **FOA frames:** the wave-based card encodes along the world axes, the ray-tracing card in the
+  listener frame (90° apart). Only the hybrid job converts. Decide which one playback expects.
+- **Open models are quieter far from the source** with compas_acoustics (2–4 dB, more where the
+  direct sound is blocked) than with the legacy engine. Unexplained.
+- Wrapper-side changes deviate from the plan below where it says "upstream": edge selection and
+  path tracing on a prepared room are done in the wrapper, to keep compas_acoustics unchanged.
+
+---
+
 # Step 1 (this approval): implement the compas_acoustics changes in the `bouiz` fork
 
 ## Context

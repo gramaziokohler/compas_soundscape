@@ -27,6 +27,13 @@ from typing import Callable, Optional
 
 import numpy as np
 import config.constants as constants
+from config.constants import ACOUSTICS_ENGINE_COMPAS_ACOUSTICS
+from config.constants import ACOUSTICS_ENGINE_DEFAULT
+from config.constants import ACOUSTICS_ENGINE_PYROOMACOUSTICS
+from config.constants import CA_AIR_HUMIDITY_DEFAULT
+from config.constants import CA_DIFFRACTION_DEFAULT
+from config.constants import CA_SEED_DEFAULT
+from config.constants import CA_TAIL_DEFAULT
 from config.constants import PYROOMACOUSTICS_DEFAULT_PARALLEL
 from config.constants import PYROOMACOUSTICS_IR_TRIM_THRESHOLD
 from config.constants import PYROOMACOUSTICS_RECIPROCITY_ENABLED
@@ -86,6 +93,78 @@ def split_processes(max_processes: int, n_emitters: int) -> tuple[int, int]:
     """(emitter rooms simulated at once, processes splitting the rays of each room)."""
     at_once = max(1, min(max_processes, n_emitters))
     return at_once, max(1, max_processes // at_once)
+
+
+def _ambisonic_order(simulation_mode: str, ambisonic_order: Optional[int]) -> int:
+    """0 for mono, 1 for FOA, the requested order (default CA_AMBISONIC_ORDER_DEFAULT) for HOA."""
+    if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_MONO:
+        return 0
+    if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_FOA:
+        return 1
+    return int(ambisonic_order or constants.CA_AMBISONIC_ORDER_DEFAULT)
+
+
+def _export_pair(ctx: dict, pair_dict: dict, rir: np.ndarray, num_channels: int, extra: dict) -> tuple[str, dict]:
+    """Trim, measure and write one pair's IR (float32 WAV, the app's 1/r level); returns
+    ``(IR file name, result entry)``. ``rir`` is (samples,) or (samples, channels)."""
+    source_id = pair_dict["source_id"]
+    receiver_id = pair_dict["receiver_id"]
+    if rir is None or len(rir) == 0:
+        raise ValueError(f"Empty RIR for '{source_id}' -> '{receiver_id}'")
+    if not np.any(rir):
+        raise ValueError(
+            f"No sound path from '{source_id}' to '{receiver_id}': the direct path and every "
+            "reflection are blocked (a point inside a closed object, or outside the model?)"
+        )
+    rir_data = trim_ir(np.asarray(rir, dtype=np.float64), threshold_fraction=PYROOMACOUSTICS_IR_TRIM_THRESHOLD)
+
+    # Metrics are computed on the TRIMMED signal that is written to disk, so
+    # RT60/EDT/DRR/C50/D50 describe the exact exported IR. Ambisonic metrics use
+    # the W (omni) channel, rir_data[:, 0].
+    acoustic_params = None
+    try:
+        metric_rir = rir_data if rir_data.ndim == 1 else rir_data[:, 0]
+        acoustic_params = AcousticMeasurement.calculate_acoustic_parameters_from_rir(
+            metric_rir, PYROOMACOUSTICS_SAMPLE_RATE
+        )
+        if acoustic_params and not ctx["ray_tracing"]:
+            # Pure ISM has no diffuse late field; its decay estimate is
+            # inherently less trustworthy than the hybrid ray-traced one.
+            acoustic_params["rt60_is_estimate"] = True
+    except Exception as ap_err:
+        print(f"  Warning: acoustic params failed for {source_id}->{receiver_id}: {ap_err}")
+
+    ir_filename = f"sim_{ctx['simulation_id']}_src_{source_id}_rcv_{receiver_id}.wav"
+    # float32: 1/r IRs exceed 1.0 near a source, which int16 wrapped
+    wavfile.write(str(Path(ctx["rir_dir"]) / ir_filename), PYROOMACOUSTICS_SAMPLE_RATE, rir_data.astype(np.float32))
+    print(f"  Exported {num_channels}-channel IR: {ir_filename}")
+
+    result_entry: dict = {
+        "source_id": source_id,
+        "receiver_id": receiver_id,
+        "source_position": pair_dict["source_position"],
+        "receiver_position": pair_dict["receiver_position"],
+        "ir_file": ir_filename,
+        "sample_rate": PYROOMACOUSTICS_SAMPLE_RATE,
+        "max_order": ctx["max_order"],
+        "ray_tracing": ctx["ray_tracing"],
+        "air_absorption": ctx["air_absorption"],
+        "simulation_mode": ctx["simulation_mode"],
+        "num_channels": num_channels,
+        "engine": ctx.get("engine", ACOUSTICS_ENGINE_PYROOMACOUSTICS),
+    }
+    result_entry.update(ctx["entry_meta"])
+    if num_channels > 1:
+        result_entry["channel_ordering"] = "ACN"
+        result_entry["normalization_convention"] = "SN3D"
+        result_entry["format"] = "AmbiX"
+        result_entry["ambisonic_order"] = int(round(np.sqrt(num_channels))) - 1
+    if ctx["ray_tracing"] and ctx["ray_tracing_entry_meta"]:
+        result_entry.update(ctx["ray_tracing_entry_meta"])
+    result_entry.update(extra)
+    if acoustic_params:
+        result_entry["acoustic_parameters"] = acoustic_params
+    return ir_filename, result_entry
 
 
 def _simulate_emitter(ctx: dict, task: dict, progress: Callable[[float, str], None]) -> list[tuple[int, str, dict]]:
@@ -153,7 +232,7 @@ def _simulate_emitter(ctx: dict, task: dict, progress: Callable[[float, str], No
                     f"No sound path from '{source_id}' to '{receiver_id}': the direct path and every "
                     "reflection are blocked (a point inside a closed object, or outside the model?)"
                 )
-            rir_data = trim_ir(rir, threshold_fraction=PYROOMACOUSTICS_IR_TRIM_THRESHOLD)
+            rir_data = rir
         else:
             rir_channels = []
             for ch in range(num_channels):
@@ -170,59 +249,18 @@ def _simulate_emitter(ctx: dict, task: dict, progress: Callable[[float, str], No
                 np.pad(r, (0, max_length - len(r)), mode="constant") if len(r) < max_length else r
                 for r in rir_channels
             ]
-            rir_data = trim_ir(np.column_stack(padded), threshold_fraction=PYROOMACOUSTICS_IR_TRIM_THRESHOLD)
-
-        # Metrics are computed on the TRIMMED signal that is written to
-        # disk, so RT60/EDT/DRR/C50/D50 describe the exact exported IR.
-        # FOA metrics use the W (omni) channel — rir_data[:, 0].
-        acoustic_params = None
-        try:
-            metric_rir = rir_data if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_MONO else rir_data[:, 0]
-            acoustic_params = AcousticMeasurement.calculate_acoustic_parameters_from_rir(
-                metric_rir, PYROOMACOUSTICS_SAMPLE_RATE
-            )
-            if acoustic_params and not ray_tracing:
-                # Pure ISM has no diffuse late field; its decay estimate is
-                # inherently less trustworthy than the hybrid ray-traced one.
-                acoustic_params["rt60_is_estimate"] = True
-        except Exception as ap_err:
-            print(f"  Warning: acoustic params failed for {source_id}->{receiver_id}: {ap_err}")
+            rir_data = np.column_stack(padded)
 
         progress(
             0.8 + 0.2 * (local_pair_idx + 1) / n_pairs,
             f"Pair {index + 1}/{ctx['total_pairs']}: Exporting IR...",
         )
-
-        ir_filename = f"sim_{ctx['simulation_id']}_src_{source_id}_rcv_{receiver_id}.wav"
-        rir_int16 = np.int16(rir_data * 32767)
-        wavfile.write(str(Path(ctx["rir_dir"]) / ir_filename), PYROOMACOUSTICS_SAMPLE_RATE, rir_int16)
-        print(f"  Exported {num_channels}-channel IR: {ir_filename}")
-
-        result_entry: dict = {
-            "source_id": source_id,
-            "receiver_id": receiver_id,
-            "source_position": pair_dict["source_position"],
-            "receiver_position": pair_dict["receiver_position"],
-            "ir_file": ir_filename,
-            "sample_rate": PYROOMACOUSTICS_SAMPLE_RATE,
-            "max_order": ctx["max_order"],
-            "ray_tracing": ray_tracing,
-            "air_absorption": ctx["air_absorption"],
-            "simulation_mode": simulation_mode,
-            "num_channels": num_channels,
-        }
-        result_entry.update(ctx["entry_meta"])
+        extra: dict = {}
         if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_FOA:
-            result_entry["channel_ordering"] = "ACN"
-            result_entry["normalization_convention"] = "SN3D"
-            result_entry["format"] = "AmbiX"
-            result_entry["encoding_method"] = "directivity"
-        if ray_tracing and ctx["ray_tracing_entry_meta"]:
-            result_entry.update(ctx["ray_tracing_entry_meta"])
+            extra["encoding_method"] = "directivity"
         if directivity_spec:
-            result_entry["source_directivity"] = directivity_result_entry(directivity_spec)
-        if acoustic_params:
-            result_entry["acoustic_parameters"] = acoustic_params
+            extra["source_directivity"] = directivity_result_entry(directivity_spec)
+        ir_filename, result_entry = _export_pair(ctx, pair_dict, rir_data, num_channels, extra)
         outputs.append((index, ir_filename, result_entry))
     return outputs
 
@@ -298,6 +336,16 @@ def _run_pyroomacoustics_compute_loop(
     ray_tracing_entry_meta: Optional[dict] = None,
     header_meta: Optional[dict] = None,
     parallel: bool = PYROOMACOUSTICS_DEFAULT_PARALLEL,
+    engine: str = ACOUSTICS_ENGINE_DEFAULT,
+    diffraction: str = CA_DIFFRACTION_DEFAULT,
+    ambisonic_order: Optional[int] = None,
+    air_temperature: Optional[float] = None,
+    air_humidity: float = CA_AIR_HUMIDITY_DEFAULT,
+    tail: str = CA_TAIL_DEFAULT,
+    n_slopes: int = 1,
+    seed: int = CA_SEED_DEFAULT,
+    scattering_split: bool = False,
+    excluded_edges: Optional[list] = None,
 ) -> None:
     """
     Shared per-source compute pipeline used by both the Speckle worker and the
@@ -324,7 +372,10 @@ def _run_pyroomacoustics_compute_loop(
         pairs=[(str(p["source_id"]), str(p["receiver_id"])) for p in pairs_data],
         max_order=max_order,
         ray_tracing=ray_tracing,
-        two_sided_supported=pra_supports_two_sided(),
+        two_sided_supported=engine == ACOUSTICS_ENGINE_COMPAS_ACOUSTICS or pra_supports_two_sided(),
+        geometric_engine=engine,
+        simulation_mode=simulation_mode,
+        diffraction=diffraction or CA_DIFFRACTION_DEFAULT,
     ))
     geometry_diagnostics = {
         **summarize(analysis.issues),
@@ -346,6 +397,27 @@ def _run_pyroomacoustics_compute_loop(
             print(f"  [{issue.severity}] {issue.title}")
     # pra walls are float32: build around the model centre, shift positions too.
     offset = room_offset(mesh)
+
+    if engine == ACOUSTICS_ENGINE_COMPAS_ACOUSTICS:
+        _run_compas_acoustics(
+            simulation_id=simulation_id, progress_file=progress_file, result_file=result_file,
+            simulation_name=simulation_name, pairs_data=pairs_data, mesh=mesh, offset=offset,
+            simulation_mode=simulation_mode, max_order=max_order, ray_tracing=ray_tracing,
+            air_absorption=air_absorption, n_rays=n_rays, sound_speed=sound_speed, rir_dir=rir_dir,
+            tmp_dir=tmp_dir, entry_meta=entry_meta, ray_tracing_entry_meta=ray_tracing_entry_meta,
+            header_meta=header_meta, parallel=parallel, diffraction=diffraction,
+            ambisonic_order=ambisonic_order, air_temperature=air_temperature, air_humidity=air_humidity,
+            geometry_diagnostics=geometry_diagnostics,
+            tail=tail, n_slopes=n_slopes, seed=seed, scattering_split=scattering_split,
+            excluded_edges=excluded_edges,
+        )
+        return
+    if engine != ACOUSTICS_ENGINE_PYROOMACOUSTICS:
+        raise ValueError(f"Unknown acoustics engine: {engine!r}")
+    if simulation_mode not in (PYROOMACOUSTICS_SIMULATION_MODE_MONO, PYROOMACOUSTICS_SIMULATION_MODE_FOA):
+        raise ValueError(f"The pyroomacoustics engine has no '{simulation_mode}' output; use mono or foa")
+    if diffraction and diffraction != CA_DIFFRACTION_DEFAULT:
+        print(f"[{simulation_id[:8]}] Diffraction '{diffraction}' ignored: the pyroomacoustics engine has none")
 
     # ── Group pairs by emitter ──────────────────────────────────────────────
     # Normally every source is an emitter and the listeners are its microphones.
@@ -415,6 +487,7 @@ def _run_pyroomacoustics_compute_loop(
         "total_pairs": total_pairs,
         "entry_meta": entry_meta,
         "ray_tracing_entry_meta": ray_tracing_entry_meta,
+        "engine": ACOUSTICS_ENGINE_PYROOMACOUSTICS,
     }
 
     # Progress spread: 20% → 90% across all emitters
@@ -446,6 +519,7 @@ def _run_pyroomacoustics_compute_loop(
         results_json.update(header_meta)
     results_json["geometry_diagnostics"] = geometry_diagnostics
     results_json["reciprocity"] = reciprocity.as_dict()
+    results_json["engine"] = ACOUSTICS_ENGINE_PYROOMACOUSTICS
     with open(tmp_dir / results_filename, "w") as f:
         json.dump(results_json, f, indent=2)
 
@@ -453,6 +527,125 @@ def _run_pyroomacoustics_compute_loop(
     print(f"Pyroomacoustics simulation completed: {simulation_id}")
     print(f"  IR files: {len(ir_files)}")
     print(f"{'='*60}\n")
+
+    _write_result(result_file, {
+        "type": "done",
+        "result": {
+            "simulation_id": simulation_id,
+            "message": "Simulation completed successfully",
+            "ir_files": ir_files,
+            "results_file": results_filename,
+        },
+    })
+
+
+def _run_compas_acoustics(
+    *, simulation_id: str, progress_file: str, result_file: str, simulation_name: str,
+    pairs_data: list, mesh, offset: np.ndarray, simulation_mode: str, max_order: int,
+    ray_tracing: bool, air_absorption: bool, n_rays: int, sound_speed: float, rir_dir: Path,
+    tmp_dir: Path, entry_meta: dict, ray_tracing_entry_meta: Optional[dict],
+    header_meta: Optional[dict], parallel: bool, diffraction: str, ambisonic_order: Optional[int],
+    air_temperature: Optional[float], air_humidity: float, geometry_diagnostics: dict,
+    tail: str = CA_TAIL_DEFAULT, n_slopes: int = 1, seed: int = CA_SEED_DEFAULT,
+    scattering_split: bool = False, excluded_edges: Optional[list] = None,
+) -> None:
+    """The compute half of the job on compas_acoustics (services/compas_acoustics_engine.py):
+    every pair in one or a few scenes, then the same export and results file as the legacy path."""
+    from services.compas_acoustics_engine import EngineSettings, simulate_pairs
+
+    order = _ambisonic_order(simulation_mode, ambisonic_order)
+    if not 0 <= order <= constants.CA_AMBISONIC_ORDER_MAX:
+        raise ValueError(f"Ambisonic order must be 1 to {constants.CA_AMBISONIC_ORDER_MAX}, got {order}")
+    num_channels = (order + 1) ** 2
+    settings = EngineSettings(
+        ambisonic_order=order,
+        max_order=max_order,
+        ray_tracing=ray_tracing,
+        air_absorption=air_absorption,
+        n_rays=n_rays,
+        sound_speed=sound_speed,
+        air_temperature=air_temperature,
+        air_humidity=air_humidity,
+        diffraction=diffraction or CA_DIFFRACTION_DEFAULT,
+        n_jobs=constants.PYROOMACOUSTICS_MAX_PROCESSES if parallel else 1,
+        reciprocity=PYROOMACOUSTICS_RECIPROCITY_ENABLED,
+        tail=tail or CA_TAIL_DEFAULT,
+        n_slopes=int(n_slopes),
+        seed=int(seed),
+        scattering_split=bool(scattering_split),
+        excluded_edges=list(excluded_edges or []),
+    )
+    output = "mono" if order == 0 else f"ambisonic order {order}"
+    rays = f"on ({n_rays} rays)" if ray_tracing else "off"
+    print(
+        f"[{simulation_id[:8]}] compas_acoustics: {len(pairs_data)} pair(s), {output}, ISM order {max_order}, "
+        f"ray tracing {rays}, diffraction {settings.diffraction}, {settings.n_jobs} process(es)"
+    )
+
+    def _progress(fraction: float, text: str) -> None:
+        _write_progress(progress_file, min(int(20 + 65.0 * fraction), 85), text)
+
+    run = simulate_pairs(mesh, offset, pairs_data, settings, _progress)
+    for note in run.notes:
+        print(f"  [note] {note}")
+
+    ctx = {
+        "simulation_id": simulation_id,
+        "simulation_mode": simulation_mode,
+        "max_order": max_order,
+        "ray_tracing": ray_tracing,
+        "air_absorption": air_absorption,
+        "rir_dir": str(rir_dir),
+        "entry_meta": entry_meta,
+        "ray_tracing_entry_meta": ray_tracing_entry_meta,
+        "engine": ACOUSTICS_ENGINE_COMPAS_ACOUSTICS,
+    }
+    ir_files: list[str] = []
+    results_data: list[dict] = []
+    for k, response in enumerate(run.responses):
+        pair_dict = pairs_data[response.pair_index]
+        _write_progress(
+            progress_file, min(85 + int(10 * k / max(len(run.responses), 1)), 95),
+            f"Pair {response.pair_index + 1}/{len(pairs_data)}: Exporting IR...",
+        )
+        rir = response.rir
+        if rir.ndim == 2 and rir.shape[1] != num_channels:
+            raise RuntimeError(f"compas_acoustics returned {rir.shape[1]} channels, expected {num_channels}")
+        extra: dict = {"diffraction": settings.diffraction}
+        if num_channels > 1:
+            extra["encoding_method"] = "compas_acoustics_hybrid"
+        spec = pair_dict.get("source_directivity_spec")
+        if spec:
+            extra["source_directivity"] = directivity_result_entry(spec)
+        if response.band_metrics:
+            extra["acoustic_parameters_bands"] = response.band_metrics
+        ir_filename, entry = _export_pair(ctx, pair_dict, rir, num_channels, extra)
+        ir_files.append(ir_filename)
+        results_data.append(entry)
+
+    _write_progress(progress_file, 95, "Saving results...")
+    results_filename = f"simulation_{simulation_id}_results.json"
+    results_json = {
+        "simulation_id": simulation_id,
+        "simulation_name": simulation_name,
+        "results": results_data,
+    }
+    if header_meta:
+        results_json.update(header_meta)
+    results_json["geometry_diagnostics"] = geometry_diagnostics
+    results_json["engine"] = ACOUSTICS_ENGINE_COMPAS_ACOUSTICS
+    results_json["compas_acoustics"] = {**run.generation, "notes": run.notes}
+    results_json["reciprocity"] = {
+        "flipped": bool(run.generation.get("reciprocal", False)),
+        "reason": "compas_acoustics Mono(reciprocity=...)",
+    }
+    with open(tmp_dir / results_filename, "w") as f:
+        json.dump(results_json, f, indent=2)
+
+    print(f"\n{'=' * 60}")
+    print(f"compas_acoustics simulation completed: {simulation_id}")
+    print(f"  IR files: {len(ir_files)}")
+    print(f"{'=' * 60}\n")
 
     _write_result(result_file, {
         "type": "done",
@@ -487,6 +680,16 @@ def run_pyroomacoustics_simulation(
     temp_dir: str = "",
     mesh_settings: Optional[dict] = None,
     parallel: bool = PYROOMACOUSTICS_DEFAULT_PARALLEL,
+    engine: str = ACOUSTICS_ENGINE_DEFAULT,
+    diffraction: str = CA_DIFFRACTION_DEFAULT,
+    ambisonic_order: Optional[int] = None,
+    air_temperature: Optional[float] = None,
+    air_humidity: float = CA_AIR_HUMIDITY_DEFAULT,
+    tail: str = CA_TAIL_DEFAULT,
+    n_slopes: int = 1,
+    seed: int = CA_SEED_DEFAULT,
+    scattering_split: bool = False,
+    excluded_edges: Optional[list] = None,
 ) -> None:
     """
     Full pyroomacoustics simulation pipeline, runs in a subprocess.
@@ -550,6 +753,16 @@ def run_pyroomacoustics_simulation(
                 },
             },
             parallel=parallel,
+            engine=engine,
+            diffraction=diffraction,
+            ambisonic_order=ambisonic_order,
+            air_temperature=air_temperature,
+            air_humidity=air_humidity,
+            tail=tail,
+            n_slopes=n_slopes,
+            seed=seed,
+            scattering_split=scattering_split,
+            excluded_edges=excluded_edges,
         )
 
     except Exception as exc:
@@ -574,6 +787,16 @@ def run_pyroomacoustics_simulation_from_geometry(
     temp_dir: str = "",
     mesh_settings: Optional[dict] = None,
     parallel: bool = PYROOMACOUSTICS_DEFAULT_PARALLEL,
+    engine: str = ACOUSTICS_ENGINE_DEFAULT,
+    diffraction: str = CA_DIFFRACTION_DEFAULT,
+    ambisonic_order: Optional[int] = None,
+    air_temperature: Optional[float] = None,
+    air_humidity: float = CA_AIR_HUMIDITY_DEFAULT,
+    tail: str = CA_TAIL_DEFAULT,
+    n_slopes: int = 1,
+    seed: int = CA_SEED_DEFAULT,
+    scattering_split: bool = False,
+    excluded_edges: Optional[list] = None,
 ) -> None:
     """
     Direct-geometry pyroomacoustics pipeline, runs in a subprocess.
@@ -693,6 +916,16 @@ def run_pyroomacoustics_simulation_from_geometry(
                 "geometry_source": {"format": "geometry-json", "units": "m"},
             },
             parallel=parallel,
+            engine=engine,
+            diffraction=diffraction,
+            ambisonic_order=ambisonic_order,
+            air_temperature=air_temperature,
+            air_humidity=air_humidity,
+            tail=tail,
+            n_slopes=n_slopes,
+            seed=seed,
+            scattering_split=scattering_split,
+            excluded_edges=excluded_edges,
         )
 
     except Exception as exc:

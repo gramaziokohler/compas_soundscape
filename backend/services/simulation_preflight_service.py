@@ -68,6 +68,10 @@ class PreflightContext:
     pffdtd_runs: float = 0.0
     # Free-listener mode cannot radiate directional sources (1.0 = requested anyway).
     pffdtd_directional_free_listener: float = 0.0
+    # Geometric engine behind ENGINE_PYROOMACOUSTICS (config.constants.ACOUSTICS_ENGINES) and its output
+    geometric_engine: str = "pyroomacoustics"
+    simulation_mode: str = "mono"
+    diffraction: str = "off"
 
 
 @dataclass
@@ -264,6 +268,8 @@ class SimulationPreflightService:
                         "model or lower the max order (ray tracing covers the late tail).")
         if ctx.engine == ENGINE_PFFDTD and len(mesh.faces):
             _pffdtd_checks(mesh, ctx, out, dists)
+        if ctx.engine == ENGINE_PYROOMACOUSTICS and ctx.geometric_engine == "compas_acoustics" and len(mesh.faces):
+            _compas_acoustics_checks(mesh, ctx, out)
         if len(mesh.vertices):
             diag = float(np.linalg.norm(mesh.vertices.max(axis=0) - mesh.vertices.min(axis=0)))
             if not (PREFLIGHT_MODEL_DIAGONAL_MIN_M <= diag <= PREFLIGHT_MODEL_DIAGONAL_MAX_M):
@@ -360,3 +366,40 @@ def summarize(issues: list[PreflightIssue]) -> dict[str, int]:
 
 def issue_codes(issues: list[PreflightIssue], severity: Optional[str] = None) -> list[str]:
     return [i.code for i in issues if severity is None or i.severity == severity]
+
+
+def model_closes(mesh: SimulationMesh) -> bool:
+    """compas_acoustics' rule (RoomGeometry.from_prepared): every one-sided face belongs to a closed welded component."""
+    one_sided = ~np.asarray(mesh.two_sided, dtype=bool)
+    if not one_sided.any():
+        return False
+    return bool(np.all(np.asarray(mesh.component_closed)[np.asarray(mesh.component)[one_sided]]))
+
+
+def _compas_acoustics_checks(mesh: SimulationMesh, ctx: PreflightContext, out) -> None:
+    """What the compas_acoustics engine does differently from the legacy pyroomacoustics path."""
+    ambisonic = ctx.simulation_mode in ("foa", "hoa")
+    closes = model_closes(mesh)
+    if ambisonic and not closes:
+        if mesh.air_volume_m3 > 0:
+            out.add("warning", "ca_hybrid_open_model", "Ambisonic late field in a model that does not close",
+                    f"The late reverberation is synthesised from the estimated air volume "
+                    f"({mesh.air_volume_m3:.0f} m^3, {mesh.air_volume_method.replace('_', ' ')}) and the openings "
+                    "are treated as fully absorbing. Close the leaks for a reliable decay.")
+        else:
+            out.add("error", "ca_hybrid_no_volume", "Ambisonic output needs an air volume",
+                    "The model does not close and no air volume could be estimated from the sources and "
+                    "listeners. Close the room, or run in mono.")
+    if ctx.diffraction != "off" and not closes:
+        n_two_sided = int(np.count_nonzero(mesh.two_sided))
+        out.add("warning" if n_two_sided == 0 else "info", "ca_diffraction_open_model",
+                "Room corners do not diffract in a model that does not close",
+                "Edge diffraction then only uses the rims of free-standing (two-sided) surfaces"
+                + (" — and this model has none, so diffraction will add nothing. " if n_two_sided == 0 else ". ")
+                + "Close the room to include its corners.")
+    if ctx.diffraction == "btms" and not ambisonic:
+        out.add("error", "ca_btms_mono", "BTMS diffraction needs ambisonic output",
+                "Use UDFA diffraction for mono, or switch the output to FOA/HOA.")
+    if ctx.diffraction != "off" and ctx.max_order == 0:
+        out.add("info", "ca_diffraction_direct_only", "Diffraction with image-source order 0",
+                "Only edges seen from both the source and the listener diffract (first order).")

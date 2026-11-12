@@ -5,6 +5,7 @@
  * saving/loading soundscape state to/from Speckle + local storage.
  */
 
+import type { HybridRunInfo } from '@/types/acoustics';
 import type { DrawnArea } from './area-drawing';
 import type { GridPlacementMode } from './receiver';
 import type { IRAcousticParameters } from './audio';
@@ -184,6 +185,23 @@ export interface SoundscapeSimulationSettings {
   parallel?: boolean;
   simulation_mode: string;
   enable_grid?: boolean;
+  // compas_acoustics engine only (GeometricEngineSettings in types/acoustics.ts)
+  engine?: string;
+  diffraction?: string;
+  ambisonic_order?: number;
+  tail?: string;
+  n_slopes?: number;
+  seed?: number;
+  scattering_split?: boolean;
+  air_temperature?: number | null;
+  air_humidity?: number;
+  excluded_edges?: number[][];
+  // Hybrid (wave + geometric) only; ppw / duration below are shared with PFFDTD
+  crossover_mode?: 'schroeder' | 'manual';
+  crossover_hz?: number;
+  crossover_factor?: number;
+  wave_fmax_cap?: number;
+  level_match?: boolean;
   // PFFDTD (wave-based) only
   fmax?: number;
   ppw?: number;
@@ -236,6 +254,8 @@ export interface SoundscapeSimulationConfig {
   current_simulation_run_id?: string;
   /** PFFDTD: grid problems the run reported after voxelising. */
   run_problems?: PffdtdVoxelProblem[];
+  /** Hybrid: crossover of the finished run (results JSON `hybrid` block). */
+  hybrid_info?: HybridRunInfo | null;
   imported_ir_ids?: string[];
   source_receiver_ir_mapping?: Record<string, Record<string, SoundscapeIRMetadata>>;
   receiver_positions?: Record<string, number[]>; // receiverId -> [x, y, z]

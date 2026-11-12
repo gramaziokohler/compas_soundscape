@@ -5,6 +5,9 @@ from enum import Enum
 from typing import Any, Literal
 from typing import Optional
 
+from config.constants import ACOUSTICS_ENGINE_DEFAULT
+from config.constants import CA_AIR_HUMIDITY_DEFAULT
+from config.constants import CA_DIFFRACTION_DEFAULT
 from config.constants import AUDIO_SAMPLE_RATE
 from config.constants import BUG_REPORT_MAX_DESCRIPTION_CHARS
 from config.constants import CUSTOM_MATERIAL_CATEGORY
@@ -706,6 +709,23 @@ class SoundscapeSimulationSettings(BaseModel):
     parallel: bool = PYROOMACOUSTICS_DEFAULT_PARALLEL
     simulation_mode: str = "foa"
     enable_grid: bool = False
+    # compas_acoustics engine only (None = the engine's default)
+    engine: Optional[str] = None
+    diffraction: Optional[str] = None
+    ambisonic_order: Optional[int] = None
+    tail: Optional[str] = None
+    n_slopes: Optional[int] = None
+    seed: Optional[int] = None
+    scattering_split: Optional[bool] = None
+    air_temperature: Optional[float] = None
+    air_humidity: Optional[float] = None
+    excluded_edges: Optional[list[list[float]]] = None
+    # hybrid (wave + geometric) only; ppw / duration below are shared with PFFDTD
+    crossover_mode: Optional[str] = None
+    crossover_hz: Optional[float] = None
+    crossover_factor: Optional[float] = None
+    wave_fmax_cap: Optional[float] = None
+    level_match: Optional[bool] = None
     fmax: Optional[float] = None
     ppw: Optional[float] = None
     duration: Optional[float] = None
@@ -771,7 +791,7 @@ class SoundscapeSimulationConfig(BaseModel):
     """Serializable simulation configuration"""
     id: str
     display_name: str
-    type: str  # "pyroomacoustics", "pffdtd", "resonance"
+    type: str  # "pyroomacoustics", "pffdtd", "hybrid", "resonance", "import-irs"
     state: str = "completed"
     simulation_instance_id: Optional[str] = None
     resonance_room: Optional[SoundscapeResonanceRoom] = None
@@ -791,6 +811,8 @@ class SoundscapeSimulationConfig(BaseModel):
     current_simulation_run_id: Optional[str] = None
     # PFFDTD: grid problems the run reported after voxelising (e.g. the model leaks)
     run_problems: Optional[list[dict]] = None
+    # Hybrid: crossover of the finished run (results JSON `hybrid` block)
+    hybrid_info: Optional[dict] = None
     imported_ir_ids: Optional[list[str]] = None
     source_receiver_ir_mapping: Optional[dict[str, dict[str, SoundscapeIRMetadata]]] = None
     receiver_positions: Optional[dict[str, list[float]]] = None  # receiverId -> [x, y, z]
@@ -976,9 +998,20 @@ class PyroomacousticsGeometrySettings(BaseModel):
     n_rays: int = PYROOMACOUSTICS_RAY_TRACING_N_RAYS
     # Emitter rooms in parallel processes (PYROOMACOUSTICS_MAX_PROCESSES); False = one process
     parallel: bool = PYROOMACOUSTICS_DEFAULT_PARALLEL
-    simulation_mode: Literal["mono", "foa"] = PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE
+    simulation_mode: Literal["mono", "foa", "hoa"] = PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE
     sound_speed: float = DEFAULT_SPEED_OF_SOUND
     rir_duration: float = PYROOMACOUSTICS_DEFAULT_RIR_DURATION
+    # Engine (config.constants.ACOUSTICS_ENGINES) and its compas_acoustics-only settings
+    engine: str = ACOUSTICS_ENGINE_DEFAULT
+    diffraction: Literal["off", "udfa", "btms"] = CA_DIFFRACTION_DEFAULT
+    ambisonic_order: Optional[int] = None   # "hoa": 2 or 3
+    air_temperature: Optional[float] = None  # deg C; default: from sound_speed
+    air_humidity: float = CA_AIR_HUMIDITY_DEFAULT
+    tail: str = "auto"                       # ambisonic late field (config.constants.CA_TAILS)
+    n_slopes: int = 1
+    seed: int = 42
+    scattering_split: bool = False
+    excluded_edges: list[list[float]] = Field(default_factory=list)  # [[x1,y1,z1,x2,y2,z2], ...]
 
 
 class PyroomacousticsGeometrySource(BaseModel):

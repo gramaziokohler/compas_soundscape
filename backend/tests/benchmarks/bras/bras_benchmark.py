@@ -36,7 +36,7 @@ from benchmarks.bras.bras_geometry import (
     material_table,
     scene_geometry,
 )
-from benchmarks.bras.bras_pra import PraConfig, simulate_pra
+from benchmarks.bras.bras_pra import ENGINE_LABEL, PraConfig, simulate_pra
 from benchmarks.bras.bras_plots import plot_animation_preview, plot_average, plot_overview, plot_pair
 from benchmarks.bras.bras_report import write_report, write_results
 from benchmarks.bras.bras_setup_plots import plot_setup
@@ -331,12 +331,12 @@ def run_benchmark(data: SceneData, opts: RunOptions) -> dict:
           f"({plan.nodes / 1e6:.0f} M nodes, {plan.gpu_gb:.1f} GB), ~{plan.est_runtime_s:.0f} s per engine run", flush=True)
 
     runs = out / "runs"
-    # pyroomacoustics on the CPU, in a thread, while the GPU runs PFFDTD
+    # the geometric-acoustics engine (compas_acoustics / pyroomacoustics) on the CPU, in a thread, while the GPU runs PFFDTD
     pool = ThreadPoolExecutor(max_workers=1)
     pra_future = None
     if opts.pra and scene.pra.enabled:
         pra_cfg = PraConfig(scene.name, scene.pra.max_order, scene.pra.ray_tracing, [p.key for p in pairs],
-                            fit is not None, opts.material_mode)
+                            fit is not None, opts.material_mode, temperature_c=scene.temperature_c, humidity=scene.humidity)
         pra_geo = enclosed_geometry(rp.scene_geo, bounds) if K.PRA_CLOSED_ROOM else rp.scene_geo
         pra_future = pool.submit(simulate_pra, pra_cfg, pra_geo, rp.pairs_data, runs, opts.force)
     plate = simulate(rp.cfg, rp.scene_geo, rp.pairs_data, bounds, opts.force, out_root=runs)
@@ -409,8 +409,12 @@ def _second_engine(future, pairs, rp: RunPlan, bt, fmax: float, scene: Scene) ->
     """The pyroomacoustics comparison (same windows, bands and gain rule), or why there is none."""
     run = future.result()
     spec = scene.pra
-    notes = [f"pyroomacoustics: image sources up to order {spec.max_order}"
-             + (" + ray tracing" if spec.ray_tracing else "") + ", the measured loudspeaker balloon, no diffraction"
+    cfg_diffraction = (run.config or {}).get("diffraction", "off")
+    notes = [f"{ENGINE_LABEL}: image sources up to order {spec.max_order}"
+             + (" + ray tracing" if spec.ray_tracing else "") + ", the measured loudspeaker balloon, "
+             + ("no diffraction" if cfg_diffraction == "off" else f"{cfg_diffraction.upper()} edge diffraction")
+             + (f", air at {run.config['temperature_c']:g} degC / {run.config['humidity']:g} % RH"
+                if (run.config or {}).get("temperature_c") is not None else "")
              + (", inside a fully absorbing shell (a closed room, so the objects block paths)" if K.PRA_CLOSED_ROOM else "")
              + f"; {run.wall_s:.0f} s on the CPU."]
     if run.error:

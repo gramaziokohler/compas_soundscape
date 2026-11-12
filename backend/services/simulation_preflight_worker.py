@@ -54,6 +54,9 @@ def run_simulation_preflight(
     mesh_settings: dict,
     payload_dir: str,
     pffdtd_settings: Optional[dict] = None,
+    geometric_engine: str = "pyroomacoustics",
+    simulation_mode: str = "mono",
+    diffraction: str = "off",
 ) -> None:
     try:
         inputs = load_speckle_simulation_geometry(
@@ -82,7 +85,13 @@ def run_simulation_preflight(
             pairs=[(str(p["source_id"]), str(p["receiver_id"])) for p in pairs_data],
             max_order=int(max_order),
             ray_tracing=bool(ray_tracing),
-            two_sided_supported=two_sided_supported() if engine == ENGINE_PYROOMACOUSTICS else True,
+            two_sided_supported=(
+                (geometric_engine == "compas_acoustics" or two_sided_supported())
+                if engine == ENGINE_PYROOMACOUSTICS else True
+            ),
+            geometric_engine=geometric_engine,
+            simulation_mode=simulation_mode,
+            diffraction=diffraction,
             **{f"pffdtd_{k}": float(v) for k, v in (pffdtd_settings or {}).items()},
         )
         analysis = SimulationPreflightService.analyze(mesh, ctx)

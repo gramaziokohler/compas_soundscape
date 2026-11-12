@@ -1,5 +1,6 @@
 "use client";
 
+import { isEngineSimulation } from '@/types/acoustics';
 import { useEffect, useState, useCallback, useRef, useMemo, Suspense } from "react";
 import { useRouter } from "next/navigation";
 import { SpeckleScene } from "@/components/scene/SpeckleScene";
@@ -1250,7 +1251,7 @@ function HomeContent() {
   const getSimIRMapping = useCallback((index: number | null) => {
     if (index === null) return null;
     const config = acousticsSimulation.simulationConfigs[index];
-    if (!config || (config.type !== 'pyroomacoustics' && config.type !== 'pffdtd' && config.type !== 'import-irs')) return null;
+    if (!config || (!isEngineSimulation(config) && config.type !== 'import-irs')) return null;
     const mapping = (config as any).sourceReceiverIRMapping || null;
     return mapping && Object.keys(mapping).length > 0 ? mapping : null;
   }, [acousticsSimulation.simulationConfigs]);
@@ -1266,9 +1267,9 @@ function HomeContent() {
     if (acousticsSimulation.activeSimulationIndex !== null) {
       const activeConfig = acousticsSimulation.simulationConfigs[acousticsSimulation.activeSimulationIndex];
 
-      if (activeConfig && (activeConfig.type === 'pyroomacoustics' || activeConfig.type === 'pffdtd' || activeConfig.type === 'import-irs')) {
+      if (activeConfig && (isEngineSimulation(activeConfig) || activeConfig.type === 'import-irs')) {
         const simConfig = activeConfig as any;
-        const simulationMode = activeConfig.type === 'import-irs' ? 'pyroomacoustics' : activeConfig.type as AcousticSimulationMode;
+        const simulationMode = activeConfig.type === 'import-irs' ? 'pyroomacoustics' : activeConfig.type === 'hybrid' ? 'pffdtd' : activeConfig.type as AcousticSimulationMode;
 
         // If simulation has source-receiver IR mapping, pass it to AudioOrchestrator
         if (simConfig.sourceReceiverIRMapping) {

@@ -20,6 +20,18 @@ from pathlib import Path
 from typing import List
 from typing import Optional
 
+from config.constants import ACOUSTICS_ENGINE_COMPAS_ACOUSTICS
+from config.constants import ACOUSTICS_ENGINE_DEFAULT
+from config.constants import ACOUSTICS_ENGINES
+from config.constants import CA_AIR_HUMIDITY_DEFAULT
+from config.constants import CA_AMBISONIC_ORDER_MAX
+from config.constants import CA_DIFFRACTION_DEFAULT
+from config.constants import CA_DIFFRACTION_MODELS
+from config.constants import CA_DIFFRACTION_OFF
+from config.constants import CA_N_SLOPES_MAX
+from config.constants import CA_SEED_DEFAULT
+from config.constants import CA_TAIL_DEFAULT
+from config.constants import CA_TAILS
 from config.constants import DEFAULT_SPEED_OF_SOUND
 from config.constants import PYROOMACOUSTICS_DEFAULT_ABSORPTION
 from config.constants import PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION
@@ -32,6 +44,7 @@ from config.constants import PYROOMACOUSTICS_MAX_ORDER_MIN
 from config.constants import PYROOMACOUSTICS_RAY_TRACING_N_RAYS
 from config.constants import PYROOMACOUSTICS_RIR_DIR
 from config.constants import PYROOMACOUSTICS_SIMULATION_MODE_FOA
+from config.constants import PYROOMACOUSTICS_SIMULATION_MODE_HOA
 from config.constants import PYROOMACOUSTICS_SIMULATION_MODE_MONO
 from config.constants import TEMP_SIMULATIONS_DIR
 from config.constants import JOB_TYPE_PYROOMACOUSTICS
@@ -58,6 +71,45 @@ RIR_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 TEMP_DIR = Path(TEMP_SIMULATIONS_DIR)
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def validate_tail_settings(tail: str, n_slopes: int) -> None:
+    if tail not in CA_TAILS:
+        raise HTTPException(status_code=400, detail=f"tail must be one of {list(CA_TAILS)}")
+    if not 1 <= n_slopes <= CA_N_SLOPES_MAX:
+        raise HTTPException(status_code=400, detail=f"n_slopes must be 1 to {CA_N_SLOPES_MAX}")
+
+
+def validate_engine_settings(
+    engine: str,
+    simulation_mode: str,
+    diffraction: str,
+    ambisonic_order: Optional[int],
+    air_temperature: Optional[float],
+    air_humidity: float,
+) -> None:
+    """400 for an engine / output / diffraction combination the engine cannot run."""
+    if engine not in ACOUSTICS_ENGINES:
+        raise HTTPException(status_code=400, detail=f"Unknown engine '{engine}'; one of {list(ACOUSTICS_ENGINES)}")
+    modes = (PYROOMACOUSTICS_SIMULATION_MODE_MONO, PYROOMACOUSTICS_SIMULATION_MODE_FOA, PYROOMACOUSTICS_SIMULATION_MODE_HOA)
+    if simulation_mode not in modes:
+        raise HTTPException(status_code=400, detail=f"Invalid simulation mode: {simulation_mode}")
+    if diffraction not in CA_DIFFRACTION_MODELS:
+        raise HTTPException(status_code=400, detail=f"diffraction must be one of {list(CA_DIFFRACTION_MODELS)}")
+    if engine != ACOUSTICS_ENGINE_COMPAS_ACOUSTICS:
+        if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_HOA:
+            raise HTTPException(status_code=400, detail="Higher-order ambisonics needs the compas_acoustics engine")
+        if diffraction != CA_DIFFRACTION_OFF:
+            raise HTTPException(status_code=400, detail="Edge diffraction needs the compas_acoustics engine")
+        return
+    if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_MONO and diffraction == "btms":
+        raise HTTPException(status_code=400, detail="BTMS diffraction needs an ambisonic output; use 'udfa' for mono")
+    if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_HOA and ambisonic_order is not None and not 2 <= ambisonic_order <= CA_AMBISONIC_ORDER_MAX:
+        raise HTTPException(status_code=400, detail=f"ambisonic_order must be 2 to {CA_AMBISONIC_ORDER_MAX} for 'hoa'")
+    if air_temperature is not None and not 0.0 <= air_temperature <= 30.0:
+        raise HTTPException(status_code=400, detail="air_temperature must be within 0 to 30 deg C")
+    if not 0.0 <= air_humidity <= 100.0:
+        raise HTTPException(status_code=400, detail="air_humidity must be within 0 to 100 %")
 
 
 # ─── Pydantic models (local use only) ─────────────────────────────────────────
@@ -165,6 +217,16 @@ async def run_simulation_speckle(
     source_receiver_pairs: str = Form(...),
     mesh_settings: Optional[str] = Form(None),
     model_id: Optional[str] = Form(None),  # resolves shared-soundscape directivity copies
+    engine: str = Form(ACOUSTICS_ENGINE_DEFAULT),
+    diffraction: str = Form(CA_DIFFRACTION_DEFAULT),
+    ambisonic_order: Optional[int] = Form(None),  # 'hoa' mode: 2 or 3
+    air_temperature: Optional[float] = Form(None),  # deg C; default: from sound_speed
+    air_humidity: float = Form(CA_AIR_HUMIDITY_DEFAULT),
+    tail: str = Form(CA_TAIL_DEFAULT),              # ambisonic late field (CA_TAILS)
+    n_slopes: int = Form(1),
+    seed: int = Form(CA_SEED_DEFAULT),
+    scattering_split: bool = Form(False),
+    excluded_edges: Optional[str] = Form(None),      # JSON [[x1,y1,z1,x2,y2,z2], ...]
 ):
     """
     Validate basic params and enqueue the simulation.  Returns {job_id,
@@ -183,8 +245,10 @@ async def run_simulation_speckle(
         object_scattering_dict: dict[str, float] = json.loads(object_scattering) if object_scattering else {}
         mesh_prep = parse_mesh_settings(mesh_settings)
 
-        if simulation_mode not in (PYROOMACOUSTICS_SIMULATION_MODE_MONO, PYROOMACOUSTICS_SIMULATION_MODE_FOA):
-            raise HTTPException(status_code=400, detail=f"Invalid simulation mode: {simulation_mode}")
+        validate_engine_settings(engine, simulation_mode, diffraction, ambisonic_order, air_temperature, air_humidity)
+        validate_tail_settings(tail, n_slopes)
+        from routers.acoustic_paths import parse_excluded_edges
+        excluded_edge_rows = parse_excluded_edges(excluded_edges)
 
         unique_sources: dict[str, list] = {}
         unique_receivers: dict[str, list] = {}
@@ -204,7 +268,7 @@ async def run_simulation_speckle(
         print("Pyroomacoustics Speckle Simulation Request")
         print(f"Simulation ID: {simulation_id}")
         print(f"Project: {speckle_project_id}  Version: {speckle_version_id}")
-        print(f"Layer: {layer_name}  Mode: {simulation_mode}  Pairs: {len(pairs_data)}")
+        print(f"Layer: {layer_name}  Mode: {simulation_mode}  Pairs: {len(pairs_data)}  Engine: {engine}  Diffraction: {diffraction}")
         print(f"{'='*60}\n")
 
         payload = {
@@ -229,6 +293,16 @@ async def run_simulation_speckle(
                 rir_output_dir=str(RIR_OUTPUT_DIR),
                 temp_dir=str(TEMP_DIR),
                 mesh_settings=mesh_prep.model_dump(),
+                engine=engine,
+                diffraction=diffraction,
+                ambisonic_order=ambisonic_order,
+                air_temperature=air_temperature,
+                air_humidity=air_humidity,
+                tail=tail,
+                n_slopes=n_slopes,
+                seed=seed,
+                scattering_split=scattering_split,
+                excluded_edges=excluded_edge_rows,
             ),
         }
 
@@ -274,14 +348,11 @@ async def run_simulation_geometry(body: PyroomacousticsGeometryRequest, http_req
 
     try:
         settings = req.settings
-        if settings.simulation_mode not in (
-            PYROOMACOUSTICS_SIMULATION_MODE_MONO,
-            PYROOMACOUSTICS_SIMULATION_MODE_FOA,
-        ):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid simulation mode: {settings.simulation_mode}",
-            )
+        validate_engine_settings(
+            settings.engine, settings.simulation_mode, settings.diffraction, settings.ambisonic_order,
+            settings.air_temperature, settings.air_humidity,
+        )
+        validate_tail_settings(settings.tail, settings.n_slopes)
 
         if settings.max_order < PYROOMACOUSTICS_MAX_ORDER_MIN or settings.max_order > PYROOMACOUSTICS_MAX_ORDER_MAX:
             raise HTTPException(
@@ -388,6 +459,16 @@ async def run_simulation_geometry(body: PyroomacousticsGeometryRequest, http_req
                 rir_output_dir=str(RIR_OUTPUT_DIR),
                 temp_dir=str(TEMP_DIR),
                 mesh_settings=(req.mesh_settings or MeshPrepSettings()).model_dump(),
+                engine=settings.engine,
+                diffraction=settings.diffraction,
+                ambisonic_order=settings.ambisonic_order,
+                air_temperature=settings.air_temperature,
+                air_humidity=settings.air_humidity,
+                tail=settings.tail,
+                n_slopes=settings.n_slopes,
+                seed=settings.seed,
+                scattering_split=settings.scattering_split,
+                excluded_edges=settings.excluded_edges,
             ),
         }
 

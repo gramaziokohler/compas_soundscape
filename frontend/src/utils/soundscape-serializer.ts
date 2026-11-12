@@ -5,6 +5,8 @@
  * the serializable types used for Speckle/local persistence.
  */
 
+import type { HybridSettings } from '@/types/acoustics';
+import { restoreHybridSettings } from '@/lib/acoustics/hybrid';
 import type { SoundGenerationConfig, SoundEvent, ReceiverData, SimulationConfig } from '@/types';
 import type { ResonanceSimulationConfig } from '@/types/acoustics';
 import type {
@@ -33,6 +35,7 @@ import type { AnalysisConfig, AnalysisResult, TextPromptResult } from '@/types/a
 import { API_BASE_URL, AUDIO_PLAYBACK, PFFDTD, PYROOMACOUSTICS_DEFAULT_MAX_ORDER, PYROOMACOUSTICS_DEFAULT_PARALLEL, PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE } from '@/utils/constants';
 import type { PffdtdFreeMode, PffdtdSettings } from '@/types/pffdtd';
 import { newConfigId } from '@/utils/config-id';
+import { pickGeometricEngineSettings } from '@/lib/acoustics/geometric-engine';
 import { parseAuthoredSeconds } from '@/lib/audio/utils/timeline-utils';
 import { captureGenerationSignature } from '@/utils/generationSignature';
 import { customMaterialRecordsFor, useCustomMaterialStore } from '@/store/customMaterialStore';
@@ -65,6 +68,12 @@ function serializePffdtdSettings(s: PffdtdSettings): SoundscapeSimulationSetting
 }
 
 /** Saved settings → wave-based card settings (defaults fill fields missing on older saves). */
+/** Hybrid card settings as saved (null wave length = from the room, left out). */
+function serializeHybridSettings(s: HybridSettings): SoundscapeSimulationSettings {
+  const { duration, ...rest } = s;
+  return { ...rest, ...(duration === null ? {} : { duration }) };
+}
+
 function restorePffdtdSettings(s: SoundscapeSimulationSettings | undefined): PffdtdSettings {
   return {
     simulation_mode: s?.simulation_mode ?? PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE,
@@ -430,6 +439,7 @@ export function buildSoundscapeSavePayload(
     if (
       config.type !== 'pyroomacoustics'
       && config.type !== 'pffdtd'
+      && config.type !== 'hybrid'
       && config.type !== 'import-irs'
       && config.type !== 'resonance'
     ) continue;
@@ -549,6 +559,8 @@ export function buildSoundscapeSavePayload(
       simulation_instance_id: config.simulationInstanceId,
       settings: config.type === 'pffdtd'
         ? serializePffdtdSettings(config.settings)
+        : config.type === 'hybrid'
+        ? serializeHybridSettings(config.settings)
         : pyConfig.settings ? {
           max_order: pyConfig.settings.max_order,
           ray_tracing: pyConfig.settings.ray_tracing,
@@ -557,6 +569,7 @@ export function buildSoundscapeSavePayload(
           parallel: pyConfig.settings.parallel,
           simulation_mode: pyConfig.settings.simulation_mode,
           enable_grid: pyConfig.settings.enable_grid,
+          ...pickGeometricEngineSettings(pyConfig.settings),
         } : undefined,
       speckle_material_assignments: speckleMaterialAssignments,
       speckle_layer_name: speckleLayerName,
@@ -569,6 +582,7 @@ export function buildSoundscapeSavePayload(
       current_simulation_id: pyConfig.currentSimulationId,
       current_simulation_run_id: pyConfig.currentSimulationRunId,
       run_problems: config.type === 'pffdtd' && config.runProblems?.length ? config.runProblems : undefined,
+      hybrid_info: config.type === 'hybrid' && config.hybridInfo ? config.hybridInfo : undefined,
       imported_ir_ids: pyConfig.importedIRIds,
       source_receiver_ir_mapping: serializedMapping,
       receiver_positions: Object.keys(receiverPositions).length > 0 ? receiverPositions : undefined,
@@ -1073,6 +1087,8 @@ export function restoreSoundscapeState(
       simulationInstanceId: saved.simulation_instance_id,
       settings: saved.type === 'pffdtd'
         ? restorePffdtdSettings(saved.settings)
+        : saved.type === 'hybrid'
+        ? restoreHybridSettings(saved.settings as Partial<HybridSettings> | undefined)
         : hasSettings ? {
         max_order: settings.max_order,
         ray_tracing: settings.ray_tracing,
@@ -1081,6 +1097,7 @@ export function restoreSoundscapeState(
         parallel: settings.parallel ?? PYROOMACOUSTICS_DEFAULT_PARALLEL,
         simulation_mode: settings.simulation_mode,
         enable_grid: settings.enable_grid,
+        ...pickGeometricEngineSettings(settings),
       } : {
         max_order: PYROOMACOUSTICS_DEFAULT_MAX_ORDER,
         ray_tracing: false,
@@ -1101,6 +1118,7 @@ export function restoreSoundscapeState(
       currentSimulationId: saved.current_simulation_id,
       currentSimulationRunId: saved.current_simulation_run_id,
       runProblems: saved.run_problems,
+      hybridInfo: saved.hybrid_info ?? undefined,
       importedIRIds: saved.imported_ir_ids,
       sourceReceiverIRMapping,
       // Restore simulation-time source/receiver positions (needed by the mismatch
@@ -1154,7 +1172,7 @@ export function restoreSoundscapeState(
       irImportMode: saved.ir_import_mode ?? undefined,
     } as any;
 
-    if (!hasSettings && saved.type !== 'pffdtd') {
+    if (!hasSettings && saved.type !== 'pffdtd' && saved.type !== 'hybrid') {
       delete (restoredConfig as any).settings;
       delete (restoredConfig as any).faceToMaterialMap;
     }

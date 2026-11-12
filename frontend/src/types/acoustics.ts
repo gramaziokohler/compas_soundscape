@@ -31,7 +31,7 @@ export interface GridListenerSnapshot {
 /**
  * Acoustic simulation modes
  */
-export type AcousticSimulationMode = 'resonance' | 'pyroomacoustics' | 'pffdtd' | 'import-irs';
+export type AcousticSimulationMode = 'resonance' | 'pyroomacoustics' | 'pffdtd' | 'hybrid' | 'import-irs';
 
 /**
  * Simulation states for UI display
@@ -91,6 +91,33 @@ export interface ResonanceSimulationConfig extends BaseSimulationConfig {
 }
 
 /**
+ * Settings only the compas_acoustics engine runs (all optional: absent = default, so cards saved
+ * before the engine switch load unchanged). Defaults: `GA_ENGINE` in utils/constants.ts.
+ */
+export interface GeometricEngineSettings {
+  /** 'auto' (backend default) | 'compas_acoustics' | 'pyroomacoustics' */
+  engine?: string;
+  /** Edge diffraction: 'off' | 'udfa' | 'btms' (btms: ambisonic output only). */
+  diffraction?: string;
+  /** Ambisonic order of the 'hoa' mode (2 or 3). */
+  ambisonic_order?: number;
+  /** Ambisonic late field: 'auto' | 'reference' | 'ray_tracing' | 'eyring' | 'sabine'. */
+  tail?: string;
+  /** Decay slopes of the late field (2+ for coupled volumes). */
+  n_slopes?: number;
+  /** Random seed of the ray tracing and the late field (same seed = same result). */
+  seed?: number;
+  /** Split the early part into specular and scattered contributions. */
+  scattering_split?: boolean;
+  /** Air temperature in deg C; null/absent = derived from the global sound speed. */
+  air_temperature?: number | null;
+  /** Relative humidity in %. */
+  air_humidity?: number;
+  /** Diffraction edges switched off: [x1, y1, z1, x2, y2, z2] in model coordinates. */
+  excluded_edges?: number[][];
+}
+
+/**
  * Pyroomacoustics simulation configuration
  */
 export interface PyroomAcousticsSimulationConfig extends BaseSimulationConfig, CardExecutionState {
@@ -101,9 +128,9 @@ export interface PyroomAcousticsSimulationConfig extends BaseSimulationConfig, C
     air_absorption: boolean;
     n_rays: number;
     parallel: boolean; // one process per emitter room on the backend
-    simulation_mode: string; // "mono" or "foa" (directivity-based, supports ISM and hybrid ray tracing)
+    simulation_mode: string; // "mono", "foa" or "hoa" (hoa: compas_acoustics engine, ambisonic_order 2-3)
     enable_grid: boolean; // Enable grid receiver simulation (heatmap export)
-  };
+  } & GeometricEngineSettings;
   // Material assignments per face
   faceToMaterialMap: Map<number, string>; // faceIndex -> materialId
   // Material UI state (persisted across tab switches)
@@ -178,6 +205,101 @@ export interface PffdtdSimulationConfig extends BaseSimulationConfig, CardExecut
   };
 }
 
+/** Settings of the hybrid (wave below the crossover, rays above) card. */
+export interface HybridSettings extends GeometricEngineSettings {
+  simulation_mode: string; // "mono" | "foa"
+  /** 'schroeder': crossover_factor x the room's Schroeder frequency; 'manual': crossover_hz. */
+  crossover_mode: 'schroeder' | 'manual';
+  crossover_hz: number;
+  crossover_factor: number;
+  /** Highest frequency the wave solver may run to (Hz); a higher crossover is lowered to fit. */
+  wave_fmax_cap: number;
+  /** Scale the wave part so both parts have the same level around the crossover. */
+  level_match: boolean;
+  /** Wave part: points per wavelength at its top frequency. */
+  ppw: number;
+  /** Wave part: IR length in s; null = from the room's decay time. */
+  duration: number | null;
+  // Geometric part (same meaning as on the ray-tracing card)
+  max_order: number;
+  ray_tracing: boolean;
+  n_rays: number;
+  air_absorption: boolean;
+  parallel: boolean;
+}
+
+/** What a finished hybrid run reports about its crossover (results JSON `hybrid` block). */
+export interface HybridRunInfo {
+  crossover_hz: number;
+  wave_fmax: number;
+  schroeder_hz: number | null;
+  rt60: number | null;
+  volume_m3: number | null;
+  mode: string;
+  factor: number;
+  limited_by: string | null;
+  notes: string[];
+  rt60_source?: string;
+  wave_duration_s?: number;
+  /** Points per wavelength the wave part ran at (raised above the card's when the grid needed it). */
+  wave_ppw?: number;
+  level_match?: boolean;
+  filter?: string;
+  median_overlap_mismatch_db?: number | null;
+}
+
+/**
+ * Hybrid wave-based + geometric simulation: PFFDTD below a crossover frequency (default the
+ * room's Schroeder frequency), compas_acoustics above. Same card shape as the other engines.
+ */
+export interface HybridSimulationConfig extends BaseSimulationConfig, CardExecutionState {
+  type: 'hybrid';
+  settings: HybridSettings;
+  faceToMaterialMap: Map<number, string>;
+  expandedMaterialItems?: Set<string>;
+  excludedLayers?: Set<string>;
+  savedSettings?: {
+    settings: HybridSettings;
+    faceToMaterialMap: Map<number, string>;
+    expandedMaterialItems?: Set<string>;
+    excludedLayers?: Set<string>;
+  };
+  simulationResults: string | null;
+  importedIRMetadata?: ImpulseResponseMetadata;
+  importedIRIds?: string[];
+  sourceReceiverIRMapping?: SourceReceiverIRMapping;
+  currentSimulationId?: string | null;
+  currentSimulationRunId?: string | null;
+  /** Crossover of the last finished run. */
+  hybridInfo?: HybridRunInfo | null;
+  speckleMaterialAssignments?: Record<string, string>;
+  speckleLayerName?: string | null;
+  speckleGeometryObjectIds?: string[];
+  speckleScatteringAssignments?: Record<string, number>;
+  speckleIsolatedObjectIds?: string[] | null;
+  simulationPositions?: {
+    sources: Record<string, [number, number, number]>;
+    receivers: Record<string, [number, number, number]>;
+    soundToPosKey?: Record<string, string>;
+    sourceDirectivities?: Record<string, SoundDirectivity>;
+    gridListeners?: GridListenerSnapshot[];
+  };
+}
+
+/** Cards that run a simulation engine on the Speckle geometry (materials, IR mapping, positions). */
+export type EngineSimulationConfig = PyroomAcousticsSimulationConfig | PffdtdSimulationConfig | HybridSimulationConfig;
+
+export function isEngineSimulation(config: SimulationConfig | null | undefined): config is EngineSimulationConfig {
+  return !!config && (config.type === 'pyroomacoustics' || config.type === 'pffdtd' || config.type === 'hybrid');
+}
+
+/** Cards whose geometric part runs on rays (diffraction edges, sound paths). */
+export function isGeometricSimulation(
+  config: SimulationConfig | null | undefined,
+): config is PyroomAcousticsSimulationConfig | HybridSimulationConfig {
+  return !!config && (config.type === 'pyroomacoustics' || config.type === 'hybrid');
+}
+
 /**
  * Manual source-receiver IR import configuration
  */
@@ -224,6 +346,7 @@ export type SimulationConfig =
   | ResonanceSimulationConfig
   | PyroomAcousticsSimulationConfig
   | PffdtdSimulationConfig
+  | HybridSimulationConfig
   | ImportIRsSimulationConfig;
 
 /**

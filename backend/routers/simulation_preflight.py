@@ -20,6 +20,8 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
+from config.constants import ACOUSTICS_ENGINE_DEFAULT
+from config.constants import CA_DIFFRACTION_DEFAULT
 from config.constants import (
     JOB_TYPE_PYROOMACOUSTICS,
     PFFDTD_DEFAULT_DURATION,
@@ -71,6 +73,8 @@ async def preflight_speckle(
     simulation_mode: str = Form("mono"),              # PFFDTD only: run count of directional sources
     free_mode: str = Form("off"),                     # PFFDTD only
     model_id: Optional[str] = Form(None),             # resolves shared-soundscape directivity copies
+    geometric_engine: str = Form(ACOUSTICS_ENGINE_DEFAULT),  # engine behind 'pyroomacoustics'
+    diffraction: str = Form(CA_DIFFRACTION_DEFAULT),
 ):
     if engine not in _ENGINES:
         raise HTTPException(status_code=400, detail=f"engine must be one of {_ENGINES}")
@@ -107,6 +111,9 @@ async def preflight_speckle(
             ray_tracing=ray_tracing,
             mesh_settings=settings.model_dump(),
             payload_dir=str(_workspace_dir(req)),
+            geometric_engine=geometric_engine,
+            simulation_mode=simulation_mode,
+            diffraction=diffraction,
             pffdtd_settings=(
                 {
                     "fmax": fmax, "ppw": ppw, "duration": duration,

@@ -69,6 +69,12 @@ const SIGNATURE_SPECS: Partial<Record<CardType, SignatureSpec>> = {
   },
   // Wave-based: no scattering (the FDTD grid models diffraction itself).
   pffdtd: { fields: ['settings', 'speckleMaterialAssignments'], nested: ['settings'], customMaterials: true },
+  // Hybrid: its geometric part uses scattering, like the ray-tracing card.
+  hybrid: {
+    fields: ['settings', 'speckleMaterialAssignments', 'speckleScatteringAssignments'],
+    nested: ['settings'],
+    customMaterials: true,
+  },
   text: { fields: ['textInput', 'numSounds', 'useAnalysisResult', 'drawnArea'] },
   scenario: { fields: ['userContext', 'peopleCount', 'likeliness', 'timelineDurationMs', 'useAnalysisResult'] },
 };

@@ -7,6 +7,7 @@
  * volume files row-major z, then y, then x.
  */
 
+import type { HybridRunInfo } from '@/types/acoustics';
 import type { IRAcousticParameters } from '@/types/audio';
 
 /** GET /api/pffdtd/status */
@@ -58,6 +59,8 @@ export interface PffdtdJobResult {
   ir_files: string[];
   results_file: string;
   method: string;
+  /** Hybrid runs only: the crossover the run used. */
+  hybrid?: HybridRunInfo;
 }
 
 // ─── Field outputs (results JSON `field` block) ──────────────────────────────

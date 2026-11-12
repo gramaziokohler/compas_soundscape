@@ -52,7 +52,7 @@ from services.study_log_store import study_log_store
 # from services.modal_analysis_service import ModalAnalysisService
 
 # Import routers
-from routers import upload, generation, sounds, stable_audio, sed_analysis, sed_extract, library_search, reprocess, impulse_responses, modal_analysis, pffdtd, pffdtd_free, pyroomacoustics, simulation_preflight, speckle, soundscape, tokens, tts, tts_voices, loop_analysis, jobs, auth, workspaces, preferences, materials, directivities, bug_reports, study, share
+from routers import upload, generation, sounds, stable_audio, sed_analysis, sed_extract, library_search, reprocess, impulse_responses, modal_analysis, pffdtd, pffdtd_free, pyroomacoustics, simulation_preflight, acoustic_paths, hybrid, speckle, soundscape, tokens, tts, tts_voices, loop_analysis, jobs, auth, workspaces, preferences, materials, directivities, bug_reports, study, share
 
 # Import constants
 from config.constants import (
@@ -338,6 +338,8 @@ app.include_router(pffdtd.router)
 app.include_router(pffdtd_free.router)
 app.include_router(pyroomacoustics.router)
 app.include_router(simulation_preflight.router)
+app.include_router(acoustic_paths.router)
+app.include_router(hybrid.router)
 app.include_router(speckle.router)
 app.include_router(share.router)
 app.include_router(share.owner_router)

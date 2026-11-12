@@ -22,6 +22,11 @@ import { PyroomAcousticsSimulationSettings } from './PyroomAcousticsSimulationSe
 import { PffdtdSimulationSettings } from './PffdtdSimulationSettings';
 import { SimulationPreflightPanel, type PreflightPanelControl } from './SimulationPreflightPanel';
 import { PffdtdVoxelPreviewPanel, type VoxelPreviewControl } from './PffdtdVoxelPreviewPanel';
+import { AcousticPathsPanel, type AcousticPathsControl } from './AcousticPathsPanel';
+import { HybridSimulationSettings } from './HybridSimulationSettings';
+import { GA_ENGINE } from '@/utils/constants';
+import { isEngineSimulation, isGeometricSimulation } from '@/types/acoustics';
+import { useCanEdit } from '@/hooks/useCanEdit';
 import type { SimulationConfig, PyroomAcousticsSimulationConfig } from '@/types/acoustics';
 import type { AcousticMaterial } from '@/types/materials';
 import type { Viewer } from '@speckle/viewer';
@@ -45,6 +50,8 @@ interface SimulationSetupContentProps {
   preflight?: PreflightPanelControl;
   /** Voxel preview wiring (PFFDTD cards). */
   voxelPreview?: VoxelPreviewControl;
+  /** Sound-path wiring (ray-tracing and hybrid cards). */
+  paths?: AcousticPathsControl;
 }
 
 /**
@@ -64,7 +71,9 @@ export function SimulationSetupContent({
   onIsolationChange,
   preflight,
   voxelPreview,
+  paths,
 }: SimulationSetupContentProps) {
+  const canEdit = useCanEdit();
   // Extract persisted Speckle state from config
   const initialAssignments = (config as any).speckleMaterialAssignments as Record<string, string> | undefined;
   const initialLayerName = (config as any).speckleLayerName as string | null | undefined;
@@ -79,7 +88,7 @@ export function SimulationSetupContent({
         viewerRef={viewerRef}
         worldTree={worldTree}
         availableMaterials={availableMaterials}
-        cardType={config.type === 'pyroomacoustics' || config.type === 'pffdtd' ? config.type : null}
+        cardType={isEngineSimulation(config) ? (config.type === 'hybrid' ? 'pyroomacoustics' : config.type) : null}
         filteringEnabled={filteringEnabled}
         isReadOnly={isReadOnly}
         isActive={isActive}
@@ -107,12 +116,34 @@ export function SimulationSetupContent({
         />
       )}
 
+      {/* Hybrid (wave below the crossover, rays above) settings */}
+      {config.type === 'hybrid' && (
+        <HybridSimulationSettings
+          config={config}
+          onUpdateConfig={(updates) => onUpdateConfig(updates as Partial<SimulationConfig>)}
+        />
+      )}
+
       {/* Pre-simulation geometry check: the exact mesh the engine will use */}
-      {preflight && config.type === 'pyroomacoustics' && (
+      {preflight && isGeometricSimulation(config) && (
         <SimulationPreflightPanel
           configId={config.id}
-          engine={config.type}
+          engine="pyroomacoustics"
           {...preflight}
+        />
+      )}
+
+      {/* Sound paths: reflections, billiard rays, diffraction edges and their selection */}
+      {paths && isGeometricSimulation(config) && (
+        <AcousticPathsPanel
+          configId={config.id}
+          excludedEdges={config.settings.excluded_edges ?? []}
+          diffraction={config.settings.diffraction ?? GA_ENGINE.DIFFRACTION_OFF}
+          onExcludedEdgesChange={(edges) =>
+            onUpdateConfig({ settings: { ...config.settings, excluded_edges: edges } } as Partial<SimulationConfig>)
+          }
+          canEdit={canEdit && !isReadOnly}
+          {...paths}
         />
       )}
 

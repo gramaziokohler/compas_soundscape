@@ -66,6 +66,16 @@ branch is checked out. `supervisor.log` says which.
   fork changes there and don't build by hand. To force a pull and rebuild now, run `compas pyroom`,
   then `compas restart api` and `compas restart cpu`. If the flag is missing, simulations that need
   it stop with a "rebuild pyroomacoustics" error.
+- **compas_acoustics** (the default acoustics engine) is an editable install from
+  `C:\Users\soundisblue\repos\compas_acoustics_dev`, a worktree of the `bouiz/compas_acoustics`
+  fork on branch `engine-integration`. It's listed in `PipExcludePackages`, so the git-URL line in
+  `requirements.txt` never replaces it. The supervisor does not pull it. To update it, pull in that
+  worktree, then run `compas restart api` and `compas restart cpu`. To (re)install it, stop the
+  services first (scipy's DLLs are locked while they run), then run:
+  `uv pip install --python <PythonExe> -e "C:\Users\soundisblue\repos\compas_acoustics_dev[hybrid]" "protobuf<6"`.
+  Never install its `[worker]` extra: compas_pb needs protobuf ≥ 6.31, and tensorflow needs < 6.
+  To fall back to the legacy engine, set `ACOUSTICS_ENGINE=pyroomacoustics` in `.env` and restart
+  `api` and `cpu`.
 - **PFFDTD:** provisioned with `compas pffdtd-setup` (CUDA compiler env, `compas-pffdtd` env,
   engine, worker service; idempotent). To force an engine rebuild, run `compas pffdtd-build`. For a
   different GPU, change `PffdtdCudaArch` in `config.psd1`; the next cycle rebuilds.

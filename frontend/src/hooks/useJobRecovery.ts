@@ -690,6 +690,8 @@ async function recoverAcousticsJob(
     currentSimulationId: simulationId,
     currentSimulationRunId: null,
     ...(simulationPositions ? { simulationPositions } : {}),
+    // hybrid runs (tracked as 'pffdtd' jobs) report their crossover with the result
+    ...(result?.hybrid ? { hybridInfo: result.hybrid } : {}),
   } as any);
 }
 

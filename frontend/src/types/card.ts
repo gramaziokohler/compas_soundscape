@@ -40,7 +40,7 @@ export type CardColor =
  *
  * Analysis types: 'audio', 'text'
  * Sound types: 'text-to-audio', 'upload', 'library', 'sample-audio'
- * Acoustics types: 'resonance', 'pyroomacoustics', 'pffdtd', 'import-irs'
+ * Acoustics types: 'resonance', 'pyroomacoustics', 'pffdtd', 'hybrid', 'import-irs'
  */
 export type CardType =
   | 'audio'
@@ -54,6 +54,7 @@ export type CardType =
   | 'resonance'
   | 'pyroomacoustics'
   | 'pffdtd'
+  | 'hybrid'
   | 'import-irs'
   | 'listener'
   | 'grid-listener'
@@ -76,6 +77,7 @@ export const CARD_TYPE_LABELS: Record<CardType, string> = {
   'resonance': 'Shoebox simulation',
   'pyroomacoustics': 'Ray-tracing simulation',
   'pffdtd': 'Wave-based simulation',
+  'hybrid': 'Hybrid simulation',
   'import-irs': 'Import IRs',
   'listener': 'Listener',
   'grid-listener': 'Grid Listener',
@@ -109,6 +111,8 @@ export const CARD_TYPE_DESCRIPTIONS: Record<CardType, string> = {
     'Resonance Audio synthetic room: parametric shoebox with early reflections + late reverb rendered by the Web Audio engine. No external solver; instant real-time 6DOF auralization.',
   'pffdtd':
     'GPU finite-difference (FDTD) wave solver on a Cartesian voxel grid. Captures diffraction and room modes exactly up to the max frequency; the IR has no content above it. Axis-aligned walls are exact, oblique walls are staircased. Also records a strength-G SPL map and an optional pressure-wave animation on a horizontal plane.',
+  'hybrid':
+    'Wave solver below a crossover frequency, rays above it, joined into one full-band IR. The crossover defaults to the room\'s Schroeder frequency, 2000·√(T60 / V): below it the room has separate modes that only a wave solver models; above it image sources, ray tracing and edge diffraction are valid and much cheaper. Joined with a 4th-order Linkwitz-Riley crossover; mono or FOA.',
   'pyroomacoustics':
     'ISM + ray tracing on mesh faces. Multi-band absorption coefficients, single scattering coefficient per face. Computes RT60 / EDT / C80 and per-source-per-receiver IR WAVs (mono or FOA B-format).',
   'import-irs':

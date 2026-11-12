@@ -1,3 +1,8 @@
+import { engineFormFields, type EngineCapabilities } from '@/lib/acoustics/geometric-engine';
+import type { HybridSettings } from '@/types/acoustics';
+import { hybridFormFields } from '@/lib/acoustics/hybrid';
+import type { GeometricEngineSettings } from '@/types/acoustics';
+import type { AcousticPathKind, AcousticPathsJobResult, AcousticPathsPayload } from '@/types/acousticPaths';
 import { API_BASE_URL, SHARE_VIEW, SPECKLE_DIRECT_UPLOAD, SPECKLE_INGESTION } from '@/utils/constants';
 import { isShareViewActive, useShareViewStore } from '@/store/shareViewStore';
 import type { CompasGeometry, SoundEvent, SoundGenerationConfig, FileUploadResponse, JobType, JobRecord, UserPreferences, BugReportPayload, BugReportCreated } from '@/types';
@@ -1716,7 +1721,7 @@ export const apiService = {
       simulation_mode: string;
       enable_grid?: boolean;
       sound_speed?: number;
-    },
+    } & GeometricEngineSettings,
     sourceReceiverPairs: Array<{
       source_position: number[];
       receiver_position: number[];
@@ -1754,6 +1759,8 @@ export const apiService = {
       if (settings.sound_speed !== undefined) {
         formData.append('sound_speed', settings.sound_speed.toString());
       }
+      // compas_acoustics engine settings (diffraction, HOA order, tail, air, seed, edge selection)
+      for (const [key, value] of Object.entries(engineFormFields(settings))) formData.append(key, value);
 
       // Send explicit geometry object IDs from the frontend to bypass layer-name filtering
       if (geometryObjectIds && geometryObjectIds.length > 0) {
@@ -1849,9 +1856,14 @@ export const apiService = {
     /** PFFDTD: output mode and free-positioning mode (run count / refusal of directional sources). */
     simulationMode?: string;
     freeMode?: string;
+    /** Geometric engine behind 'pyroomacoustics' and its diffraction model (engine-specific checks). */
+    geometricEngine?: string;
+    diffraction?: string;
   }): Promise<{ job_id: string }> {
     const formData = new FormData();
     formData.append('engine', params.engine);
+    if (params.geometricEngine) formData.append('geometric_engine', params.geometricEngine);
+    if (params.diffraction) formData.append('diffraction', params.diffraction);
     formData.append('speckle_project_id', params.projectId);
     formData.append('speckle_version_id', params.versionId);
     formData.append('object_materials', JSON.stringify(params.objectMaterials));
@@ -1909,6 +1921,103 @@ export const apiService = {
   },
 
   async cancelSimulationPreflight(jobId: string): Promise<void> {
+    await cancelUnifiedJob(jobId);
+  },
+
+  /** Which geometric engine the backend runs by default and what each can do. */
+  async getAcousticsEngines(): Promise<EngineCapabilities> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/acoustics/engines`,
+      undefined,
+      'Load acoustics engines'
+    );
+    if (!response.ok) throw new Error('Acoustics engines unavailable');
+    return response.json();
+  },
+
+  /**
+   * Enqueue the sound-path job of a geometric card (reflections, billiard rays, diffraction
+   * edges) on the same geometry inputs as its run. Poll with getAcousticPathsStatus().
+   */
+  async runAcousticPaths(params: {
+    projectId: string;
+    versionId: string;
+    objectMaterials: Record<string, string>;
+    customMaterials: Record<string, CustomMaterialCoefficients>;
+    layerName: string;
+    geometryObjectIds?: string[];
+    objectScattering?: Record<string, number>;
+    sourceReceiverPairs: Array<{
+      source_position: number[];
+      receiver_position: number[];
+      source_id: string;
+      receiver_id: string;
+      source_directivity?: SoundDirectivity;
+    }>;
+    meshSettings: SimulationMeshSettings;
+    modelId?: string;
+    kinds: AcousticPathKind[];
+    maxOrder: number;
+    nRays: number;
+    rayOrder: number;
+    excludedEdges?: number[][];
+  }): Promise<{ job_id: string }> {
+    const formData = new FormData();
+    formData.append('speckle_project_id', params.projectId);
+    formData.append('speckle_version_id', params.versionId);
+    formData.append('object_materials', JSON.stringify(params.objectMaterials));
+    formData.append('custom_materials', JSON.stringify(params.customMaterials));
+    formData.append('layer_name', params.layerName);
+    if (params.modelId) formData.append('model_id', params.modelId);
+    if (params.geometryObjectIds?.length) {
+      formData.append('geometry_object_ids', JSON.stringify(params.geometryObjectIds));
+    }
+    formData.append('object_scattering', JSON.stringify(params.objectScattering ?? {}));
+    formData.append('source_receiver_pairs', JSON.stringify(params.sourceReceiverPairs));
+    formData.append('mesh_settings', JSON.stringify(params.meshSettings));
+    formData.append('kinds', JSON.stringify(params.kinds));
+    formData.append('max_order', String(params.maxOrder));
+    formData.append('n_rays', String(params.nRays));
+    formData.append('ray_order', String(params.rayOrder));
+    if (params.excludedEdges?.length) formData.append('excluded_edges', JSON.stringify(params.excludedEdges));
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/acoustics/paths-speckle`,
+      { method: 'POST', body: formData },
+      'Trace sound paths'
+    );
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: 'Sound paths failed' }));
+      throw new Error(err.detail || 'Sound paths failed');
+    }
+    return response.json();
+  },
+
+  async getAcousticPathsStatus(jobId: string): Promise<{
+    progress: number;
+    status: string;
+    completed: boolean;
+    cancelled: boolean;
+    error: string | null;
+    result: AcousticPathsJobResult | null;
+  }> {
+    const job = await getUnifiedJobStatus(jobId);
+    return toLegacyJobStatus(job);
+  },
+
+  async getAcousticPathsPayload(pathsId: string): Promise<AcousticPathsPayload> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/acoustics/paths/${pathsId}`,
+      undefined,
+      'Load sound paths'
+    );
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: 'Sound paths not found' }));
+      throw new Error(err.detail || 'Sound paths not found');
+    }
+    return response.json();
+  },
+
+  async cancelAcousticPaths(jobId: string): Promise<void> {
     await cancelUnifiedJob(jobId);
   },
 
@@ -1984,6 +2093,33 @@ export const apiService = {
     if (!response.ok) {
       const err = await response.json().catch(() => ({ detail: 'Wave-based simulation failed' }));
       throw new Error(err.detail || 'Wave-based simulation failed');
+    }
+    return response.json();
+  },
+
+  /**
+   * Enqueue a hybrid (wave below the crossover, rays above) simulation. Polled and cancelled
+   * like a wave-based one (getPffdtdSimulationStatus / cancelPffdtdSimulation).
+   */
+  async runHybridSimulationSpeckle(
+    request: SimulationGeometryRequest,
+    simulationName: string,
+    settings: HybridSettings,
+    soundSpeed: number,
+    meshSettings?: SimulationMeshSettings,
+  ): Promise<{ job_id: string; position: number; total: number }> {
+    const formData = pffdtdGeometryForm(request, meshSettings);
+    formData.append('simulation_name', simulationName);
+    formData.append('object_scattering', JSON.stringify(request.objectScattering ?? {}));
+    for (const [key, value] of Object.entries(hybridFormFields(settings, soundSpeed))) formData.append(key, value);
+
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/hybrid/run-simulation-speckle`,
+      { method: 'POST', body: formData },
+      'Run hybrid simulation'
+    );
+    if (!response.ok) {
+      throw new Error(await responseErrorDetail(response, 'Hybrid simulation failed'));
     }
     return response.json();
   },
