@@ -57,21 +57,15 @@ setuptools==78.1.1
 importlib
 
 # --- Room Acoustics ---
-# The production host runs a local editable pyroomacoustics build; its
-# auto-deploy skips this line (PipExcludePackages, see deploy/PRODUCTION.md).
-pyroomacoustics==0.9.0
+compas_acoustics[hybrid] @ git+https://github.com/bouiz/compas_acoustics.git@engine-integration
+# Keep this compatible with compas_acoustics' supported runtime.
+pyroomacoustics>=0.10.1
 # Reads SOFA files: the fork's measured directivities and our directivity import
 h5py==3.15.1
 # 1.17: spharpy (compas_acoustics' spherical harmonics) requires scipy>=1.17
 scipy==1.17.1
 numpy==1.26.4
 matplotlib==3.10.7
-# compas_acoustics: the geometric-acoustics engine behind /api/pyroomacoustics/*
-# (config.constants.ACOUSTICS_ENGINE_DEFAULT). [hybrid] = the ambisonic output (pyFDN -> flamo,
-# which uses the torch above). Its [worker] extra (compas_pb, protobuf>=6.31, Grasshopper only)
-# is NOT installed: tensorflow pins protobuf<6. The production host runs it editable from a local
-# clone instead of this line (PipExcludePackages, see deploy/PRODUCTION.md).
-compas_acoustics[hybrid] @ git+https://github.com/bouiz/compas_acoustics.git@engine-integration
 protobuf<6
 
 # --- Speckle (3D model platform) ---

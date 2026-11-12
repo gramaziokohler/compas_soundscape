@@ -13,7 +13,7 @@ The operational scripts live **outside this repo**, in `C:\compas\`. Their full 
 | Piece | Where |
 | --- | --- |
 | Scripts | `C:\compas\compas.ps1` (CLI `compas`), `compas-lib.ps1`, `compas-supervisor.ps1`, `compas-install.ps1` |
-| Config | `C:\compas\config.psd1`: paths, service names, ports, intervals, `EnableAutoDeploy`, `PipExcludePackages`, `Pffdtd*` / `Cuda*`, `Pyroomacoustics*` |
+| Config | `C:\compas\config.psd1`: paths, service names, ports, intervals, `EnableAutoDeploy`, `Pffdtd*` / `Cuda*` |
 | Backend Python env | `PythonExe` = `…\miniconda3\envs\compas-soundscape\python.exe` (**not** `compas-toy`) |
 | Stable Audio 3 env | `Sa3PythonExe` = `…\miniconda3\envs\compas-sa3\python.exe` |
 | PFFDTD env | `PffdtdPythonExe` = `…\miniconda3\envs\compas-pffdtd\python.exe` (from `backend/pffdtd_backend/environment.yml`). The worker runs in the backend env (`--role pffdtd`) and calls this interpreter. The services get `PFFDTD_PYTHON` from `config.psd1` through nssm, so it is **not** set in `.env`. `compas deps` never touches this env. |
@@ -31,26 +31,20 @@ Nothing is deployed by hand. Every `DeployPollSeconds`, the supervisor:
 1. Runs `git fetch`. If `origin/master` moved, it runs `git pull`.
 2. Runs `npm run build` if `frontend/` changed.
 3. **Checks Python deps by content.** It filters `requirements.txt` by dropping the
-   `PipExcludePackages` lines, hashes the result, and compares it with
+   the requirements file, hashes the result, and compares it with
    `logs\requirements.sha256`. If they differ, it runs `pip install -r` on the filtered file and
    writes the stamp only on success. The check runs every cycle, so a manual `git pull` or a missed
    cycle is caught too. If the install fails, **services are not restarted**.
-4. **Syncs the pyroomacoustics fork.** It fetches `PyroomacousticsBranch` (`directivity-bypass`) in
-   `PyroomacousticsRepoPath` and fast-forwards it (`merge --ff-only`). Then it rebuilds the C++
-   extensions in place and checks that `libroom.Wall.two_sided` imports. A rebuild happens whenever
-   HEAD differs from `logs\pyroomacoustics.stamp`, so a manual pull is caught too.
-5. **Keeps PFFDTD in sync.** It updates the `compas-pffdtd` env when `environment.yml` changed, and
+4. **Keeps PFFDTD in sync.** It updates the `compas-pffdtd` env when `environment.yml` changed, and
    rebuilds the CUDA engine when the `c_cuda/` sources, the arch or the CUDA version changed. Both
    checks compare content hashes in `logs\pffdtd-*.stamp`.
 6. Restarts the API, the frontend and nginx if the frontend changed, then the workers (GPU, CPU,
    SA3, PFFDTD).
 
-Steps 4–5 move loaded `.pyd`/`.exe` files aside before building (Windows allows renaming them, not
-overwriting them). If a build fails, they put the old files back. A failure is recorded in
-`logs\*.failed`, and that input is not retried every cycle: it retries on a new commit, or on
-`compas pyroom` / `compas pffdtd-build`. The fork sync never discards your edits. It refuses when
-uncommitted changes overlap the incoming commit, when the local branch has diverged, or when another
-branch is checked out. `supervisor.log` says which.
+Step 4 moves loaded `.exe` files aside before building (Windows allows renaming them, not
+overwriting them). If a build fails, the old files are put back. A failure is recorded in
+`logs\*.failed`, and that input is not retried every cycle: it retries on a new commit or on
+`compas pffdtd-build`. `supervisor.log` says which.
 
 ## Rules on this host
 
@@ -58,22 +52,11 @@ branch is checked out. `supervisor.log` says which.
   `compas restart <api|gpu|cpu|sa3|pffdtd|frontend|nginx|all>`.
 - **Never `pip install -r requirements.txt` by hand.** Use `compas deps`, which applies the
   exclusions and writes the stamp.
-- **Local editable builds:** `pyroomacoustics` is an editable install from
-  `C:\Users\soundisblue\repos\pyroomacoustics`. It's listed in `PipExcludePackages`, so the
-  `pyroomacoustics==0.9.0` pin never replaces it. Add any future local build there too.
-  The simulation needs the fork's C++ `Wall.two_sided` flag (two-sided thin surfaces). The
-  auto-deploy pulls the fork's `directivity-bypass` branch and rebuilds it (step 4 above); push
-  fork changes there and don't build by hand. To force a pull and rebuild now, run `compas pyroom`,
-  then `compas restart api` and `compas restart cpu`. If the flag is missing, simulations that need
-  it stop with a "rebuild pyroomacoustics" error.
-- **compas_acoustics** (the default acoustics engine) is an editable install from
-  `C:\Users\soundisblue\repos\compas_acoustics_dev`, a worktree of the `bouiz/compas_acoustics`
-  fork on branch `engine-integration`. It's listed in `PipExcludePackages`, so the git-URL line in
-  `requirements.txt` never replaces it. The supervisor does not pull it. To update it, pull in that
-  worktree, then run `compas restart api` and `compas restart cpu`. To (re)install it, stop the
-  services first (scipy's DLLs are locked while they run), then run:
-  `uv pip install --python <PythonExe> -e "C:\Users\soundisblue\repos\compas_acoustics_dev[hybrid]" "protobuf<6"`.
-  Never install its `[worker]` extra: compas_pb needs protobuf ≥ 6.31, and tensorflow needs < 6.
+- **Room acoustics dependencies:** `compas deps` installs both `compas_acoustics[hybrid]`
+  non-editably and its compatible `pyroomacoustics>=0.10.1` dependency into the
+  `compas-soundscape` environment. Neither package is excluded from the requirements file.
+  Never install the CA `[worker]` extra: `compas_pb` needs protobuf >= 6.31, while TensorFlow
+  pins protobuf < 6.
   To fall back to the legacy engine, set `ACOUSTICS_ENGINE=pyroomacoustics` in `.env` and restart
   `api` and `cpu`.
 - **PFFDTD:** provisioned with `compas pffdtd-setup` (CUDA compiler env, `compas-pffdtd` env,
@@ -92,8 +75,8 @@ branch is checked out. `supervisor.log` says which.
   it, then run `compas deps` followed by `compas restart api`.
 - **A new requirement isn't installed but the supervisor logs nothing about deps:** the supervisor
   is running old code. Run `compas restart supervisor`.
-- **An excluded package was replaced:** `supervisor.log` warns `is no longer an editable install`.
-  Reinstall it with `pip install -e <path>` in the `compas-soundscape` env.
+- **A room-acoustics package is missing or stale:** run `compas deps`, then
+  `compas restart api` and `compas restart cpu`.
 - Everything else (tunnel, Access, nginx, SA3): see `C:\compas\README.md` § Troubleshooting.
 
 ## Public share links

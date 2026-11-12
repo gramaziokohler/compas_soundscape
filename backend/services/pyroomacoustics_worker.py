@@ -17,6 +17,7 @@ Result file  (temp_dir/result_{simulation_id}.json):
 from __future__ import annotations
 
 import dataclasses
+import inspect
 import json
 import os
 import time
@@ -211,7 +212,13 @@ def _simulate_emitter(ctx: dict, task: dict, progress: Callable[[float, str], No
     # The first 80% of the room is compute (reported from inside compute_rir:
     # image sources -> chunked ray tracing -> RIR synthesis), the last 20% IR export.
     progress(0.0, f"{label}: Computing RIR...")
-    room.compute_rir(progress_callback=lambda fraction, text: progress(0.8 * fraction, f"{label}: {text}"))
+    if "progress_callback" in inspect.signature(room.compute_rir).parameters:
+        room.compute_rir(
+            progress_callback=lambda fraction, text: progress(0.8 * fraction, f"{label}: {text}")
+        )
+    else:
+        room.compute_rir()
+        progress(0.8, f"{label}: RIR computation complete")
 
     # ── Extract and export RIRs for each pair with this emitter ───────────
     outputs = []

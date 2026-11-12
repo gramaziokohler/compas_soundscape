@@ -32,9 +32,10 @@ mamba activate compas-toy
 python -m pip install -r requirements.txt
 ```
 
-`requirements.txt` installs the acoustics engine, `compas_acoustics[hybrid]`, from the
-`bouiz/compas_acoustics` fork (branch `engine-integration`). To work on the engine itself, clone the
-fork and install it editable in its place:
+`requirements.txt` installs the acoustics engine, `compas_acoustics[hybrid]`, non-editably from the
+`bouiz/compas_acoustics` fork (branch `engine-integration`) into the backend's `compas-toy`
+environment. To work on the engine itself, clone the fork and install it editable in a separate
+development environment:
 `pip install -e "<clone>[hybrid]" "protobuf<6"`. Don't install its `[worker]` extra: it needs
 protobuf ≥ 6.31, and tensorflow pins < 6. To run the legacy pyroomacoustics engine instead, set
 `ACOUSTICS_ENGINE=pyroomacoustics` in `.env`.
