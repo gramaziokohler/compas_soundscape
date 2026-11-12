@@ -12,7 +12,6 @@ import { useAcousticMaterialStore } from '@/store';
 import { useUIStore, selectHasSaveTarget } from '@/store/uiStore';
 import { useTextGenerationStore } from '@/store/textGenerationStore';
 import { apiService } from '@/services/api';
-import { useSpeckleTree } from '@/hooks/useSpeckleTree';
 import { useAudioControlsStore } from '@/store';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { isShareViewActive } from '@/store/shareViewStore';
@@ -41,7 +40,6 @@ import { useSpecklePlayingVisuals } from '@/components/scene/hooks/useSpecklePla
 import { useSpeckleSimulationMismatch } from '@/components/scene/hooks/useSpeckleSimulationMismatch';
 import { useSpeckleIRHoverLine } from '@/components/scene/hooks/useSpeckleIRHoverLine';
 import { useSpeckleScenarioPreview } from '@/components/scene/hooks/useSpeckleScenarioPreview';
-import { useSpeckleObjectOverlay } from '@/components/scene/hooks/useSpeckleObjectOverlay';
 import { useSpeckleCoordinatorCallbacks } from '@/components/scene/hooks/useSpeckleCoordinatorCallbacks';
 import { useSpeckleBoundingBoxGumball } from '@/components/scene/hooks/useSpeckleBoundingBoxGumball';
 import { useSpeckleGroundGrid } from '@/components/scene/hooks/useSpeckleGroundGrid';
@@ -49,6 +47,7 @@ import { usePlaceholderRoom, getSandboxFramingBounds, getSandboxStageBounds, fit
 import { useSpeckleHomeAutoRotate } from '@/components/scene/hooks/useSpeckleHomeAutoRotate';
 import { useSceneShortcutTargets } from '@/components/scene/hooks/useSceneShortcutTargets';
 import { useAcousticLayerIsolation } from '@/hooks/useAcousticLayerIsolation';
+import { useIRChannelCount } from '@/components/scene/hooks/useIRChannelCount';
 // Phase 5 JSX sub-components
 import { SceneViewModeToolbar } from '@/components/scene/SceneViewModeToolbar';
 import { SceneBottomBar } from '@/components/scene/SceneBottomBar';
@@ -290,7 +289,13 @@ export function SpeckleScene({
   const containerRef = useRef<HTMLDivElement>(null);
   
   // Viewer ref — SpeckleScene owns it; registering into store for cross-component access
-  const { getViewerRef: _getViewerRef, setViewer, incrementWorldTreeVersion, selectedEntity, setSelectedEntity, setSelectedObjectIds, applyFilterColors, getObjectLinkState, linkedObjectIds, setFilteringEnabled, viewMode, setViewMode } = useSpeckleStore();
+  // Values via selectors (re-render only when they change); actions are stable,
+  // so read them once via getState(). Never read the whole store here: this
+  // component hosts the entire scene tree.
+  const selectedEntity = useSpeckleStore((s) => s.selectedEntity);
+  const linkedObjectIds = useSpeckleStore((s) => s.linkedObjectIds);
+  const viewMode = useSpeckleStore((s) => s.viewMode);
+  const { setSelectedEntity, setSelectedObjectIds, applyFilterColors, getObjectLinkState, setFilteringEnabled, setViewMode } = useSpeckleStore.getState();
   const selectedObjectIdsForHighlight = useSpeckleStore((s) => s.selectedObjectIds);
 
   // Grid listeners — needed for IR hover line position lookup
@@ -559,9 +564,6 @@ export function SpeckleScene({
     isViewerReady,
   });
 
-  // Use Speckle tree hook for selection handling
-  useSpeckleTree(worldTree);
-
   // ============================================================================
   // Phase 5 Hook Invocations
   // ============================================================================
@@ -637,13 +639,6 @@ export function SpeckleScene({
 
   // ── Scenario Preview (wireframe highlight + dashed-arrow parcours) ──
   useSpeckleScenarioPreview({ isViewerReady, worldTree });
-
-  // ── Selected Object Overlay ──
-  useSpeckleObjectOverlay({
-    isViewerReady,
-    selectedSpeckleObjectIds,
-    worldTree,
-  });
 
   // ── Ground Grid ──
   useSpeckleGroundGrid({ isViewerReady, isSandbox, isDragOver });
@@ -935,6 +930,9 @@ export function SpeckleScene({
     scheduler: playbackSchedulerRef,
   });
 
+  // IR channel count for the export menu's max ambisonic order.
+  const irChannelCount = useIRChannelCount(audioOrchestrator, selectedIRId, auralizationConfig, audioRenderingMode);
+
   // Natural end-of-timeline: Transport stops itself and invokes this callback.
   useEffect(() => {
     enginePlaybackScheduler?.setOnEnd(() => storeStopAll());
@@ -1079,8 +1077,6 @@ export function SpeckleScene({
     seekTo(timeMs);
   }, [seekTo]);
 
-  // (object overlay extracted to useSpeckleObjectOverlay)
-
   // (IR hover line extracted to useSpeckleIRHoverLine)
   // (simulation mismatch extracted to useSpeckleSimulationMismatch)
 
@@ -1211,7 +1207,7 @@ export function SpeckleScene({
           onClose={handleCloseTimeline}
           isAnyPlaying={playbackState.isPlaying}
           onSelectSoundCard={onSelectSoundCard}
-          originalIRChannelCount={audioOrchestrator?.getIRState().channelCount ?? 0}
+          originalIRChannelCount={irChannelCount}
           playbackSchedulerRef={playbackSchedulerRef}
         />
       )}
@@ -1232,7 +1228,6 @@ export function SpeckleScene({
         isLoadingLatestSoundscape={isLoadingLatestSoundscape}
         hasTimeline={timelineSounds.length > 0}
         isPlaying={playbackState.isPlaying}
-        currentTimeMs={playbackState.currentTime}
         durationMs={playbackState.duration}
         showTimeline={showTimeline}
         onPlay={handlePlayAll}

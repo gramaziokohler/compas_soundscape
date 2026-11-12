@@ -87,7 +87,7 @@ export function SpeckleSurfaceMaterialsSection({
   } = useSpeckleFiltering(viewerRef, 'acoustic-materials');
 
   // Material color registration (merged with diverse/linked colors)
-  const { registerMaterialColors, clearMaterialColors, applyFilterColors } = useSpeckleStore();
+  const { registerMaterialColors, clearMaterialColors } = useSpeckleStore.getState();
 
   // Surface materials hook — used ONLY for the Acoustics-layer isolation start point
   const {
@@ -110,8 +110,11 @@ export function SpeckleSurfaceMaterialsSection({
   // Whole-model id maps (raw.id <-> applicationId), built once per worldTree.
   // `appIdToGeometryIds` is plural because a carrier and its display meshes share an
   // applicationId (see utils/speckle-assignment-ids).
+  // Shared across cards per tree + version (one walk). Deps stay [worldTree]:
+  // the map identity drives this section's effects, so it must only change when
+  // the tree object does (as before).
   const { geometryIdToAppId, appIdToGeometryIds } = useMemo(
-    () => buildAssignmentIdMaps(worldTree),
+    () => buildAssignmentIdMaps(worldTree, useSpeckleStore.getState().worldTreeVersion),
     [worldTree],
   );
 

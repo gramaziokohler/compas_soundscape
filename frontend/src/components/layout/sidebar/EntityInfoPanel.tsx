@@ -62,7 +62,7 @@ function matchesCard(sound: SoundEvent, cardIndex: number): boolean {
 export function EntityInfoPanel({
   onGoToReceiver,
 }: EntityInfoPanelProps) {
-  const { selectedEntity } = useSpeckleStore();
+  const selectedEntity = useSpeckleStore((s) => s.selectedEntity);
 
   // ── Shared preview/playback state (same store the sound card uses) ──
   const selectedVariants = useAudioControlsStore((s) => s.selectedVariants);

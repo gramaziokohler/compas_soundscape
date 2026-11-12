@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import {
   useAreaDrawingStore,
   useAnalysisStore,
@@ -57,8 +58,20 @@ export function useSpeckleAreaDrawing({
   isViewerReady: boolean;
   containerRef: React.RefObject<HTMLDivElement | null>;
 }) {
-  const areaDrawingCtx = useAreaDrawingStore();
-  const { areaDrawingManager, selectionExtension } = useSpeckleEngineStore();
+  // Field selectors only: a whole-store read re-renders SpeckleScene on every
+  // engine-store write (the camera orientation is written every orbit frame).
+  const areaDrawingCtx = useAreaDrawingStore(useShallow((s) => ({
+    isDrawing: s.isDrawing,
+    drawingCardIndex: s.drawingCardIndex,
+    drawingGridListenerId: s.drawingGridListenerId,
+    version: s.version,
+    pendingConfirm: s.pendingConfirm,
+    drawnAreas: s.drawnAreas,
+    areaVisualStates: s.areaVisualStates,
+    clearConfirmDrawing: s.clearConfirmDrawing,
+  })));
+  const areaDrawingManager = useSpeckleEngineStore((s) => s.areaDrawingManager);
+  const selectionExtension = useSpeckleEngineStore((s) => s.selectionExtension);
 
   // ============================================================================
   // Effect - Area Drawing Mode (event listeners on canvas)

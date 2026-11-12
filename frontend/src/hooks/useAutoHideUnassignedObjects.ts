@@ -44,7 +44,7 @@ export function useAutoHideUnassignedObjects({
   // Whole-tree walk — only needed (and only rebuilt) when reading persisted assignments.
   const needsIdMaps = savedAssignments !== null;
   const idMaps = useMemo(
-    () => (needsIdMaps ? buildAssignmentIdMaps(worldTree) : null),
+    () => (needsIdMaps ? buildAssignmentIdMaps(worldTree, useSpeckleStore.getState().worldTreeVersion) : null),
     [needsIdMaps, worldTree],
   );
   const assignedIds = useMemo<ReadonlyMap<string, string>>(

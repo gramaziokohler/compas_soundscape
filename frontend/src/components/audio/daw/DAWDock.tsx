@@ -8,6 +8,8 @@ import { DAWTrackHead } from './DAWTrackHead';
 import { DAWLane, type DAWLaneClip } from './DAWLane';
 import { DAWBarControls } from './DAWBarControls';
 import { DAWClipMenu } from './DAWClipMenu';
+import { DAWPlayheadCursor } from './DAWPlayheadCursor';
+import { useTransportTimeStore } from '@/store';
 import { IntervalSettingsPanel } from './IntervalSettingsPanel';
 import { useDawView } from './useDawView';
 import { useClipSelection } from './useClipSelection';
@@ -56,7 +58,6 @@ function buildTopNotchClipPath(width: number, height: number): string {
 
 export interface DAWDockProps {
   sounds: TimelineSound[];
-  currentTime: number;
   isPlaying: boolean;
   isAnyPlaying?: boolean;
   onSeek: (timeMs: number) => void;
@@ -73,7 +74,6 @@ export interface DAWDockProps {
 
 export function DAWDock({
   sounds,
-  currentTime,
   isPlaying,
   onSeek,
   onDownload,
@@ -256,7 +256,10 @@ export function DAWDock({
   const snapModeRef = useRef(snapMode); snapModeRef.current = snapMode;
   const tickStepSec = computeTickStep(pxPerSecond);
   const gridStepSecRef = useRef(tickStepSec); gridStepSecRef.current = tickStepSec;
-  const playheadMsRef = useRef(currentTime); playheadMsRef.current = currentTime;
+  // Live playhead for the gesture hooks — mirrored from the transport store
+  // (not a prop: playback no longer re-renders the dock every frame).
+  const playheadMsRef = useRef(useTransportTimeStore.getState().currentTimeMs);
+  useEffect(() => useTransportTimeStore.subscribe((s) => { playheadMsRef.current = s.currentTimeMs; }), []);
   const timelineDurationMsRef = useRef(timelineDurationMs); timelineDurationMsRef.current = timelineDurationMs;
   const triggerReverseRef = useRef(triggerGraph.reverse); triggerReverseRef.current = triggerGraph.reverse;
   const selectedClipKeysRef = useRef(selection.selectedClipKeys); selectedClipKeysRef.current = selection.selectedClipKeys;
@@ -441,8 +444,10 @@ export function DAWDock({
   const [loopRegion, setLoopRegion] = useState<LoopRegion | null>(null);
   useEffect(() => {
     if (!loopRegion || !isPlaying) return;
-    if (currentTime >= loopRegion.endMs) onSeek(loopRegion.startMs);
-  }, [currentTime, isPlaying, loopRegion, onSeek]);
+    const check = (ms: number) => { if (ms >= loopRegion.endMs) onSeek(loopRegion.startMs); };
+    check(useTransportTimeStore.getState().currentTimeMs);
+    return useTransportTimeStore.subscribe((s) => check(s.currentTimeMs));
+  }, [isPlaying, loopRegion, onSeek]);
 
   /* ---- Duration edit (ruler pencil) ---- */
   const [isEditingDuration, setIsEditingDuration] = useState(false);
@@ -545,7 +550,8 @@ export function DAWDock({
       ensureTrackMaterialized(soundsRef, soundId);
       const store = useAudioControlsStore.getState();
       const current = store.soundTimestamps[soundId] ?? [];
-      const newStartSec = parseFloat(((currentTime + offsetMs) / 1000).toFixed(3));
+      const playheadMs = useTransportTimeStore.getState().currentTimeMs;
+      const newStartSec = parseFloat(((playheadMs + offsetMs) / 1000).toFixed(3));
       let insertAt = current.length;
       for (let i = 0; i < current.length; i++) {
         if (newStartSec < current[i]) { insertAt = i; break; }
@@ -555,7 +561,7 @@ export function DAWDock({
       store.remapIterationLinksForInsert(soundId, insertAt, trimCopy);
       store.handleTimestampsChange(soundId, newTs);
     });
-  }, [currentTime]);
+  }, []);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
     // Never hijack keys meant for a focused text field (duration editor, etc.).
@@ -638,7 +644,6 @@ export function DAWDock({
 
   const totalDurationSec = timelineDurationMs / 1000;
   const contentWidth = totalDurationSec * pxPerSecond;
-  const cursorLeft = DAW.HEAD_WIDTH + (currentTime / 1000) * pxPerSecond;
   const tickStepPx = tickStepSec * pxPerSecond;
 
 
@@ -890,13 +895,7 @@ export function DAWDock({
             )}
 
             {/* Playback cursor — offset by HEAD_WIDTH like the ruler, so it never renders under the sticky head column */}
-            <div
-              style={{
-                position: 'absolute', top: 0, left: `${cursorLeft}px`, width: '2px', bottom: 0,
-                backgroundColor: 'var(--color-primary)', opacity: 0.85, zIndex: 50, pointerEvents: 'none',
-                boxShadow: '0 0 4px var(--color-primary)',
-              }}
-            />
+            <DAWPlayheadCursor pxPerSecond={pxPerSecond} />
           </div>
         </div>
 

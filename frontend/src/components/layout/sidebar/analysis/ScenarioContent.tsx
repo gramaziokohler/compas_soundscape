@@ -21,7 +21,7 @@ import { ModifiedMark, useIsFieldModified } from '@/components/ui/ModifiedMark';
 
 /** Event text with hoverable / zoomable object references ("Name (id:…)"). */
 export function ScenarioTextRenderer({ text }: { text: string }) {
-  const { highlightObjectForHover, clearHoverHighlight, zoomToObjectById } = useSpeckleStore();
+  const { highlightObjectForHover, clearHoverHighlight, zoomToObjectById } = useSpeckleStore.getState();
 
   const parts = useMemo(() => {
     // Pre-normalize dot-separated refs to parenthesized format for unified matching

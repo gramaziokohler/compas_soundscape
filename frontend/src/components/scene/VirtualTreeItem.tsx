@@ -28,6 +28,8 @@ import type { MaterialOption } from '@/components/ui/MaterialSelect';
 
 interface VirtualTreeItemProps {
   item: TreeItem;
+  /** Geometry leaf ids of this row (cached by the parent). Computed here if omitted. */
+  geometryIds?: string[];
   style?: CSSProperties;
   isHidden: boolean;
   isIsolated: boolean;
@@ -61,6 +63,7 @@ interface VirtualTreeItemProps {
 
 export function VirtualTreeItem({
   item,
+  geometryIds: geometryIdsProp,
   style,
   isHidden,
   isIsolated,
@@ -84,9 +87,13 @@ export function VirtualTreeItem({
   onToggleSelection,
   isAcousticLayerRow,
 }: VirtualTreeItemProps) {
-  const { modelFileName } = useSpeckleStore();
+  const modelFileName = useSpeckleStore((s) => s.modelFileName);
   const rawSpeckleData = item.data.raw;
-  const geometryIds = useMemo(() => getGeometryLeafIdsFromNode(item.data), [item.data]);
+  // Prefer the parent's cached ids (world-tree-index); compute only as a fallback.
+  const geometryIds = useMemo(
+    () => geometryIdsProp ?? getGeometryLeafIdsFromNode(item.data),
+    [geometryIdsProp, item.data],
+  );
   // Hide/isolate/hover must key off the actual renderable geometry leaf ids
   // (same ids the ObjectExplorer uses for isHidden/isIsolated state and the
   // acoustic-mode explorer-hide tracking). A group/layer row's own raw id is

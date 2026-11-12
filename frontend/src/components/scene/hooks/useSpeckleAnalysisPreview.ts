@@ -16,7 +16,7 @@ export function useSpeckleAnalysisPreview({ isViewerReady }: { isViewerReady: bo
   const objectIds = useAnalysisPreviewStore((s) => s.objectIds);
   const points = useAnalysisPreviewStore((s) => s.points);
   const highlightedPromptId = useAnalysisPreviewStore((s) => s.highlightedPromptId);
-  const { areaDrawingManager } = useSpeckleEngineStore();
+  const areaDrawingManager = useSpeckleEngineStore((s) => s.areaDrawingManager);
 
   // Read the latest highlight inside the rebuild effect without re-triggering it.
   const highlightRef = useRef(highlightedPromptId);

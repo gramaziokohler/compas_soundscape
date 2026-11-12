@@ -296,7 +296,10 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     if (!ids.includes(id)) toggleResonanceActive(id);
   }, []);
 
-  const { getViewerRef, clearMaterialColors, filteringEnabled, viewMode, setViewMode, worldTreeVersion } = useSpeckleStore();
+  const filteringEnabled = useSpeckleStore((s) => s.filteringEnabled);
+  const viewMode = useSpeckleStore((s) => s.viewMode);
+  const worldTreeVersion = useSpeckleStore((s) => s.worldTreeVersion);
+  const { getViewerRef, clearMaterialColors, setViewMode } = useSpeckleStore.getState();
   const handleReorderSimulationConfigs = useAcousticsSimulationStore((s) => s.handleReorderConfigs);
   const duplicateConfigAt = useAcousticsSimulationStore((s) => s.duplicateConfigAt);
   const viewerRef = useMemo<{ current: any }>(() => ({ get current() { return getViewerRef(); } }), [getViewerRef]);

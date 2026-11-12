@@ -63,6 +63,8 @@ export type { ShareConfigStoreState, ShareLinkEnd } from './shareConfigStore';
 export { useShareViewStore, selectIsShareView } from './shareViewStore';
 export type { ShareViewStoreState } from './shareViewStore';
 
+export { useTransportTimeStore, selectTransportWholeSeconds } from './transportTimeStore';
+
 export { usePositionClipboardStore } from './positionClipboardStore';
 export type { PositionClipboardState } from './positionClipboardStore';
 

@@ -802,15 +802,17 @@ function HomeContent() {
   const cardFlow = useCardFlowStore();
 
   // Speckle store — replaces SpeckleViewerContext + SpeckleSelectionModeContext
+  // Values via selectors; actions are stable (getState). A whole-store read here
+  // re-rendered this page on every speckleStore write (selection, hide/isolate…).
+  const linkedObjectIds = useSpeckleStore((s) => s.linkedObjectIds);
+  const worldTreeVersion = useSpeckleStore((s) => s.worldTreeVersion);
   const {
     linkObjectToSound,
     unlinkObjectFromSound,
-    linkedObjectIds,
     setSelectedEntity,
     setModelFileName,
     getViewerRef,
-    worldTreeVersion,
-  } = useSpeckleStore();
+  } = useSpeckleStore.getState();
   // Non-reactive compat shim — .current always returns latest viewer via getter
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const viewerRef = useMemo<{ current: ReturnType<typeof getViewerRef> }>(() => ({
@@ -840,7 +842,11 @@ function HomeContent() {
     }, 500);
 
     return () => clearInterval(checkInterval);
-  }, [viewerRef?.current]);
+    // worldTreeVersion: re-check after each model load. This page no longer
+    // re-renders on every speckleStore write, so `viewerRef.current` alone could
+    // miss the viewer becoming available.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewerRef?.current, worldTreeVersion]);
 
   // Map applicationId (Rhino GUID) → current Speckle tree ID.
   // Rebuilt when worldTree becomes ready AND on every worldTreeVersion bump (a new

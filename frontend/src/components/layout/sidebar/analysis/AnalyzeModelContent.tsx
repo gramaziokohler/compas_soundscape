@@ -31,7 +31,10 @@ export function AnalyzeModelContent({
   isAnalyzing,
   onUpdateConfig,
 }: AnalyzeModelContentProps) {
-  const { getViewerRef } = useSpeckleStore();
+  const { getViewerRef } = useSpeckleStore.getState();
+  // Re-run the tree load after each model load (this component no longer
+  // re-renders on every speckleStore write, which used to retrigger it).
+  const worldTreeVersion = useSpeckleStore((s) => s.worldTreeVersion);
   const viewerRef = useMemo<{ current: any }>(
     () => ({ get current() { return getViewerRef(); } }),
     [getViewerRef],
@@ -122,7 +125,8 @@ export function AnalyzeModelContent({
       timeouts.push(setTimeout(() => { if (!hasLoadedTreeRef.current) attemptLoad(); }, delay));
     });
     return () => timeouts.forEach(clearTimeout);
-  }, [viewerRef?.current, config.speckleData]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewerRef?.current, config.speckleData, worldTreeVersion]);
 
   // Keep entityCount in sync when config changes externally
   useEffect(() => {
