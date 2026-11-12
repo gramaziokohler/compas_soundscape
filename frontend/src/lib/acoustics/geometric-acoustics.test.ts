@@ -29,8 +29,10 @@ import {
 import {
   crossoverReadout,
   defaultHybridSettings,
+  estimateSchroederEyring,
   hybridFormFields,
   hybridRunSummary,
+  lowFrequencyMeanAbsorption,
   mismatchWarning,
   planCrossover,
   restoreHybridSettings,
@@ -256,9 +258,8 @@ describe('hybrid crossover', () => {
     expect(planCrossover({ ...s, crossover_factor: 2 }, 200)?.crossoverHz).toBe(400);
     expect(planCrossover(s, null)).toBeNull(); // unknown room: measured when it runs
     expect(planCrossover({ ...s, crossover_mode: 'manual', crossover_hz: 315 }, null)?.crossoverHz).toBe(315);
-    // a wave cap lowers the crossover, never the reverse
-    const capped = planCrossover({ ...s, wave_fmax_cap: 300 }, 400);
-    expect(capped).toEqual({ crossoverHz: 300 / HYBRID.WAVE_FMAX_MARGIN, waveFmax: 300, limited: true });
+    // the wave band is always the crossover plus its headroom
+    expect(planCrossover(s, 900)).toEqual({ crossoverHz: 900, waveFmax: 900 * HYBRID.WAVE_FMAX_MARGIN, limited: false });
     // a very large hall: the crossover floor, and the solver's own minimum band
     const hall = planCrossover(s, 20);
     expect(hall?.crossoverHz).toBe(HYBRID.CROSSOVER_HZ_MIN);
@@ -300,9 +301,26 @@ describe('hybrid crossover', () => {
     expect(crossoverReadout(s, null)).toContain('measured from the room');
     expect(crossoverReadout(s, info())).toContain('crossover 234 Hz');
     expect(crossoverReadout({ ...s, crossover_mode: 'manual', crossover_hz: 150 }, null)).toContain('Wave below 150 Hz');
-    expect(crossoverReadout({ ...s, crossover_mode: 'manual', crossover_hz: 900 }, null)).toContain('capped');
+    expect(crossoverReadout(s, null, 180)).toContain('Estimated (Eyring');
+    expect(crossoverReadout(s, info(), 180)).toContain("last run's room"); // a measured room wins
     expect(hybridRunSummary(info())).toBe('Last run: T60 0.41 s, 30 m³ → Schroeder 234 Hz · joined at 234 Hz · wave +1.2 dB vs rays at the join');
     expect(hybridRunSummary(info({ rt60: null, schroeder_hz: null, median_overlap_mismatch_db: null }))).toBe('Last run · joined at 234 Hz');
+  });
+
+  it('estimates the Schroeder frequency with Eyring from the box and the materials', () => {
+    // 10 × 5 × 3 m box: V = 150 m³, S = 190 m², ᾱ = 0.2 → T60 = 0.161·150 / (190·0.223) ≈ 0.57 s
+    const est = estimateSchroederEyring({ min: [0, 0, 0], max: [10, 5, 3] }, 0.2);
+    expect(est?.volume).toBe(150);
+    expect(est?.rt60).toBeCloseTo(0.57, 2);
+    expect(est?.schroederHz).toBeCloseTo(2000 * Math.sqrt(est!.rt60 / 150));
+    expect(estimateSchroederEyring(null, 0.2)).toBeNull();
+    expect(estimateSchroederEyring({ min: [0, 0, 0], max: [1, 0, 1] }, 0.2)).toBeNull();
+    const materials = [
+      { id: 'a', absorption: 0.5, coeffs: [0.1, 0.3, 0.5, 0.9], center_freqs: [125, 250, 500, 1000] },
+      { id: 'b', absorption: 0.4 },
+    ];
+    expect(lowFrequencyMeanAbsorption(['a', 'b'], materials)).toBeCloseTo((0.3 + 0.4) / 2);
+    expect(lowFrequencyMeanAbsorption([], materials)).toBe(HYBRID.ESTIMATE_MEAN_ABSORPTION);
   });
 
   it('warns when the two parts disagree at the join', () => {

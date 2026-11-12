@@ -9,6 +9,7 @@ import { isShareViewActive } from "@/store/shareViewStore";
 import { FileDropRow } from "@/components/ui/FileDropRow";
 import { apiService } from "@/services/api";
 import { useApiErrorHandler } from "@/hooks/useApiErrorHandler";
+import { decodeAudioAllChannels } from "@/lib/audio/utils/wav-multichannel";
 import { Notice } from '@/components/ui/Notice';
 import { Badge } from '@/components/ui/Badge';
 import { Spinner } from '@/components/ui/Spinner';
@@ -246,7 +247,7 @@ export function ImpulseResponseUpload({
         const audioContext = new AudioContext({ sampleRate: AUDIO_SAMPLE_RATE });
         let audioBuffer: AudioBuffer;
         try {
-          audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+          audioBuffer = await decodeAudioAllChannels(audioContext, arrayBuffer);
         } finally {
           void audioContext.close();
         }

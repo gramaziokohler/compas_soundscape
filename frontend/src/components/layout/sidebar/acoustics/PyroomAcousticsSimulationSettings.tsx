@@ -27,11 +27,9 @@ import { useAcousticPathsStore } from '@/store';
 import { usesCompasAcoustics } from '@/lib/acoustics/geometric-engine';
 import { GeometricEngineSettings } from './GeometricEngineSettings';
 import type { GeometricEngineSettings as EngineSettings } from '@/types/acoustics';
-import { useMemo, useState } from 'react';
-import { useFileUploadStore, useAcousticLayerStore } from '@/store';
-import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
+import { useState } from 'react';
+import { useAcousticRegionBounds } from '@/hooks/useAcousticRegionBounds';
 import { estimateRayCount } from '@/lib/acoustics/ray-count-estimate';
-import { computeSpeckleObjectsBounds } from '@/lib/three/speckle-object-bounds';
 import type { PyroomAcousticsSimulationConfig } from '@/types/acoustics';
 import { ToggleField } from '@/components/ui/ToggleField';
 import { RangeSlider } from '@/components/ui/RangeSlider';
@@ -51,22 +49,7 @@ export function PyroomAcousticsSimulationSettings({
   onUpdateConfig
 }: PyroomAcousticsSimulationSettingsProps) {
   
-  // Bounds of the acoustic region (the geometry the simulation actually runs on). Falls back
-  // to the whole model — Speckle World box, then the legacy vertex-upload `geometryBounds` —
-  // when no region is resolved yet or the region is the whole model.
-  const viewer = useSpeckleEngineStore((s) => s.viewer);
-  const resonanceRoomBoxes = useSpeckleEngineStore((s) => s.resonanceRoomBoxes);
-  const geometryBounds = useFileUploadStore((s) => s.geometryBounds);
-  const acousticGeometryIds = useAcousticLayerStore((s) => s.selectedAcousticGeometryIds);
-  const isWholeModel = useAcousticLayerStore((s) => s.isWholeModel);
-  const acousticBounds = useMemo(
-    () => (isWholeModel ? null : computeSpeckleObjectsBounds(viewer, acousticGeometryIds)),
-    [viewer, acousticGeometryIds, isWholeModel]
-  );
-  // World box is read every render (cheap) since it fills asynchronously after load.
-  const modelBounds =
-    acousticBounds ??
-    ((viewer && resonanceRoomBoxes?.calculateBoundsFromSpeckleBatches(viewer)) || geometryBounds);
+  const { bounds: modelBounds, isAcousticLayer } = useAcousticRegionBounds();
 
   // Recommended ray count (Vorländer receiver-sphere criterion — theory and sources in
   // lib/acoustics/ray-count-estimate.ts). Shown as a "rec" tick + the slider's tooltip.
@@ -75,7 +58,7 @@ export function PyroomAcousticsSimulationSettings({
     ? [{ value: rayEstimate.recommended, label: 'rec', tone: 'primary' as const }]
     : undefined;
   const rayTooltip = rayEstimate
-    ? `Recommended ≈ ${rayEstimate.recommended.toLocaleString()} (${Math.round(rayEstimate.volume).toLocaleString()} m³ ${acousticBounds ? 'acoustic layer' : 'model'} bbox)`
+    ? `Recommended ≈ ${rayEstimate.recommended.toLocaleString()} (${Math.round(rayEstimate.volume).toLocaleString()} m³ ${isAcousticLayer ? 'acoustic layer' : 'model'} bbox)`
     : undefined;
 
   // Slider max for Rays — editable by double-clicking the max label. Seeded from the saved

@@ -232,16 +232,3 @@ def combine(
     }
     return (out[:, 0] if mono else out), info
 
-
-def world_to_listener_foa(ir: np.ndarray) -> np.ndarray:
-    """First-order AmbiX (ACN: W, Y, Z, X) from world axes to the app's listener frame.
-
-    The wave solver encodes along the world axes (X channel = +X, Y channel = +Y); the geometric
-    engines encode in the listener frame, whose front is world -Y and whose left is world +X
-    (PyroomacousticsService.add_receiver_to_room). So X_listener = -Y_world, Y_listener = X_world.
-    """
-    ir = np.asarray(ir, dtype=np.float64)
-    if ir.ndim != 2 or ir.shape[1] != 4:
-        return ir
-    w, y, z, x = ir[:, 0], ir[:, 1], ir[:, 2], ir[:, 3]
-    return np.column_stack([w, x, z, -y])

@@ -105,6 +105,9 @@ export class SimulationMeshPreview {
       const pts = payload.leaks.flatMap((l) => [...l.origin, ...l.end]);
       group.add(lines(pts, palette.error, 0.8, true));
     }
+    if (options.filters.diffractionEdges && payload.diffraction_edges?.length) {
+      group.add(lines(payload.diffraction_edges.flatMap((e) => e.segment), palette.diffractionEdges));
+    }
     if (options.filters.blockers && payload.blocked_paths.length) {
       group.add(lines(payload.blocked_paths.flatMap((p) => [...p.segment[0], ...p.segment[1]]), palette.error));
     }

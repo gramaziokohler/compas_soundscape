@@ -1,12 +1,10 @@
 'use client';
 
 import { useCallback, useRef, useState, useEffect, type ReactNode } from 'react';
-import { createPortal } from 'react-dom';
 import type { CardProps, CardBaseConfig } from '@/types/card';
 import { CARD_TYPE_LABELS, CARD_TYPE_DESCRIPTIONS } from '@/types/card';
 import { useNameEditing } from '@/utils/useNameEditing';
 import { useCanEdit } from '@/hooks/useCanEdit';
-import { useViewportClampedPosition } from '@/hooks/useViewportClampedPosition';
 import { GenerateButton, type GenerateStatus } from '@/components/ui/GenerateButton';
 import { VariantsBar } from '@/components/ui/VariantsBar';
 import { Notice } from '@/components/ui/Notice';
@@ -16,7 +14,9 @@ import { DeleteConfirmButton } from '@/components/ui/DeleteConfirmButton';
 import { OptionalShortcutTooltip, ariaKeyShortcuts } from '@/components/ui/ShortcutTooltip';
 import { isModEnter, isTypingTarget } from '@/lib/shortcuts/keyboard-utils';
 import type { ShortcutId } from '@/utils/constants';
-import { POPUP_MENU } from '@/utils/constants';
+import { CardContextMenu } from '@/components/ui/CardContextMenu';
+import { useRevealOnExpand } from '@/hooks/useRevealOnExpand';
+import { CARD_REVEAL } from '@/utils/constants';
 
 /**
  * Card Component
@@ -179,6 +179,7 @@ function CardView<TConfig extends CardBaseConfig>({
   onSettingsExpandedChange,
   beforeSettingsSummary,
   description,
+  renameRequest,
 }: CardProps<TConfig>) {
   // Compute default name if not provided
   const computedDefaultName = defaultName || getCardDefaultName(config, index);
@@ -240,22 +241,20 @@ function CardView<TConfig extends CardBaseConfig>({
   // so we can restore the original state when the second click fires.
   const stateAtFirstClickRef = useRef<boolean | null>(null);
 
+  // Options that mount content below them scroll it into view (card body / sidebar).
+  const rootRef = useRef<HTMLDivElement>(null);
+  useRevealOnExpand(rootRef);
+
   // Right-click context menu state
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
-  const [expandedSubKey, setExpandedSubKey] = useState<string | null>(null);
-  const contextMenuRef = useRef<HTMLDivElement>(null);
-  const contextMenuPos = useViewportClampedPosition(
-    contextMenuRef,
-    contextMenu?.x ?? 0,
-    contextMenu?.y ?? 0,
-  );
 
+  // A bubble's "Rename" opens its card and asks for the title editor (seq bump).
+  const lastRenameRequestRef = useRef<number | undefined>(undefined);
   useEffect(() => {
-    if (!contextMenu) return;
-    const close = () => { setContextMenu(null); setExpandedSubKey(null); };
-    window.addEventListener('pointerdown', close);
-    return () => window.removeEventListener('pointerdown', close);
-  }, [contextMenu]);
+    if (renameRequest === undefined || renameRequest === lastRenameRequestRef.current) return;
+    lastRenameRequestRef.current = renameRequest;
+    if (!readOnly) startEdit();
+  }, [renameRequest, readOnly, startEdit]);
 
   // Button handlers
   // Single click (e.detail=1): toggle expand/collapse.
@@ -297,7 +296,6 @@ function CardView<TConfig extends CardBaseConfig>({
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    setExpandedSubKey(null);
     setContextMenu({ x: e.clientX, y: e.clientY });
   }, []);
 
@@ -379,23 +377,9 @@ function CardView<TConfig extends CardBaseConfig>({
   const showFooterSuffix = !!footerSuffix && generateStatus !== 'generating';
   const showFooterExtras = showFooterPrefix || showFooterSuffix;
 
-  const contextMenuItemClass = (
-    state: 'default' | 'disabled' | 'active' = 'default',
-    indented = false,
-  ) => [
-    'card-context-menu-item flex items-center gap-2 w-full text-left py-2 text-xs transition-colors',
-    indented ? 'pl-8 pr-3' : 'px-3',
-    state === 'disabled'
-      ? `opacity-40 cursor-not-allowed${isGeneratedActive ? '' : ' text-secondary-hover'}`
-      : state === 'active'
-        ? 'active cursor-pointer'
-        : isGeneratedActive
-          ? 'cursor-pointer'
-          : 'text-foreground cursor-pointer hover:bg-secondary-light',
-  ].join(' ');
-
   return (
     <div
+      ref={rootRef}
       className={cardClassName}
       onDoubleClick={handleCardDoubleClick}
       onContextMenu={readOnly ? undefined : handleContextMenu}
@@ -429,6 +413,7 @@ function CardView<TConfig extends CardBaseConfig>({
       {/* Header - Click to expand/collapse.
            Double-click to zoom — stops propagation so the outer card's onDoubleClick doesn't fire twice. */}
       <div
+        {...{ [CARD_REVEAL.IGNORE_ATTR]: '' }}
         className="group relative z-10 flex items-center justify-between gap-2 cursor-pointer"
         onClick={!isEditingName ? handleToggleClick : undefined}
         onDoubleClick={e => e.stopPropagation()}
@@ -670,136 +655,17 @@ function CardView<TConfig extends CardBaseConfig>({
       )}
       </div>
 
-      {/* Right-click context menu — rendered via portal to <body> so it escapes the
-          card's stacking context. Dimmed (muted) cards apply `filter: brightness(...)`,
-          which creates a new stacking context and would trap z-index:9999 behind other cards. */}
-      {contextMenu && createPortal(
-        <div
-          ref={contextMenuRef}
-          className={isGeneratedActive ? 'card-context-menu--generated' : undefined}
-          onPointerDown={e => e.stopPropagation()}
-          onClick={e => e.stopPropagation()}
-          onDoubleClick={e => e.stopPropagation()}
-          style={{
-            position: 'fixed',
-            left: `${contextMenuPos?.x ?? contextMenu.x}px`,
-            top: `${contextMenuPos?.y ?? contextMenu.y}px`,
-            maxHeight: `calc(100vh - ${POPUP_MENU.VIEWPORT_MARGIN * 2}px)`,
-            overflowY: 'auto',
-            opacity: contextMenuPos ? 1 : 0,
-            zIndex: 9999,
-            backgroundColor: isGeneratedActive ? undefined : 'var(--color-surface-2)',
-            border: isGeneratedActive ? '1px solid var(--color-on-blue-faint)' : '1px solid var(--color-border-strong)',
-            borderRadius: '8px',
-            boxShadow: 'var(--shadow-lg)',
-            minWidth: '150px',
-            padding: '4px 0',
-            fontSize: '11px',
-          }}
-        >
-          {/* Rename option */}
-          {!isEditingName && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setContextMenu(null);
-                startEdit();
-              }}
-              className={contextMenuItemClass()}
-            >
-              <span className="flex-shrink-0 w-3 h-3 flex items-center justify-center">
-                <PenIcon />
-              </span>
-              <span className="flex-1">Rename</span>
-            </button>
-          )}
-
-          {/* Custom buttons */}
-          {customButtons && customButtons.map(item => (
-            <div key={item.key}>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (item.disabled) return;
-                  if (item.subItems) {
-                    setExpandedSubKey(prev => prev === item.key ? null : item.key);
-                  } else {
-                    item.onClick?.(e);
-                    setContextMenu(null);
-                  }
-                }}
-                disabled={item.disabled && !item.subItems}
-                className={contextMenuItemClass(
-                  item.disabled && !item.subItems
-                    ? 'disabled'
-                    : item.isActive
-                      ? 'active'
-                      : 'default',
-                )}
-                style={item.isActive ? {
-                  backgroundColor: isGeneratedActive
-                    ? 'var(--color-blue-chip-bg)'
-                    : 'var(--card-color-lighter, var(--color-primary-light))',
-                  color: isGeneratedActive
-                    ? 'var(--color-on-blue)'
-                    : 'var(--card-color, var(--color-primary))',
-                } : undefined}
-              >
-                <span className="flex-shrink-0 w-3 h-3 flex items-center justify-center">
-                  {item.icon}
-                </span>
-                <span className="flex-1">{item.label}</span>
-                {item.subItems && (
-                  <span className={`text-[10px] ${isGeneratedActive ? 'card-context-menu-chevron' : 'text-secondary-hover'}`}>
-                    {expandedSubKey === item.key ? '▾' : '▸'}
-                  </span>
-                )}
-              </button>
-
-              {/* Sub-items accordion */}
-              {item.subItems && expandedSubKey === item.key && (
-                <div className={`border-t ${isGeneratedActive ? 'card-context-menu-divider' : 'border-secondary-light'}`}>
-                  {item.subItems.map(sub => (
-                    <button
-                      key={sub.key}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (!sub.disabled) {
-                          sub.onClick(e);
-                          setContextMenu(null);
-                          setExpandedSubKey(null);
-                        }
-                      }}
-                      disabled={sub.disabled}
-                      className={contextMenuItemClass(
-                        sub.disabled
-                          ? 'disabled'
-                          : sub.isActive
-                            ? 'active'
-                            : 'default',
-                        true,
-                      )}
-                      style={sub.isActive ? {
-                        backgroundColor: isGeneratedActive
-                          ? 'var(--color-blue-chip-bg)'
-                          : 'var(--card-color-lighter, var(--color-primary-light))',
-                        color: isGeneratedActive
-                          ? 'var(--color-on-blue)'
-                          : 'var(--card-color, var(--color-primary))',
-                      } : undefined}
-                    >
-                      <span className="flex-1">{sub.label}</span>
-                      {sub.isActive && (
-                        <span className="text-[10px] opacity-60">✓</span>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>,
-        document.body
+      {/* Right-click context menu — portaled to <body> (CardContextMenu) so it escapes the
+          card's stacking context: dimmed cards' `filter` would trap it behind other cards. */}
+      {contextMenu && (
+        <CardContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={customButtons ?? []}
+          onRename={isEditingName ? undefined : startEdit}
+          onBlueBackground={isGeneratedActive}
+          onClose={() => setContextMenu(null)}
+        />
       )}
     </div>
   );
@@ -872,14 +738,6 @@ function ReduceIcon() {
 export function CloseIcon() {
   return (
     <span className="text-lg leading-none">×</span>
-  );
-}
-
-function PenIcon() {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 012.828 2.828L11.828 15.828a2 2 0 01-1.414.586H8v-2.414a2 2 0 01.586-1.414z" />
-    </svg>
   );
 }
 

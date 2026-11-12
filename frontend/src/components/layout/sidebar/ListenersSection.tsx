@@ -84,6 +84,8 @@ export function ListenersSection({
   // Expanded card (single or grid) — UI only. Powering a listener (FPS view /
   // grid points) is separate: the card header's power button.
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
+  // A bubble's "Rename": the floating card opens with its title editable.
+  const [renameRequest, setRenameRequest] = useState<{ id: string; seq: number } | null>(null);
   // Opening a model / reloading the page starts with every listener pop-up reduced.
   useOnFloatingPanelsCollapse(() => setExpandedItemId(null));
   const prevGridCountRef = useRef(gridListeners.length);
@@ -233,13 +235,8 @@ export function ListenersSection({
     </div>
       );
 
-  const renderCard = useCallback((
-    item: ListenerItemConfig,
-    index: number,
-    isExpanded: boolean,
-    onToggleExpand: (i: number) => void,
-    floating?: FloatingCardOptions,
-  ) => {
+  // Card / bubble right-click rows: the same menu on an expanded card and on its bubble.
+  const buildListenerMenu = useCallback((item: ListenerItemConfig): CustomMenuItem[] => {
     const isHidden = item.hiddenForSimulation ?? false;
 
     const hideButton: CustomMenuItem = {
@@ -301,7 +298,18 @@ export function ListenersSection({
       }
     }
 
+    return [...clipboardButtons, hideButton];
+  }, [onToggleReceiverHiddenForSimulation, toggleGridListenerHiddenForSimulation, onUpdateReceiverPosition, copiedPosition]);
+
+  const renderCard = useCallback((
+    item: ListenerItemConfig,
+    index: number,
+    isExpanded: boolean,
+    onToggleExpand: (i: number) => void,
+    floating?: FloatingCardOptions,
+  ) => {
     const isPowered = isItemPowered(item);
+    const isHidden = item.hiddenForSimulation ?? false;
 
     // Share view: listeners are only powered on/off — no position / orientation /
     // grid editors, clipboard or hide buttons.
@@ -337,7 +345,8 @@ export function ListenersSection({
           showIndex={true}
           canRemove={true}
           closeButtonTitle="Delete listener"
-          customButtons={canEdit ? [...clipboardButtons, hideButton, ...(floating?.extraMenu ?? [])] : floating?.extraMenu}
+          customButtons={canEdit ? [...buildListenerMenu(item), ...(floating?.extraMenu ?? [])] : floating?.extraMenu}
+          renameRequest={renameRequest?.id === item.id ? renameRequest.seq : undefined}
           onReduce={floating?.onReduce}
           onToggleExpand={onToggleExpand}
           onUpdateConfig={handleUpdateConfig as (index: number, updates: Partial<typeof item>) => void}
@@ -350,13 +359,12 @@ export function ListenersSection({
       </div>
     );
   }, [
-    onToggleReceiverHiddenForSimulation,
-    toggleGridListenerHiddenForSimulation,
+    buildListenerMenu,
+    renameRequest,
     handleUpdateConfig,
     handleRemove,
     onComputeBounds,
     onUpdateReceiverPosition,
-    copiedPosition,
     isItemPowered,
     toggleItemPower,
     fpsGridListenerId,
@@ -372,12 +380,16 @@ export function ListenersSection({
         openIndex={expandedIndex}
         isFpsMode={poweredListenerId !== null || fpsGridListenerId !== null}
         onTogglePower={handleBubblePower}
-        onToggleHiddenForSimulation={canEdit ? (item) => {
-          if (item.type === 'listener') onToggleReceiverHiddenForSimulation(item.id);
-          else toggleGridListenerHiddenForSimulation(item.id);
+        buildMenu={canEdit ? buildListenerMenu : undefined}
+        onRename={canEdit ? (item) => {
+          setExpandedItemId(item.id);
+          setRenameRequest({ id: item.id, seq: Date.now() });
         } : undefined}
         onExitFps={() => onExitFPS?.()}
-        onOpenChange={handleExpandedIndexChange}
+        onOpenChange={(index) => {
+          setRenameRequest(null);
+          handleExpandedIndexChange(index);
+        }}
         onAddItem={handleAddItem}
         renderCard={renderCard}
       />

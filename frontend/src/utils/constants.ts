@@ -409,8 +409,22 @@ export const ACTION_MENU = {
 } as const;
 
 // Self-positioned right-click menus (Card, DAWClipMenu) — see hooks/useViewportClampedPosition.ts.
+/** Cards scroll content revealed by an option into view (hooks/useRevealOnExpand.ts). */
+export const CARD_REVEAL = {
+  /** Content mounted within this long after a click / change counts as revealed by it. */
+  INPUT_WINDOW_MS: 600,
+  /** Space kept below the revealed content and above the control (px). */
+  MARGIN_PX: 8,
+  /** Inputs inside an element with this attribute (the card header) never reveal. */
+  IGNORE_ATTR: 'data-no-reveal',
+} as const;
+
 export const POPUP_MENU = {
   VIEWPORT_MARGIN: 8,         // px — minimum distance from viewport edges after clamping
+  MIN_WIDTH: 150,             // px — card right-click menu min width
+  SUBMENU_GAP: 2,             // px — gap between a row and its flyout submenu
+  PADDING_Y: 4,               // px — panel vertical padding (aligns a submenu's first row)
+  Z_INDEX: 9999,
 } as const;
 
 // Card info ("i") popover — click-to-open explanation panel on every card
@@ -1231,6 +1245,10 @@ export const IMPULSE_RESPONSE = {
 
   // Maximum supported channels
   MAX_CHANNELS: 16,  // Changed from 2 to 16 to support TOA
+
+  // Most channels the browser's decodeAudioData keeps (Chrome drops the rest, Firefox fails).
+  // WAVs with more channels (2nd/3rd-order ambisonic IRs) are parsed in JS (wav-multichannel.ts).
+  NATIVE_DECODE_MAX_CHANNELS: 8,
 
   // Fixed gain multiplier for ambisonic IRs (used by legacy processImpulseResponse)
   // AmbisonicIRMode bypasses this — passes IR data through unmodified
@@ -2570,18 +2588,20 @@ export const HYBRID = {
   CROSSOVER_FACTOR_MIN: 0.5,
   CROSSOVER_FACTOR_MAX: 4,
   CROSSOVER_FACTOR_STEP: 0.25,
-  /** The wave solver runs to this x the crossover. */
+  /** The wave solver runs to this x the crossover (headroom: its response is low-passed at its fmax). */
   WAVE_FMAX_MARGIN: 1.5,
-  WAVE_FMAX_CAP_DEFAULT: 1000,
-  WAVE_FMAX_CAP_MIN: 100,
-  WAVE_FMAX_CAP_MAX: 4000,
-  WAVE_FMAX_CAP_STEP: 50,
   LEVEL_MATCH_DEFAULT: false,
   DEFAULT_PPW: 12,
   /** |wave - rays| level in the crossover octave above which the join is flagged (dB). */
   MISMATCH_WARNING_DB: 4,
-  /** Eyring estimate inputs when no run exists yet: mean absorption assumed for the read-out. */
+  /** Eyring estimate inputs when no run exists yet: mean absorption assumed when nothing is assigned. */
   ESTIMATE_MEAN_ABSORPTION: 0.2,
+  /** Octave bands up to this (Hz) give the low-frequency absorption of a material for the estimate. */
+  ESTIMATE_MAX_BAND_HZ: 500,
+  ESTIMATE_ABSORPTION_MIN: 0.01,
+  ESTIMATE_ABSORPTION_MAX: 0.95,
+  /** 24·ln(10) / c at 343 m/s (s/m), the Sabine / Eyring constant. */
+  SABINE_CONSTANT: 0.161,
 } as const;
 
 /** Sound paths in the 3D view: reflections, billiard rays, diffraction edges (acousticPathsStore). */

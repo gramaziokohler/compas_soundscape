@@ -26,7 +26,7 @@ export type PreviewCategoryKey = Extract<
   keyof PreflightFilters,
   'reflectingSide' | 'backSide' | 'closed' | 'open' | 'shell' | 'interior' | 'doubleSided' | 'skipped'
 >;
-export type PreviewOverlayKey = Extract<keyof PreflightFilters, 'edges' | 'holes' | 'leaks' | 'blockers'>;
+export type PreviewOverlayKey = Extract<keyof PreflightFilters, 'edges' | 'holes' | 'leaks' | 'blockers' | 'diffractionEdges'>;
 
 export interface PreviewCategory<K extends string = PreviewCategoryKey> {
   key: K;
@@ -69,11 +69,13 @@ export const PREVIEW_OVERLAYS: PreviewCategory<PreviewOverlayKey>[] = [
   { key: 'holes', colorVar: '--color-warning', label: 'Holes (open edges)' },
   { key: 'leaks', colorVar: '--color-error', label: 'Leaks (escaping sound)' },
   { key: 'blockers', colorVar: '--color-error', label: 'Blocked direct paths' },
+  { key: 'diffractionEdges', colorVar: '--color-primary', label: 'Diffraction edges' },
 ];
 
 export interface PreviewPalette {
   edges: number;
   holes: number;
+  diffractionEdges: number;
   error: number;
   warning: number;
   info: number;
@@ -92,6 +94,7 @@ export function resolvePreviewPalette(): PreviewPalette {
   return {
     edges: overlay('edges'),
     holes: overlay('holes'),
+    diffractionEdges: overlay('diffractionEdges'),
     error: getCssColorHex('--color-error'),
     warning: getCssColorHex('--color-warning'),
     info: getCssColorHex('--color-info'),

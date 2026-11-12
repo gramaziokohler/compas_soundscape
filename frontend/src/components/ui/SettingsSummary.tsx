@@ -295,7 +295,7 @@ export function getSettingsRows(config: CardBaseConfig): SettingsRow[] {
         : `${s.crossover_factor === 1 ? '' : `${s.crossover_factor} × `}Schroeder frequency`,
     });
     if (hybrid.hybridInfo) rows.push({ label: 'Joined At', value: `${Math.round(hybrid.hybridInfo.crossover_hz)} Hz` });
-    rows.push({ label: 'Wave Solver Up To', value: `${s.wave_fmax_cap} Hz` });
+    if (hybrid.hybridInfo) rows.push({ label: 'Wave Solved Up To', value: `${Math.round(hybrid.hybridInfo.wave_fmax)} Hz` });
     rows.push({ label: 'Points per Wavelength', value: String(s.ppw) });
     rows.push({ label: 'Wave IR Length', value: s.duration === null ? 'From the decay' : `${s.duration} s` });
     if (s.level_match) rows.push({ label: 'Level Match', value: 'Yes' });

@@ -22,6 +22,7 @@ from config.constants import (
     HYBRID_WAVE_FMAX_MARGIN,
     PFFDTD_FMAX_MIN,
 )
+from pffdtd_backend.listener_frame import world_to_listener_foa
 from utils.hybrid_crossover import (
     band_energy,
     combine,
@@ -30,7 +31,6 @@ from utils.hybrid_crossover import (
     plan_crossover,
     schroeder_frequency,
     split_bands,
-    world_to_listener_foa,
 )
 
 FS = 48000
@@ -186,17 +186,17 @@ def test_band_energy_is_parseval():
 
 
 def test_world_to_listener_foa():
-    # A plane wave from world -Y (the listener's front): world channels W=1, Y=-1, Z=0, X=0
-    world = np.array([[1.0, -1.0, 0.0, 0.0]])
-    np.testing.assert_allclose(world_to_listener_foa(world), [[1.0, 0.0, 0.0, 1.0]])    # front -> X = +1
-    # From world +X (the listener's left): W=1, Y=0, Z=0, X=1 -> listener Y = +1
-    world = np.array([[1.0, 0.0, 0.0, 1.0]])
-    np.testing.assert_allclose(world_to_listener_foa(world), [[1.0, 1.0, 0.0, 0.0]])
+    # Channels first [W, Y, Z, X]. A plane wave from world -Y (the listener's front): world Y = -1
+    world = np.array([[1.0], [-1.0], [0.0], [0.0]])
+    np.testing.assert_allclose(world_to_listener_foa(world), [[1.0], [0.0], [0.0], [1.0]])    # front -> X = +1
+    # From world +X (the listener's left): world X = +1 -> listener Y = +1
+    world = np.array([[1.0], [0.0], [0.0], [1.0]])
+    np.testing.assert_allclose(world_to_listener_foa(world), [[1.0], [1.0], [0.0], [0.0]])
     # From above: unchanged
-    world = np.array([[1.0, 0.0, 1.0, 0.0]])
+    world = np.array([[1.0], [0.0], [1.0], [0.0]])
     np.testing.assert_allclose(world_to_listener_foa(world), world)
-    mono = np.ones(8)
-    assert world_to_listener_foa(mono) is not None and world_to_listener_foa(mono).shape == (8,)
+    mono = np.ones((1, 8))
+    assert world_to_listener_foa(mono).shape == (1, 8)
 
 
 def test_wave_grid_is_refined_for_low_crossovers_and_near_surfaces():

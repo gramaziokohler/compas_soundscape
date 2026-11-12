@@ -24,7 +24,8 @@ wheels/
 .installed.cfg
 *.egg
 
-.claude/
+.claude/*
+!.claude/rules/
 
 # Temp files
 temp/
@@ -154,6 +155,7 @@ docs/api/generated/
 
 scripts/*
 !scripts/loadtest/
+!scripts/sync_claude_rules.py
 scripts/loadtest/results/
 
 .ruff_cache

@@ -34,14 +34,11 @@ from config.constants import (
     HYBRID_CROSSOVER_MAX_HZ,
     HYBRID_CROSSOVER_MIN_HZ,
     HYBRID_CROSSOVER_MODES,
-    HYBRID_WAVE_FMAX_CAP_DEFAULT,
     HYBRID_WAVE_FMAX_MARGIN,
     JOB_TYPE_PFFDTD,
     PFFDTD_DEFAULT_PPW,
     PFFDTD_DURATION_MAX,
     PFFDTD_DURATION_MIN,
-    PFFDTD_FMAX_MAX,
-    PFFDTD_FMAX_MIN,
     PFFDTD_PPW_MAX,
     PFFDTD_PPW_MIN,
     PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION,
@@ -99,10 +96,9 @@ async def crossover_estimate(
     mode: str = "schroeder",
     crossover_hz: Optional[float] = None,
     factor: float = HYBRID_CROSSOVER_FACTOR_DEFAULT,
-    wave_fmax_cap: float = HYBRID_WAVE_FMAX_CAP_DEFAULT,
 ):
     try:
-        return plan_crossover(mode, rt60, volume, manual_hz=crossover_hz, factor=factor, wave_fmax_cap=wave_fmax_cap).as_dict()
+        return plan_crossover(mode, rt60, volume, manual_hz=crossover_hz, factor=factor).as_dict()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -126,7 +122,6 @@ async def run_simulation_speckle(
     crossover_mode: str = Form("schroeder"),
     crossover_hz: Optional[float] = Form(None),
     crossover_factor: float = Form(HYBRID_CROSSOVER_FACTOR_DEFAULT),
-    wave_fmax_cap: float = Form(HYBRID_WAVE_FMAX_CAP_DEFAULT),
     level_match: bool = Form(False),
     # wave part
     ppw: float = Form(PFFDTD_DEFAULT_PPW),
@@ -160,7 +155,6 @@ async def run_simulation_speckle(
             raise HTTPException(status_code=400, detail="A manual crossover needs crossover_hz")
         _check_range("crossover_hz", crossover_hz, HYBRID_CROSSOVER_MIN_HZ, HYBRID_CROSSOVER_MAX_HZ)
     _check_range("crossover_factor", crossover_factor, HYBRID_CROSSOVER_FACTOR_MIN, HYBRID_CROSSOVER_FACTOR_MAX)
-    _check_range("wave_fmax_cap", wave_fmax_cap, PFFDTD_FMAX_MIN, PFFDTD_FMAX_MAX)
     _check_range("ppw", ppw, PFFDTD_PPW_MIN, PFFDTD_PPW_MAX)
     if duration is not None:
         _check_range("duration", duration, PFFDTD_DURATION_MIN, PFFDTD_DURATION_MAX)
@@ -205,7 +199,6 @@ async def run_simulation_speckle(
                 crossover_mode=crossover_mode,
                 crossover_hz=crossover_hz,
                 crossover_factor=crossover_factor,
-                wave_fmax_cap=wave_fmax_cap,
                 level_match=level_match,
                 ppw=ppw,
                 duration=duration,

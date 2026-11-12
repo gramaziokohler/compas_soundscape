@@ -492,7 +492,6 @@ HYBRID_CROSSOVER_FALLBACK_HZ = 200.0    # when the room's decay time or volume i
 # The wave solver runs to this x the crossover: its response is low-passed at its fmax, and the
 # 4th-order low branch is -14 dB there (cost of the wave run grows with fmax^4).
 HYBRID_WAVE_FMAX_MARGIN = 1.5
-HYBRID_WAVE_FMAX_CAP_DEFAULT = 1000.0   # Hz; a higher crossover is lowered to this / margin
 HYBRID_WAVE_DURATION_T60_FACTOR = 1.2   # wave run length when not given: this x T60
 HYBRID_LEVEL_MATCH_MAX_DB = 6.0
 # The wave grid of a hybrid run is refined beyond its points-per-wavelength when needed: a low

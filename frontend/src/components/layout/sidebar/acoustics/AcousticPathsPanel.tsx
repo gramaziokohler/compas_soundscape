@@ -131,7 +131,8 @@ export function AcousticPathsPanel({
         {!unavailableReason && (
           <button
             type="button"
-            disabled={disabled}
+            disabled={disabled || (!isRunning && options.kinds.length === 0)}
+            title={!isRunning && options.kinds.length === 0 ? 'Pick at least one kind of path to trace' : undefined}
             onClick={() => (isRunning ? store().cancelPaths(configId) : onRun())}
             className="cursor-pointer rounded border border-primary bg-transparent px-2 text-xxs font-semibold leading-4 text-primary transition-colors hover:bg-primary hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
           >

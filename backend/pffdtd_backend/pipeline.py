@@ -66,6 +66,7 @@ from pffdtd_backend.outputs import (  # noqa: E402
     read_plane_accum,
     read_receivers,
 )
+from pffdtd_backend.listener_frame import world_to_listener_foa  # noqa: E402
 from pffdtd_backend.postprocess import foa_channels, probe_positions, to_ir  # noqa: E402
 from pffdtd_backend.sim_prepare import SimSpec, derive, job_domain_bounds, prepare, with_extras  # noqa: E402
 
@@ -245,7 +246,7 @@ def run_job(job: dict, watch: ParentWatch) -> dict:
         for ri in range(receivers.shape[0]):
             sig = r_out[ri * n_probe : (ri + 1) * n_probe]
             if foa:
-                sig = foa_channels(sig, Ts, offset_m, prep.c)
+                sig = world_to_listener_foa(foa_channels(sig, Ts, offset_m, prep.c))
             irs.append(
                 _quiet(
                     to_ir,

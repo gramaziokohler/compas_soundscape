@@ -241,7 +241,7 @@ export const useAcousticPathsStore = create<AcousticPathsStoreState>()(
           set((s) => {
             const has = s.options.kinds.includes(kind);
             const kinds = has ? s.options.kinds.filter((k) => k !== kind) : [...s.options.kinds, kind];
-            return kinds.length ? { options: { ...s.options, kinds } } : {};
+            return { options: { ...s.options, kinds } };
           }, false, 'paths/toggleKind'),
         setPlaying: (playing) =>
           set((s) => (playing && s.durationMs > 0 && s.timeMs >= s.durationMs

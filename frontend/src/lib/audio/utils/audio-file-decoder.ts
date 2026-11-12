@@ -6,6 +6,7 @@
  */
 
 import { decode as decodeWav } from 'wav-decoder';
+import { decodeAudioAllChannels } from './wav-multichannel';
 
 /**
  * Audio file metadata extracted before decoding
@@ -91,10 +92,11 @@ export async function decodeAudioFile(
   // so we need a copy for the fallback decoder
   const arrayBufferCopy = arrayBuffer.slice(0);
 
-  // STEP 1: Try native Web Audio API first (fastest)
+  // STEP 1: Native Web Audio API (fastest), or the JS WAV parser for WAVs with more
+  // channels than the browser keeps (it stops at 8; a 3rd-order IR has 16)
   try {
     console.log('[AudioFileDecoder] Trying native decodeAudioData...');
-    const audioBuffer = await audioContext.decodeAudioData(arrayBufferCopy);
+    const audioBuffer = await decodeAudioAllChannels(audioContext, arrayBufferCopy);
 
     const info = getAudioBufferInfo(audioBuffer, metadata);
     console.log('[AudioFileDecoder] ✅ Native decoding successful:', formatAudioBufferInfo(info));

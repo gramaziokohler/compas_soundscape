@@ -13,10 +13,10 @@ One job, three stages, on one Speckle geometry and one set of source-listener pa
    pair's two responses are joined with a 4th-order Linkwitz-Riley crossover
    (utils/hybrid_crossover.combine) and written over the wave response, with metrics recomputed.
 
-Both engines keep the propagation delay and write at the app's level (free field at 1 m, 1/r);
-the wave solver's ambisonic channels (world axes) are turned into the listener frame of the
-geometric ones before joining. Results use the PFFDTD file names and results JSON (served by
-/api/pffdtd/get-result-file), with a ``hybrid`` header and per-pair ``hybrid`` block.
+Both engines keep the propagation delay and write at the app's level (free field at 1 m, 1/r),
+and both write first-order ambisonics in the same listener frame (the wave solver turns its
+world-axis channels into it, pffdtd_backend/listener_frame.py). Results use the PFFDTD file
+names and results JSON (served by /api/pffdtd/get-result-file), with a ``hybrid`` header and per-pair ``hybrid`` block.
 """
 
 from __future__ import annotations
@@ -57,7 +57,7 @@ from utils.acoustic_measurement import AcousticMeasurement
 from utils.audio_processing import trim_ir
 from utils.geometry import seeds_from_pairs
 from utils.hybrid_crossover import (
-    CROSSOVER_SCHROEDER, CrossoverPlan, combine, plan_crossover, wave_ppw, world_to_listener_foa,
+    CROSSOVER_SCHROEDER, CrossoverPlan, combine, plan_crossover, wave_ppw,
 )
 
 METHOD_NAME = "Hybrid (PFFDTD + compas_acoustics)"
@@ -149,9 +149,7 @@ def join_pairs(
         fs, wave = wavfile.read(str(path))
         if fs != AUDIO_SAMPLE_RATE:
             raise RuntimeError(f"Wave response at {fs} Hz, expected {AUDIO_SAMPLE_RATE}")
-        wave = np.asarray(wave, dtype=np.float64)
-        if foa:
-            wave = world_to_listener_foa(wave)
+        wave = np.asarray(wave, dtype=np.float64)  # already in the listener frame
         joined, info = combine(wave, ga_by_pair[key], AUDIO_SAMPLE_RATE, plan.crossover_hz, level_match=level_match)
         joined = trim_ir(joined, threshold_fraction=PYROOMACOUSTICS_IR_TRIM_THRESHOLD)
         wavfile.write(str(path), AUDIO_SAMPLE_RATE, np.ascontiguousarray(joined, dtype=np.float32))

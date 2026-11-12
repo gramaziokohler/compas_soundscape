@@ -36,7 +36,8 @@ import { Notice } from '@/components/ui/Notice';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Bubble, BubbleAddButton, BubbleHeading } from '@/components/ui/Bubble';
 import { SimulationTypeIcon } from '@/components/ui/BubbleIcons';
-import { ContextMenu, type ContextMenuItem } from '@/components/ui/ContextMenu';
+import { ContextMenu } from '@/components/ui/ContextMenu';
+import { CardContextMenu } from '@/components/ui/CardContextMenu';
 import { buildSavedVisibilityRows } from '@/utils/savedObjectVisibility';
 import { buildCopyMaterialsRows } from '@/utils/copyMaterialAssignments';
 import { useDismissOnSceneClick } from '@/hooks/useDismissOnSceneClick';
@@ -1538,6 +1539,57 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   </div>
     );
 
+  // A bubble's "Rename": the floating card opens with its title editable.
+  const [renameRequest, setRenameRequest] = useState<{ index: number; seq: number } | null>(null);
+
+  // Card / bubble right-click rows: the same menu on an expanded card and on its bubble.
+  const buildSimulationMenu = (index: number): CustomMenuItem[] => {
+    const config = simulationConfigs[index];
+    const customButtons: CustomMenuItem[] = [];
+    if (!config) return customButtons;
+    if (canEdit && onAddSimulationConfig && onUpdateSimulationConfig) {
+      customButtons.push({
+        key: 'duplicate',
+        icon: (
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+          </svg>
+        ),
+        label: 'Duplicate simulation',
+        onClick: (e) => { e.stopPropagation(); handleDuplicateSimulation(index); },
+      });
+    }
+    if (canEdit && onUpdateSimulationConfig) {
+      const copyRows = buildCopyMaterialsRows({ configs: simulationConfigs, sourceIndex: index, onUpdate: handleUpdateConfig });
+      if (copyRows.length > 0) {
+        customButtons.push({
+          key: 'copy-materials',
+          icon: <Copy className="h-3 w-3" />,
+          label: COPY_MATERIALS.LABEL,
+          subItems: copyRows.map((row) => ({
+            key: row.key,
+            label: row.label,
+            onClick: (e) => { e.stopPropagation(); row.onClick(); },
+          })),
+        });
+      }
+      for (const row of buildSavedVisibilityRows({
+        saved: config.savedObjectVisibility,
+        onSave: (snapshot) => handleUpdateConfig(index, { savedObjectVisibility: snapshot }),
+        onClear: () => handleUpdateConfig(index, { savedObjectVisibility: undefined }),
+      })) {
+        customButtons.push({
+          key: row.key,
+          icon: <Eye className="h-3 w-3" />,
+          label: row.label,
+          isActive: row.isActive,
+          onClick: (e) => { e.stopPropagation(); row.onClick(); },
+        });
+      }
+    }
+    return customButtons;
+  };
+
   const renderCard = (
     config: SimulationConfig,
     index: number,
@@ -2172,48 +2224,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         </>
     ) : undefined;
 
-    // Duplicate button — available for all simulation types and states
-    const customButtons: CustomMenuItem[] = [];
-    if (canEdit && onAddSimulationConfig && onUpdateSimulationConfig) {
-      customButtons.push({
-        key: 'duplicate',
-        icon: (
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-          </svg>
-        ),
-        label: 'Duplicate simulation',
-        onClick: (e) => { e.stopPropagation(); handleDuplicateSimulation(index); },
-      });
-    }
-    if (canEdit && onUpdateSimulationConfig) {
-      const copyRows = buildCopyMaterialsRows({ configs: simulationConfigs, sourceIndex: index, onUpdate: handleUpdateConfig });
-      if (copyRows.length > 0) {
-        customButtons.push({
-          key: 'copy-materials',
-          icon: <Copy className="h-3 w-3" />,
-          label: COPY_MATERIALS.LABEL,
-          subItems: copyRows.map((row) => ({
-            key: row.key,
-            label: row.label,
-            onClick: (e) => { e.stopPropagation(); row.onClick(); },
-          })),
-        });
-      }
-      for (const row of buildSavedVisibilityRows({
-        saved: config.savedObjectVisibility,
-        onSave: (snapshot) => handleUpdateConfig(index, { savedObjectVisibility: snapshot }),
-        onClear: () => handleUpdateConfig(index, { savedObjectVisibility: undefined }),
-      })) {
-        customButtons.push({
-          key: row.key,
-          icon: <Eye className="h-3 w-3" />,
-          label: row.label,
-          isActive: row.isActive,
-          onClick: (e) => { e.stopPropagation(); row.onClick(); },
-        });
-      }
-    }
+    const customButtons = buildSimulationMenu(index);
     if (floating?.extraMenu) customButtons.push(...floating.extraMenu);
 
     // Derive the service version for this card type
@@ -2287,6 +2298,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             closeButtonTitle="Remove simulation"
             removeConfirmMessage={isCompleted ? 'Remove this simulation and its results?' : 'Remove this simulation?'}
             customButtons={customButtons.length > 0 ? customButtons : undefined}
+            renameRequest={renameRequest?.index === index ? renameRequest.seq : undefined}
             // Simulation action button props (for pyroomacoustics/pffdtd)
             onRun={isSimulationType ? async () => await runSimulation(index) : undefined}
             onCancel={isSimulationType ? () => cancelSimulation(index) : undefined}
@@ -2337,6 +2349,19 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         />
       ) : null;
 
+    const openBubbleCard = (index: number) => {
+      setExpandedCardIndex(index);
+      setRenameRequest(null);
+      useUIStore.getState().setExpandedSimulationTabIndex(index);
+      const opened = simulationConfigs[index];
+      if (opened?.type === 'resonance') {
+        powerOnResonance(opened.id);
+      } else if (opened && viewMode !== 'dark' && canEdit) {
+        // The share view keeps the viewer's chosen view mode.
+        setViewMode('acoustic');
+      }
+    };
+
     return (
       <>
         {reducedActiveMaterials}
@@ -2348,21 +2373,16 @@ export function AcousticsSection(props: AcousticsSectionProps) {
           availableTypes={AVAILABLE_TYPES}
           onAddItem={handleAddItem}
           onSetActiveSimulation={onSetActiveSimulation}
-          onUpdateConfig={canEdit && onUpdateSimulationConfig ? handleUpdateConfig : undefined}
-          onOpen={(index) => {
-            setExpandedCardIndex(index);
-            useUIStore.getState().setExpandedSimulationTabIndex(index);
-            const opened = simulationConfigs[index];
-            if (opened?.type === 'resonance') {
-              powerOnResonance(opened.id);
-            } else if (opened && viewMode !== 'dark' && canEdit) {
-              // The share view keeps the viewer's chosen view mode.
-              setViewMode('acoustic');
-            }
-          }}
+          buildMenu={canEdit ? buildSimulationMenu : undefined}
+          onRename={canEdit && onUpdateSimulationConfig ? (index) => {
+            if (expandedCardIndex !== index) openBubbleCard(index);
+            setRenameRequest({ index, seq: Date.now() });
+          } : undefined}
+          onOpen={openBubbleCard}
           onReduce={() => {
             // Reduce is not deactivate: the auralization keeps running with the panel closed.
             setExpandedCardIndex(null);
+            setRenameRequest(null);
             useUIStore.getState().setExpandedSimulationTabIndex(null);
           }}
           renderCard={renderCard}
@@ -2419,8 +2439,10 @@ interface AcousticsBubblesProps {
   onSetActiveSimulation?: (index: number | null) => void;
   onOpen: (index: number) => void;
   onReduce: () => void;
-  /** Right-click menu rows (save / clear object visibility). Undefined = no menu (read-only). */
-  onUpdateConfig?: (index: number, updates: Partial<SimulationConfig>) => void;
+  /** Right-click menu rows — the expanded card's own. Undefined = no menu (read-only). */
+  buildMenu?: (index: number) => CustomMenuItem[];
+  /** "Rename" row of the menu: opens the card with its title editable. */
+  onRename?: (index: number) => void;
   renderCard: (
     config: SimulationConfig,
     index: number,
@@ -2458,26 +2480,14 @@ function AcousticsBubbles({
   onSetActiveSimulation,
   onOpen,
   onReduce,
-  onUpdateConfig,
+  buildMenu,
+  onRename,
   renderCard,
 }: AcousticsBubblesProps) {
   const [addMenu, setAddMenu] = useState<{ x: number; y: number } | null>(null);
   const [simMenu, setSimMenu] = useState<{ x: number; y: number; index: number } | null>(null);
-  // Rows are built from the live config so the label reflects what is saved now.
-  const simMenuItems = useMemo<ContextMenuItem[]>(() => {
-    if (!simMenu || !onUpdateConfig) return [];
-    const { index } = simMenu;
-    const copyRows = buildCopyMaterialsRows({ configs: simulationConfigs, sourceIndex: index, onUpdate: onUpdateConfig })
-      .map((row) => ({ ...row, label: `${COPY_MATERIALS.LABEL} ${row.label}` }));
-    return [
-      ...buildSavedVisibilityRows({
-        saved: simulationConfigs[index]?.savedObjectVisibility,
-        onSave: (snapshot) => onUpdateConfig(index, { savedObjectVisibility: snapshot }),
-        onClear: () => onUpdateConfig(index, { savedObjectVisibility: undefined }),
-      }),
-      ...copyRows,
-    ];
-  }, [simMenu, simulationConfigs, onUpdateConfig]);
+  // Rows are built from the live config on every render, so labels reflect what is saved now.
+  const simMenuItems = simMenu && buildMenu ? buildMenu(simMenu.index) : [];
   const columnSpace = useBubbleColumnSpace();
   // Share view: only the simulations linked to the powered scene (null = all).
   const linkedIds = useShareLinkedSimulations();
@@ -2572,7 +2582,7 @@ function AcousticsBubbles({
                     : undefined
                 : undefined}
               powerTitle={isActive ? 'Disable simulation' : 'Enable simulation'}
-              onContextMenu={onUpdateConfig
+              onContextMenu={buildMenu
                 ? (e) => setSimMenu({ x: e.clientX, y: e.clientY, index })
                 : undefined}
             />
@@ -2603,12 +2613,12 @@ function AcousticsBubbles({
         />
       )}
 
-      {simMenu && simMenuItems.length > 0 && (
-        <ContextMenu
+      {simMenu && (simMenuItems.length > 0 || onRename) && (
+        <CardContextMenu
           x={simMenu.x}
           y={simMenu.y}
-          title="Simulation"
           items={simMenuItems}
+          onRename={onRename ? () => onRename(simMenu.index) : undefined}
           onClose={() => setSimMenu(null)}
         />
       )}

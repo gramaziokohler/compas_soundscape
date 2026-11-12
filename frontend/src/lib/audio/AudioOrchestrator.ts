@@ -65,6 +65,7 @@ import {
   getAudioBufferInfo,
   formatAudioBufferInfo
 } from './utils/audio-file-decoder';
+import { decodeAudioAllChannels } from './utils/wav-multichannel';
 import { AUDIO_CONTROL, AUDIO_SAMPLE_RATE, DEFAULT_SPEED_OF_SOUND, API_BASE_URL } from '@/utils/constants';
 import { registerOutputDeviceTarget } from './output-device';
 import { OutputLevelMeter } from './utils/output-level-meter';
@@ -863,8 +864,8 @@ export class AudioOrchestrator implements IAudioOrchestrator {
 
       const arrayBuffer = await response.arrayBuffer();
 
-      // Decode audio data
-      const audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
+      // Decode keeping every channel (the browser decoder stops at 8: a 3rd-order IR has 16)
+      const audioBuffer = await decodeAudioAllChannels(this.audioContext, arrayBuffer);
 
       // Cache the decoded buffer
       this.irCache.set(cacheKey, audioBuffer);

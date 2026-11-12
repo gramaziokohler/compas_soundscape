@@ -127,6 +127,15 @@ export interface PreflightPayload {
   seeds: PreflightSeed[];
   blocked_paths: PreflightBlockedPath[];
   issues: PreflightIssue[];
+  /** Diffracting edges of the room (compas_acoustics); null / absent when it is not installed. */
+  diffraction_edges?: PreflightDiffractionEdge[] | null;
+}
+
+export interface PreflightDiffractionEdge {
+  /** [x0, y0, z0, x1, y1, z1] in model coordinates. */
+  segment: number[];
+  /** 'obstacle': an object inside the room; 'boundary': a corner of the room itself. */
+  kind: 'obstacle' | 'boundary';
 }
 
 /** Job result of POST /api/simulation/preflight-speckle. */
@@ -165,6 +174,7 @@ export interface PreflightFilters {
   holes: boolean;
   leaks: boolean;
   blockers: boolean;
+  diffractionEdges: boolean;
 }
 
 export type PreflightRunStatus = 'idle' | 'running' | 'done' | 'error';

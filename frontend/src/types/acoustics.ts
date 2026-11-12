@@ -212,8 +212,6 @@ export interface HybridSettings extends GeometricEngineSettings {
   crossover_mode: 'schroeder' | 'manual';
   crossover_hz: number;
   crossover_factor: number;
-  /** Highest frequency the wave solver may run to (Hz); a higher crossover is lowered to fit. */
-  wave_fmax_cap: number;
   /** Scale the wave part so both parts have the same level around the crossover. */
   level_match: boolean;
   /** Wave part: points per wavelength at its top frequency. */

@@ -8,6 +8,7 @@ import { useUIStore } from '@/store';
 import { Bubble, BubbleAddButton, BubbleExitButton, BubbleHeading } from '@/components/ui/Bubble';
 import { ListenerIcon, ListenerGridIcon } from '@/components/ui/BubbleIcons';
 import { ContextMenu } from '@/components/ui/ContextMenu';
+import { CardContextMenu } from '@/components/ui/CardContextMenu';
 import { BubbleScrollColumn } from '@/components/ui/BubbleScrollColumn';
 import { FpsHelpPopup } from '@/components/scene/FpsHelpPopup';
 import { useDismissOnSceneClick } from '@/hooks/useDismissOnSceneClick';
@@ -36,8 +37,10 @@ interface ListenerBubblesProps {
   isFpsMode: boolean;
   /** Power a listener on (index) or switch the powered one off (null). */
   onTogglePower: (index: number | null) => void;
-  /** Include / exclude a listener from simulations (bubble right-click). Omit to disable the menu. */
-  onToggleHiddenForSimulation?: (item: ListenerItemConfig) => void;
+  /** Right-click menu rows — the expanded card's own. Omit to disable the menu (read-only). */
+  buildMenu?: (item: ListenerItemConfig) => CustomMenuItem[];
+  /** "Rename" row of the menu: opens the card with its title editable. */
+  onRename?: (item: ListenerItemConfig) => void;
   /** Leave the FPS view (a grid stays powered, a single listener powers off). */
   onExitFps: () => void;
   onOpenChange: (index: number | null) => void;
@@ -79,7 +82,8 @@ export function ListenerBubbles({
   openIndex: openIndexProp,
   isFpsMode,
   onTogglePower,
-  onToggleHiddenForSimulation,
+  buildMenu,
+  onRename,
   onExitFps,
   onOpenChange,
   onAddItem,
@@ -227,7 +231,7 @@ export function ListenerBubbles({
               onClick={() => handleClick(index)}
               onTogglePower={isClickPowerable(item) ? () => onTogglePower(active ? null : index) : undefined}
               powerTitle={powerTitle}
-              onContextMenu={onToggleHiddenForSimulation
+              onContextMenu={buildMenu
                 ? (e) => setItemMenu({ x: e.clientX, y: e.clientY, item })
                 : undefined}
             />
@@ -249,16 +253,12 @@ export function ListenerBubbles({
         />
       )}
 
-      {itemMenu && onToggleHiddenForSimulation && (
-        <ContextMenu
+      {itemMenu && buildMenu && (
+        <CardContextMenu
           x={itemMenu.x}
           y={itemMenu.y}
-          title={itemMenu.item.name}
-          items={[{
-            key: 'simulation',
-            label: itemMenu.item.hiddenForSimulation ? 'Include in simulation' : 'Exclude from simulation',
-            onClick: () => onToggleHiddenForSimulation(itemMenu.item),
-          }]}
+          items={buildMenu(items.find((i) => i.id === itemMenu.item.id) ?? itemMenu.item)}
+          onRename={onRename ? () => onRename(itemMenu.item) : undefined}
           onClose={() => setItemMenu(null)}
         />
       )}

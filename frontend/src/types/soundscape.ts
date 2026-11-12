@@ -200,6 +200,7 @@ export interface SoundscapeSimulationSettings {
   crossover_mode?: 'schroeder' | 'manual';
   crossover_hz?: number;
   crossover_factor?: number;
+  /** Legacy (removed setting): the wave band is always the crossover x HYBRID.WAVE_FMAX_MARGIN. */
   wave_fmax_cap?: number;
   level_match?: boolean;
   // PFFDTD (wave-based) only

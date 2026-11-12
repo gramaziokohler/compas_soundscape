@@ -43,7 +43,7 @@ function CategoryToggles({ items, inline = false }: { items: PreviewCategory<key
   );
 }
 
-export function PreflightPreviewControls() {
+export function PreflightPreviewControls({ hasDiffractionEdges = false }: { hasDiffractionEdges?: boolean } = {}) {
   const viewMode = useSimulationPreflightStore((s) => s.viewMode);
   const setViewMode = useSimulationPreflightStore((s) => s.setViewMode);
   const ghost = useSimulationPreflightStore((s) => s.ghost);
@@ -60,7 +60,10 @@ export function PreflightPreviewControls() {
       <CategoryToggles items={PREVIEW_CATEGORIES[viewMode]} />
       <div className="card-field">
         <span className="text-xxs text-secondary-hover">Overlays</span>
-        <CategoryToggles items={PREVIEW_OVERLAYS} inline />
+        <CategoryToggles
+          items={hasDiffractionEdges ? PREVIEW_OVERLAYS : PREVIEW_OVERLAYS.filter((o) => o.key !== 'diffractionEdges')}
+          inline
+        />
         <label className="flex cursor-pointer items-center gap-1.5 text-xxs">
           <Checkbox checked={ghost} onChange={setGhost} size={12} label="See-through surfaces" />
           See-through surfaces

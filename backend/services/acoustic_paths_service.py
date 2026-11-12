@@ -72,6 +72,33 @@ def _level_db(band_gain) -> Optional[float]:
     return round(20.0 * np.log10(rms), 2) if rms > 0 else None
 
 
+def room_diffraction_edges(mesh: SimulationMesh, excluded_edges: Optional[list] = None,
+                           notes: Optional[list] = None, geometry=None) -> list[dict]:
+    """Every diffracting edge of the prepared room (model coordinates), the excluded ones flagged.
+    ``geometry``: the room's ``room_geometry(mesh, room_offset(mesh))`` when already built."""
+    from compas_acoustics.hybrid.diffraction import diffraction_edges
+
+    from services.compas_acoustics_engine import edge_excluded, edge_warnings, room_geometry
+
+    offset = room_offset(mesh)
+    rows = np.asarray(excluded_edges or [], dtype=np.float64).reshape(-1, 6)
+    local = rows - np.concatenate([offset, offset]) if len(rows) else rows
+    with edge_warnings(notes if notes is not None else []):
+        found = diffraction_edges(geometry if geometry is not None else room_geometry(mesh, offset))
+    return [
+        {
+            "id": k,
+            "segment": _flat([e.start, e.end], offset),
+            "length": round(float(e.length), 3),
+            # the wedge's solid angle seen from the air: 90 deg = a box corner, 0 = a thin panel's rim
+            "wedge_deg": round(float(np.degrees(2.0 * np.pi - e.theta_w)), 1),
+            "kind": "obstacle" if e.component >= 0 else "boundary",
+            "excluded": bool(edge_excluded(e.start, e.end, local)),
+        }
+        for k, e in enumerate(found)
+    ]
+
+
 def compute_paths(
     mesh: SimulationMesh,
     pairs: list[dict],
@@ -85,12 +112,9 @@ def compute_paths(
     """The paths document (see the module docstring) for a prepared mesh and the app's pairs."""
     import compas_acoustics as ca
     from compas_acoustics.defaults import Defaults
-    from compas_acoustics.hybrid.diffraction import diffraction_edges
     from compas_acoustics.rays import diffracted_paths
 
-    from services.compas_acoustics_engine import (
-        build_scene, diffraction_edge_filter, edge_excluded, edge_warnings, room_geometry,
-    )
+    from services.compas_acoustics_engine import build_scene, diffraction_edge_filter, edge_warnings, room_geometry
 
     unknown = [k for k in kinds if k not in ACOUSTIC_PATHS_KINDS]
     if unknown:
@@ -143,24 +167,11 @@ def compute_paths(
 
     if "diffraction" in kinds:
         progress(75, "Finding diffracting edges...")
-        rows = np.asarray(excluded_edges or [], dtype=np.float64).reshape(-1, 6)
-        local = rows - np.concatenate([offset, offset]) if len(rows) else rows
-        with edge_warnings(doc["notes"]):
-            all_edges = diffraction_edges(geometry)
-        edges, active_index = [], {}
-        for k, e in enumerate(all_edges):
-            excluded = edge_excluded(e.start, e.end, local)
-            if not excluded:
-                active_index[len(active_index)] = k
-            edges.append({
-                "id": k,
-                "segment": _flat([e.start, e.end], offset),
-                "length": round(float(e.length), 3),
-                # the wedge's solid angle seen from the air: 90 deg = a box corner, 0 = a thin panel's rim
-                "wedge_deg": round(float(np.degrees(2.0 * np.pi - e.theta_w)), 1),
-                "kind": "obstacle" if e.component >= 0 else "boundary",
-                "excluded": bool(excluded),
-            })
+        edges = room_diffraction_edges(mesh, excluded_edges, doc["notes"], geometry)
+        active_index = {}
+        for edge in edges:
+            if not edge["excluded"]:
+                active_index[len(active_index)] = edge["id"]
         progress(85, f"Tracing diffracted paths over {len(active_index)} edge(s)...")
         with diffraction_edge_filter(excluded_edges, offset), edge_warnings(doc["notes"]):
             found = diffracted_paths(scene, max_order=1, geometry=geometry)

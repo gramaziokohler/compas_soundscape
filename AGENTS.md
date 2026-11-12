@@ -7,15 +7,6 @@ generation (TangoFlux / AudioLDM2), spatial room acoustics simulation (pyroomaco
 sound library search (Freesound / BBC), LLM-driven workflow orchestration (Gemini), and
 ambisonic / binaural spatial audio rendering.
 
-## Stack & Ports
-
-| Layer    | Technology                          | Port |
-| -------- | ----------------------------------- | ---- |
-| Backend  | FastAPI + Uvicorn                   | 8000 |
-| Frontend | Next.js 15 + React 19 (App Router)  | 3000 |
-| State    | Zustand v5 + zundo undo/redo        | —    |
-| Job store| Redis (job hashes + worker queues)  | 6379 |
-
 ## Deployment Docs: which file to use
 
 | Talking about… | Use |
@@ -61,45 +52,18 @@ pnpm exec tsc --noEmit
 pnpm build
 ```
 
-## Repository Map
+## Where Things Live (conventions the directory tree won't show)
 
-```
-backend/
-  main.py                  # App factory, lifespan, service injection, router registration
-  config/constants.py      # ALL backend constants — never hardcode literals elsewhere
-  models/schemas.py        # ALL Pydantic request/response schemas
-  routers/                 # 14+ routers — validate input, dispatch to service, return response
-  services/                # Business logic, ML model wrappers, external API clients
-    job_store.py           # Redis-backed job store (AsyncJobStore + WorkerJobStore)
-    io_jobs.py             # LLM/model-analysis/TTS asyncio jobs + SSE keepalive helper
-    compas_acoustics_engine.py  # Default geometric-acoustics engine (compas_acoustics: Mono, FOA/HOA hybrid, diffraction)
-    acoustic_paths_service.py   # Reflection paths, billiard rays, diffraction edges for the 3D view
-    hybrid_job.py               # Hybrid simulation: PFFDTD below the crossover, compas_acoustics above
-    runtime_config.py      # Redis-persisted runtime config (e.g. Speckle token)
-  workers/                 # Resident worker processes (GPU / CPU / SA3 / PFFDTD)
-    worker_main.py         # python -m workers.worker_main --role gpu|cpu|sa3|pffdtd
-  middleware/session.py    # UUID cookie injection → request.state.session_id
-  utils/                   # Stateless helpers (audio_processing, file_operations, etc.)
-  pffdtd_backend/          # Vendored PFFDTD (GPU FDTD) + compas driver; runs in the compas-pffdtd env only
-  data/                    # Durable: app.db (metadata), soundscapes/, directivities/<user_hash>/*.npz (+ presets/)
-  temp/                    # All generated/transient files (gitignored)
-    static/sounds/generated/<session_id>/
-    static/impulse_responses/
-    static/pyroomacoustics_rir/
-    simulations/           # Progress JSON + simulation results
-    uploads/               # Staged uploads
-
-frontend/src/
-  app/page.tsx             # Single "use client" orchestration page (intentionally large)
-  app/globals.css          # ALL CSS tokens (colors, shadows, card spacing) — single source of truth
-  components/              # UI components by domain
-  store/                   # 24 Zustand stores — always import from @/store barrel
-  lib/audio/               # Audio pipeline (AudioOrchestrator, modes, decoders)
-  hooks/                   # Domain-scoped custom hooks
-  services/api.ts          # All backend API calls via fetchWithErrorHandling(); unified /api/jobs polling
-  types/                   # TypeScript types — barrel export from types/index.ts
-  utils/constants.ts       # Frontend constants (AMBISONIC, WAVESURFER_TIMELINE, HRTF, etc.)
-```
+- Single sources of truth: `backend/config/constants.py` (all backend constants), `backend/models/schemas.py`
+  (all Pydantic schemas), `frontend/src/utils/constants.ts`, `frontend/src/app/globals.css` (all CSS tokens).
+- `frontend/src/app/page.tsx` is intentionally one large `"use client"` orchestration page.
+- Import stores from the `@/store` barrel and types from `types/index.ts`. All backend calls go through
+  `fetchWithErrorHandling()` in `services/api.ts`; jobs are polled via the unified `/api/jobs`.
+- Routers only validate, dispatch to a service, and return; `backend/utils/` holds stateless helpers.
+- `compas_acoustics_engine.py` is the default geometric-acoustics engine; `hybrid_job.py` runs PFFDTD below
+  the crossover and compas_acoustics above. `backend/pffdtd_backend/` is vendored and runs only in `compas-pffdtd`.
+- Transient output goes under `backend/temp/` (gitignored); durable data under `backend/data/`
+  (`app.db`, `soundscapes/`, `directivities/<user_hash>/`).
 
 ## Global Hard Rules
 
@@ -150,7 +114,7 @@ frontend/src/
 ## Scoped Rules
 
 Detailed rules for each domain live in `.cursor/rules/` and are loaded automatically when you
-touch matching files (Cursor by glob, Opencode via `opencode.json`, Claude Code via `CLAUDE.md`).
+touch matching files (Cursor by glob, Opencode via `opencode.json`, Claude Code via the `paths:` pointers in `.claude/rules/*.md`).
 
 | File                  | Domain                        | Key paths                                                             |
 | --------------------- | ----------------------------- | --------------------------------------------------------------------- |

@@ -129,7 +129,7 @@ export function SimulationPreflightPanel({
             onChange={(on) => setPreviewConfig(on ? configId : null)}
             label="Show simulation mesh in 3D"
           />
-          {isPreviewed && <PreflightPreviewControls />}
+          {isPreviewed && <PreflightPreviewControls hasDiffractionEdges={!!entry.payload.diffraction_edges?.length} />}
           <PreflightIssueList issues={entry.payload.issues} showInfo={showInfo} />
           <button
             type="button"

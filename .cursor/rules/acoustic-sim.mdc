@@ -142,8 +142,9 @@ One job on the PFFDTD queue (`JOB_TYPE_PFFDTD`, payload `variant: "hybrid"`,
 2. **Crossover** (`utils/hybrid_crossover.plan_crossover`): `crossover_factor ×` the Schroeder
    frequency `2000·√(T60/V)`, with T60 the median reliable RT60 of the geometric IRs (Eyring's
    prediction otherwise) and V the prepared air volume; or a manual frequency. The wave solver runs
-   to `HYBRID_WAVE_FMAX_MARGIN` (1.5) × the crossover, never above `wave_fmax_cap`: a binding cap
-   lowers the crossover and says so. Limits 40–2000 Hz, fallback 200 Hz when the room is unknown.
+   to `HYBRID_WAVE_FMAX_MARGIN` (1.5) × the crossover (headroom; no user cap). Limits 40–2000 Hz,
+   fallback 200 Hz when the room is unknown. Before a run the card shows an Eyring estimate of the
+   Schroeder frequency from the acoustic layer box + assigned materials (`estimateSchroederEyring`).
 3. **Wave part** (`pffdtd_job._run_from_geometry` to that fmax), then each pair is joined with a
    **4th-order Linkwitz-Riley** crossover (`combine`): causal (no pre-ringing before the direct
    sound), branches in phase, flat sum for coherent parts.
@@ -152,9 +153,11 @@ One job on the PFFDTD queue (`JOB_TYPE_PFFDTD`, payload `variant: "hybrid"`,
   rate, same time origin (both keep the propagation delay), same level (free field at 1 m).
   `overlap_mismatch_db` (wave minus rays in the crossover octave) is reported per pair; the card
   warns above 4 dB. `level_match` scales the wave part to the rays there (±6 dB), off by default.
-- **FOA frames differ between the engines:** PFFDTD encodes along the world axes, the geometric
-  engines in the listener frame (front = world −Y, left = world +X). The hybrid job converts the
-  wave part with `world_to_listener_foa` before joining. The standalone wave-based card does not.
+- **One FOA frame for every engine:** the listener frame (front = world −Y, left = world +X,
+  up = +Z), the frame playback rotates. PFFDTD's pressure-gradient encoding works on the world
+  axes, so every FOA IR it writes (pair WAVs and free-grid point WAVs) goes through
+  `pffdtd_backend/listener_frame.world_to_listener_foa`; the hybrid job joins the two parts as-is.
+  Source directivity composition (`free_runs.py`, `directional.py`) stays on the world axes.
 - **Results** use the PFFDTD file names, results JSON and `/api/pffdtd/get-result-file`, plus a
   `hybrid` header (crossover, Schroeder frequency, T60, volume, notes) and a per-pair `hybrid`
   block. The frontend tracks the run as a `pffdtd` in-flight job (`runHybridSimulation.ts`), so

@@ -17,10 +17,18 @@ vi.mock('@/store', async () => {
   const { useAcousticPathsStore: real } = await import('@/store/acousticPathsStore');
   type State = ReturnType<typeof real.getState>;
   const hook = <T,>(selector: (s: State) => T): T => selector(real.getState());
-  return { useAcousticPathsStore: Object.assign(hook, { getState: real.getState, setState: real.setState }) };
+  const materials = { materialAssignments: new Map<string, string>(), availableMaterials: [] };
+  return {
+    useAcousticPathsStore: Object.assign(hook, { getState: real.getState, setState: real.setState }),
+    useAcousticMaterialStore: <T,>(selector: (s: typeof materials) => T): T => selector(materials),
+  };
 });
 vi.mock('@/store/uiStore', () => ({ useUIStore: (selector: (s: { globalSoundSpeed: number }) => unknown) => selector({ globalSoundSpeed: 343 }) }));
 vi.mock('./AcousticMaterialsSummary', () => ({ AcousticMaterialsSummary: () => null }));
+const regionBounds = vi.hoisted(() => ({ current: null as { min: [number, number, number]; max: [number, number, number] } | null }));
+vi.mock('@/hooks/useAcousticRegionBounds', () => ({
+  useAcousticRegionBounds: () => ({ bounds: regionBounds.current, isAcousticLayer: true }),
+}));
 import { defaultHybridSettings } from '@/lib/acoustics/hybrid';
 import { AcousticPathsPanel } from './AcousticPathsPanel';
 import { GeometricEngineSettings } from './GeometricEngineSettings';
@@ -181,6 +189,20 @@ describe('hybrid card settings', () => {
     expect(html).toContain('Length from the room');
     expect(html).not.toContain('Wave IR length'); // automatic by default
     expect(html).not.toContain('Engine</label>'); // always compas_acoustics
+    expect(html).not.toContain('Wave solver up to'); // the wave band follows the crossover
+  });
+
+  it('recommends the Eyring estimate of the acoustic layer before a run', () => {
+    regionBounds.current = { min: [0, 0, 0], max: [10, 5, 3] };
+    try {
+      const html = hybrid(hybridConfig());
+      expect(html).toContain('Estimated (Eyring, acoustic layer box)');
+      const manual = hybrid(hybridConfig({ settings: { ...defaultHybridSettings(), crossover_mode: 'manual' } }));
+      expect(manual).toContain('Recommended ≈');
+      expect(manual).toContain('>rec<');
+    } finally {
+      regionBounds.current = null;
+    }
   });
 
   it('offers a frequency for a manual crossover and a length when not automatic', () => {

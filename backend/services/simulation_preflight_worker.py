@@ -10,6 +10,7 @@ atomic JSON contract (see services/pyroomacoustics_worker.py).
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import traceback
@@ -35,6 +36,20 @@ from utils.preflight_payload import build_preflight_payload
 
 def preflight_payload_path(payload_dir: str, preflight_id: str) -> Path:
     return Path(payload_dir) / f"preflight_{preflight_id}.json"
+
+
+def _diffraction_edges(mesh, preflight_id: str) -> Optional[list]:
+    """The room's diffracting edges for the preview ({segment, kind}), or None when compas_acoustics
+    is not installed or cannot build the room: the check itself never depends on them."""
+    if importlib.util.find_spec("compas_acoustics") is None or len(mesh.faces) == 0:
+        return None
+    try:
+        from services.acoustic_paths_service import room_diffraction_edges
+
+        return [{"segment": e["segment"], "kind": e["kind"]} for e in room_diffraction_edges(mesh)]
+    except Exception as exc:
+        print(f"[preflight {preflight_id[:8]}] diffraction edges skipped: {exc}")
+        return None
 
 
 def run_simulation_preflight(
@@ -100,6 +115,7 @@ def run_simulation_preflight(
         payload = build_preflight_payload(
             preflight_id, engine, mesh, analysis, ctx, settings.model_dump()
         )
+        payload["diffraction_edges"] = _diffraction_edges(mesh, preflight_id)
         os.makedirs(payload_dir, exist_ok=True)
         path = preflight_payload_path(payload_dir, preflight_id)
         tmp = str(path) + ".tmp"

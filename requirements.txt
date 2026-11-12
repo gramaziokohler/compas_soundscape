@@ -59,7 +59,7 @@ importlib
 # --- Room Acoustics ---
 compas_acoustics[hybrid] @ git+https://github.com/bouiz/compas_acoustics.git@engine-integration
 # Keep this compatible with compas_acoustics' supported runtime.
-pyroomacoustics>=0.10.1
+pyroomacoustics==0.10.1
 # Reads SOFA files: the fork's measured directivities and our directivity import
 h5py==3.15.1
 # 1.17: spharpy (compas_acoustics' spherical harmonics) requires scipy>=1.17

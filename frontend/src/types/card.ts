@@ -203,7 +203,7 @@ export interface CustomMenuItem {
   disabled?: boolean;
   /** When true, renders with card-color accent styling */
   isActive?: boolean;
-  /** Nested items rendered as an accordion below this item when clicked */
+  /** Nested items opened in a flyout submenu (hover or click) */
   subItems?: Array<{
     key: string;
     label: string;
@@ -410,6 +410,8 @@ export interface CardProps<TConfig extends CardBaseConfig = CardBaseConfig, TRes
   onSettingsExpandedChange?: (expanded: boolean) => void;
   /** Optional content pinned above the settings summary (e.g. scenario parcours toggle). */
   beforeSettingsSummary?: ReactNode;
+  /** Bump to open the title editor (a bubble's "Rename" opens the card first). */
+  renameRequest?: number;
 }
 
 

@@ -54,22 +54,46 @@ export function cartesianToSpherical(position: Position3D): SphericalPosition {
 /** 3×3 identity in Omnitone's column-major `setRotationMatrix3` layout. */
 export const IDENTITY_MATRIX3: readonly number[] = [1, 0, 0, 0, 1, 0, 0, 0, 1];
 
+type Matrix3 = number[][]; // row-major
+
+function rotX(a: number): Matrix3 {
+  const c = Math.cos(a), s = Math.sin(a);
+  return [[1, 0, 0], [0, c, -s], [0, s, c]];
+}
+
+function rotY(a: number): Matrix3 {
+  const c = Math.cos(a), s = Math.sin(a);
+  return [[c, 0, s], [0, 1, 0], [-s, 0, c]];
+}
+
+function rotZ(a: number): Matrix3 {
+  const c = Math.cos(a), s = Math.sin(a);
+  return [[c, -s, 0], [s, c, 0], [0, 0, 1]];
+}
+
+function multiplyRowMajor(a: Matrix3, b: Matrix3): Matrix3 {
+  return a.map((row) => [0, 1, 2].map((col) => row[0] * b[0][col] + row[1] * b[1][col] + row[2] * b[2][col]));
+}
+
 /**
- * Listener orientation → Omnitone rotation matrix.
- * R = Ry(yaw) · Rx(pitch) · Rz(roll), column-major, Y-up convention.
- * With roll = 0 this reduces to Ry(yaw) · Rx(pitch).
+ * Listener orientation → Omnitone rotation matrix (column-major `setRotationMatrix3`).
+ *
+ * Omnitone rotates the sound field by the matrix it is given, in a Y-up frame
+ * (x = right, y = up, z = back), so head tracking needs the WORLD→HEAD rotation:
+ * the inverse of the head's orientation (its `setRotationMatrixFromCamera` inverts the
+ * camera matrix for the same reason).
+ *
+ * The listener convention (speckle-camera-controller.ts): +yaw turns RIGHT (toward world
+ * −X), +pitch looks up, +roll tilts the head left (about the camera's +Z). In Omnitone's
+ * frame the head is H = Ry(−yaw) · Rx(pitch) · Rz(roll), so the field rotation is
+ * Hᵀ = Rz(−roll) · Rx(−pitch) · Ry(yaw): the pitch and roll axes follow the head after a
+ * yaw, and looking up moves a frontal source down.
  */
 export function orientationToRotationMatrix3(orientation: Orientation): number[] {
   const { yaw, pitch, roll } = orientation;
-  const cosYaw = Math.cos(yaw),     sinYaw = Math.sin(yaw);
-  const cosPitch = Math.cos(pitch), sinPitch = Math.sin(pitch);
-  const cosRoll = Math.cos(roll),   sinRoll = Math.sin(roll);
-
-  return [
-    cosYaw*cosRoll + sinYaw*sinPitch*sinRoll,  cosPitch*sinRoll,  -sinYaw*cosRoll + cosYaw*sinPitch*sinRoll,
-    -cosYaw*sinRoll + sinYaw*sinPitch*cosRoll, cosPitch*cosRoll,  sinYaw*sinRoll + cosYaw*sinPitch*cosRoll,
-    sinYaw*cosPitch,                           -sinPitch,         cosYaw*cosPitch,
-  ];
+  const m = multiplyRowMajor(multiplyRowMajor(rotZ(-roll), rotX(-pitch)), rotY(yaw));
+  // column-major: m[row][col] → index col * 3 + row
+  return [m[0][0], m[1][0], m[2][0], m[0][1], m[1][1], m[2][1], m[0][2], m[1][2], m[2][2]];
 }
 
 /** Transpose of a 3×3 matrix — the inverse of a rotation matrix. */

@@ -27,6 +27,9 @@ import {
   PYROOMACOUSTICS_SIMULATION_MODE_MONO,
   PYROOMACOUSTICS_SIMULATION_MODE_NAMES,
 } from '@/utils/constants';
+import { useMemo } from 'react';
+import { useAcousticMaterialStore } from '@/store';
+import { useAcousticRegionBounds } from '@/hooks/useAcousticRegionBounds';
 import { CardSelect } from '@/components/ui/CardSelect';
 import { ModifiedMark, useIsFieldModified } from '@/components/ui/ModifiedMark';
 import { Notice } from '@/components/ui/Notice';
@@ -35,7 +38,13 @@ import { TextSelect } from '@/components/ui/TextSelect';
 import { ToggleField } from '@/components/ui/ToggleField';
 import { AcousticMaterialsSummary } from './AcousticMaterialsSummary';
 import { GeometricEngineSettings } from './GeometricEngineSettings';
-import { crossoverReadout, hybridRunSummary, mismatchWarning } from '@/lib/acoustics/hybrid';
+import {
+  crossoverReadout,
+  estimateSchroederEyring,
+  hybridRunSummary,
+  lowFrequencyMeanAbsorption,
+  mismatchWarning,
+} from '@/lib/acoustics/hybrid';
 import type { GeometricEngineSettings as EngineSettings, HybridSettings, HybridSimulationConfig } from '@/types/acoustics';
 
 interface HybridSimulationSettingsProps {
@@ -59,6 +68,23 @@ export function HybridSimulationSettings({ config, onUpdateConfig }: HybridSimul
   const info = config.hybridInfo ?? null;
   const mismatch = mismatchWarning(info);
   const autoDuration = s.duration === null;
+
+  // Eyring estimate of the Schroeder frequency until a run has measured the room.
+  const { bounds, isAcousticLayer } = useAcousticRegionBounds();
+  const materialAssignments = useAcousticMaterialStore((st) => st.materialAssignments);
+  const availableMaterials = useAcousticMaterialStore((st) => st.availableMaterials);
+  const meanAbsorption = useMemo(
+    () => lowFrequencyMeanAbsorption(materialAssignments.values(), availableMaterials),
+    [materialAssignments, availableMaterials]
+  );
+  const estimate = useMemo(() => estimateSchroederEyring(bounds, meanAbsorption), [bounds, meanAbsorption]);
+  const recommendedHz = info?.schroeder_hz ?? estimate?.schroederHz ?? null;
+  const recommendedTitle = info?.schroeder_hz != null
+    ? `Recommended: the last run's Schroeder frequency, ${Math.round(info.schroeder_hz)} Hz`
+    : estimate
+      ? `Recommended ≈ ${Math.round(estimate.schroederHz)} Hz: Schroeder frequency by Eyring (T60 ≈ ${estimate.rt60.toFixed(2)} s, `
+        + `${Math.round(estimate.volume).toLocaleString()} m³ ${isAcousticLayer ? 'acoustic layer' : 'model'} box, ᾱ ≈ ${meanAbsorption.toFixed(2)})`
+      : undefined;
 
   return (
     <div className="card-stack">
@@ -102,6 +128,7 @@ export function HybridSimulationSettings({ config, onUpdateConfig }: HybridSimul
             onChange={(v) => set('crossover_factor', v)}
             disabled={disabled}
             defaultValue={HYBRID.CROSSOVER_FACTOR_DEFAULT}
+            markers={[{ value: 1, label: 'rec', tone: 'primary' }]}
             hoverText="1 = the Schroeder frequency. Up to 4 puts the join where the room's modes overlap strongly, at the cost of a longer wave run."
           />
         ) : (
@@ -116,9 +143,11 @@ export function HybridSimulationSettings({ config, onUpdateConfig }: HybridSimul
             onChange={(v) => set('crossover_hz', v)}
             disabled={disabled}
             defaultValue={HYBRID.CROSSOVER_HZ_DEFAULT}
+            markers={recommendedHz !== null ? [{ value: recommendedHz, label: 'rec', tone: 'primary' }] : undefined}
+            sliderTitle={recommendedTitle}
           />
         )}
-        <p className="text-xxs text-secondary-hover">{crossoverReadout(s, info)}</p>
+        <p className="text-xxs text-secondary-hover">{crossoverReadout(s, info, estimate?.schroederHz ?? null)}</p>
         {info && <p className="text-xxs text-secondary-hover">{hybridRunSummary(info)}</p>}
         {info?.notes.map((note) => <Notice key={note} type="info" message={note} />)}
         {mismatch && <Notice type="warning" message={mismatch} />}
@@ -132,21 +161,11 @@ export function HybridSimulationSettings({ config, onUpdateConfig }: HybridSimul
       </div>
 
       {/* ── Wave part ─────────────────────────────────────────────────────── */}
-      <div className="card-stack--tight">
+      <div
+        className="card-stack--tight"
+        title={`The wave solver runs to ${HYBRID.WAVE_FMAX_MARGIN}× the crossover. Cost grows with the 4th power of the frequency.`}
+      >
         <span className="text-xxs text-secondary-hover">Wave part (below the crossover)</span>
-        <RangeSlider
-          label="Wave solver up to"
-          unit="Hz"
-          modified={isSettingModified('wave_fmax_cap')}
-          value={s.wave_fmax_cap}
-          min={HYBRID.WAVE_FMAX_CAP_MIN}
-          max={HYBRID.WAVE_FMAX_CAP_MAX}
-          step={HYBRID.WAVE_FMAX_CAP_STEP}
-          onChange={(v) => set('wave_fmax_cap', v)}
-          disabled={disabled}
-          defaultValue={HYBRID.WAVE_FMAX_CAP_DEFAULT}
-          hoverText={`A limit, not a target: the wave solver runs to ${HYBRID.WAVE_FMAX_MARGIN}× the crossover. If that exceeds this, the crossover is lowered. Cost grows with the 4th power of the frequency.`}
-        />
         <RangeSlider
           label="Points per wavelength"
           modified={isSettingModified('ppw')}

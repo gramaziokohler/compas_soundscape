@@ -24,7 +24,6 @@ export function defaultHybridSettings(): HybridSettings {
     crossover_mode: HYBRID.CROSSOVER_MODE_DEFAULT,
     crossover_hz: HYBRID.CROSSOVER_HZ_DEFAULT,
     crossover_factor: HYBRID.CROSSOVER_FACTOR_DEFAULT,
-    wave_fmax_cap: HYBRID.WAVE_FMAX_CAP_DEFAULT,
     level_match: HYBRID.LEVEL_MATCH_DEFAULT,
     ppw: HYBRID.DEFAULT_PPW,
     duration: null,
@@ -52,7 +51,6 @@ export function restoreHybridSettings(saved: Partial<HybridSettings> | null | un
     crossover_mode: s.crossover_mode === 'manual' ? 'manual' : 'schroeder',
     crossover_hz: num(s.crossover_hz, d.crossover_hz, HYBRID.CROSSOVER_HZ_MIN, HYBRID.CROSSOVER_HZ_MAX),
     crossover_factor: num(s.crossover_factor, d.crossover_factor, HYBRID.CROSSOVER_FACTOR_MIN, HYBRID.CROSSOVER_FACTOR_MAX),
-    wave_fmax_cap: num(s.wave_fmax_cap, d.wave_fmax_cap, HYBRID.WAVE_FMAX_CAP_MIN, HYBRID.WAVE_FMAX_CAP_MAX),
     level_match: typeof s.level_match === 'boolean' ? s.level_match : d.level_match,
     ppw: num(s.ppw, d.ppw, PFFDTD.PPW_MIN, PFFDTD.PPW_MAX),
     duration: typeof s.duration === 'number' ? clamp(s.duration, PFFDTD.DURATION_MIN, PFFDTD.DURATION_MAX) : null,
@@ -72,22 +70,59 @@ export function schroederFrequency(rt60: number | null | undefined, volume: numb
 
 /** Crossover and wave band a room would get with these settings (the backend's rule). */
 export function planCrossover(
-  settings: Pick<HybridSettings, 'crossover_mode' | 'crossover_hz' | 'crossover_factor' | 'wave_fmax_cap'>,
+  settings: Pick<HybridSettings, 'crossover_mode' | 'crossover_hz' | 'crossover_factor'>,
   schroederHz: number | null,
 ): { crossoverHz: number; waveFmax: number; limited: boolean } | null {
   const target = settings.crossover_mode === 'manual'
     ? settings.crossover_hz
     : schroederHz === null ? null : settings.crossover_factor * schroederHz;
   if (target === null) return null;
-  let crossover = clamp(target, HYBRID.CROSSOVER_HZ_MIN, HYBRID.CROSSOVER_HZ_MAX);
-  let waveFmax = crossover * HYBRID.WAVE_FMAX_MARGIN;
-  let limited = crossover !== target;
-  if (waveFmax > settings.wave_fmax_cap) {
-    waveFmax = settings.wave_fmax_cap;
-    crossover = waveFmax / HYBRID.WAVE_FMAX_MARGIN;
-    limited = true;
+  const crossover = clamp(target, HYBRID.CROSSOVER_HZ_MIN, HYBRID.CROSSOVER_HZ_MAX);
+  const waveFmax = clamp(crossover * HYBRID.WAVE_FMAX_MARGIN, PFFDTD.FMAX_MIN, PFFDTD.FMAX_MAX);
+  return { crossoverHz: crossover, waveFmax, limited: crossover !== target };
+}
+
+/**
+ * Eyring estimate of the Schroeder frequency from the acoustic region's bounding box and the
+ * low-frequency absorption of the assigned materials, before any run has measured the room.
+ * T60 = 0.161·V / (−S·ln(1 − ᾱ)) with V and S the box's volume and surface; null when the box
+ * is missing or degenerate.
+ */
+export function estimateSchroederEyring(
+  bounds: { min: [number, number, number]; max: [number, number, number] } | null | undefined,
+  meanAbsorption: number,
+): { schroederHz: number; rt60: number; volume: number } | null {
+  if (!bounds) return null;
+  const [dx, dy, dz] = [0, 1, 2].map((i) => bounds.max[i] - bounds.min[i]);
+  const volume = dx * dy * dz;
+  const surface = 2 * (dx * dy + dy * dz + dz * dx);
+  if (!(volume > 0) || !(surface > 0)) return null;
+  const alpha = clamp(meanAbsorption, HYBRID.ESTIMATE_ABSORPTION_MIN, HYBRID.ESTIMATE_ABSORPTION_MAX);
+  const rt60 = (HYBRID.SABINE_CONSTANT * volume) / (-surface * Math.log(1 - alpha));
+  const schroederHz = schroederFrequency(rt60, volume);
+  return schroederHz === null ? null : { schroederHz, rt60, volume };
+}
+
+/**
+ * Mean absorption the Eyring estimate uses: per assigned material, the mean of its octave-band
+ * coefficients up to HYBRID.ESTIMATE_MAX_BAND_HZ (the Schroeder range), else its broadband value;
+ * averaged over the assigned objects. HYBRID.ESTIMATE_MEAN_ABSORPTION when nothing is assigned.
+ */
+export function lowFrequencyMeanAbsorption(
+  assignedMaterialIds: Iterable<string>,
+  materials: ReadonlyArray<{ id: string; absorption: number; coeffs?: number[]; center_freqs?: number[] }>,
+): number {
+  const byId = new Map(materials.map((m) => [m.id, m]));
+  let sum = 0;
+  let count = 0;
+  for (const id of assignedMaterialIds) {
+    const m = byId.get(id);
+    if (!m) continue;
+    const low = (m.coeffs ?? []).filter((_, i) => (m.center_freqs?.[i] ?? Infinity) <= HYBRID.ESTIMATE_MAX_BAND_HZ);
+    sum += low.length > 0 ? low.reduce((a, b) => a + b, 0) / low.length : m.absorption;
+    count += 1;
   }
-  return { crossoverHz: crossover, waveFmax: Math.max(waveFmax, PFFDTD.FMAX_MIN), limited };
+  return count > 0 ? sum / count : HYBRID.ESTIMATE_MEAN_ABSORPTION;
 }
 
 /** Form fields of POST /api/hybrid/run-simulation-speckle for the card's settings. */
@@ -96,7 +131,6 @@ export function hybridFormFields(settings: HybridSettings, soundSpeed: number): 
     simulation_mode: settings.simulation_mode,
     crossover_mode: settings.crossover_mode,
     crossover_factor: String(settings.crossover_factor),
-    wave_fmax_cap: String(settings.wave_fmax_cap),
     level_match: String(settings.level_match),
     ppw: String(settings.ppw),
     max_order: String(settings.max_order),
@@ -117,20 +151,25 @@ export function hybridFormFields(settings: HybridSettings, soundSpeed: number): 
 
 const hz = (value: number) => `${Math.round(value)} Hz`;
 
-/** One line under the crossover control: what the next run will do, as far as it is known. */
-export function crossoverReadout(settings: HybridSettings, info: HybridRunInfo | null): string {
+/**
+ * One line under the crossover control: what the next run will do, as far as it is known.
+ * `estimatedSchroederHz` (Eyring, from the acoustic region) stands in until a run has measured the room.
+ */
+export function crossoverReadout(
+  settings: HybridSettings,
+  info: HybridRunInfo | null,
+  estimatedSchroederHz: number | null = null,
+): string {
   if (settings.crossover_mode === 'manual') {
     const plan = planCrossover(settings, null);
     if (!plan) return '';
-    return plan.limited
-      ? `Wave solver capped at ${hz(settings.wave_fmax_cap)}: the crossover will be ${hz(plan.crossoverHz)}.`
-      : `Wave below ${hz(plan.crossoverHz)} (solved up to ${hz(plan.waveFmax)}), rays above.`;
+    return `Wave below ${hz(plan.crossoverHz)} (solved up to ${hz(plan.waveFmax)}), rays above.`;
   }
-  const plan = planCrossover(settings, info?.schroeder_hz ?? null);
+  const measured = info?.schroeder_hz ?? null;
+  const plan = planCrossover(settings, measured ?? estimatedSchroederHz);
   if (!plan) return 'The Schroeder frequency, 2000·√(T60 / V), is measured from the room when the simulation runs.';
-  return plan.limited
-    ? `With the last run's room: crossover ${hz(plan.crossoverHz)} (limited), wave solved up to ${hz(plan.waveFmax)}.`
-    : `With the last run's room: crossover ${hz(plan.crossoverHz)}, wave solved up to ${hz(plan.waveFmax)}.`;
+  const source = measured !== null ? "With the last run's room" : 'Estimated (Eyring, acoustic layer box)';
+  return `${source}: crossover ${hz(plan.crossoverHz)}${plan.limited ? ' (limited)' : ''}, wave solved up to ${hz(plan.waveFmax)}.`;
 }
 
 /** What the last run measured and used. */

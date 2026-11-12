@@ -15,8 +15,8 @@ Open items:
   (see `deploy/PRODUCTION.md`). Until then the backend falls back to the legacy engine and the
   paths / hybrid endpoints answer "not installed".
 - **No live check yet** of the new panels, the 3D overlay or the hybrid card.
-- **FOA frames:** the wave-based card encodes along the world axes, the ray-tracing card in the
-  listener frame (90° apart). Only the hybrid job converts. Decide which one playback expects.
+- ~~**FOA frames**~~ — resolved: PFFDTD now writes its FOA IRs in the listener frame of the
+  geometric engines (`pffdtd_backend/listener_frame.py`), so all three cards match playback.
 - **Open models are quieter far from the source** with compas_acoustics (2–4 dB, more where the
   direct sound is blocked) than with the legacy engine. Unexplained.
 - Wrapper-side changes deviate from the plan below where it says "upstream": edge selection and

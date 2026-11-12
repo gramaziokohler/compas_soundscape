@@ -141,12 +141,13 @@ def test_pffdtd_foa_direction(tmp_path):
     n_direct = int(r / C * fs)
     win = slice(n_direct - int(0.002 * fs), n_direct + int(0.002 * fs))
     W, Y, Z, X = (ir[win, k].astype(np.float64) for k in range(4))
-    # source lies along -x from the receiver: X ~ -W, Y ~ Z ~ 0 for the direct sound
-    corr = float(np.dot(W, X) / np.sqrt(np.dot(W, W) * np.dot(X, X)))
+    # The source lies along world -x from the receiver, the listener's right in the listener
+    # frame (front -Y, left +X) shared with the geometric engines: Y ~ -W, X ~ Z ~ 0.
+    corr = float(np.dot(W, Y) / np.sqrt(np.dot(W, W) * np.dot(Y, Y)))
     assert corr < -0.8, corr
-    assert np.sqrt(np.dot(Y, Y)) < 0.3 * np.sqrt(np.dot(W, W))
+    assert np.sqrt(np.dot(X, X)) < 0.3 * np.sqrt(np.dot(W, W))
     assert np.sqrt(np.dot(Z, Z)) < 0.3 * np.sqrt(np.dot(W, W))
-    assert 0.7 < np.sqrt(np.dot(X, X) / np.dot(W, W)) < 1.3
+    assert 0.7 < np.sqrt(np.dot(Y, Y) / np.dot(W, W)) < 1.3
 
 
 SOURCE_2 = [3.1, 0.8, 1.0]

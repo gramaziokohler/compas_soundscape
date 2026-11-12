@@ -45,6 +45,7 @@ const DEFAULT_FILTERS: PreflightFilters = {
   holes: true,
   leaks: true,
   blockers: true,
+  diffractionEdges: false,
 };
 
 export interface RunPreflightArgs {

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from pffdtd_backend.listener_frame import world_to_listener_foa
 from pffdtd_backend.postprocess import foa_channels, to_ir
 
 FREE_META = "free.json"
@@ -71,9 +72,13 @@ def directional(w: np.ndarray, xyz: np.ndarray, a: float, n) -> np.ndarray:
 
 
 def to_wav_ir(channels: np.ndarray, Ts: float, post: dict) -> np.ndarray:
-    """[C, Nt] sim rate -> [C, N] at post["out_fs"], band-limited, re the free field at 1 m."""
+    """[C, Nt] sim rate -> [C, N] at post["out_fs"], band-limited, re the free field at 1 m.
+
+    FOA channels arrive on the world axes (forward_channels / reciprocal_channels) and leave in
+    the listener frame of the geometric engines and playback (listener_frame.world_to_listener_foa).
+    """
     ir = to_ir(
-        channels, Ts, fmax=post["fmax"], out_fs=post["out_fs"], duration=post["duration"],
+        world_to_listener_foa(channels), Ts, fmax=post["fmax"], out_fs=post["out_fs"], duration=post["duration"],
         lowcut_hz=post["lowcut_hz"], lowcut_order=post["lowcut_order"], lowpass_order=post["lowpass_order"],
         air_absorption=post["air_absorption"], Tc=post["Tc"], rh=post["rh"],
     )
