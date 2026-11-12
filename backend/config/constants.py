@@ -513,6 +513,13 @@ ACOUSTIC_PATHS_RAYS_MAX = 2000
 ACOUSTIC_PATHS_RAY_ORDER_DEFAULT = 8
 ACOUSTIC_PATHS_RAY_ORDER_MAX = 30
 ACOUSTIC_PATHS_MAX_EXCLUDED_EDGES = 5000
+# An ambisonic response is rendered only as long as it will be kept: the exported IR is cut where it
+# falls PYROOMACOUSTICS_IR_TRIM_THRESHOLD below its peak, so the render stops where the mono
+# reference is this many dB lower still (the two differ a little), plus a short pad. compas_acoustics'
+# own default (1.5 x the longest reverberation time) renders several times more than is kept.
+CA_RENDER_MARGIN_DB = 12.0
+CA_RENDER_PAD_S = 0.05
+CA_RENDER_MIN_S = 0.2
 CA_BAND_METRICS = True          # also store compas_acoustics Analyser per-band metrics per pair
 # compas_acoustics writes responses at 1/(4 pi r) ("package scale"); the app's IRs (legacy engine,
 # PFFDTD, saved soundscapes, playback gains) are at 1/r. Multiplied by this at export.

@@ -184,3 +184,98 @@ def test_routing_rules():
 
 def test_level_scale_constant():
     assert CA_TO_APP_LEVEL_SCALE == pytest.approx(4 * np.pi)
+
+
+def _prepared_shoebox(points):
+    from models.schemas import MeshPrepSettings
+    from services.simulation_mesh_service import MeshPrepOptions, SimulationMeshService
+
+    v, f = _shoebox_inward(*ROOM)
+    return SimulationMeshService.prepare(
+        v, f, {"room": [0, len(f) - 1]}, {i: 0.3 for i in range(len(f))}, None, points,
+        MeshPrepOptions.from_settings(MeshPrepSettings()),
+    )
+
+
+def test_render_chunks_keep_every_pair_once():
+    pairs = [{"source_id": f"s{s}", "receiver_id": f"r{r}"} for s in range(3) for r in range(5)]
+    indices = list(range(len(pairs)))
+    for workers in (1, 2, 4, 8):
+        chunks = engine.render_chunks(pairs, indices, workers)
+        assert sorted(i for chunk in chunks for i in chunk) == indices
+        assert len(chunks) <= workers and all(chunks)
+        for chunk in chunks:   # each part is every source x listener of its own members
+            sources = {pairs[i]["source_id"] for i in chunk}
+            receivers = {pairs[i]["receiver_id"] for i in chunk}
+            assert len(chunk) == len(sources) * len(receivers)
+    # one source, many listeners: cut by listener
+    one = [{"source_id": "s", "receiver_id": f"r{r}"} for r in range(6)]
+    assert [len(c) for c in engine.render_chunks(one, list(range(6)), 4)] == [2, 2, 1, 1]
+
+
+def test_parallel_rendering_gives_the_serial_responses():
+    """Ambisonic pairs rendered in several processes equal the one-process run, pair by pair."""
+    from services.pyroomacoustics_room_builder import room_offset
+
+    sources = {"s1": [1.5, 2.5, 1.5], "s2": [4.5, 1.5, 1.2]}
+    receivers = {"r1": [3.0, 3.5, 1.5], "r2": [2.0, 1.0, 1.4]}
+    pairs = [{"source_id": s, "source_position": sp, "receiver_id": r, "receiver_position": rp}
+             for s, sp in sources.items() for r, rp in receivers.items()]
+    mesh = _prepared_shoebox(list(sources.values()) + list(receivers.values()))
+    offset = room_offset(mesh)
+    base = dict(ambisonic_order=1, max_order=1, ray_tracing=True, n_rays=2000, air_absorption=False)
+    stages = []
+    serial = engine.simulate_pairs(mesh, offset, pairs, engine.EngineSettings(**base, n_jobs=1), lambda f, t: None)
+    parallel = engine.simulate_pairs(mesh, offset, pairs, engine.EngineSettings(**base, n_jobs=2), lambda f, t: stages.append((f, t)))
+    assert [r.pair_index for r in parallel.responses] == [0, 1, 2, 3]
+    for a, b in zip(serial.responses, parallel.responses):
+        assert a.rir.shape[1] == b.rir.shape[1] == 4
+        n = min(len(a.rir), len(b.rir))
+        peak = np.max(np.abs(a.rir))
+        # Same image sources and seed. The reference's rays are cut differently over 2 processes
+        # (as in compas_acoustics itself), so the tail under the early part differs by Monte-Carlo
+        # noise: 40 dB below the direct sound at most.
+        early = slice(0, int(0.03 * FS))
+        np.testing.assert_allclose(b.rir[early], a.rir[early], atol=1e-2 * peak)
+        energy_a, energy_b = np.sum(a.rir[:n, 0] ** 2), np.sum(b.rir[:n, 0] ** 2)
+        assert 10 * abs(np.log10(energy_b / energy_a)) < 0.5
+        assert b.band_metrics is not None
+    fractions = [f for f, _ in stages]
+    assert fractions == sorted(fractions) and fractions[-1] <= 1.0
+    assert any("rendering" in t and "at once" in t for _, t in stages)
+
+
+def test_mono_band_metrics_from_the_pool_match():
+    from services.pyroomacoustics_room_builder import room_offset
+
+    source = [1.5, 2.5, 1.5]
+    receivers = {f"r{k}": [2.5 + 0.5 * k, 3.0, 1.4] for k in range(4)}
+    pairs = [{"source_id": "s1", "source_position": source, "receiver_id": r, "receiver_position": rp} for r, rp in receivers.items()]
+    mesh = _prepared_shoebox([source] + list(receivers.values()))
+    offset = room_offset(mesh)
+    base = dict(max_order=2, ray_tracing=False, air_absorption=False)
+    serial = engine.simulate_pairs(mesh, offset, pairs, engine.EngineSettings(**base, n_jobs=1), lambda f, t: None)
+    pooled = engine.simulate_pairs(mesh, offset, pairs, engine.EngineSettings(**base, n_jobs=2), lambda f, t: None)
+    for a, b in zip(serial.responses, pooled.responses):
+        np.testing.assert_allclose(b.rir, a.rir)
+        assert b.band_metrics is not None
+        for key in ("C50", "D50"):   # float32 hand-over to the pool: equal to rounding
+            np.testing.assert_allclose(b.band_metrics[key], a.band_metrics[key], atol=0.05)
+
+
+def test_render_duration_follows_what_the_export_keeps():
+    from config.constants import CA_RENDER_MIN_S, CA_RENDER_PAD_S
+
+    t = np.arange(FS * 3) / FS
+    decay = np.exp(-6.91 * t / 1.0)            # T60 = 1 s: -60 dB at 1 s, so -52 dB (trim 40 + margin 12) at 0.87 s
+    length = engine.render_duration([decay])
+    assert length == pytest.approx(52.0 / 60.0 + CA_RENDER_PAD_S, abs=0.01)
+    # the slowest of several decides; a second channel is ignored (W decides)
+    slow = np.exp(-6.91 * t / 2.0)
+    assert engine.render_duration([decay, np.column_stack([slow, slow * 0])]) == pytest.approx(2 * 52.0 / 60.0 + CA_RENDER_PAD_S, abs=0.02)
+    # a lone click still gets a minimum length; silence gives no opinion
+    click = np.zeros(FS)
+    click[100] = 1.0
+    assert engine.render_duration([click]) == CA_RENDER_MIN_S
+    assert engine.render_duration([np.zeros(FS)]) is None
+    assert engine.render_duration([]) is None
