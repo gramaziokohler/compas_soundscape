@@ -168,6 +168,12 @@ after activating a simulation, until each sound had played once).
   `AudioOrchestrator.wireAnechoicToDecoder()`; never connect only the input.
 - Head rotation happens inside the decoder; the matrix comes from
   `orientationToRotationMatrix3()` (`utils/ambisonic-utils.ts`) — never re-derive it inline.
+  It is the world→head rotation (+yaw turns right, +pitch looks up, +roll tilts left).
+- **Omnitone's `HOARotator` needs `toHoaRotatorMatrix3()`** — the rotator inside `HOARenderer`
+  (orders 2/3) and the multichannel send. Given the bare identity it turns the field 180° about the
+  vertical (measured: an order-3 source on the left was 10 dB louder in the right ear), so every
+  matrix it gets, the resting identity included, goes through the helper. `FOARotator` takes the
+  matrix as is. `ambisonic-utils.test.ts` models both rotators.
 
 ### Normalization — every mode bus is ACN/SN3D (AmbiX)
 

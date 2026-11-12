@@ -160,7 +160,7 @@ export interface SoundscapeIRMetadata {
   url: string;
   filename: string; // Filename only, used for persistent copy
   name: string;
-  format: string; // "mono", "binaural", "foa", "toa"
+  format: string; // "mono", "binaural", "foa", "soa", "toa"
   channels: number;
   original_channels: number;
   sample_rate: number;

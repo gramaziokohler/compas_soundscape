@@ -1,7 +1,8 @@
 'use client';
 
 import type { HybridSimulationConfig } from '@/types/acoustics';
-import { ambisonicOrder, engineSummaryRows } from '@/lib/acoustics/geometric-engine';
+import { engineSummaryRows, outputChoice } from '@/lib/acoustics/geometric-engine';
+import { PYROOMACOUSTICS_SIMULATION_MODE_NAMES } from '@/utils/constants';
 import { useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight, RotateCcw } from 'lucide-react';
 import type { CardBaseConfig, CardType } from '@/types/card';
@@ -271,7 +272,7 @@ export function getSettingsRows(config: CardBaseConfig): SettingsRow[] {
     const s = (config as PyroomAcousticsSimulationConfig).settings;
     rows.push({
       label: 'Simulation Mode',
-      value: s.simulation_mode === 'hoa' ? `HOA (order ${ambisonicOrder(s.simulation_mode, s)})` : s.simulation_mode === 'foa' ? 'FOA' : 'Mono',
+      value: (PYROOMACOUSTICS_SIMULATION_MODE_NAMES as Record<string, string>)[outputChoice(s.simulation_mode, s)] ?? s.simulation_mode,
     });
     rows.push({ label: 'Max Order (ISM)', value: String(s.max_order) });
     if (s.ray_tracing) {

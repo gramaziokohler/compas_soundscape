@@ -6,7 +6,8 @@ module hands the prepared mesh to compas_acoustics and gives back one response p
 
 * geometry  — ``SimulationMesh`` -> ``compas_acoustics.geometry.PreparedMesh`` (same layout: the
   preparation was ported to compas_acoustics verbatim) -> ``RoomGeometry.from_prepared``:
-  one-sided walls are the boundary, two-sided walls obstacles, orientation trusted, the
+  two-sided walls and objects standing in the air (furniture, columns) are obstacles, the
+  other walls the boundary, orientation trusted, the
   mean-free-path air volume used when the model does not close. Recentred (float32 walls).
 * materials — every face material (pyroomacoustics id, app custom id, inlined user material,
   bare absorption) becomes a compas_acoustics material on its 125 Hz–8 kHz bands; a per-object
@@ -327,7 +328,7 @@ def edge_warnings(notes: list):
     for w in caught:
         if issubclass(w.category, ShellEdgeWarning) and "does not close" in str(w.message):
             note = ("The model does not close, so the room's own corners do not diffract: only the edges of "
-                    "free-standing (two-sided) surfaces do.")
+                    "objects inside the room and of double-sided surfaces do.")
         elif issubclass(w.category, (ShellEdgeWarning, ObstacleEdgeWarning)):
             note = f"Diffraction: {w.message}."
         else:

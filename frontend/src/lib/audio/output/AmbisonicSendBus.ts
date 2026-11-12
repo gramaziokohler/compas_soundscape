@@ -20,6 +20,9 @@
  *   | preRotated = false      | R                    | identity     |
  *   | preRotated = true       | identity             | transpose(R) |
  *
+ *   Every matrix goes through `toHoaRotatorMatrix3`: HOARotator given the bare
+ *   identity would turn the field 180° about the vertical.
+ *
  * Usage:
  * ```ts
  * const bus = await AmbisonicSendBus.create(ctx, 3);
@@ -35,6 +38,7 @@ import {
   ambisonicChannelCount,
   IDENTITY_MATRIX3,
   orientationToRotationMatrix3,
+  toHoaRotatorMatrix3,
   transposeMatrix3,
 } from '../utils/ambisonic-utils';
 
@@ -183,7 +187,7 @@ export class AmbisonicSendBus {
     } else {
       matrix = this.rotateWithListener ? listener : IDENTITY_MATRIX3;
     }
-    stage.rotator.setRotationMatrix3(matrix);
+    stage.rotator.setRotationMatrix3(toHoaRotatorMatrix3(matrix));
   }
 
   private disposeStage(stage: TapStage): void {

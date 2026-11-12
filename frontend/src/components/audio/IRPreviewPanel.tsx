@@ -17,6 +17,14 @@ export interface IRPreviewLayout {
   height: number;
 }
 
+/** Panel border (CSS px, both sides) added to the content size. */
+const PANEL_BORDER = 2;
+
+/** Default panel height for an IR with `channels` channels: header + one waveform row per channel. */
+function defaultPanelHeight(channels: number): number {
+  return IR_PREVIEW_PANEL.HEADER_HEIGHT + getDefaultWaveformHeight(channels) + PANEL_BORDER;
+}
+
 const MODES: Array<{ id: IRPreviewMode; label: string; title: string }> = [
   { id: 'impulse', label: 'IR', title: 'Impulse response' },
   { id: 'frequency', label: 'FR', title: 'Frequency response' },
@@ -157,11 +165,12 @@ export function IRPreviewContent({
 }
 
 export interface IRPreviewPanelProps extends Omit<IRPreviewContentProps, 'dragHandlers' | 'fill'> {
-  /** Remembered layout (position + size); null = default size at `defaultPosition`. */
-  savedLayout: { x: number; y: number; width?: number; height?: number } | null;
+  /** Remembered layout (position + size); null = default size at `defaultPosition`. Its height is
+   *  reused only for an IR with the same `channels`. */
+  savedLayout: { x: number; y: number; width?: number; height?: number; channels?: number } | null;
   defaultPosition: { x: number; y: number };
-  /** Called when a drag or resize ends, so the layout can be remembered. */
-  onLayoutCommit: (layout: IRPreviewLayout) => void;
+  /** Called when a drag or resize ends, so the layout can be remembered (with the channel count). */
+  onLayoutCommit: (layout: IRPreviewLayout & { channels: number }) => void;
 }
 
 /**
@@ -180,15 +189,16 @@ export function IRPreviewPanel({
   ...content
 }: IRPreviewPanelProps) {
   const panelRef = useRef<HTMLDivElement>(null);
+  const channels = content.audioBuffer.numberOfChannels;
   const [layout, setLayout] = useState<IRPreviewLayout>(() => {
-    const border = 2;
     const width = clampToViewportWidth(
-      savedLayout?.width ?? AUDIO_VISUALIZATION.WAVEFORM_WIDTH + border,
+      savedLayout?.width ?? AUDIO_VISUALIZATION.WAVEFORM_WIDTH + PANEL_BORDER,
       IR_PREVIEW_PANEL.MIN_WIDTH,
       IR_PREVIEW_PANEL.MARGIN * 2,
     );
+    const savedHeight = savedLayout?.channels === channels ? savedLayout.height : undefined;
     const height = clampToViewportHeight(
-      savedLayout?.height ?? IR_PREVIEW_PANEL.HEADER_HEIGHT + getDefaultWaveformHeight(content.audioBuffer.numberOfChannels) + border,
+      savedHeight ?? defaultPanelHeight(channels),
       IR_PREVIEW_PANEL.MIN_HEIGHT,
       IR_PREVIEW_PANEL.MARGIN * 2,
     );
@@ -212,6 +222,16 @@ export function IRPreviewPanel({
     layoutRef.current = next;
     setLayout(next);
   }, []);
+
+  // Pinning an IR with another channel count re-fits the height to its rows.
+  const shownChannelsRef = useRef(channels);
+  useEffect(() => {
+    if (shownChannelsRef.current === channels) return;
+    shownChannelsRef.current = channels;
+    const l = layoutRef.current;
+    const height = clampToViewportHeight(defaultPanelHeight(channels), IR_PREVIEW_PANEL.MIN_HEIGHT, IR_PREVIEW_PANEL.MARGIN * 2);
+    updateLayout({ ...l, ...clampToViewport(l.x, l.y, l.width, height, IR_PREVIEW_PANEL.MARGIN), height });
+  }, [channels, updateLayout]);
 
   // Re-fit after a viewport resize.
   useEffect(() => {
@@ -258,7 +278,7 @@ export function IRPreviewPanel({
   const endGesture = () => {
     if (!gestureRef.current) return;
     gestureRef.current = null;
-    onLayoutCommit(layoutRef.current);
+    onLayoutCommit({ ...layoutRef.current, channels });
   };
 
   return createPortal(

@@ -154,7 +154,7 @@ export interface TimelinePlaybackState {
  */
 
 // IR Format types
-export type IRFormat = "mono" | "binaural" | "foa" | "toa";
+export type IRFormat = "mono" | "binaural" | "foa" | "soa" | "toa";
 
 // Ambisonic order types
 export type AmbisonicOrder = 1 | 2 | 3; // First-order, Second-order, or Third-order

@@ -7,8 +7,10 @@
  * - Order 3 (TOA):  Omnitone.createHOARenderer(3) → 16-ch input, stereo out
  *
  * All renderers use SN3D (AmbiX) natively — no normalization conversion needed.
- * Rotation is applied via renderer.setRotationMatrix3() for both FOARenderer
- * and HOARenderer (same 3×3 matrix interface).
+ * Rotation is applied via renderer.setRotationMatrix3() for both renderers, but
+ * HOARenderer's rotator reads the matrix with a 180° turn about the vertical built
+ * in, so its matrices (the resting identity included) go through
+ * toHoaRotatorMatrix3() — see applyRotation().
  *
  * Signal chain: Input Gain → [Internal Rotator + HRIR Convolver] → Output Gain
  */
@@ -16,7 +18,7 @@
 import type { IBinauralDecoder } from '../core/interfaces/IBinauralDecoder';
 import type { Orientation } from '@/types/audio';
 import type { FOARenderer, HOARenderer } from 'omnitone';
-import { IDENTITY_MATRIX3, orientationToRotationMatrix3 } from '../utils/ambisonic-utils';
+import { IDENTITY_MATRIX3, orientationToRotationMatrix3, toHoaRotatorMatrix3 } from '../utils/ambisonic-utils';
 
 type AnyRenderer = FOARenderer | HOARenderer;
 
@@ -55,6 +57,8 @@ export class OmnitoneDecoder implements IBinauralDecoder {
       }
 
       renderer.setRenderingMode('ambisonic');
+      // Omnitone starts at its own identity, which HOARotator renders mirrored
+      this.applyRotation();
       this.ready = true;
       console.log(`[OmnitoneDecoder] Initialized (order ${order}, SN3D native)`);
     } catch (error) {
@@ -83,24 +87,25 @@ export class OmnitoneDecoder implements IBinauralDecoder {
 
   setRotationEnabled(enabled: boolean): void {
     this.rotationEnabled = enabled;
-    if (!enabled && this.renderer) {
-      this.renderer.setRotationMatrix3([...IDENTITY_MATRIX3]);
-    }
+    this.applyRotation();
   }
 
   /**
-   * Evaluate listener orientation via Omnitone's setRotationMatrix3.
-   * Matrix is Ry(yaw) * Rx(pitch) * Rz(roll), column-major, Y-up convention.
-   * Works identically for FOARenderer and HOARenderer.
-   * With roll = 0 this reduces to the previous Ry * Rx matrix.
+   * Head-track the field: orientationToRotationMatrix3() (world→head rotation), converted
+   * for HOARenderer by toHoaRotatorMatrix3() so every order turns the same way.
    */
   updateOrientation(orientation: Orientation): void {
-    if (!this.renderer) return;
     this.currentOrientation = orientation;
+    this.applyRotation();
+  }
 
-    this.renderer.setRotationMatrix3(
-      this.rotationEnabled ? orientationToRotationMatrix3(orientation) : [...IDENTITY_MATRIX3]
-    );
+  /** Current orientation (or the identity when rotation is off) in the renderer's matrix convention. */
+  private applyRotation(): void {
+    if (!this.renderer) return;
+    const matrix = this.rotationEnabled
+      ? orientationToRotationMatrix3(this.currentOrientation)
+      : [...IDENTITY_MATRIX3];
+    this.renderer.setRotationMatrix3(this.order === 1 ? matrix : toHoaRotatorMatrix3(matrix));
   }
 
   isReady(): boolean {

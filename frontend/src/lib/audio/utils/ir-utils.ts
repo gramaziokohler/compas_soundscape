@@ -31,12 +31,14 @@ export function detectIRFormat(buffer: AudioBuffer): IRFormat {
       return 'binaural';
     case 4:
       return 'foa';
+    case 9:
+      return 'soa';
     case 16:
       return 'toa';
     default:
       throw new Error(
         `Unsupported IR channel count: ${channels}. ` +
-        `Supported: 1 (mono), 2 (binaural), 4 (FOA), 16 (TOA)`
+        `Supported: 1 (mono), 2 (binaural), 4 (FOA), 9 (SOA), 16 (TOA)`
       );
   }
 }
@@ -52,6 +54,7 @@ export function getDOFDescription(format: IRFormat): string {
       return '6 DOF for sources, 0 DOF for IR (head-locked)';
     case 'binaural':
     case 'foa':
+    case 'soa':
     case 'toa':
       return '3 DOF rotation (static position at receiver)';
   }
@@ -76,6 +79,8 @@ export function getUINotice(format: IRFormat, isActive: boolean): string | null 
       return 'Binaural (2ch) IR active: 3DoF rotation enabled (static position)';
     case 'foa':
       return 'FOA (4ch) IR active: 3DoF rotation enabled (static position)';
+    case 'soa':
+      return 'SOA (9ch) IR active: 3DoF rotation enabled (static position)';
     case 'toa':
       return 'TOA (16ch) IR active: 3DoF rotation enabled (static position)';
   }
@@ -94,6 +99,8 @@ export function getFormatDisplayName(format: IRFormat): string {
       return 'Binaural (2ch)';
     case 'foa':
       return 'FOA (4ch)';
+    case 'soa':
+      return 'SOA (9ch)';
     case 'toa':
       return 'TOA (16ch)';
   }
@@ -294,4 +301,51 @@ export function getIRInfo(buffer: AudioBuffer | null): {
     channels: buffer.numberOfChannels === 1 ? "Mono" : buffer.numberOfChannels === 2 ? "Stereo" : `${buffer.numberOfChannels} ch`,
     samples: `${buffer.length.toLocaleString()}`
   };
+}
+
+/* ========================================
+ * IR PREVIEW
+ * ======================================== */
+
+/** True when every sample of `data` is exactly zero. */
+function isSilent(data: Float32Array): boolean {
+  for (let i = 0; i < data.length; i++) {
+    if (data[i] !== 0) return false;
+  }
+  return true;
+}
+
+/**
+ * Channels an ambisonic IR actually carries: (order + 1)² for the highest order with a non-silent
+ * channel (at least first order). A 9-channel SOA IR padded to 16 (older IR-library uploads)
+ * gives 9. Non-ambisonic channel counts are returned as is.
+ */
+export function ambisonicContentChannels(buffer: AudioBuffer): number {
+  const total = buffer.numberOfChannels;
+  if (total !== AMBISONIC.CHANNELS.SOA && total !== AMBISONIC.CHANNELS.TOA) return total;
+  for (let order = Math.round(Math.sqrt(total)) - 1; order > AMBISONIC.ORDER.FOA; order--) {
+    for (let ch = order * order; ch < (order + 1) ** 2; ch++) {
+      if (!isSilent(buffer.getChannelData(ch))) return (order + 1) ** 2;
+    }
+  }
+  return AMBISONIC.CHANNELS.FOA;
+}
+
+/** The IR as the preview shows it: trailing silent ambisonic orders dropped (same buffer when none are). */
+export function previewIRBuffer(buffer: AudioBuffer): AudioBuffer {
+  const channels = ambisonicContentChannels(buffer);
+  if (channels === buffer.numberOfChannels) return buffer;
+  const out = new AudioBuffer({ numberOfChannels: channels, length: buffer.length, sampleRate: buffer.sampleRate });
+  for (let ch = 0; ch < channels; ch++) out.copyToChannel(buffer.getChannelData(ch), ch);
+  return out;
+}
+
+/** Channel-count label of an IR ("Mono", "4-Channel (FOA)", "9-Channel (SOA)", ...). */
+export function irChannelLabel(channelCount: number): string {
+  if (channelCount === 1) return 'Mono';
+  if (channelCount === 2) return 'Stereo';
+  if (channelCount === AMBISONIC.CHANNELS.FOA) return '4-Channel (FOA)';
+  if (channelCount === AMBISONIC.CHANNELS.SOA) return '9-Channel (SOA)';
+  if (channelCount === AMBISONIC.CHANNELS.TOA) return '16-Channel (TOA)';
+  return `${channelCount}-Channel`;
 }

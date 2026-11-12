@@ -171,7 +171,7 @@ export interface PreflightFilters {
   skipped: boolean;
   // Overlays
   edges: boolean;
-  holes: boolean;
+  openEdges: boolean;
   leaks: boolean;
   blockers: boolean;
   diffractionEdges: boolean;

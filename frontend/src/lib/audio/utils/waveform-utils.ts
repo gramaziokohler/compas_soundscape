@@ -69,8 +69,10 @@ export function getChannelNames(numChannels: number): string[] {
     return ['W', 'Y', 'Z', 'X'];
   }
 
-  if (numChannels === 16) {
-    return ['W', 'Y', 'Z', 'X', 'V', 'T', 'R', 'S', 'U', 'Q', 'O', 'M', 'K', 'L', 'N', 'P'];
+  // ACN letters (FuMa names) for full ambisonic orders: 4 (FOA), 9 (SOA), 16 (TOA)
+  const acn = ['W', 'Y', 'Z', 'X', 'V', 'T', 'R', 'S', 'U', 'Q', 'O', 'M', 'K', 'L', 'N', 'P'];
+  if (numChannels === 9 || numChannels === 16) {
+    return acn.slice(0, numChannels);
   }
 
   return Array.from({ length: numChannels }, (_, i) => `Ch ${i + 1}`);

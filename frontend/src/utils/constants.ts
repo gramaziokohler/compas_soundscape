@@ -1656,6 +1656,10 @@ export const AUDIO_VISUALIZATION = {
   // Canvas dimensions for IR hover waveform overlay
   WAVEFORM_WIDTH: 304,
   WAVEFORM_HEIGHT: 144,
+  /** Default height per channel row of a higher-order (9/16-channel) IR preview (CSS px) */
+  WAVEFORM_ROW_HEIGHT: 22,
+  /** Tallest default IR preview waveform (CSS px) */
+  WAVEFORM_MAX_HEIGHT: 640,
 
   /** Axis padding inside the waveform canvas (CSS px) */
   AXIS: {
@@ -2480,11 +2484,17 @@ export const SIMULATION_POSITION_MATCH_THRESHOLD = 0.5;
 export const PYROOMACOUSTICS_SIMULATION_MODE_MONO = "mono"; // Single microphone (1 channel)
 export const PYROOMACOUSTICS_SIMULATION_MODE_FOA = "foa"; // First-Order Ambisonics (4 channels: W, Y, Z, X - ACN/N3D)
 
-// Simulation Mode Display Names
+// Card output choices of the geometric card. SOA / TOA both run simulation_mode "hoa" with
+// ambisonic_order 2 / 3 (lib/acoustics/geometric-engine.ts outputChoice / settingsForOutputChoice).
+export const SIMULATION_OUTPUT_SOA = "soa";
+export const SIMULATION_OUTPUT_TOA = "toa";
+
+// Simulation Mode Display Names (keyed by simulation mode or output choice)
 export const PYROOMACOUSTICS_SIMULATION_MODE_NAMES = {
   [PYROOMACOUSTICS_SIMULATION_MODE_MONO]: "Mono (1-ch)",
   [PYROOMACOUSTICS_SIMULATION_MODE_FOA]: "FOA (4-ch)",
-  hoa: "HOA (9/16-ch)",
+  [SIMULATION_OUTPUT_SOA]: "SOA (9-ch)",
+  [SIMULATION_OUTPUT_TOA]: "TOA (16-ch)",
 } as const;
 
 // Simulation Mode Descriptions (for tooltips/UI help)

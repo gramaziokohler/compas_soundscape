@@ -4,7 +4,7 @@ import { useEffect, useRef } from 'react';
 import { extractWaveformData } from '@/lib/audio/utils/waveform-utils';
 import { useResolvedColorTheme } from '@/hooks/useResolvedColorTheme';
 import { Spinner } from '@/components/ui/Spinner';
-import { AUDIO_VISUALIZATION } from '@/utils/constants';
+import { AMBISONIC, AUDIO_VISUALIZATION } from '@/utils/constants';
 
 interface MiniIRWaveformProps {
   audioBuffer: AudioBuffer | null;
@@ -29,11 +29,16 @@ interface MiniIRWaveformProps {
 
 const WIDTH = 56;
 const MONO_HEIGHT = 22;
-const FOA_HEIGHT = 40;
+const AMBISONIC_HEIGHT = 40;
+
+/** Thumbnail height: ambisonic IRs (4, 9 or 16 channels) stack their tracks in a taller box. */
+function thumbnailHeight(channels: number | undefined): number {
+  return (channels ?? 1) >= AMBISONIC.CHANNELS.FOA ? AMBISONIC_HEIGHT : MONO_HEIGHT;
+}
 
 /**
  * Compact impulse-response thumbnail for sidebar IR rows.
- * Renders mono as a single track; FOA (4-ch) as four stacked mini tracks.
+ * Renders mono as a single track; ambisonic IRs (4/9/16-ch) as stacked mini tracks.
  */
 export function MiniIRWaveform({
   audioBuffer,
@@ -47,7 +52,7 @@ export function MiniIRWaveform({
 }: MiniIRWaveformProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const colorTheme = useResolvedColorTheme();
-  const height = audioBuffer?.numberOfChannels === 4 ? FOA_HEIGHT : MONO_HEIGHT;
+  const height = thumbnailHeight(audioBuffer?.numberOfChannels);
 
   const borderStyle = lowEnergy
     ? { borderColor: 'var(--color-warning)' }
@@ -60,7 +65,7 @@ export function MiniIRWaveform({
     if (!canvas || !audioBuffer) return;
 
     const numChannels = audioBuffer.numberOfChannels;
-    const canvasHeight = numChannels === 4 ? FOA_HEIGHT : MONO_HEIGHT;
+    const canvasHeight = thumbnailHeight(numChannels);
 
     const dpr = window.devicePixelRatio || 1;
     canvas.width = WIDTH * dpr;

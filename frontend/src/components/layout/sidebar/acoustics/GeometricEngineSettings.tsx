@@ -19,7 +19,7 @@ import { ModifiedMark } from '@/components/ui/ModifiedMark';
 import { Notice } from '@/components/ui/Notice';
 import { RangeSlider } from '@/components/ui/RangeSlider';
 import { ToggleField } from '@/components/ui/ToggleField';
-import { GA_ENGINE, PYROOMACOUSTICS_SIMULATION_MODE_HOA } from '@/utils/constants';
+import { GA_ENGINE } from '@/utils/constants';
 import {
   effectiveEngineSettings,
   isAmbisonicMode,
@@ -40,7 +40,7 @@ interface GeometricEngineSettingsProps {
 }
 
 const ADDITIONAL_FIELDS: (keyof EngineSettings)[] = [
-  'engine', 'ambisonic_order', 'n_slopes', 'scattering_split', 'air_temperature', 'air_humidity', 'seed',
+  'engine', 'n_slopes', 'scattering_split', 'air_temperature', 'air_humidity', 'seed',
 ];
 
 export function GeometricEngineSettings({
@@ -146,20 +146,6 @@ export function GeometricEngineSettings({
               </div>
             )}
 
-            {settings.simulation_mode === PYROOMACOUSTICS_SIMULATION_MODE_HOA && (
-              <RangeSlider
-                label="Ambisonic order"
-                modified={isModified('ambisonic_order')}
-                value={settings.ambisonic_order ?? GA_ENGINE.AMBISONIC_ORDER_DEFAULT}
-                min={2}
-                max={GA_ENGINE.AMBISONIC_ORDER_MAX}
-                step={1}
-                onChange={(v) => onChange('ambisonic_order', v)}
-                disabled={disabled || !ca}
-                defaultValue={GA_ENGINE.AMBISONIC_ORDER_DEFAULT}
-                hoverText="Order 2 = 9 channels, order 3 = 16 channels"
-              />
-            )}
 
             {ambisonic && ca && (
               <div className="card-stack--tight">

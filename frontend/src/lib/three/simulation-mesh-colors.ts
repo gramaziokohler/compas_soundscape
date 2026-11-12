@@ -26,7 +26,7 @@ export type PreviewCategoryKey = Extract<
   keyof PreflightFilters,
   'reflectingSide' | 'backSide' | 'closed' | 'open' | 'shell' | 'interior' | 'doubleSided' | 'skipped'
 >;
-export type PreviewOverlayKey = Extract<keyof PreflightFilters, 'edges' | 'holes' | 'leaks' | 'blockers' | 'diffractionEdges'>;
+export type PreviewOverlayKey = Extract<keyof PreflightFilters, 'edges' | 'openEdges' | 'leaks' | 'blockers' | 'diffractionEdges'>;
 
 export interface PreviewCategory<K extends string = PreviewCategoryKey> {
   key: K;
@@ -52,8 +52,7 @@ export const PREVIEW_CATEGORIES: Record<PreflightViewMode, PreviewCategory[]> = 
   ],
   topology: [
     { key: 'closed', colorVar: '--color-success', label: 'Closed (watertight) element' },
-    { key: 'open', colorVar: '--color-warning', label: 'Open single surface' },
-    DOUBLE_SIDED,
+    { key: 'open', colorVar: '--color-warning', label: 'Open single surface (incl. double-sided)' },
     SKIPPED,
   ],
   class: [
@@ -66,7 +65,7 @@ export const PREVIEW_CATEGORIES: Record<PreflightViewMode, PreviewCategory[]> = 
 /** Overlay toggles; the checkbox colour matches the drawn lines. */
 export const PREVIEW_OVERLAYS: PreviewCategory<PreviewOverlayKey>[] = [
   { key: 'edges', colorVar: '--color-secondary-hover', label: 'Wall edges' },
-  { key: 'holes', colorVar: '--color-warning', label: 'Holes (open edges)' },
+  { key: 'openEdges', colorVar: '--color-warning', label: 'Open edges' },
   { key: 'leaks', colorVar: '--color-error', label: 'Leaks (escaping sound)' },
   { key: 'blockers', colorVar: '--color-error', label: 'Blocked direct paths' },
   { key: 'diffractionEdges', colorVar: '--color-primary', label: 'Diffraction edges' },
@@ -74,7 +73,7 @@ export const PREVIEW_OVERLAYS: PreviewCategory<PreviewOverlayKey>[] = [
 
 export interface PreviewPalette {
   edges: number;
-  holes: number;
+  openEdges: number;
   diffractionEdges: number;
   error: number;
   warning: number;
@@ -93,7 +92,7 @@ export function resolvePreviewPalette(): PreviewPalette {
     getCssColorHex(PREVIEW_OVERLAYS.find((o) => o.key === key)!.colorVar);
   return {
     edges: overlay('edges'),
-    holes: overlay('holes'),
+    openEdges: overlay('openEdges'),
     diffractionEdges: overlay('diffractionEdges'),
     error: getCssColorHex('--color-error'),
     warning: getCssColorHex('--color-warning'),
@@ -118,7 +117,7 @@ function faceCategories(payload: PreflightPayload, f: number, mode: PreflightVie
       // Normal side = inside the wall; the opposite (BackSide) faces the air.
       return twoSided ? both('doubleSided') : ['backSide', 'reflectingSide'];
     case 'topology':
-      return both(twoSided ? 'doubleSided' : payload.closed[f] === 1 ? 'closed' : 'open');
+      return both(payload.closed[f] === 1 && !twoSided ? 'closed' : 'open');
     case 'class':
     default:
       return both(cls === PREFLIGHT_FACE_CLASS.INTERIOR ? 'interior' : 'shell');

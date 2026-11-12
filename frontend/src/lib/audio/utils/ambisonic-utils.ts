@@ -96,6 +96,20 @@ export function orientationToRotationMatrix3(orientation: Orientation): number[]
   return [m[0][0], m[1][0], m[2][0], m[0][1], m[1][1], m[2][1], m[0][2], m[1][2], m[2][2]];
 }
 
+/**
+ * Rotation matrix for Omnitone's `HOARotator` (inside `HOARenderer` for orders 2–3, and the
+ * multichannel send), so it rotates exactly like `FOARotator` does with `m`.
+ *
+ * `HOARotator.setRotationMatrix3` negates columns 0 and 2 of what `FOARotator` reads: given
+ * the identity it turns the field 180° about the vertical (left↔right, front↔back), while the
+ * HOA HRIR convolver after it expects plain ACN. Measured through the real renderers: an
+ * order-3 source on the left came out 10 dB louder in the RIGHT ear. Feeding
+ * m · diag(−1, 1, −1) cancels the flip.
+ */
+export function toHoaRotatorMatrix3(m: readonly number[]): number[] {
+  return [-m[0], -m[1], -m[2], m[3], m[4], m[5], -m[6], -m[7], -m[8]];
+}
+
 /** Transpose of a 3×3 matrix — the inverse of a rotation matrix. */
 export function transposeMatrix3(m: readonly number[]): number[] {
   return [m[0], m[3], m[6], m[1], m[4], m[7], m[2], m[5], m[8]];

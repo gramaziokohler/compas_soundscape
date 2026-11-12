@@ -68,8 +68,12 @@ Step 5 above is the **legacy** engine. Since the compas_acoustics migration
 
 - **Geometry:** `SimulationMesh` → `compas_acoustics.geometry.PreparedMesh` (same layout: the
   preparation was ported to CA verbatim) → `RoomGeometry.from_prepared(check_inside=False)`.
-  One-sided walls become the boundary and two-sided walls become obstacles. The mean-free-path air
-  volume is used when the model does not close. Everything is recentred.
+  Two-sided walls and objects standing in the air become obstacles, the other walls the boundary
+  (`compas_acoustics.geometry.obstacle_mask`). An object is a closed welded component or a loose-face
+  enclosing object wound inwards (the air surrounds it), or an open component that is mostly
+  "interior" by area. A component whose bounding box holds a source or listener is never an object.
+  Only the boundary must close (`boundary_closes`; the preflight's `model_closes` calls it). The
+  mean-free-path air volume is used when the model does not close. Everything is recentred.
 - **Materials:** pra ids, `PYROOMACOUSTICS_CUSTOM_MATERIALS`, inlined user materials and bare
   absorptions all map onto CA's 125 Hz–8 kHz bands. A per-object scattering overrides the
   material's; without either, scattering is 0.05.
@@ -102,7 +106,10 @@ Step 5 above is the **legacy** engine. Since the compas_acoustics migration
 - **Settings** live on the card as optional `GeometricEngineSettings` (`types/acoustics.ts`):
   `engine`, `diffraction`, `ambisonic_order`, `tail`, `n_slopes`, `seed`, `scattering_split`,
   `air_temperature`, `air_humidity`, `excluded_edges`. Absent means default, so older saved cards
-  load unchanged. `lib/acoustics/geometric-engine.ts` is the single place that decides what is
+  load unchanged. The card never shows `hoa`: its Simulation Mode offers SOA (9-ch) and TOA
+  (16-ch), which set `simulation_mode: "hoa"` with `ambisonic_order` 2 / 3 in one update
+  (`outputChoice` / `settingsForOutputChoice`); an `hoa` card without an order reads as SOA.
+  `lib/acoustics/geometric-engine.ts` is the single place that decides what is
   sent (`engineFormFields`), saved (`pickGeometricEngineSettings`) and summarised. The UI is
   `GeometricEngineSettings.tsx`, shared by the ray-tracing and hybrid cards.
 - **Capabilities:** `GET /api/acoustics/engines` says which engine is the default and what each
@@ -129,9 +136,11 @@ Step 5 above is the **legacy** engine. Since the compas_acoustics migration
   internals: `tests/test_acoustic_paths.py` fails if an upgrade breaks them.
 - **Per-band metrics:** `acoustic_parameters_bands` per pair → `BandMetricsTable.tsx`
   (`lib/acoustics/band-metrics.ts`).
-- **IR import** (`impulse_response_service`): 9–15 channels are kept as second order, stored as
-  third order with silent third-order channels (they used to be cut to 4). An IR above full scale
-  is stored as float WAV instead of clipped 16-bit.
+- **IR import** (`impulse_response_service`): 9–15 channels are stored as second order (9
+  channels, format `soa`); they used to be padded to 16 with silent third-order channels, and
+  before that cut to 4. The IR list previews drop trailing silent orders
+  (`ir-utils.previewIRBuffer`), so older padded files still show 9 rows. An IR above full scale is
+  stored as float WAV instead of clipped 16-bit.
 
 ### Hybrid simulation (wave below a crossover, rays above) — card type `hybrid`
 

@@ -158,6 +158,7 @@ class IRFormat(str, Enum):
     MONO = "mono"
     BINAURAL = "binaural"
     FOA = "foa"
+    SOA = "soa"
     TOA = "toa"
 
 
@@ -688,7 +689,7 @@ class SoundscapeIRMetadata(BaseModel):
     url: str = ""  # Original URL (rewritten on restore)
     filename: str  # Filename only, used for persistent copy
     name: str
-    format: str  # "mono", "binaural", "foa", "toa"
+    format: str  # "mono", "binaural", "foa", "soa", "toa"
     channels: int
     original_channels: int
     sample_rate: int

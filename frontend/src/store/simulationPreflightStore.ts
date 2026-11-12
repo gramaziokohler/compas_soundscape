@@ -42,7 +42,7 @@ const DEFAULT_FILTERS: PreflightFilters = {
   doubleSided: true,
   skipped: false,
   edges: true,
-  holes: true,
+  openEdges: true,
   leaks: true,
   blockers: true,
   diffractionEdges: false,

@@ -7,10 +7,13 @@
  */
 
 import {
+  AMBISONIC,
   GA_ENGINE,
   PYROOMACOUSTICS_SIMULATION_MODE_FOA,
   PYROOMACOUSTICS_SIMULATION_MODE_HOA,
   PYROOMACOUSTICS_SIMULATION_MODE_MONO,
+  SIMULATION_OUTPUT_SOA,
+  SIMULATION_OUTPUT_TOA,
 } from '@/utils/constants';
 import type { GeometricEngineSettings } from '@/types/acoustics';
 
@@ -69,6 +72,22 @@ export function ambisonicOrder(mode: string, settings: GeometricEngineSettings):
 
 export function channelCount(mode: string, settings: GeometricEngineSettings): number {
   return (ambisonicOrder(mode, settings) + 1) ** 2;
+}
+
+/**
+ * The card's output choice: the simulation mode, with HOA split by order into SOA (order 2) and
+ * TOA (order 3). Keys of PYROOMACOUSTICS_SIMULATION_MODE_NAMES.
+ */
+export function outputChoice(mode: string, settings: GeometricEngineSettings): string {
+  if (mode !== PYROOMACOUSTICS_SIMULATION_MODE_HOA) return mode;
+  return ambisonicOrder(mode, settings) >= AMBISONIC.ORDER.TOA ? SIMULATION_OUTPUT_TOA : SIMULATION_OUTPUT_SOA;
+}
+
+/** The settings an output choice stands for (the backend still receives "hoa" + ambisonic_order). */
+export function settingsForOutputChoice(choice: string): { simulation_mode: string; ambisonic_order: number | undefined } {
+  if (choice === SIMULATION_OUTPUT_SOA) return { simulation_mode: PYROOMACOUSTICS_SIMULATION_MODE_HOA, ambisonic_order: AMBISONIC.ORDER.SOA };
+  if (choice === SIMULATION_OUTPUT_TOA) return { simulation_mode: PYROOMACOUSTICS_SIMULATION_MODE_HOA, ambisonic_order: AMBISONIC.ORDER.TOA };
+  return { simulation_mode: choice, ambisonic_order: undefined };
 }
 
 /**

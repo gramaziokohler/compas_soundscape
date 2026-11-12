@@ -10,6 +10,7 @@ import { FileDropRow } from "@/components/ui/FileDropRow";
 import { apiService } from "@/services/api";
 import { useApiErrorHandler } from "@/hooks/useApiErrorHandler";
 import { decodeAudioAllChannels } from "@/lib/audio/utils/wav-multichannel";
+import { irChannelLabel, previewIRBuffer } from "@/lib/audio/utils/ir-utils";
 import { Notice } from '@/components/ui/Notice';
 import { Badge } from '@/components/ui/Badge';
 import { Spinner } from '@/components/ui/Spinner';
@@ -265,8 +266,10 @@ export function ImpulseResponseUpload({
         if (isLowEnergyPeak(peakSum / audioBuffer.numberOfChannels)) {
           setLowEnergyIRIds(prev => new Set(prev).add(ir.id));
         }
-        setBufferCache(prev => { const m = new Map(prev); m.set(ir.id, audioBuffer); return m; });
-        return audioBuffer;
+        // Previews show the channels the IR carries (an SOA IR padded to 16 shows 9 rows)
+        const previewBuffer = previewIRBuffer(audioBuffer);
+        setBufferCache(prev => { const m = new Map(prev); m.set(ir.id, previewBuffer); return m; });
+        return previewBuffer;
       } catch (err) {
         console.error(`Failed to load IR buffer for ${ir.name}:`, err);
         return null;
@@ -429,13 +432,7 @@ export function ImpulseResponseUpload({
     }
   };
 
-  const formatChannelLabel = (channelCount: number): string => {
-    if (channelCount === 1) return 'Mono';
-    if (channelCount === 2) return 'Stereo';
-    if (channelCount === 4) return '4-Channel (FOA)';
-    if (channelCount === 16) return '16-Channel (TOA)';
-    return `${channelCount}-Channel`;
-  };
+  const formatChannelLabel = irChannelLabel;
 
   // ── Grouped-by-receiver structure ──────────────────────────────────────────
   const groupedByReceiver = useMemo((): {

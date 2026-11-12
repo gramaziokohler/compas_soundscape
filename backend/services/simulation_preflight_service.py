@@ -368,12 +368,18 @@ def issue_codes(issues: list[PreflightIssue], severity: Optional[str] = None) ->
     return [i.code for i in issues if severity is None or i.severity == severity]
 
 
+def obstacle_faces(mesh: SimulationMesh) -> np.ndarray:
+    """compas_acoustics' obstacles (RoomGeometry.from_prepared): two-sided faces and objects standing in the air."""
+    from compas_acoustics.geometry import obstacle_mask
+
+    return obstacle_mask(mesh)
+
+
 def model_closes(mesh: SimulationMesh) -> bool:
-    """compas_acoustics' rule (RoomGeometry.from_prepared): every one-sided face belongs to a closed welded component."""
-    one_sided = ~np.asarray(mesh.two_sided, dtype=bool)
-    if not one_sided.any():
-        return False
-    return bool(np.all(np.asarray(mesh.component_closed)[np.asarray(mesh.component)[one_sided]]))
+    """compas_acoustics' rule (RoomGeometry.from_prepared): every face but the obstacles belongs to a closed welded component."""
+    from compas_acoustics.geometry import boundary_closes
+
+    return boundary_closes(mesh)
 
 
 def _compas_acoustics_checks(mesh: SimulationMesh, ctx: PreflightContext, out) -> None:
@@ -391,11 +397,11 @@ def _compas_acoustics_checks(mesh: SimulationMesh, ctx: PreflightContext, out) -
                     "The model does not close and no air volume could be estimated from the sources and "
                     "listeners. Close the room, or run in mono.")
     if ctx.diffraction != "off" and not closes:
-        n_two_sided = int(np.count_nonzero(mesh.two_sided))
-        out.add("warning" if n_two_sided == 0 else "info", "ca_diffraction_open_model",
+        n_obstacles = int(np.count_nonzero(obstacle_faces(mesh)))
+        out.add("warning" if n_obstacles == 0 else "info", "ca_diffraction_open_model",
                 "Room corners do not diffract in a model that does not close",
-                "Edge diffraction then only uses the rims of free-standing (two-sided) surfaces"
-                + (" — and this model has none, so diffraction will add nothing. " if n_two_sided == 0 else ". ")
+                "Edge diffraction then only uses the edges of objects inside the room and of double-sided surfaces"
+                + (" — and this model has none, so diffraction will add nothing. " if n_obstacles == 0 else ". ")
                 + "Close the room to include its corners.")
     if ctx.diffraction == "btms" and not ambisonic:
         out.add("error", "ca_btms_mono", "BTMS diffraction needs ambisonic output",

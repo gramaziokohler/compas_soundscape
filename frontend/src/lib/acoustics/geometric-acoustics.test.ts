@@ -18,9 +18,11 @@ import {
   effectiveEngineSettings,
   engineFormFields,
   engineSummaryRows,
+  outputChoice,
   pickGeometricEngineSettings,
   resolveEngine,
   sameEdge,
+  settingsForOutputChoice,
   temperatureForSoundSpeed,
   toggleExcludedEdge,
   usesCompasAcoustics,
@@ -349,5 +351,25 @@ describe('per-band metrics', () => {
     expect(aggregateBandMetrics(undefined)).toBeNull();
     expect(formatBandFrequency(500)).toBe('500');
     expect(formatBandFrequency(2000)).toBe('2k');
+  });
+});
+
+describe('SOA / TOA output choices', () => {
+  it('maps each choice to the hoa mode and its order', () => {
+    expect(settingsForOutputChoice('soa')).toEqual({ simulation_mode: 'hoa', ambisonic_order: 2 });
+    expect(settingsForOutputChoice('toa')).toEqual({ simulation_mode: 'hoa', ambisonic_order: 3 });
+    expect(settingsForOutputChoice('foa')).toEqual({ simulation_mode: 'foa', ambisonic_order: undefined });
+  });
+
+  it('reads the choice back from the settings (an hoa card without an order is SOA)', () => {
+    expect(outputChoice('hoa', { ambisonic_order: 3 })).toBe('toa');
+    expect(outputChoice('hoa', { ambisonic_order: 2 })).toBe('soa');
+    expect(outputChoice('hoa', {})).toBe('soa');
+    expect(outputChoice('mono', { ambisonic_order: 3 })).toBe('mono');
+  });
+
+  it('sends the chosen order to the backend', () => {
+    expect(engineFormFields({ ...settingsForOutputChoice('toa') }).ambisonic_order).toBe('3');
+    expect(channelCount('hoa', { ...settingsForOutputChoice('toa') })).toBe(16);
   });
 });

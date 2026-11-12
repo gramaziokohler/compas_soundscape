@@ -42,7 +42,13 @@ interface AudioWaveformDisplayProps {
 export function getDefaultWaveformHeight(numChannels: number, compact = false): number {
   if (compact) return numChannels === 4 ? 112 : numChannels >= 8 ? 144 : 70;
   if (numChannels === 4) return Math.min(480, AUDIO_VISUALIZATION.WAVEFORM_HEIGHT * 1.6);
-  if (numChannels >= 8) return Math.min(640, AUDIO_VISUALIZATION.WAVEFORM_HEIGHT * 2.2);
+  if (numChannels >= 8) {
+    // One row per channel: 9 rows (SOA) stay compact, 16 (TOA) get a taller panel
+    return Math.min(
+      AUDIO_VISUALIZATION.WAVEFORM_MAX_HEIGHT,
+      Math.max(AUDIO_VISUALIZATION.WAVEFORM_HEIGHT * 1.6, numChannels * AUDIO_VISUALIZATION.WAVEFORM_ROW_HEIGHT),
+    );
+  }
   return AUDIO_VISUALIZATION.WAVEFORM_HEIGHT;
 }
 

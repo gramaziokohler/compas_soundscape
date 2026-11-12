@@ -15,6 +15,7 @@ from config.constants import (
     IR_FORMAT_MONO,
     IR_FORMAT_BINAURAL,
     IR_FORMAT_FOA,
+    IR_FORMAT_SOA,
     IR_FORMAT_TOA,
     AUDIO_SAMPLE_RATE
 )
@@ -64,7 +65,7 @@ class ImpulseResponseService:
             channels: Number of audio channels
             
         Returns:
-            IR format string ("mono", "binaural", "foa", or "toa")
+            IR format string ("mono", "binaural", "foa", "soa" or "toa")
         """
         if channels == 1:
             return IR_FORMAT_MONO
@@ -72,6 +73,8 @@ class ImpulseResponseService:
             return IR_FORMAT_BINAURAL
         elif channels == 4:
             return IR_FORMAT_FOA
+        elif channels == 9:
+            return IR_FORMAT_SOA
         elif channels == 16:
             return IR_FORMAT_TOA
         else:
@@ -158,12 +161,7 @@ class ImpulseResponseService:
         elif original_channels >= 16:
             target_channels = 16  # Extract TOA (first 16 channels)
         elif original_channels >= 9:
-            # Second-order ambisonics (9 channels, ACN): kept as third order with silent
-            # third-order channels, which decodes identically. Cutting it to 4 lost the order.
-            audio_data = np.vstack([
-                audio_data[:9], np.zeros((16 - 9, audio_data.shape[1]), dtype=audio_data.dtype),
-            ])
-            original_channels = target_channels = 16
+            target_channels = 9   # Second-order ambisonics (9 channels, ACN) kept as SOA
         elif original_channels >= 4:
             target_channels = 4   # Extract FOA (first 4 channels)
         else:

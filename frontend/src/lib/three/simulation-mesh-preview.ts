@@ -4,7 +4,7 @@
  * Renders the prepared simulation mesh of a geometry preflight in place of the
  * Speckle model: per-face coloured surfaces (separate front/back side passes,
  * each side filtered by its legend category), outlines of the simulated walls,
- * open-edge loops (holes), escaping rays (leaks) and blocked source→receiver
+ * open-edge loops, escaping rays (leaks) and blocked source→receiver
  * segments.
  *
  * The whole group is rebuilt on every option change — it is a handful of
@@ -100,7 +100,7 @@ export class SimulationMeshPreview {
 
     this.addFaces(group, payload, options, palette, highlightFaces);
     if (options.filters.edges) this.addWallOutlines(group, payload, options, palette);
-    if (options.filters.holes) this.addLoops(group, payload, palette, options.highlight);
+    if (options.filters.openEdges) this.addLoops(group, payload, palette, options.highlight);
     if (options.filters.leaks && payload.leaks.length) {
       const pts = payload.leaks.flatMap((l) => [...l.origin, ...l.end]);
       group.add(lines(pts, palette.error, 0.8, true));
@@ -277,7 +277,7 @@ export class SimulationMeshPreview {
       else if (loop.leaking) leaking.push(...loop.segments);
       else open.push(...loop.segments);
     }
-    if (open.length) group.add(lines(open, palette.holes, 0.7));
+    if (open.length) group.add(lines(open, palette.openEdges, 0.7));
     if (leaking.length) group.add(lines(leaking, palette.error));
     if (emphasised.length && highlight) group.add(lines(emphasised, severityColor(palette, highlight.severity)));
   }

@@ -246,9 +246,10 @@ export interface UIStoreState {
   // ── Floating panel positions & sizes (survive refresh) ──────────────────────
   objectExplorerPanel: { x: number; y: number; width: number; height: number } | null;
   setObjectExplorerPanel: (state: { x: number; y: number; width: number; height: number } | null) => void;
-  /** Pinned IR preview panel: last position and view mode (survive refresh). */
-  irPreviewPanel: { x: number; y: number; width?: number; height?: number } | null;
-  setIrPreviewPanel: (layout: { x: number; y: number; width?: number; height?: number } | null) => void;
+  /** Pinned IR preview panel: last position and size (survive refresh); the height applies to IRs
+   *  with `channels` channels only. */
+  irPreviewPanel: { x: number; y: number; width?: number; height?: number; channels?: number } | null;
+  setIrPreviewPanel: (layout: { x: number; y: number; width?: number; height?: number; channels?: number } | null) => void;
   irPreviewMode: 'impulse' | 'frequency';
   setIrPreviewMode: (mode: 'impulse' | 'frequency') => void;
   /** Which IR list currently owns the open pinned panel (transient, not persisted). */

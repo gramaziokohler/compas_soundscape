@@ -20,11 +20,12 @@ import {
   PYROOMACOUSTICS_DEFAULT_PARALLEL,
   PYROOMACOUSTICS_SIMULATION_MODE_MONO,
   PYROOMACOUSTICS_SIMULATION_MODE_FOA,
-  PYROOMACOUSTICS_SIMULATION_MODE_HOA,
-  PYROOMACOUSTICS_SIMULATION_MODE_NAMES
+  PYROOMACOUSTICS_SIMULATION_MODE_NAMES,
+  SIMULATION_OUTPUT_SOA,
+  SIMULATION_OUTPUT_TOA,
 } from '@/utils/constants';
 import { useAcousticPathsStore } from '@/store';
-import { usesCompasAcoustics } from '@/lib/acoustics/geometric-engine';
+import { outputChoice, settingsForOutputChoice, usesCompasAcoustics } from '@/lib/acoustics/geometric-engine';
 import { GeometricEngineSettings } from './GeometricEngineSettings';
 import type { GeometricEngineSettings as EngineSettings } from '@/types/acoustics';
 import { useState } from 'react';
@@ -91,20 +92,27 @@ export function PyroomAcousticsSimulationSettings({
     } as Partial<PyroomAcousticsSimulationConfig>);
   };
 
+  /** Mode and ambisonic order change together (one update, one undo step). */
+  const handleOutputChoice = (choice: string) => {
+    onUpdateConfig({
+      settings: { ...config.settings, ...settingsForOutputChoice(choice) },
+    } as Partial<PyroomAcousticsSimulationConfig>);
+  };
+
   return (
     <div className="card-stack">
 
       {/* Note: Error display is handled at Card level for consistency */}
 
-      {/* Simulation Mode Dropdown */}
+      {/* Simulation Mode Dropdown (SOA / TOA = "hoa" at order 2 / 3) */}
       <div>
         <label className="text-xxs card-label text-secondary-hover">
-          Simulation Mode{isSettingModified('simulation_mode') && <ModifiedMark />}
+          Simulation Mode{(isSettingModified('simulation_mode') || isSettingModified('ambisonic_order')) && <ModifiedMark />}
         </label>
 
         <CardSelect
-          value={config.settings.simulation_mode}
-          onChange={(v) => handleSettingChange('simulation_mode', v)}
+          value={outputChoice(config.settings.simulation_mode, config.settings)}
+          onChange={handleOutputChoice}
           disabled={config.isRunning}
           options={[
             {
@@ -115,14 +123,14 @@ export function PyroomAcousticsSimulationSettings({
               value: PYROOMACOUSTICS_SIMULATION_MODE_FOA,
               label: PYROOMACOUSTICS_SIMULATION_MODE_NAMES[PYROOMACOUSTICS_SIMULATION_MODE_FOA],
             },
-            {
-              value: PYROOMACOUSTICS_SIMULATION_MODE_HOA,
-              label: PYROOMACOUSTICS_SIMULATION_MODE_NAMES[PYROOMACOUSTICS_SIMULATION_MODE_HOA],
+            ...([SIMULATION_OUTPUT_SOA, SIMULATION_OUTPUT_TOA] as const).map((value) => ({
+              value,
+              label: PYROOMACOUSTICS_SIMULATION_MODE_NAMES[value],
               disabled: !hoaAvailable,
               title: hoaAvailable
-                ? 'Higher-order ambisonics (order 2 or 3, under Additional settings)'
+                ? `${value === SIMULATION_OUTPUT_SOA ? 'Second' : 'Third'}-order ambisonics`
                 : 'Needs the compas_acoustics engine',
-            },
+            })),
           ]}
         />
       </div>
