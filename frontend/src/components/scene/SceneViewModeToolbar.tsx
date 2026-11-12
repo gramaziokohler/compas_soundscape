@@ -20,7 +20,8 @@ const VIEW_MODES: { mode: ViewMode; label: string; description: string }[] = [
  * description of the hovered item (or of the active one between items).
  */
 export function SceneViewModeToolbar() {
-  const { viewMode, setViewMode } = useSpeckleStore();
+  const viewMode = useSpeckleStore((s) => s.viewMode);
+  const setViewMode = useSpeckleStore((s) => s.setViewMode);
   const acousticGeometryIds = useAcousticLayerStore((s) => s.selectedAcousticGeometryIds);
   const acousticFaceCount = useAcousticLayerStore((s) => s.selectedAcousticFaceCount);
   const isWholeModel = useAcousticLayerStore((s) => s.isWholeModel);

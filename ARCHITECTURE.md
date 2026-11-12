@@ -124,7 +124,7 @@ compas_soundscape/
 │       │   │   ├── OrientationIndicator.tsx
 │       │   │   └── PlaybackControls.tsx
 │       │   ├── layout/
-│       │   │   ├── ObjectExplorer.tsx      # Object explorer tree (right sidebar)
+│       │   │   ├── ObjectExplorer.tsx      # Object explorer tree (right sidebar; rows windowed via useFixedRowWindow, leaf ids via lib/speckle/world-tree-index)
 │       │   │   ├── RightSidebar.tsx        # Right sidebar container
 │       │   │   ├── Sidebar.tsx             # Left sidebar (main navigation)
 │       │   │   └── sidebar/               # Sidebar sub-components
@@ -206,6 +206,8 @@ compas_soundscape/
 │       │   ├── useSpeckleInteractions.ts    # Speckle user interactions (click, hover)
 │       │   ├── useSpeckleSurfaceMaterials.ts # Speckle surface material management
 │       │   ├── useSpeckleTree.ts            # Speckle world tree navigation
+│       │   ├── useFixedRowWindow.ts         # Fixed-row-height list windowing (Object Explorer rows)
+│       │   ├── useTransportClock.ts         # DAW transport adapter; live playhead → store/transportTimeStore (not React state)
 │       │   ├── useTextGeneration.ts         # Text/prompt generation
 │       │   ├── useTimelinePlayback.ts       # Timeline playback state management
 │       │   └── useWaveformInteraction.ts    # Waveform zoom/pan interaction
@@ -249,6 +251,8 @@ compas_soundscape/
 │       │   │       ├── scheduled-sounds-logger.ts # Debug logging for scheduled sounds
 │       │   │       ├── timeline-utils.ts        # Timeline data extraction
 │       │   │       └── waveform-utils.ts        # Waveform visualization
+│       │   ├── speckle/
+│       │   │   └── world-tree-index.ts  # Cached geometry-leaf ids per tree node (key: tree root + worldTreeVersion)
 │       │   └── three/               # Three.js / Speckle utilities
 │       │       ├── BoundingBoxManager.ts        # Bounding box management
 │       │       ├── draggable-mesh-manager.ts    # Shared mesh update utilities

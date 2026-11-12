@@ -94,7 +94,6 @@ export function SceneTimeline({
   return (
     <DAWDock
       sounds={sounds}
-      currentTime={playbackState.currentTime}
       isPlaying={playbackState.isPlaying}
       isAnyPlaying={isAnyPlaying}
       onSeek={onSeek}

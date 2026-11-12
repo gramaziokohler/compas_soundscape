@@ -67,7 +67,10 @@ export function useSpeckleViewerInit({
   isAcousticModeRef,
   showHoveringHighlightRef,
 }: ViewerInitProps): ViewerInitResult {
-  const { setViewer: setStoreViewer, setViewMode, incrementWorldTreeVersion } = useSpeckleStore();
+  // Actions only — read via getState() (stable references) so this hook never
+  // subscribes SpeckleScene to the stores. A whole-store read here re-rendered the
+  // scene on every engine-store write, i.e. every camera-orbit frame.
+  const { setViewer: setStoreViewer, setViewMode, incrementWorldTreeVersion } = useSpeckleStore.getState();
   const {
     setViewer,
     setCoordinator,
@@ -79,7 +82,7 @@ export function useSpeckleViewerInit({
     setPlaybackScheduler,
     setLoadedModelVersionId,
     setLoadedModelVersionCreatedAt,
-  } = useSpeckleEngineStore();
+  } = useSpeckleEngineStore.getState();
 
   const [isViewerReady, setIsViewerReady] = useState(false);
   const [isLoading, setIsLoading] = useState(false);

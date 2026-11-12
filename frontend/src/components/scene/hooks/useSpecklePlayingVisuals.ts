@@ -5,6 +5,7 @@ import { getPreviewLevel } from '@/lib/audio/previewRegistry';
 import { isSoundSilenced } from '@/lib/audio/utils/mute-solo';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
 import type { SoundEvent } from '@/types';
+import { DARK_MODE } from '@/utils/constants';
 
 /** Level sampling cadence (ms) — ~30 Hz is smooth without per-frame audio reads. */
 const SAMPLE_INTERVAL_MS = 33;
@@ -44,6 +45,7 @@ export function useSpecklePlayingVisuals({
   const rafRef = useRef<number | null>(null);
   const lastSampleRef = useRef(0);
   const hadPlayingRef = useRef(false);
+  const lastLevelsRef = useRef<Map<number, number>>(new Map());
 
   // Track-level mute/solo. A muted (or non-soloed while solo is active) track
   // must not drive the sphere scale pulse nor its dark-mode point light, even
@@ -171,7 +173,22 @@ export function useSpecklePlayingVisuals({
       soundSphereManager.setShadowCasters(shadowCasters);
 
       const anyPlaying = playingPrompts.size > 0;
-      if (anyPlaying || hadPlayingRef.current) viewer.requestRender();
+      // Redraw only when the pulse / lights actually change: the sphere pulse is
+      // driven purely by these levels, so an unchanged level set looks identical.
+      const prevLevels = lastLevelsRef.current;
+      let levelsChanged = prevLevels.size !== promptLevels.size;
+      if (!levelsChanged) {
+        for (const [idx, level] of promptLevels) {
+          const prev = prevLevels.get(idx);
+          if (prev === undefined || Math.abs(prev - level) > DARK_MODE.PLAYING_VISUALS_RENDER_EPSILON) {
+            levelsChanged = true;
+            break;
+          }
+        }
+      }
+      if (levelsChanged) lastLevelsRef.current = promptLevels;
+      // Always render the tick playback stops on (resets pulse + lights).
+      if ((anyPlaying && levelsChanged) || (!anyPlaying && hadPlayingRef.current)) viewer.requestRender();
       hadPlayingRef.current = anyPlaying;
     };
 
@@ -182,6 +199,7 @@ export function useSpecklePlayingVisuals({
       rafRef.current = null;
       clearAll();
       hadPlayingRef.current = false;
+      lastLevelsRef.current = new Map(); // next run's first tick always renders
       useSpeckleEngineStore.getState().viewer?.requestRender();
     };
   }, [isViewerReady, audioOrchestrator, showPlayingHighlight, isDarkMode, soundscapeData, previewingSoundId, mutedSounds, soloedSounds]);

@@ -18,9 +18,24 @@ useAcousticLayerIsolation   ← auto-detects the acoustic layer, publishes its g
 speckleStore.applyVisibility ← THE single place that applies hide/isolate to the viewer
 ```
 
+## Performance: Cached Leaf Ids + Row Windowing
+
+- **Never call `getGeometryLeafIdsFromNode` per row in a render path.** It walks the node's
+  subtree and each raw object's property graph (the root row = the whole model). Use
+  `getCachedLeafIds` / `getCachedLeafIdSet` (`lib/speckle/world-tree-index.ts`), cached per
+  tree root + `worldTreeVersion`: namespace `'row'` for `flattenModelTree` rows (filtered
+  children, `geometryRoot`), `'node'` for unfiltered world-tree nodes. Results are shared —
+  read-only. The version bump after `loadObject` invalidates anything cached mid-load.
+- **Rows are windowed** (`hooks/useFixedRowWindow.ts`): only rows in the viewport
+  (± `UI_RIGHT_SIDEBAR.TREE_WINDOW_OVERSCAN`) render, with spacers keeping the scroll height,
+  so a hidden panel (`display: none`) renders none. Rows must keep the fixed
+  `TREE_ITEM_HEIGHT`. Scrolling to a row indexes the **filtered** (rendered) list.
+- The panel stays mounted while hidden (its effects drive selection mirroring etc.).
+
 ## Row Geometry Units
 
-A row's geometry ids come from `getGeometryLeafIdsFromNode(item.data)` (`useSpeckleTree.ts`).
+A row's geometry ids come from `getGeometryLeafIdsFromNode(item.data)` (`useSpeckleTree.ts`),
+read through the cache above.
 A **display mesh is never its own unit**. The backend maps display-mesh ids onto the host's
 whole face range (host = object with `displayValue`, e.g. `Objects.Data.DataObject`), and Speckle
 colors a host together with all its descendant render views. `flattenModelTree` therefore sets

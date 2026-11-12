@@ -11,7 +11,7 @@ import { SceneVolumeButton } from '@/components/scene/SceneVolumeButton';
 import { SceneRenderStyleButton } from '@/components/scene/SceneRenderStyleButton';
 import { BugReportButton } from '@/components/scene/BugReportButton';
 import { ModelPill } from '@/components/scene/model-version/ModelPill';
-import { useSceneWorkflowStore, useUIStore, useWorkspaceStore, selectHasSaveTarget, selectIsReadOnlyWorkspace, selectHasNewerSave } from '@/store';
+import { useSceneWorkflowStore, useUIStore, useWorkspaceStore, useTransportTimeStore, selectTransportWholeSeconds, selectHasSaveTarget, selectIsReadOnlyWorkspace, selectHasNewerSave } from '@/store';
 import { useHomeStageHasWork } from '@/hooks/useHomeStageHasWork';
 import { APP_BRAND, MODEL_VERSION_WATCH, SCENE_BOTTOM_BAR, WORKSPACE_MESSAGES } from '@/utils/constants';
 import { useCanEdit } from '@/hooks/useCanEdit';
@@ -25,6 +25,19 @@ function formatTime(ms: number): string {
 }
 
 const ICON = SCENE_BOTTOM_BAR.ICON_SIZE;
+
+/**
+ * `m:ss / m:ss` readout. Subscribes to the playhead store in whole seconds, so
+ * it re-renders once per second during playback instead of every frame.
+ */
+function TransportTimeLabel({ durationMs }: { durationMs: number }) {
+  const wholeSeconds = useTransportTimeStore(selectTransportWholeSeconds);
+  return (
+    <span className="bar-time" aria-live="polite">
+      {formatTime(wholeSeconds * 1000)} / {formatTime(durationMs)}
+    </span>
+  );
+}
 
 export interface SceneBottomBarProps {
   isViewerReady: boolean;
@@ -42,7 +55,6 @@ export interface SceneBottomBarProps {
   // Playback (center)
   hasTimeline: boolean;
   isPlaying: boolean;
-  currentTimeMs: number;
   durationMs: number;
   showTimeline: boolean;
   onPlay: () => void;
@@ -98,7 +110,7 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
   const {
     isViewerReady, isSandbox, isFirstPersonMode,
     enableAutoSave, isSavingSoundscape, onSaveSoundscape, onLoadLatestSoundscape, isLoadingLatestSoundscape = false,
-    hasTimeline, isPlaying, currentTimeMs, durationMs, showTimeline,
+    hasTimeline, isPlaying, durationMs, showTimeline,
     onPlay, onPause, onStop, onToggleTimeline,
     audioOrchestrator, onResetZoom, onRefreshScene, showUpdateBadge, isPreparingUpdate = false,
     showObjectExplorer, onToggleExplorer, showLoadModelPanel, onToggleLoadModel, onUploadNewVersion, onSendScenes,
@@ -249,9 +261,7 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
                 </svg>
               }
             />
-            <span className="bar-time" aria-live="polite">
-              {formatTime(currentTimeMs)} / {formatTime(durationMs)}
-            </span>
+            <TransportTimeLabel durationMs={durationMs} />
             <BarButton
               onClick={onToggleTimeline}
               active={showTimeline}

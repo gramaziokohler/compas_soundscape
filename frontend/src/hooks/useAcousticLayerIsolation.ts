@@ -22,6 +22,8 @@ import { useEffect, useRef } from 'react';
 import type React from 'react';
 import { useSpeckleStore, useAcousticLayerStore, useUIStore, discardAcousticSelectionSnapshot, runAsLoad } from '@/store';
 import { getRootNodesForModel, getGeometryLeafIdsFromNode, getExplorerNodeId, countTopLevelLayers, findSingleTopLevelLayer } from '@/hooks/useSpeckleTree';
+import { getCachedLeafIds } from '@/lib/speckle/world-tree-index';
+import { FACE_COUNT_FALLBACK_TIMEOUT_MS } from '@/utils/constants';
 import { setAcousticLayerAllIds, setAllModelGeometryIds } from '@/store/speckleStore';
 import { isShareViewActive } from '@/store/shareViewStore';
 import { computeGeometryFaceCounts } from '@/utils/face-count';
@@ -73,15 +75,18 @@ export function useAcousticLayerIsolation(
   const hasDetectedRef = useRef(false);
 
   // ── Compute per-geometry mesh-face counts from the viewer BVH (raw Speckle
-  // `faces` arrays are emptied during the viewer's tree build). Retry until the
-  // renderer has built the batch BVHs for the loaded geometry. ──
+  // `faces` arrays are emptied during the viewer's tree build). `worldTree` is
+  // published only after `viewer.loadObject` resolved — i.e. after every batch
+  // and its BVH was built — so one pass normally suffices. A single delayed
+  // retry covers a viewer that is not ready yet; a model with no mesh faces
+  // (lines/points only) then settles on zeros. (This used to re-walk the whole
+  // tree every 500 ms, up to 30 times.) ──
   useEffect(() => {
     if (!worldTree) return;
 
     let cancelled = false;
-    let attempts = 0;
 
-    const compute = (): boolean => {
+    const compute = (final: boolean): boolean => {
       if (cancelled) return true;
       const viewer = viewerRef.current;
       if (!viewer) return false;
@@ -89,26 +94,24 @@ export function useAcousticLayerIsolation(
       const rootNodes = getRootNodesForModel(worldTree, modelFileName);
       if (!rootNodes || rootNodes.length === 0) return false;
 
+      const version = useSpeckleStore.getState().worldTreeVersion;
       const ids = new Set<string>();
       for (const root of rootNodes) {
-        for (const id of getGeometryLeafIdsFromNode(root)) ids.add(id);
+        for (const id of getCachedLeafIds(worldTree, version, root, 'node')) ids.add(id);
       }
       if (ids.size === 0) return false;
 
       const counts = computeGeometryFaceCounts(viewer, Array.from(ids));
       const total = Array.from(counts.values()).reduce((sum, n) => sum + n, 0);
-      if (total === 0 && attempts < 30) return false; // BVHs not built yet — retry
+      if (total === 0 && !final) return false;
       useAcousticLayerStore.getState().setModelFaceCounts(Object.fromEntries(counts));
       return true;
     };
 
-    if (compute()) return;
+    if (compute(false)) return;
 
-    const timer = setInterval(() => {
-      attempts += 1;
-      if (compute() || attempts > 30) clearInterval(timer);
-    }, 500);
-    return () => { cancelled = true; clearInterval(timer); };
+    const timer = setTimeout(() => compute(true), FACE_COUNT_FALLBACK_TIMEOUT_MS);
+    return () => { cancelled = true; clearTimeout(timer); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [worldTree, viewerRef]);
 
@@ -120,11 +123,12 @@ export function useAcousticLayerIsolation(
     const allModelIds = new Set<string>();
 
     const modelFileName = useSpeckleStore.getState().modelFileName;
+    const version = useSpeckleStore.getState().worldTreeVersion;
     const rootNodes = getRootNodesForModel(worldTree, modelFileName);
     if (rootNodes && rootNodes.length > 0) {
       // Collect the full model's geometry leaf ids (for hide-based isolation).
       for (const root of rootNodes) {
-        for (const id of getGeometryLeafIdsFromNode(root)) allModelIds.add(id);
+        for (const id of getCachedLeafIds(worldTree, version, root, 'node')) allModelIds.add(id);
       }
 
       if (!isWholeModel && acousticLayerIds.length > 0) {
@@ -136,7 +140,7 @@ export function useAcousticLayerIsolation(
           // fall back to name (legacy persisted selections / auto-detect).
           const node = findNodeById(rootNodes, id) ?? (name ? findNodeByName(rootNodes, name) : null);
           if (node) {
-            for (const gid of getGeometryLeafIdsFromNode(node)) seen.add(gid);
+            for (const gid of getCachedLeafIds(worldTree, version, node, 'node')) seen.add(gid);
           } else if (allModelIds.has(id)) {
             // The selected id is itself a geometry leaf not present as a tree row.
             seen.add(id);
@@ -194,8 +198,9 @@ export function useAcousticLayerIsolation(
         // Keep the persisted selection if its geometry ids still exist in this
         // model; only clear when the model genuinely no longer contains them.
         const modelIds = new Set<string>();
+        const version = useSpeckleStore.getState().worldTreeVersion;
         for (const root of rootNodes) {
-          for (const id of getGeometryLeafIdsFromNode(root)) modelIds.add(id);
+          for (const id of getCachedLeafIds(worldTree, version, root, 'node')) modelIds.add(id);
         }
         const stillValid = useAcousticLayerStore
           .getState()

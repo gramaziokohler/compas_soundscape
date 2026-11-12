@@ -33,7 +33,7 @@ interface FoleySoundItemProps {
 }
 
 function FoleySoundItem({ sound, checked, onToggle }: FoleySoundItemProps) {
-  const { highlightObjectForHover, clearHoverHighlight } = useSpeckleStore();
+  const { highlightObjectForHover, clearHoverHighlight } = useSpeckleStore.getState();
   const involvedIds = sound.objectsInvolved ?? [];
 
   return (

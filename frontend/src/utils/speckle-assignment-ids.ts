@@ -51,10 +51,33 @@ function walkCollectIdMaps(nodes: any[], maps: AssignmentIdMaps): void {
   }
 }
 
-/** Build the geometry-id ↔ applicationId maps for a viewer world tree. */
-export function buildAssignmentIdMaps(worldTree: any): AssignmentIdMaps {
+// Shared per loaded tree: every simulation card's materials section (and the
+// auto-hide rule) needs the same whole-model maps, so walk the tree once.
+// Keyed by the tree's root node + worldTreeVersion (the viewer fills the tree
+// in place while loading and bumps the version once the load completes).
+const mapsCache = new WeakMap<object, { version: number; maps: AssignmentIdMaps }>();
+
+function getTreeRoot(worldTree: any): object | null {
+  const root = worldTree?.tree?._root ?? worldTree?._root ?? worldTree?.root ?? null;
+  return root && typeof root === 'object' ? root : null;
+}
+
+/**
+ * Build the geometry-id ↔ applicationId maps for a viewer world tree.
+ *
+ * With `version` (the speckleStore `worldTreeVersion`), the result is cached
+ * and shared by every caller for that tree + version. The returned maps are
+ * shared: treat them as read-only.
+ */
+export function buildAssignmentIdMaps(worldTree: any, version?: number): AssignmentIdMaps {
+  const root = version === undefined ? null : getTreeRoot(worldTree);
+  if (root) {
+    const cached = mapsCache.get(root);
+    if (cached && cached.version === version) return cached.maps;
+  }
   const maps: AssignmentIdMaps = { geometryIdToAppId: new Map(), appIdToGeometryIds: new Map() };
   if (worldTree) walkCollectIdMaps(getRootChildren(worldTree), maps);
+  if (root && version !== undefined) mapsCache.set(root, { version, maps });
   return maps;
 }
 

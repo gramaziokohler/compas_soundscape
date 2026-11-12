@@ -2,7 +2,9 @@
 
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { VirtualTreeItem } from '@/components/scene/VirtualTreeItem';
-import { useSpeckleTree, getRootNodesForModel, getGeometryLeafIdsFromNode, getExplorerNodeId, getHeaderAndSubheader, countTopLevelLayers } from '@/hooks/useSpeckleTree';
+import { useSpeckleTree, getRootNodesForModel, getExplorerNodeId, getHeaderAndSubheader, countTopLevelLayers } from '@/hooks/useSpeckleTree';
+import { getCachedLeafIds, getCachedLeafIdSet } from '@/lib/speckle/world-tree-index';
+import { useFixedRowWindow } from '@/hooks/useFixedRowWindow';
 import { useSpeckleFiltering } from '@/hooks/useSpeckleFiltering';
 import { useSpeckleInteractions } from '@/hooks/useSpeckleInteractions';
 import { useObjectSelectionPhase } from '@/hooks/useObjectSelectionPhase';
@@ -33,7 +35,9 @@ interface ObjectExplorerProps {
 }
 
 export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerProps = {}) {
-  const { modelFileName, worldTreeVersion, getViewerRef, setSelectedEntity, setSelectedObjectIds: storeSetSelectedObjectIds } = useSpeckleStore();
+  const modelFileName = useSpeckleStore((s) => s.modelFileName);
+  const worldTreeVersion = useSpeckleStore((s) => s.worldTreeVersion);
+  const { getViewerRef, setSelectedEntity, setSelectedObjectIds: storeSetSelectedObjectIds } = useSpeckleStore.getState();
   const storeSelectedObjectIds = useSpeckleStore((s) => s.selectedObjectIds);
   const viewMode = useSpeckleStore((s) => s.viewMode);
   const selectedAcousticLayerNames = useAcousticLayerStore((s) => s.selectedAcousticLayerNames);
@@ -119,16 +123,32 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
 
   const hasIsolatedObjectsInGeneral = isolatedObjects.size > 0;
 
+  // Geometry leaf ids of a tree row, cached per loaded tree version (a row's
+  // subtree is walked once, not on every render — see world-tree-index.ts).
+  const rowLeafIds = useCallback(
+    (data: TreeItem['data']) => getCachedLeafIds(worldTree, worldTreeVersion, data, 'row'),
+    [worldTree, worldTreeVersion],
+  );
+  // Same cache key for ref-based callbacks (resolveSelectionRowIds has no deps).
+  const rowLeafCacheKeyRef = useRef({ worldTree, version: worldTreeVersion });
+  rowLeafCacheKeyRef.current = { worldTree, version: worldTreeVersion };
+
   // All model geometry leaf ids (denominator for "N of M surfaces" + whole-model check)
   // and per-object mesh-face counts (from the viewer BVH, published by
   // useAcousticLayerIsolation since raw Speckle `faces` are emptied on load).
   const allModelGeometryIds = useMemo(() => {
     const s = new Set<string>();
     for (const node of rootNodes) {
-      for (const id of getGeometryLeafIdsFromNode(node)) s.add(id);
+      for (const id of getCachedLeafIds(worldTree, worldTreeVersion, node, 'node')) s.add(id);
     }
     return s;
-  }, [rootNodes]);
+  }, [rootNodes, worldTree, worldTreeVersion]);
+
+  // O(1) membership for the acoustic-mode "hidden in explorer" check per row.
+  const acousticExplorerHiddenSet = useMemo(
+    () => new Set(acousticExplorerHiddenIds),
+    [acousticExplorerHiddenIds],
+  );
 
   // Number of top-level selectable layers — multi-layer models start collapsed
   // after an acoustic region is assigned (see effect below).
@@ -237,11 +257,11 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
       // ── ViewMode-dependent acoustic filtering ──
       if (phase || isWholeModel || acousticSet.size === 0) return true;
 
-      const leaves = getGeometryLeafIdsFromNode(item.data);
+      const leaves = rowLeafIds(item.data);
       const intersects = leaves.some((id) => acousticSet.has(id));
       return isAcousticMode ? intersects : !intersects;
     });
-  }, [virtualItems, isAcousticMode, selectedAcousticGeometryIds, isWholeModel, phase]);
+  }, [virtualItems, isAcousticMode, selectedAcousticGeometryIds, isWholeModel, phase, rowLeafIds]);
 
   // Geometry-leaf union across the currently selected rows. A material /
   // scattering edit on any selected row applies to this whole set, so a
@@ -252,11 +272,11 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
     for (const item of filteredVirtualItems) {
       const nodeId = getExplorerNodeId(item.data);
       if (nodeId && selectedObjectIds.includes(nodeId)) {
-        for (const id of getGeometryLeafIdsFromNode(item.data)) set.add(id);
+        for (const id of rowLeafIds(item.data)) set.add(id);
       }
     }
     return Array.from(set);
-  }, [filteredVirtualItems, selectedObjectIds]);
+  }, [filteredVirtualItems, selectedObjectIds, rowLeafIds]);
 
   // Expose reset-all function to parent panel
   useEffect(() => {
@@ -367,15 +387,19 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
     }
   }, [viewerRef, modelFileName]);
   
-  // Keep virtualItemsRef in sync so scroll helpers always read the latest list
+  // Keep virtualItemsRef in sync so selection helpers always read the latest list
   useEffect(() => { virtualItemsRef.current = virtualItems; }, [virtualItems]);
+  // The RENDERED (filtered) rows — row index × height is the scroll offset, so
+  // scrolling must index this list, not the unfiltered one.
+  const filteredItemsRef = useRef<typeof filteredVirtualItems>([]);
+  filteredItemsRef.current = filteredVirtualItems;
 
   // Core scroll helper — reads fresh data via refs, returns true on success
   const doScrollToItem = useCallback((objectId: string): boolean => {
     const container = treeContainerRef.current;
     if (!container || container.clientHeight === 0) return false;
 
-    const itemIndex = virtualItemsRef.current.findIndex(
+    const itemIndex = filteredItemsRef.current.findIndex(
       (item) => getExplorerNodeId(item.data) === objectId
     );
     if (itemIndex === -1) return false; // not in view yet (expansion pending)
@@ -404,12 +428,12 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
     });
   }, [doScrollToItem]);
 
-  // Retry when virtualItems updates (covers expansion-before-scroll race)
+  // Retry when the rows update (covers expansion-before-scroll race)
   useEffect(() => {
     if (!pendingScrollIdRef.current) return;
     const success = doScrollToItem(pendingScrollIdRef.current);
     if (success) pendingScrollIdRef.current = null;
-  }, [virtualItems, doScrollToItem]);
+  }, [filteredVirtualItems, doScrollToItem]);
 
   // Retry when the tree container gains height (sidebar expands from collapsed state)
   useEffect(() => {
@@ -431,6 +455,7 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
     const items = virtualItemsRef.current;
     const resolved = new Set<string>();
 
+    const { worldTree: tree, version } = rowLeafCacheKeyRef.current;
     for (const id of ids) {
       let bestNodeId: string | null = null;
       let bestIndent = -1;
@@ -440,7 +465,7 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
         const nodeId = getExplorerNodeId(item.data);
         const indent = item.indent ?? 0;
         const exact = nodeId === id;
-        const contains = !exact && getGeometryLeafIdsFromNode(item.data).includes(id);
+        const contains = !exact && getCachedLeafIdSet(tree, version, item.data, 'row').has(id);
         if (!exact && !contains) continue;
         if (bestNodeId === null || indent > bestIndent || (indent === bestIndent && order > bestOrder)) {
           bestNodeId = nodeId ?? null;
@@ -593,7 +618,7 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
 
   // ── Acoustic-region selection handlers ───────────────────────────────────
   const toggleSelectionForItem = useCallback((item: TreeItem) => {
-    const leaves = getGeometryLeafIdsFromNode(item.data);
+    const leaves = rowLeafIds(item.data);
     if (leaves.length === 0) return;
     const draft = draftLeafIdsRef.current;
     const allIn = leaves.every((id) => draft.has(id));
@@ -603,7 +628,7 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
       leaves.forEach((id) => draft.add(id));
     }
     syncDraftToViewer();
-  }, [syncDraftToViewer]);
+  }, [syncDraftToViewer, rowLeafIds]);
 
   const handleSelectAll = useCallback(() => {
     draftLeafIdsRef.current = new Set(allModelGeometryIds);
@@ -653,7 +678,7 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
         if (indent > ancestorIndent) continue;
         ancestorIndent = null;
       }
-      const leaves = getGeometryLeafIdsFromNode(item.data);
+      const leaves = rowLeafIds(item.data);
       if (leaves.length === 0) continue;
       if (!leaves.every((id) => draft.has(id))) continue;
       const nodeId = getExplorerNodeId(item.data) || item.id;
@@ -682,7 +707,7 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
     draftLeafIdsRef.current = new Set();
     setDraftVersion((v) => v + 1);
     clearSelection();
-  }, [allModelGeometryIds, modelFileName, setAcousticSelection, selectedFaceCount, clearSelection]);
+  }, [allModelGeometryIds, modelFileName, setAcousticSelection, selectedFaceCount, clearSelection, rowLeafIds]);
 
   // Keyboard: Enter confirms, Escape clears the draft.
   useObjectSelectionPhase({
@@ -749,8 +774,8 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
 
   const handleToggleVisibility = useCallback((objectIds: string[]) => {
     if (isAcousticMode && hasDefinedLayer) {
-      const hiddenSet = useSpeckleStore.getState().acousticExplorerHiddenIds;
-      const allHidden = objectIds.every((id) => hiddenSet.includes(id));
+      const hiddenSet = new Set(useSpeckleStore.getState().acousticExplorerHiddenIds);
+      const allHidden = objectIds.every((id) => hiddenSet.has(id));
 
       objectIds.forEach((id) => {
         if (allHidden) {
@@ -788,6 +813,18 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
 
   const selectedCount = draftLeafIdsRef.current.size;
   const totalCount = allModelGeometryIds.size;
+
+  // Render only the rows inside the tree viewport (rows have a fixed height).
+  // A hidden panel (display: none) renders none. A fully expanded big model
+  // has thousands of rows, so rendering them all made every explorer update
+  // (selection, hide, playback before) cost O(rows).
+  const rowWindow = useFixedRowWindow(
+    treeContainerRef,
+    filteredVirtualItems.length,
+    UI_RIGHT_SIDEBAR.TREE_ITEM_HEIGHT,
+    UI_RIGHT_SIDEBAR.TREE_WINDOW_OVERSCAN,
+    UI_RIGHT_SIDEBAR.TREE_WINDOW_INITIAL_ROWS,
+  );
 
   // Don't render anything if no viewer
   if (!viewerRef?.current) {
@@ -885,7 +922,9 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
               overflowY: 'auto'
             }}
           >
-            {filteredVirtualItems.map((item, index) => {
+            {rowWindow.padTop > 0 && <div style={{ height: `${rowWindow.padTop}px` }} aria-hidden="true" />}
+            {filteredVirtualItems.slice(rowWindow.start, rowWindow.end).map((item, offset) => {
+              const index = rowWindow.start + offset;
               try {
                 if (!item || !item.data) {
                   return (
@@ -895,10 +934,10 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
                   );
                 }
 
-                const objectIds = getGeometryLeafIdsFromNode(item.data);
+                const objectIds = rowLeafIds(item.data) as string[];
                 const isHidden = areObjectsHidden(objectIds) ||
                   (isAcousticMode && hasDefinedLayer && objectIds.length > 0 &&
-                   objectIds.every((id) => acousticExplorerHiddenIds.includes(id)));
+                   objectIds.every((id) => acousticExplorerHiddenSet.has(id)));
                 const isIsolated = areObjectsIsolated(objectIds);
                 const itemName = item.data.raw?.name || '';
 
@@ -912,6 +951,7 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
                   <VirtualTreeItem
                     key={`${item.id}-${index}`}
                     item={item}
+                    geometryIds={objectIds}
                     style={{ height: `${UI_RIGHT_SIDEBAR.TREE_ITEM_HEIGHT}px` }}
                     isHidden={isHidden}
                     isIsolated={isIsolated}
@@ -949,6 +989,7 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
                 );
               }
             })}
+            {rowWindow.padBottom > 0 && <div style={{ height: `${rowWindow.padBottom}px` }} aria-hidden="true" />}
           </div>
 
           {/* Filter controls */}

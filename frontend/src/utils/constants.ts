@@ -129,6 +129,10 @@ export const DARK_MODE = {
   PLAYING_LIGHT_MAX_FACTOR: 1.8,
   /** Sound-sphere scale pulse amplitude while playing (0 = no pulse). */
   PLAYING_SPHERE_PULSE: 0.22,
+  /** Skip the viewer redraw for a playing-visuals tick when no playing level moved
+   *  more than this (0–1). Every redraw restarts the viewer's progressive AO, so
+   *  redundant redraws keep the full pipeline running during playback. */
+  PLAYING_VISUALS_RENDER_EPSILON: 0.01,
 
   // ---------------------------------------------------------------------------
   // Large linked objects (surface point sources)
@@ -552,6 +556,8 @@ export const UI_RIGHT_SIDEBAR = {
   HEADER_HEIGHT: 48,         // Header height in pixels
   PADDING: UI_SPACING.MD,    // Internal padding
   TREE_ITEM_HEIGHT: 40,      // Height of each tree item in pixels
+  TREE_WINDOW_OVERSCAN: 8,   // Rows rendered above/below the visible tree viewport
+  TREE_WINDOW_INITIAL_ROWS: 30, // Rows rendered before the tree viewport is measured
   TREE_MAX_HEIGHT: 700,      // Maximum height of scrolling tree view
   // Background: 'white' — inlined in RightSidebar.tsx
   // Border color: 'var(--color-secondary-light)' — inlined in RightSidebar.tsx
@@ -1020,6 +1026,11 @@ export const CATALOG_CDN_BASE = 'https://actions.google.com/sounds/v1';
 export const CATALOG_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 // ENTITY_HIGHLIGHT_DELAY_MS moved to UI_TIMING section
 export const LLM_SUGGESTED_INTERVAL_SECONDS = 0;
+
+/** Single delayed retry for the post-load mesh-face count (useAcousticLayerIsolation)
+ *  when the first pass finds no faces; after it, the counts settle (zeros for
+ *  line/point-only models). */
+export const FACE_COUNT_FALLBACK_TIMEOUT_MS = 1500;
 
 // Speckle Viewer Retry Configuration
 export const SPECKLE_VIEWER_RETRY = {

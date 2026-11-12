@@ -104,6 +104,22 @@ import { useMyDomainStore } from '@/store'
 import { useMyDomainStore } from '@/store/myDomainStore'
 ```
 
+## Subscribe With Selectors — Never Read a Whole Store in a Component
+
+`const { a, b } = useMyStore()` subscribes the component to EVERY write to that store.
+For `SpeckleScene` (which hosts the whole scene tree) this re-rendered the timeline,
+bottom bar and Object Explorer on every camera-orbit frame (`speckleEngineStore`'s
+`currentCameraOrientation` is written per frame) — the main source of viewer lag on
+big models. Rules:
+
+- **Values** → one selector each: `const viewMode = useSpeckleStore((s) => s.viewMode)`,
+  or `useStore(useShallow((s) => ({ a: s.a, b: s.b })))` (`zustand/react/shallow`).
+- **Actions** are stable → `const { setX } = useStore.getState()` (no subscription).
+- **Per-frame values** (camera orientation, playhead time) live in a store only the
+  widgets that draw them subscribe to — e.g. `transportTimeStore` (live playhead,
+  written by `useTransportClock`, read by `DAWPlayheadCursor` / the bottom-bar time
+  label in whole seconds). Never put them in React state of a large component.
+
 ## Non-Serializable State (Module-Level Refs)
 
 Web Audio nodes, Speckle `Viewer`, Three.js objects, and ES6 `Map`s cannot be serialized by
@@ -173,3 +189,4 @@ commitStore('myDomain') // one step — nothing if the state ended unchanged
 | `uiStore` | global sound speed, mesh size, mesh settings (`ui`) | everything else (navigation / display) |
 | `speckleStore` | hide / isolate / exclude-from-acoustic intent (`speckle`) | selection, hover, colors, view mode |
 | `pyroomAcousticsStore`, `modalImpactStore` | — (runtime job state only) | all |
+| `transportTimeStore` | — | live playhead position (per frame) |
