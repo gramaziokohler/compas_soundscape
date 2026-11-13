@@ -2565,17 +2565,17 @@ export const GA_ENGINE = {
   TAIL_NAMES: {
     auto: 'Automatic',
     reference: 'Ray-traced (this card\'s rays)',
-    ray_tracing: 'Ray-traced (engine defaults)',
     eyring: 'Statistical (Eyring)',
     sabine: 'Statistical (Sabine)',
   } as Record<string, string>,
   TAIL_HINTS: {
     auto: 'Ray-traced when ray tracing is on, Eyring otherwise.',
-    reference: 'The late reverberation follows the energy decay of a ray-traced run with this card\'s rays.',
-    ray_tracing: 'As above, with the engine\'s own ray count and duration.',
+    reference: 'The late reverberation follows the energy decay of a ray-traced run with this card\'s rays (feedback-delay network).',
     eyring: 'Diffuse-field decay from the room volume and absorption. No rays; best for evenly absorbing rooms.',
     sabine: 'Sabine decay. No rays; only for lightly absorbing rooms.',
   } as Record<string, string>,
+  /** Cards saved with removed tail values still load as Automatic. */
+  TAIL_ALIASES: { ray_tracing: 'auto', legacy: 'auto' } as Record<string, string>,
   AMBISONIC_ORDER_DEFAULT: 2,
   AMBISONIC_ORDER_MAX: 3,
   N_SLOPES_MAX: 3,

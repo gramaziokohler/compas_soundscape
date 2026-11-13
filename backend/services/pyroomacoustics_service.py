@@ -151,7 +151,7 @@ class PyroomacousticsService:
         adjoining rooms).
         """
         from config.constants import PYROOMACOUSTICS_MESH_WELD_TOLERANCE
-        from utils.mesh_topology import dedupe_faces, weld_vertices
+        from compas_acoustics.geometry.topology import dedupe_faces, weld_vertices
 
         welded, inv = weld_vertices(vertices, tolerance or PYROOMACOUSTICS_MESH_WELD_TOLERANCE)
         tri = inv[np.asarray(faces, dtype=np.int64).reshape(-1, 3)]

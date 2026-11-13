@@ -15,7 +15,10 @@ import {
   PYROOMACOUSTICS_SIMULATION_MODE_FOA,
   PYROOMACOUSTICS_SIMULATION_MODE_MONO,
 } from '@/utils/constants';
-import { engineFormFields, pickGeometricEngineSettings } from '@/lib/acoustics/geometric-engine';
+import {
+  engineFormFields,
+  pickGeometricEngineSettings,
+} from '@/lib/acoustics/geometric-engine';
 import type { HybridRunInfo, HybridSettings } from '@/types/acoustics';
 
 export function defaultHybridSettings(): HybridSettings {
@@ -43,9 +46,10 @@ export function restoreHybridSettings(saved: Partial<HybridSettings> | null | un
   const s = saved ?? {};
   const num = (value: unknown, fallback: number, lo: number, hi: number) =>
     typeof value === 'number' && Number.isFinite(value) ? clamp(value, lo, hi) : fallback;
+  const geometric = pickGeometricEngineSettings(s);
   return {
     ...d,
-    ...pickGeometricEngineSettings(s),
+    ...geometric,
     simulation_mode: s.simulation_mode === PYROOMACOUSTICS_SIMULATION_MODE_FOA
       ? PYROOMACOUSTICS_SIMULATION_MODE_FOA : PYROOMACOUSTICS_SIMULATION_MODE_MONO,
     crossover_mode: s.crossover_mode === 'manual' ? 'manual' : 'schroeder',

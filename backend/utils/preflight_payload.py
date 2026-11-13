@@ -13,7 +13,7 @@ from config.constants import (
     PREFLIGHT_PAYLOAD_DECIMALS,
     SIM_MESH_LEAK_RAY_DISPLAY_LENGTH_M,
 )
-from utils.mesh_coplanar import walls_off_hull
+from compas_acoustics.geometry.coplanar import walls_off_hull
 
 # Hull tolerance shared with the patched pyroomacoustics find_non_convex_walls.
 _HULL_REL_TOL = 1e-5
@@ -72,7 +72,7 @@ def build_preflight_payload(preflight_id: str, engine: str, mesh, analysis, ctx,
 
     stats = dict(mesh.stats)
     stats.update({
-        "air_volume_m3": round(mesh.air_volume_m3, 3),
+        "air_volume_m3": round(mesh.air_volume, 3),
         "air_volume_method": mesh.air_volume_method,
         "ism_paths_estimate": analysis.ism_paths_estimate,
         "obstructing_walls": int(off_hull.sum()),

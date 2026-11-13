@@ -22,7 +22,7 @@ from services.simulation_mesh_service import (
     MeshPrepOptions,
     SimulationMeshService,
 )
-from utils.air_visibility import SEED_OUTSIDE
+from compas_acoustics.geometry.visibility import SEED_OUTSIDE
 
 # Box quads wound with outward normals (vertex order of _box).
 _BOX_QUADS = [[0, 3, 2, 1], [4, 5, 6, 7], [0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6], [3, 0, 4, 7]]
@@ -211,4 +211,4 @@ def test_deterministic():
     assert np.array_equal(a.faces, b.faces)
     assert np.array_equal(a.two_sided, b.two_sided)
     assert np.array_equal(a.face_class, b.face_class)
-    assert a.air_volume_m3 == b.air_volume_m3
+    assert a.air_volume == b.air_volume

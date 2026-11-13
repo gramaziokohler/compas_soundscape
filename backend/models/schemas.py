@@ -44,7 +44,6 @@ from config.constants import SIM_MESH_COPLANAR_ANGLE_DEG_MAX
 from config.constants import SIM_MESH_COPLANAR_DISTANCE_MM_DEFAULT
 from config.constants import SIM_MESH_COPLANAR_DISTANCE_MM_MAX
 from config.constants import SIM_MESH_DETECT_TWO_SIDED_DEFAULT
-from config.constants import SIM_MESH_DROP_UNREACHED_FACES_DEFAULT
 from config.constants import SIM_MESH_MERGE_COPLANAR_DEFAULT
 from config.constants import SIM_MESH_VISIBILITY_QUALITY_DEFAULT
 from config.constants import SIM_MESH_WELD_TOLERANCE_MM_DEFAULT
@@ -1028,7 +1027,11 @@ class PyroomacousticsGeometryReceiver(BaseModel):
 
 
 class MeshPrepSettings(BaseModel):
-    """User-tunable simulation mesh preparation (Advanced settings > Acoustics)."""
+    """User-tunable simulation mesh preparation (Advanced settings > Acoustics).
+
+    Unknown keys are ignored (pydantic default ``extra="ignore"``), so payloads
+    and saved settings carrying the removed ``drop_unreached_faces`` still load.
+    """
     weld_tolerance_mm: float = Field(
         default=SIM_MESH_WELD_TOLERANCE_MM_DEFAULT, ge=0.0, le=SIM_MESH_WELD_TOLERANCE_MM_MAX
     )
@@ -1040,7 +1043,6 @@ class MeshPrepSettings(BaseModel):
         default=SIM_MESH_COPLANAR_DISTANCE_MM_DEFAULT, gt=0.0, le=SIM_MESH_COPLANAR_DISTANCE_MM_MAX
     )
     detect_two_sided: bool = SIM_MESH_DETECT_TWO_SIDED_DEFAULT
-    drop_unreached_faces: bool = SIM_MESH_DROP_UNREACHED_FACES_DEFAULT
     visibility_quality: Literal["fast", "standard", "thorough"] = SIM_MESH_VISIBILITY_QUALITY_DEFAULT
 
     @classmethod

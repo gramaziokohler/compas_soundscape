@@ -7,8 +7,13 @@ the preview payload is JSON-serializable and consistent.
 """
 
 import json
+import sys
+from pathlib import Path
 
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # backend/
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # shared mesh fixtures
 
 from services.simulation_preflight_service import (
     ENGINE_PYROOMACOUSTICS,
@@ -16,7 +21,7 @@ from services.simulation_preflight_service import (
     SeedMeta,
     SimulationPreflightService,
 )
-from tests.test_simulation_mesh import _Scene, _box, _room
+from test_simulation_mesh import _Scene, _box, _room
 from utils.preflight_payload import build_preflight_payload
 
 
@@ -81,6 +86,60 @@ def test_closed_rooms_have_no_acoustic_path():
     scene.add("b", vb, fb)
     _, _, a = _analyze(scene, [[1.5, 2, 1.5]], [[4.5, 2, 1.5]])
     assert "no_acoustic_path" in _codes(a, "error")
+
+
+def test_ca_hybrid_open_model_warns_only_when_sound_escapes():
+    """Ambisonic late-field warning follows acoustic leak, not welded topology alone."""
+    from dataclasses import replace
+
+    from config.constants import PREFLIGHT_LEAK_WARNING_FRACTION
+
+    scene = _Scene()
+    v, f = _box(0, 0, 0, 6, 4, 3)
+    del f[2]
+    scene.add("room", v, f)
+    seeds = [
+        SeedMeta("s0", "source", [2, 2, 1.5]),
+        SeedMeta("r0", "receiver", [4, 2, 1.5]),
+    ]
+    mesh = scene.prepare([s.position for s in seeds])
+    assert mesh.air_volume > 0
+    assert mesh.visibility.leak_fraction >= PREFLIGHT_LEAK_WARNING_FRACTION
+
+    def codes(mesh, mode):
+        ctx = PreflightContext(
+            engine=ENGINE_PYROOMACOUSTICS, seeds=seeds, pairs=[("s0", "r0")],
+            max_order=3, ray_tracing=True,
+            geometric_engine="compas_acoustics", simulation_mode=mode,
+        )
+        return {i.code for i in SimulationPreflightService.analyze(mesh, ctx).issues}
+
+    assert "ca_hybrid_open_model" in codes(mesh, "foa")
+    assert "ca_hybrid_open_model" not in codes(mesh, "mono")
+
+    sealed = replace(mesh, visibility=replace(mesh.visibility, n_escaped=0, n_reemitted=max(mesh.visibility.n_reemitted, 1)))
+    assert sealed.visibility.leak_fraction == 0.0
+    assert "ca_hybrid_open_model" not in codes(sealed, "foa")
+    assert "ca_hybrid_no_volume" not in codes(sealed, "foa")
+
+
+def test_skipped_faces_lists_wholly_unreached_objects():
+    """Objects with no face reached by sound are listed (to exclude them by removing their
+    material); objects in the air are not, and the unreached faces are still simulated walls."""
+    scene = _Scene()
+    _room(scene)
+    pv, pf = _box(2.8, 1.8, 0, 3.2, 2.2, 3)       # pillar inside the room: reached
+    scene.add("pillar", pv, pf)
+    ov, of = _box(10, 0, 0, 11, 1, 1)            # block outside the closed room: never reached
+    scene.add("outside", ov, of)
+    mesh, _, a = _analyze(scene, [[1.5, 2, 1.5]], [[4.5, 2, 1.5]])
+    issue = next(i for i in a.issues if i.code == "skipped_faces")
+    assert issue.severity == "info"
+    assert issue.object_ids == ["outside"]
+    assert "removing their material" in issue.detail
+    outside = set(np.flatnonzero(mesh.face_object == mesh.objects.index("outside")).tolist())
+    assert outside <= set(issue.face_ids)
+    assert outside <= {int(f) for w in mesh.walls for f in w.faces}
 
 
 def test_payload_is_serializable_and_consistent():

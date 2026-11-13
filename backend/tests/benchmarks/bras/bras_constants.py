@@ -38,10 +38,11 @@ PRA_CLOSED_ROOM = True                         # pyroomacoustics: fully absorbin
 PRA_SHELL_KEY = "anechoic_shell"               # material / object key of that shell
 PRA_SHELL_MARGIN_M = 1.0                       # the shell sits this far beyond the padded domain
 # Mesh preparation for the pyroomacoustics runs (MeshPrepSettings). The BRAS RockFon absorbers are
-# tiled panels with ~1 mm slits between them: welding at 2 mm closes the slits, and the panel sides
-# left inside the slab (never reached by the air) are dropped, else the image source model mirrors
-# in them and repeats the absorber reflection (+10 dB on the RS1 specular pairs).
-PRA_MESH_SETTINGS = {"weld_tolerance_mm": 2.0, "drop_unreached_faces": True}
+# tiled panels with ~1 mm slits between them: welding at 2 mm closes the slits. The panel sides left
+# inside the slab (never reached by the air) used to be dropped with the removed
+# `drop_unreached_faces` option; unreached faces are now always simulated, so the image source model
+# may mirror in them and repeat the absorber reflection (was +10 dB on the RS1 specular pairs).
+PRA_MESH_SETTINGS = {"weld_tolerance_mm": 2.0}
 ENV_PRA = "BRAS_PRA"                            # on (default) | off
 
 # ── Analysis ──────────────────────────────────────────────────────────────────

@@ -230,15 +230,10 @@ def test_parallel_rendering_gives_the_serial_responses():
     assert [r.pair_index for r in parallel.responses] == [0, 1, 2, 3]
     for a, b in zip(serial.responses, parallel.responses):
         assert a.rir.shape[1] == b.rir.shape[1] == 4
-        n = min(len(a.rir), len(b.rir))
-        peak = np.max(np.abs(a.rir))
-        # Same image sources and seed. The reference's rays are cut differently over 2 processes
-        # (as in compas_acoustics itself), so the tail under the early part differs by Monte-Carlo
-        # noise: 40 dB below the direct sound at most.
-        early = slice(0, int(0.03 * FS))
-        np.testing.assert_allclose(b.rir[early], a.rir[early], atol=1e-2 * peak)
-        energy_a, energy_b = np.sum(a.rir[:n, 0] ** 2), np.sum(b.rir[:n, 0] ** 2)
-        assert 10 * abs(np.log10(energy_b / energy_a)) < 0.5
+        # Same seed per source and per listener, so the split run matches the single process.
+        # The pool returns float32.
+        assert a.rir.shape == b.rir.shape
+        np.testing.assert_allclose(b.rir, a.rir, rtol=1e-6, atol=1e-6)
         assert b.band_metrics is not None
     fractions = [f for f, _ in stages]
     assert fractions == sorted(fractions) and fractions[-1] <= 1.0

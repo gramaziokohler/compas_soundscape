@@ -34,9 +34,10 @@ def test_gaps_are_interpolated_and_edges_held():
     assert np.isclose(got[3], 0.2 + 0.6 * np.log2(1000 / 250) / np.log2(4000 / 250))  # 1 kHz on a log axis
 
 
-def test_drop_unreached_faces_removes_walls_the_air_never_reaches():
-    """A face sealed inside a solid (a seam between two touching blocks) is no simulated wall
-    with ``drop_unreached_faces``; by default it still is."""
+def test_unreached_faces_are_always_kept_as_walls():
+    """A face sealed inside a solid (a seam between two touching blocks) is classified as never
+    reached, but stays a simulated wall: "unreached" is a stochastic observation and must never
+    change which geometry is simulated."""
     from models.schemas import MeshPrepSettings
     from services.simulation_mesh_service import FACE_CLASS_SKIPPED, MeshPrepOptions, SimulationMeshService
 
@@ -55,12 +56,13 @@ def test_drop_unreached_faces_removes_walls_the_air_never_reaches():
     ranges = {"room": [0, 11], "block": [12, 23], "seam": [24, 25]}
     mats = {i: {"coeffs": [0.1] * 7, "center_freqs": [125, 250, 500, 1000, 2000, 4000, 8000]} for i in range(26)}
     seeds = [[1.0, 1.0, 2.0], [9.0, 7.0, 2.0]]
-    n = {}
-    for drop in (False, True):
-        mesh = SimulationMeshService.prepare(verts, faces, ranges, mats, None, seeds,
-                                             MeshPrepOptions.from_settings(MeshPrepSettings(drop_unreached_faces=drop)))
-        seam_faces = [f for f in range(len(mesh.faces)) if mesh.objects[mesh.face_object[f]] == "seam"]
-        assert all(mesh.face_class[f] == FACE_CLASS_SKIPPED for f in seam_faces)
-        n[drop] = sum(any(mesh.objects[mesh.face_object[f]] == "seam" for f in w.faces) for w in mesh.walls)
-        assert mesh.stats["unreached_faces_dropped"] == (len(seam_faces) if drop else 0)
-    assert n[False] >= 1 and n[True] == 0
+    # A legacy payload with the removed key still parses (extra keys are ignored).
+    settings = MeshPrepSettings.model_validate({"drop_unreached_faces": True})
+    mesh = SimulationMeshService.prepare(verts, faces, ranges, mats, None, seeds,
+                                         MeshPrepOptions.from_settings(settings))
+    seam_faces = [f for f in range(len(mesh.faces)) if mesh.objects[mesh.face_object[f]] == "seam"]
+    assert seam_faces and all(mesh.face_class[f] == FACE_CLASS_SKIPPED for f in seam_faces)
+    in_walls = {int(f) for w in mesh.walls for f in w.faces}
+    assert set(seam_faces) <= in_walls
+    assert in_walls == set(range(len(mesh.faces)))
+    assert "unreached_faces_dropped" not in mesh.stats

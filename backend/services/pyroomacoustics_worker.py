@@ -390,13 +390,13 @@ def _run_pyroomacoustics_compute_loop(
             {"severity": i.severity, "code": i.code, "title": i.title}
             for i in analysis.issues if i.severity != "info"
         ],
-        "stats": {**mesh.stats, "air_volume_m3": mesh.air_volume_m3,
+        "stats": {**mesh.stats, "air_volume_m3": mesh.air_volume,
                   "air_volume_method": mesh.air_volume_method},
     }
     print(
         f"[{simulation_id[:8]}] Simulation mesh: {len(mesh.faces)} faces -> {len(mesh.walls)} walls, "
         f"{mesh.stats['flipped_faces']} flipped, {mesh.stats['two_sided_faces']} two-sided, "
-        f"air volume {mesh.air_volume_m3:.1f} m^3 ({mesh.air_volume_method}); "
+        f"air volume {mesh.air_volume:.1f} m^3 ({mesh.air_volume_method}); "
         f"{geometry_diagnostics['n_errors']} error(s), {geometry_diagnostics['n_warnings']} warning(s)"
     )
     for issue in analysis.issues:

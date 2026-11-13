@@ -27,7 +27,7 @@ from config.constants import (
     MODEL_VERSION_SOLID_MAX_THICKNESS_M,
     MODEL_VERSION_STATS_CACHE_SIZE,
 )
-from utils.mesh_raycast import TriangleSet, first_hits, ray_triangle_t, uniform_sphere_directions
+from compas_acoustics.geometry.raycast import TriangleSet, first_hits, ray_triangle_t, uniform_sphere_directions
 from utils.geometry import canonical_object_id
 
 logger = logging.getLogger(__name__)

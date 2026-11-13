@@ -330,7 +330,7 @@ async function recoverJob(record: JobRecord): Promise<void> {
     if (status.cancelled || status.error) {
       console.log(`[useJobRecovery] Job ${jobId} (${jobType}) is cancelled/error — cleaning up`);
       removeInflightJob(jobId);
-      resetJobState(jobType, record);
+      resetJobState(jobType, record, status.cancelled ? null : status.error);
       return;
     }
 
@@ -375,7 +375,7 @@ function startPolling(jobType: JobType, jobId: string, record: JobRecord): void 
         clearInterval(interval);
         removeInflightJob(jobId);
         endSoundJob();
-        resetJobState(jobType, record);
+        resetJobState(jobType, record, status.cancelled ? null : status.error);
         return;
       }
 
@@ -457,7 +457,7 @@ function updateProgress(jobType: JobType, progress: number, statusText: string, 
   }
 }
 
-function resetJobState(jobType: JobType, record: JobRecord): void {
+function resetJobState(jobType: JobType, record: JobRecord, error?: string | null): void {
   switch (jobType) {
     case 'sound':
     case 'tts':
@@ -481,6 +481,7 @@ function resetJobState(jobType: JobType, record: JobRecord): void {
           isRunning: false,
           progress: 0,
           currentSimulationRunId: null,
+          ...(error ? { status: 'Error', error } : {}),
         } as any);
       }
       break;

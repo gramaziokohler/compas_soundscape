@@ -18,7 +18,7 @@ from config.constants import (
     PYROOMACOUSTICS_SAMPLE_RATE,
     PYROOMACOUSTICS_USE_RAND_ISM,
 )
-from services.simulation_mesh_service import SimulationMesh, _material_key
+from services.simulation_mesh_service import SimulationMesh, material_key
 
 # Randomized-ISM displacement (only used when PYROOMACOUSTICS_USE_RAND_ISM).
 _RAND_ISM_MAX_DISP_M = 0.05
@@ -121,7 +121,7 @@ def build_room(
     for w_idx, wall in enumerate(mesh.walls):
         f0 = int(wall.faces[0])
         material = mesh.face_material[f0]
-        key = _material_key(material)
+        key = material_key(material)
         if key not in cache:
             cache[key] = _absorption_bands(material, n_bands)
         absorption, scattering = cache[key]
@@ -161,7 +161,7 @@ def build_room(
     # The ray-traced tail's echo density comes from the room volume. pra's
     # divergence volume is meaningless for open / multi-part meshes, so use
     # the air volume estimated by the mesh preparation (mean free path).
-    if ray_tracing and mesh.air_volume_m3 > 0:
-        volume = float(mesh.air_volume_m3)
+    if ray_tracing and mesh.air_volume > 0:
+        volume = float(mesh.air_volume)
         room.get_volume = lambda: volume
     return room

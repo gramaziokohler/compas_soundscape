@@ -14,8 +14,9 @@ module hands the prepared mesh to compas_acoustics and gives back one response p
   scattering overrides the material's in every band.
 * methods   — mono: ``Mono`` (image sources + ray tracing, optional UDFA diffraction, emitter /
   ray processes, reciprocity); FOA/HOA: ``Ambisonics`` (hybrid: image sources + directional
-  FDN tail shaped by a ``Mono`` reference, optional UDFA/BTMS diffraction), AmbiX ACN/SN3D in
-  the listener frame (forward -Y, left +X, up +Z), like the legacy FOA output.
+  FDN tail). The mono reference and the directional histogram are one ray trace, with the
+  request's ray count, seed and receiver radius. Optional UDFA/BTMS diffraction. AmbiX
+  ACN/SN3D in the listener frame (forward -Y, left +X, up +Z), like the legacy FOA output.
 * level     — responses are returned at the app's 1/r level (``CA_TO_APP_LEVEL_SCALE``).
 
 compas_acoustics is imported lazily: the legacy engine and the rest of the backend never load it.
@@ -26,7 +27,8 @@ from __future__ import annotations
 import math
 import re
 from contextlib import contextmanager
-from dataclasses import dataclass, field, fields
+import dataclasses
+from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
 import numpy as np
@@ -49,7 +51,7 @@ from config.constants import (
     PYROOMACOUSTICS_SAMPLE_RATE,
 )
 from services.pyroomacoustics_directivity import build_pra_directivity
-from services.simulation_mesh_service import SimulationMesh, _material_key
+from services.simulation_mesh_service import SimulationMesh, material_key
 
 # Listener frame of the app's ambisonic IRs (see PyroomacousticsService.add_receiver_to_room).
 LISTENER_FORWARD = (0.0, -1.0, 0.0)
@@ -74,8 +76,7 @@ class EngineSettings:
     seed: int = 42
     scattering_split: bool = CA_HYBRID_SCATTERING_SPLIT
     # Ambisonic late field: "auto" (ray-traced reference when ray tracing is on, else Eyring),
-    # "reference" (the request's ray-traced mono run), "ray_tracing" (compas_acoustics' own
-    # reference run), "eyring" or "sabine" (statistical decay of the room, no rays).
+    # "reference" (the request's ray-traced mono run), "eyring" or "sabine" (statistical decay).
     tail: str = "auto"
     n_slopes: int = 1                   # decay slopes of the late field (2 = coupled volumes)
     # Diffraction edges switched off by the user: [x1, y1, z1, x2, y2, z2] in model coordinates
@@ -176,7 +177,7 @@ def _material_names(mesh: SimulationMesh) -> tuple[list[str], dict]:
     materials: dict = {}
     names: list[str] = []
     for value in mesh.face_material:
-        key = _material_key(value)
+        key = material_key(value)
         if key not in by_key:
             name = f"m{len(by_key)}"
             material = to_ca_material(name, value)
@@ -191,24 +192,17 @@ def _material_names(mesh: SimulationMesh) -> tuple[list[str], dict]:
 # ─── Geometry ─────────────────────────────────────────────────────────────────
 
 def to_prepared(mesh: SimulationMesh, offset: np.ndarray, face_material_names: list[str]):
-    """The app's prepared mesh as compas_acoustics' ``PreparedMesh``, shifted by ``-offset``."""
+    """The prepared mesh shifted by ``-offset`` (pyroomacoustics stores corners as float32), its materials as names."""
     from compas_acoustics.geometry.coplanar import MergedWall
-    from compas_acoustics.geometry.prepare import PreparedMesh
 
     offset = np.asarray(offset, dtype=np.float64)
-    names = {f.name for f in fields(PreparedMesh)}
-    values = {k: getattr(mesh, k) for k in names if hasattr(mesh, k)}
-    values.update(
+    return dataclasses.replace(
+        mesh,
         vertices=np.asarray(mesh.vertices, np.float64) - offset,
         seeds=np.asarray(mesh.seeds, np.float64).reshape(-1, 3) - offset,
         walls=[MergedWall(corners=np.asarray(w.corners, np.float64) - offset, faces=np.asarray(w.faces)) for w in mesh.walls],
         face_material=list(face_material_names),
-        visibility=None,
-        air_volume=float(mesh.air_volume_m3),
-        origin=np.arange(len(mesh.faces), dtype=np.int64),
-        stats=dict(mesh.stats),
     )
-    return PreparedMesh(**values)
 
 
 def room_geometry(mesh: SimulationMesh, offset: np.ndarray):
@@ -253,8 +247,18 @@ def replace_settings(settings: EngineSettings, **changes) -> EngineSettings:
 
 
 def reference_settings(settings: EngineSettings) -> EngineSettings:
-    """Settings of the ray-traced mono run an ambisonic tail follows (the card's rays, no diffraction)."""
-    return EngineSettings(**{**settings.__dict__, "ambisonic_order": 0, "ray_tracing": True, "diffraction": CA_DIFFRACTION_OFF})
+    """Settings of the ray-traced mono run an ambisonic tail follows.
+
+    The card's rays, no diffraction, and no reciprocity swap: the directional histogram is
+    listener-sided, so it shares this trace and cannot exchange sources and listeners.
+    """
+    return EngineSettings(**{
+        **settings.__dict__,
+        "ambisonic_order": 0,
+        "ray_tracing": True,
+        "diffraction": CA_DIFFRACTION_OFF,
+        "reciprocity": False,
+    })
 
 
 def build_method(settings: EngineSettings, reference=None):
@@ -297,39 +301,43 @@ def build_method(settings: EngineSettings, reference=None):
         # The late field follows a ray-traced mono run with the app's ray settings (also its W level reference).
         kwargs["reference"] = reference if reference is not None else _mono(reference_settings(settings), air, False)
         kwargs["n_slopes"] = int(settings.n_slopes)
-    elif tail == "ray_tracing":
-        kwargs["tail"] = "ray_tracing"
-        kwargs["air_absorption"] = settings.air_absorption
-        kwargs["n_slopes"] = int(settings.n_slopes)
     elif tail in ("eyring", "sabine"):
         kwargs["tail"] = tail
         kwargs["air_absorption"] = settings.air_absorption
         if settings.n_slopes != 1:
             notes.append(f"A {tail} tail has one decay slope; the {settings.n_slopes}-slope setting is ignored.")
     else:
-        raise ValueError(f"Unknown tail '{tail}'; one of auto, reference, ray_tracing, eyring, sabine")
-    return Ambisonics(**kwargs), notes
+        raise ValueError(f"Unknown tail '{tail}'; one of auto, reference, eyring, sabine")
+    method = Ambisonics(**kwargs)
+    if settings.duration is None and tail == "reference":
+        # The reference now exists inside the run (one ray trace). Shorten the network to what the
+        # export keeps, which used to require tracing the reference first.
+        method.limit_output = _limit_output
+    return method, notes
+
+
+def _limit_output(references, fs: int):
+    """Render length (s) from the mono references, or None when they are silent."""
+    return render_duration([np.asarray(r.denormalized()) for r in references.values()], fs)
 
 
 @contextmanager
 def edge_warnings(notes: list):
     """Collect compas_acoustics' warnings about the edges it skips into ``notes`` (plain sentences).
 
-    It searches the room's own corners only when the boundary closes, and skips obstacle edges it
-    cannot render; both only warn. Other warnings are passed on.
+    The app's rooms come from a prepared mesh, whose edges compas_acoustics finds from the air
+    around each edge (open models included); it warns when the faces at an edge disagree on which
+    side is air, and leaves those pieces out. Other warnings are passed on.
     """
     import warnings
 
-    from compas_acoustics.hybrid.diffraction import ObstacleEdgeWarning, ShellEdgeWarning
+    from compas_acoustics.hybrid.diffraction import AmbiguousEdgeWarning, ObstacleEdgeWarning, ShellEdgeWarning
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         yield
     for w in caught:
-        if issubclass(w.category, ShellEdgeWarning) and "does not close" in str(w.message):
-            note = ("The model does not close, so the room's own corners do not diffract: only the edges of "
-                    "objects inside the room and of double-sided surfaces do.")
-        elif issubclass(w.category, (ShellEdgeWarning, ObstacleEdgeWarning)):
+        if issubclass(w.category, (AmbiguousEdgeWarning, ShellEdgeWarning, ObstacleEdgeWarning)):
             note = f"Diffraction: {w.message}."
         else:
             warnings.warn_explicit(w.message, w.category, w.filename, w.lineno)
@@ -367,30 +375,26 @@ def edge_excluded(start, end, excluded: np.ndarray, tolerance: float = EDGE_MATC
 
 
 @contextmanager
-def diffraction_edge_filter(excluded_edges, offset):
-    """While in the block, compas_acoustics diffracts at every edge but the excluded ones.
+def diffraction_edge_filter(excluded_edges, offset, geometry):
+    """While in the block, compas_acoustics diffracts at every edge of ``geometry`` but the excluded ones.
 
-    compas_acoustics has no edge selection: its diffraction (UDFA and BTMS) asks
-    ``hybrid.diffraction.diffraction_edges(geometry)`` for the edges of a room, so the filter wraps
-    that function. Diffraction runs in this process (only ray tracing is spread over processes).
+    Uses compas_acoustics' edge selection (``hybrid.diffraction.set_diffraction_edges``), which
+    belongs to one geometry instance: pass the one that is simulated or traced. The selection is
+    cleared on exit. Enter it inside ``edge_warnings``: it runs the edge search, whose warnings
+    are then kept as notes.
     """
     rows = np.asarray(excluded_edges or [], dtype=np.float64).reshape(-1, 6)
     if len(rows) == 0:
         yield
         return
-    from compas_acoustics.hybrid import diffraction as module
+    from compas_acoustics.hybrid.diffraction import clear_diffraction_edges, diffraction_edges, set_diffraction_edges
 
     local = rows - np.concatenate([offset, offset])
-    original = module.diffraction_edges
-
-    def filtered(geometry):
-        return [e for e in original(geometry) if not edge_excluded(e.start, e.end, local)]
-
-    module.diffraction_edges = filtered
+    set_diffraction_edges(geometry, [e for e in diffraction_edges(geometry) if not edge_excluded(e.start, e.end, local)])
     try:
         yield
     finally:
-        module.diffraction_edges = original
+        clear_diffraction_edges(geometry)
 
 
 # ─── Run ──────────────────────────────────────────────────────────────────────
@@ -565,7 +569,8 @@ def _simulate_group(
             for i in indices
         }
     method, notes = build_method(settings, reference=reference)
-    with reporting(report or (lambda stage, done, of: None)), diffraction_edge_filter(settings.excluded_edges, offset), edge_warnings(notes):
+    with reporting(report or (lambda stage, done, of: None)), edge_warnings(notes), \
+            diffraction_edge_filter(settings.excluded_edges, offset, geometry):
         results = scene.simulate(method, geometry=geometry)
 
     responses = []
@@ -684,13 +689,12 @@ def simulate_pairs(
     band metrics one pair after another in one process — several seconds per pair, which outweighs
     the ray tracing as soon as there are a few pairs. With ``n_jobs > 1`` this function therefore:
 
-    * ambisonic output: traces the mono reference once (parallel rays), then renders the pairs in
-      ``n_jobs`` processes, each on a part of the sources (or listeners) with the reference handed in;
+    * ambisonic output: renders the pairs in ``n_jobs`` processes, each on a part of the sources
+      (or listeners). Each part traces its reference and its directional histogram once, together;
     * mono output: computes the band metrics of the responses in ``n_jobs`` processes.
 
-    How the pairs are cut does not change a pair's response (same seed, same reference). The number
-    of processes does, slightly, through the ray tracing, whose rays are cut over them (as in
-    compas_acoustics itself): Monte-Carlo noise in the tail.
+    Each source and each listener restarts from the run seed, so cutting the pairs across
+    processes does not change a response.
     """
     import dataclasses
 
@@ -709,7 +713,8 @@ def simulate_pairs(
     geometry = room_geometry(mesh, offset)
     _, notes = build_method(settings)
     ambisonic = settings.ambisonic_order > 0
-    if ambisonic and not geometry.is_closed:
+    # Match CA: topology-open with open_area = 0 is not an acoustic leak (no note).
+    if ambisonic and not geometry.is_closed and geometry.open_area > 0.0:
         notes.append(
             f"The model does not close: the ambisonic late field uses the estimated air volume "
             f"({geometry.volume:.0f} m^3) and treats the openings ({geometry.open_area:.1f} m^2) as fully absorbing."
@@ -736,29 +741,14 @@ def simulate_pairs(
     import time
 
     started = time.perf_counter()
-    if ambisonic and (spread or resolved_tail(settings) == "reference"):
-        # 1. the mono reference of every pair, once, with the rays spread over the processes
-        references: Optional[dict] = None
-        if resolved_tail(settings) == "reference":
-            references = {}
-            for g, indices in enumerate(groups):
-                lo, hi = 0.3 * g / len(groups), 0.3 * (g + 1) / len(groups)
-                progress(lo, "compas_acoustics: tracing the reference (rays)...")
-                found, new = _simulate_group(mesh, offset, pairs, indices, reference_settings(settings),
-                                             report=staged(lo, hi), metrics=False, geometry=geometry)
-                add_notes(new)
-                for r in found:
-                    references[r.pair_index] = (r.rir / CA_TO_APP_LEVEL_SCALE, r.generation)
-        print(f"  compas_acoustics: reference traced in {time.perf_counter() - started:.0f} s")
-        started = time.perf_counter()
-        # 2. the pairs rendered in parallel, each process on its own part of them
+    if ambisonic and spread:
+        # Each part traces its own rays once (reference + directional histogram) and renders them.
         worker_settings = dataclasses.replace(settings, n_jobs=1)
         tasks = []
         for indices in groups:
             for chunk in render_chunks(pairs, indices, n_workers):
-                subset = None if references is None else {i: references[i] for i in chunk}
-                tasks.append((_simulate_group_task, (shared_mesh, offset, pairs, chunk, worker_settings, subset), len(chunk)))
-        start = 0.3 if references is not None else 0.0
+                tasks.append((_simulate_group_task, (shared_mesh, offset, pairs, chunk, worker_settings, None), len(chunk)))
+        start = 0.0
         done_pairs = [0]
 
         def rendered(weight: int) -> None:
