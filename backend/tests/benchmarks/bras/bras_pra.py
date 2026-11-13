@@ -1,17 +1,18 @@
-"""Runs the app's geometric-acoustics worker on the benchmark scene (image sources, geometrical acoustics).
+"""Runs the app's geometric-acoustics worker on the benchmark scene (image sources, ray tracing, diffraction).
 
 The engine is the app's default (``ACOUSTICS_ENGINE``: compas_acoustics, or the legacy
-pyroomacoustics path); ``BRAS_GA_ENGINE`` overrides it for the benchmark and
-``BRAS_GA_DIFFRACTION`` (off | udfa) turns on compas_acoustics' edge diffraction.
+pyroomacoustics path); ``BRAS_GA_ENGINE`` overrides it for the benchmark. With compas_acoustics
+the edges of the objects diffract (UDFA, ``BRAS_GA_DIFFRACTION=off`` turns it off), and
+``BRAS_GA_RAY_TRACING`` adds the ray-traced part to the image sources.
 
 ``services.pyroomacoustics_worker._run_pyroomacoustics_compute_loop`` is the compute path of both
-the Speckle and the direct-geometry jobs: simulation-mesh preparation, one room per emitter, the
-measured loudspeaker balloon, WAVs re free field at 1 m. It takes the same geometry dict and pair
-list as the PFFDTD job, so both engines simulate the same scene. It runs on the CPU, so the
-benchmark starts it in a thread while the GPU runs PFFDTD. Results are cached like the PFFDTD runs.
+the Speckle and the direct-geometry jobs: simulation-mesh preparation, the engine, the measured
+loudspeaker balloon, WAVs re free field at 1 m. It takes the same geometry dict and pair list as
+the PFFDTD job, so both engines simulate the same scene. It runs on the CPU, so the benchmark
+starts it in a thread while the GPU runs PFFDTD. Results are cached like the PFFDTD runs.
 
-Geometrical acoustics has no diffraction: behind an obstacle the IR may be empty, and such a
-pair is reported as "no sound path".
+Without diffraction (the legacy engine, or ``off``) a pair behind an obstacle may get no sound at
+all; such a pair is reported as "no sound path" and left out of the comparison.
 """
 from __future__ import annotations
 
@@ -27,16 +28,31 @@ from typing import Optional
 import numpy as np
 from scipy.io import wavfile
 
-from benchmarks.bras.bras_constants import AIR_ABSORPTION, PRA_INT16_SCALE, PRA_MESH_SETTINGS, SIMULATION_MODE
+from benchmarks.bras.bras_constants import (AIR_ABSORPTION, ENV_GA_DIFFRACTION, ENV_GA_ENGINE, ENV_GA_RAY_TRACING,
+                                            GA_DIFFRACTION_DEFAULT, GA_DIFFRACTION_MODELS, PRA_INT16_SCALE,
+                                            PRA_MESH_SETTINGS, SIMULATION_MODE)
 from config.constants import (ACOUSTICS_ENGINE_COMPAS_ACOUSTICS, ACOUSTICS_ENGINE_DEFAULT, ACOUSTICS_ENGINE_PYROOMACOUSTICS,
                               CA_DIFFRACTION_OFF, PFFDTD_SPEED_OF_SOUND, PYROOMACOUSTICS_RAY_TRACING_N_RAYS)
 
 MANIFEST = "manifest.json"
 NO_PATH = "No sound path"
-ENGINE = os.environ.get("BRAS_GA_ENGINE", ACOUSTICS_ENGINE_DEFAULT).strip().lower()
-DIFFRACTION = os.environ.get("BRAS_GA_DIFFRACTION", CA_DIFFRACTION_OFF).strip().lower()
+ENGINE = os.environ.get(ENV_GA_ENGINE, ACOUSTICS_ENGINE_DEFAULT).strip().lower()
 ENGINE_LABELS = {ACOUSTICS_ENGINE_COMPAS_ACOUSTICS: "compas_acoustics", ACOUSTICS_ENGINE_PYROOMACOUSTICS: "pyroomacoustics"}
 ENGINE_LABEL = ENGINE_LABELS.get(ENGINE, ENGINE)   # the second engine's name in plots and reports
+
+
+def env_diffraction() -> Optional[str]:
+    """``BRAS_GA_DIFFRACTION``, or None (the engine's default, ``GA_DIFFRACTION_DEFAULT`` with compas_acoustics)."""
+    raw = os.environ.get(ENV_GA_DIFFRACTION, "").strip().lower()
+    return raw or None
+
+
+def env_ray_tracing() -> Optional[bool]:
+    """``BRAS_GA_RAY_TRACING`` (on / off), or None (the scene's ``PraSpec.ray_tracing``)."""
+    raw = os.environ.get(ENV_GA_RAY_TRACING, "").strip().lower()
+    if not raw:
+        return None
+    return raw not in ("off", "0", "no", "false")
 
 
 @dataclass
@@ -51,7 +67,8 @@ class PraConfig:
     # compas_acoustics only: the chamber's air (speed of sound, ISO 9613-1 absorption) and edge diffraction
     temperature_c: Optional[float] = None
     humidity: Optional[float] = None
-    diffraction: str = DIFFRACTION
+    diffraction: Optional[str] = None     # None: GA_DIFFRACTION_DEFAULT (BRAS_GA_DIFFRACTION) with compas_acoustics
+    n_rays: int = PYROOMACOUSTICS_RAY_TRACING_N_RAYS
 
     def __post_init__(self):
         if self.engine not in ENGINE_LABELS:
@@ -59,14 +76,40 @@ class PraConfig:
         if self.engine == ACOUSTICS_ENGINE_PYROOMACOUSTICS:   # the legacy engine has neither: keep its cache keys
             self.temperature_c = self.humidity = None
             self.diffraction = CA_DIFFRACTION_OFF
+            return
+        if self.diffraction is None:
+            self.diffraction = env_diffraction() or GA_DIFFRACTION_DEFAULT
+        self.diffraction = str(self.diffraction).strip().lower()
+        if self.diffraction not in GA_DIFFRACTION_MODELS:
+            raise ValueError(f"Diffraction {self.diffraction!r}: the mono output takes one of {GA_DIFFRACTION_MODELS} "
+                             "(BTMS needs an ambisonic output)")
+
+    @property
+    def diffracts(self) -> bool:
+        return self.diffraction != CA_DIFFRACTION_OFF
 
     def tag(self) -> str:
         pairs = hashlib.sha1("+".join(self.pair_keys).encode()).hexdigest()[:6]
-        mode = "ism+rt" if self.ray_tracing else "ism"
-        engine = "pra" if self.engine == ACOUSTICS_ENGINE_PYROOMACOUSTICS else "ca"
-        if self.diffraction != CA_DIFFRACTION_OFF:
-            mode += f"+{self.diffraction}"
-        return f"{self.scene}_{engine}_{mode}{self.max_order}_{'dir' if self.directional else 'omni'}_p{len(self.pair_keys)}_{pairs}"
+        if self.engine == ACOUSTICS_ENGINE_PYROOMACOUSTICS:   # the legacy tag, so its cached runs are found
+            method = f"pra_{'ism+rt' if self.ray_tracing else 'ism'}{self.max_order}"
+        else:
+            method = f"ca_ism{self.max_order}" + ("+rt" if self.ray_tracing else "") + (f"+{self.diffraction}" if self.diffracts else "")
+        return f"{self.scene}_{method}_{'dir' if self.directional else 'omni'}_p{len(self.pair_keys)}_{pairs}"
+
+    def short_label(self) -> str:
+        """Legend label, e.g. ``compas_acoustics (UDFA, RT)``."""
+        parts = ([self.diffraction.upper()] if self.diffracts else []) + (["RT"] if self.ray_tracing else [])
+        return ENGINE_LABELS[self.engine] + (f" ({', '.join(parts)})" if parts else "")
+
+    def describe(self) -> str:
+        """One line for reports and the setup figure."""
+        text = f"{ENGINE_LABELS[self.engine]}: image sources to order {self.max_order}"
+        if self.ray_tracing:
+            text += f" + ray tracing ({self.n_rays} rays)"
+        text += f", {self.diffraction.upper()} edge diffraction" if self.diffracts else ", no diffraction"
+        if self.temperature_c is not None:
+            text += f", air at {self.temperature_c:g} degC / {self.humidity:g} % RH"
+        return text
 
 
 @dataclass
@@ -94,7 +137,7 @@ def frac_delay_lead(engine: str = ENGINE) -> int:
 def _hash(cfg: PraConfig, geometry: dict, pairs_data: list) -> str:
     config = asdict(cfg)
     if cfg.engine == ACOUSTICS_ENGINE_PYROOMACOUSTICS:   # same hash as before the engine became a setting
-        for k in ("engine", "temperature_c", "humidity", "diffraction"):
+        for k in ("engine", "temperature_c", "humidity", "diffraction", "n_rays"):
             config.pop(k)
     payload = json.dumps([config, geometry, pairs_data, PRA_MESH_SETTINGS], sort_keys=True, default=str)
     return hashlib.sha1(payload.encode()).hexdigest()
@@ -128,7 +171,7 @@ def _run_compute_loop(loop, sim_id: str, cfg: PraConfig, geometry: dict, pairs_d
         faces=geometry["faces"], object_face_ranges=geometry["object_face_ranges"],
         face_material_map={int(k): v for k, v in geometry["face_materials"].items()}, face_scattering_map=None,
         mesh_settings=dict(PRA_MESH_SETTINGS), simulation_mode=SIMULATION_MODE, max_order=cfg.max_order, ray_tracing=cfg.ray_tracing,
-        air_absorption=AIR_ABSORPTION, n_rays=PYROOMACOUSTICS_RAY_TRACING_N_RAYS, sound_speed=PFFDTD_SPEED_OF_SOUND,
+        air_absorption=AIR_ABSORPTION, n_rays=cfg.n_rays, sound_speed=PFFDTD_SPEED_OF_SOUND,
         rir_dir=run_dir / "rir", tmp_dir=run_dir, entry_meta={}, parallel=True,
         engine=cfg.engine, diffraction=cfg.diffraction, air_temperature=cfg.temperature_c,
         **({"air_humidity": cfg.humidity} if cfg.humidity is not None else {}),
@@ -187,3 +230,91 @@ def simulate_pra(cfg: PraConfig, geometry: dict, pairs_data: list, out_root: Pat
     manifest_path.write_text(json.dumps(manifest, indent=2))
     irs, no_path = _silent(_load(run_dir, manifest), no_path)
     return PraRun(run_dir, irs, fs, False, manifest["wall_s"], no_path, config=asdict(cfg))
+
+
+@dataclass
+class GaScene:
+    """What the geometric-acoustics engine builds from the scene, without simulating."""
+    walls: int
+    two_sided: int
+    # (start, end, on_shell) in scene coordinates; on_shell: on the absorbing shell (PRA_CLOSED_ROOM), not the scene
+    edges: list = field(default_factory=list)
+    closed: Optional[bool] = None
+    volume_m3: Optional[float] = None
+    warnings: list = field(default_factory=list)
+    mesh: object = field(default=None, repr=False)        # the prepared SimulationMesh (scene coordinates)
+    obstacle: Optional[np.ndarray] = field(default=None, repr=False)   # per face: compas_acoustics obstacle
+
+    def describe(self) -> str:
+        text = f"{self.walls} walls ({self.two_sided} two-sided)"
+        if self.closed is not None:
+            text += f", {'closed' if self.closed else 'open'} model of {self.volume_m3:.0f} m^3"
+        if self.edges or self.closed is not None:
+            n_shell = sum(1 for e in self.edges if e[2])
+            text += f", {len(self.edges) - n_shell} diffracting edges on the scene" + (f" (+{n_shell} on the shell)" if n_shell else "")
+        return text
+
+    @property
+    def scene_edges(self) -> list:
+        return [e for e in self.edges if not e[2]]
+
+
+def ga_scene(cfg: PraConfig, geometry: dict, pairs_data: list) -> GaScene:
+    """The worker's mesh preparation of ``geometry`` and, with compas_acoustics, its room and the edges
+    its diffraction will use (``hybrid.diffraction.diffraction_edges``), mapped back to scene coordinates."""
+    import warnings as _warnings
+
+    from models.schemas import MeshPrepSettings
+    from services.pyroomacoustics_room_builder import room_offset
+    from services.simulation_mesh_service import MeshPrepOptions, SimulationMeshService
+    from utils.geometry import seeds_from_pairs
+
+    mesh = SimulationMeshService.prepare(
+        geometry["vertices"], geometry["faces"], geometry["object_face_ranges"],
+        {int(k): v for k, v in geometry["face_materials"].items()}, None,
+        [s["position"] for s in seeds_from_pairs(pairs_data)],
+        MeshPrepOptions.from_settings(MeshPrepSettings(**PRA_MESH_SETTINGS)),
+    )
+    out = GaScene(walls=len(mesh.walls), two_sided=int(sum(bool(mesh.two_sided[int(w.faces[0])]) for w in mesh.walls)),
+                  mesh=mesh, obstacle=np.asarray(mesh.two_sided, bool))
+    if cfg.engine != ACOUSTICS_ENGINE_COMPAS_ACOUSTICS:
+        return out
+    try:  # compas_acoustics' own rule: two-sided faces and objects standing in the air
+        from compas_acoustics.geometry import obstacle_mask
+
+        out.obstacle = np.asarray(obstacle_mask(mesh), bool)
+    except ImportError:  # an older compas_acoustics: two-sided faces only
+        pass
+    from services.compas_acoustics_engine import room_geometry
+
+    offset = np.asarray(room_offset(mesh), np.float64)
+    with _warnings.catch_warnings(record=True) as caught:
+        _warnings.simplefilter("always")
+        room = room_geometry(mesh, offset)
+        out.closed, out.volume_m3 = bool(room.is_closed), float(room.volume)
+        if cfg.diffracts:
+            from compas_acoustics.hybrid.diffraction import diffraction_edges
+
+            shell = _shell_box(geometry)
+            out.edges = [(a, b, shell is not None and _on_box(a, *shell) and _on_box(b, *shell))
+                         for a, b in ((np.asarray(e.start) + offset, np.asarray(e.end) + offset) for e in diffraction_edges(room))]
+    out.warnings = sorted({str(w.message).splitlines()[0] for w in caught})
+    return out
+
+
+def _shell_box(geometry: dict) -> Optional[tuple]:
+    """(lo, hi) of the absorbing shell of ``geometry`` (``bras_geometry.enclosed_geometry``), or None."""
+    from benchmarks.bras.bras_constants import PRA_SHELL_KEY
+
+    rng = geometry["object_face_ranges"].get(PRA_SHELL_KEY)
+    if rng is None:
+        return None
+    idx = np.asarray(geometry["faces"][rng[0]:rng[1] + 1]).ravel()
+    pts = np.asarray(geometry["vertices"], np.float64)[idx]
+    return pts.min(axis=0), pts.max(axis=0)
+
+
+def _on_box(x: np.ndarray, lo: np.ndarray, hi: np.ndarray, tol: float = 1e-4) -> bool:
+    """``x`` on the surface of the box."""
+    inside = np.all(x >= lo - tol) and np.all(x <= hi + tol)
+    return bool(inside and (np.any(np.abs(x - lo) < tol) or np.any(np.abs(x - hi) < tol)))

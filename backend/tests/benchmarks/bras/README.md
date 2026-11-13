@@ -70,6 +70,10 @@ BRAS_SCENE=RS2_1m_rigid BRAS_FMAX=2500 BRAS_FULL=1 python -m pytest tests/benchm
 | `BRAS_FORCE=1` | Ignore cached simulations |
 | `BRAS_HIGH_ORDER=off` | PFFDTD with the app's first-order directivity fit (default: the whole measured balloon, below) |
 | `BRAS_GAIN_PAIR=scene` / `=LS1-MP1` | Calibrate the level on the scene's `gain_pair` / that pair (default `on_axis`) |
+| `BRAS_PRA=off` | Skip the geometric-acoustics engine (the third curve) |
+| `BRAS_GA_ENGINE=pyroomacoustics` | The legacy engine instead of the app's default (`ACOUSTICS_ENGINE`, compas_acoustics) |
+| `BRAS_GA_DIFFRACTION=off` | compas_acoustics without edge diffraction (default `udfa`; BTMS needs an ambisonic output) |
+| `BRAS_GA_RAY_TRACING=on` / `=off` | Add / drop the ray-traced part (default: the scene's `PraSpec.ray_tracing`) |
 
 ### Every reference scene in one go
 
@@ -83,15 +87,39 @@ python tests/benchmarks/bras/run_all.py
 
 The dry run reads every input, plans every grid and runs the app's geometry preflight without the GPU, and
 writes `plan.md` to the output root. For every stage it gives the free air per face, whether the grid was
-coarsened to fit the GPU, and whether the run is edge-clean. The real run goes through the scenes and stages in sequence; each
+coarsened to fit the GPU, and whether the run is edge-clean. It also builds the geometric-acoustics room as
+compas_acoustics will (walls, closed or open, the edges its diffraction will use, its warnings) and lists the
+pairs without line of sight; diffraction on with shadowed pairs but no diffracting edge is a dry-run problem. The real run goes through the scenes and stages in sequence; each
 benchmark writes its report, plots and MP4 as it finishes, `index.md` lists them all, a failing scene does
 not stop the rest, and finished simulations are cached, so an interrupted run resumes.
-Options: `--scenes "RS1*" RS5`, `--stages 500`, `--pairs smoke`, `--no-animation`, `--force`.
+Options: `--scenes "RS1*" RS5`, `--stages 500`, `--pairs smoke`, `--no-animation`, `--force`,
+`--ga-ray-tracing on|off|scene`, `--ga-diffraction udfa|off`, `--no-pra`.
 
 Or the CLI (with `backend/` and `backend/tests` on `PYTHONPATH`):
 `python -m benchmarks.bras.bras_benchmark --scene RS2_1m_rigid --all-stages --pairs all`.
 
-CPU-only unit tests: `python -m pytest tests/benchmarks/bras/test_bras_units.py tests/benchmarks/bras/test_bras_animation_units.py`.
+### Geometry check before simulating
+
+```bash
+python tests/benchmarks/bras/bras_geometry_check.py                       # every scene and stage
+python tests/benchmarks/bras/bras_geometry_check.py --scenes RS5 RS7 --stages 500
+```
+
+One figure per scene and stage in `<BRAS_OUTPUT_ROOT>/_geometry_check/` (and `index.md` with the problems
+found), without the GPU:
+
+- **PFFDTD** (top, two perspective views): the boundary nodes of the solver's own voxelisation
+  (`sim_prepare.voxelise_only`, run in the compas-pffdtd env on the benchmark's grid and padded domain),
+  coloured by material; the floor is the plane. The voxelisation lands in the solver's voxel cache, so
+  the benchmark run reuses it. Checked: materials lost to thin geometry, asymmetric links, seed clearance.
+- **Geometric acoustics** (bottom, same views): the walls the engine builds, by material; objects left in
+  the room boundary (red, hatched), obstacles without a diffracting edge (red outline), and the edges
+  compas_acoustics diffracts on (magenta). Checked: closure, objects in the boundary, obstacles its edge
+  search cannot handle, shadowed pairs without any edge.
+- **Plan** of the whole domain (PFFDTD domain, absorbing shell, pairs with the shadowed ones dashed) and the
+  numbers (grid, nodes per material, clearance, edges, compas_acoustics warnings, materials, problems).
+
+CPU-only unit tests: `python -m pytest tests/benchmarks/bras/test_bras_units.py tests/benchmarks/bras/test_bras_animation_units.py tests/benchmarks/bras/test_bras_ga_units.py`.
 `test_ground_plane_reflection` (GPU) checks the hemi-anechoic floor against an image source.
 
 ## 4. Outputs: `../compas_soundscape_benchmarks/bras/<scene>/f<fmax>/`
@@ -104,7 +132,7 @@ it; `_cache/` holds the directivity balloons and the loudspeaker phase).
 | `report.md` | Inputs, materials (absorption per octave), setup, results per pair and per band, file list |
 | `plots/pair_<LS>-<MP>.png` | Gated IRs, frequency response and level difference per band, measured vs simulated |
 | `plots/average.png` | Average response of all pairs and the per-band difference (mean, min to max) |
-| `plots/setup.png` | The setup, same layout for every scene: plan / section / perspective with materials, loudspeakers (aim) and microphones; the PFFDTD boundary nodes (from the solver's voxel cache, `plots/setup_voxels.npz`) and the pyroomacoustics walls; the material CSVs and their values in the compared band. Without a GPU: `python tests/benchmarks/bras/bras_setup_plots.py --scenes RS7` |
+| `plots/setup.png` | The setup, same layout for every scene: plan / section / perspective with materials, loudspeakers (aim) and microphones; the PFFDTD boundary nodes (from the solver's voxel cache, `plots/setup_voxels.npz`) and the geometric-acoustics walls with the edges compas_acoustics diffracts on (magenta); the material CSVs and their values in the compared band. Without a GPU: `python tests/benchmarks/bras/bras_setup_plots.py --scenes RS7` |
 | `plots/overview.png` | Pairs x bands heatmap of the level difference |
 | `animation/wave_<LS>_z<z>.mp4` | Wave propagation on the loudspeaker's horizontal plane, with the highlighted pair's measured and simulated IRs |
 | `animation/wave_<LS>_z<z>.npz` + `.json` | The animation data (frames, plane axes, wall mask, positions, IRs) |
@@ -152,14 +180,41 @@ it; `_cache/` holds the directivity balloons and the loudspeaker phase).
   harmonics per frequency (up to order 6, while the ball resolves it) and weighted by the measured
   balloon's magnitude in the world frame (`pffdtd_backend/directional_ho.py`). On the RS2 free-field
   control runs it reproduces the balloon within 0.46 dB per octave (first order: 3.8 dB).
-  pyroomacoustics already uses the balloon's IRs.
-- **pyroomacoustics in a closed room** (`PRA_CLOSED_ROOM`, `bras_geometry.enclosed_geometry`).
+  The geometric-acoustics engine already uses the balloon's IRs.
+- **Geometric acoustics: compas_acoustics** (`bras_pra.py`), the app's default engine: image sources
+  (+ ray tracing with `BRAS_GA_RAY_TRACING=on`) and UDFA edge diffraction, in the chamber's air
+  (temperature, humidity: speed of sound and ISO 9613-1 absorption). Its responses already have
+  pyroomacoustics' fractional-delay lead removed. The pair plots and the overview heatmap show it beside
+  PFFDTD; the report splits mean |dL| into line-of-sight and shadowed (diffraction only) pairs.
+  compas_acoustics diffracts only on the edges of closed components and of two-sided panels: an object
+  that the mesh preparation leaves open (faces without a material left out, bottoms dropped as
+  unreached) gives no edge, and the room is reported open (the dry run shows it per scene).
+- **Geometric acoustics in a closed room** (`PRA_CLOSED_ROOM`, `bras_geometry.ga_scene_geometry`).
   pyroomacoustics only tests walls off the convex hull of all walls for obstruction, which assumes
   sources and receivers inside a closed room. In the open BRAS scenes they are outside, so hull walls
   (an absorber's top, a plate) never blocked a path and the floor reflected through the objects. A
-  fully absorbing box (alpha = 1) 1 m beyond the domain closes the scene: the objects obstruct again
+  fully absorbing box (alpha = 1) 1 m beyond the objects and every measured position closes the scene: the objects obstruct again
   and the shell reflects nothing. The app's mesh preparation then orients every face from the air
-  side, which pyroomacoustics needs (it reflects off a wall's front only).
+  side, which pyroomacoustics needs (it reflects off a wall's front only). In a hemi-anechoic chamber the
+  shell's bottom face is the floor (its material, at its height), not a finite floor plane inside the
+  shell: that plane's rim would diffract, and the boundary would never close.
+- **Geometric acoustics: the same scene at every stage** (`bras_benchmark.ga_inputs`). The shell encloses
+  the objects and the measured positions, not the stage's PFFDTD domain, and the positions are the
+  measured ones, not those raised to PFFDTD's clearance above the floor (which depends on the grid). The
+  shell's size used to change with the stage, and with it which thin faces the mesh preparation's air
+  sampling reached (RS4: 48 edges at 500 Hz, 108 at 2.5 kHz). The geometry check prints the run's cache
+  key per stage and flags a scene whose key differs between stages.
+- **Objects as boxes** (`PraSpec.boxes`, RS2-RS7; `bras_geometry.object_boxes`). Every object is its
+  oriented bounding box, so each side is one wall: a plate, the RS5 partition, the RS6 body (43 pieces),
+  each RS7 row (4 pieces), the nine RS4 plates (axes from the faces, so their slight tilts are kept).
+  Parts of one material closer than `GA_BOX_JOIN_M` (10 mm) are one object; the stand slots of the
+  RS2 / RS3 plates close. The RS2 absorber (drawn as one face, extruded into a slab for PFFDTD): the
+  plate's front face is duplicated, moved to the absorber's front (22 mm) and joined to the plate, one
+  box whose front face is RockFon. As a separate sheet it added four edges 22 mm in front of the plate's
+  (double diffraction) and left the 2 m model open (the air sampling missed the gap behind it). Boxes on the floor
+  stand on it: the mesh preparation drops their unreached bottom, the box joins the room boundary, and
+  only its convex edges (top and vertical) diffract. `PraSpec.lift_m` raises them instead, should a
+  scene need it. RS1 keeps its mesh (tiled absorber, diffusor). PFFDTD always uses the full mesh.
 - **pyroomacoustics mesh settings** (`PRA_MESH_SETTINGS`). The RockFon absorbers are tiled panels with
   ~1 mm slits: a 2 mm weld closes them, and `drop_unreached_faces` (an app setting, off by default)
   leaves the panel sides inside the slab out of the walls. Otherwise the image source model mirrors

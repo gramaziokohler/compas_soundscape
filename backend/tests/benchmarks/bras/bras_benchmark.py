@@ -17,7 +17,7 @@ import shutil
 import sys
 import traceback
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Optional
 
@@ -30,13 +30,17 @@ from benchmarks.bras.bras_directivity import balloon_cache_path, load_or_build_b
 from benchmarks.bras.bras_domain import DomainPlan, domain_plan, edge_padding_m
 from benchmarks.bras.bras_geometry import (
     SceneMesh,
+    box_scene_mesh,
     control_scene_geometry,
-    enclosed_geometry,
+    ga_bounds,
+    ga_scene_geometry,
+    lift_boxes,
     load_scene_mesh,
     material_table,
+    object_boxes,
     scene_geometry,
 )
-from benchmarks.bras.bras_pra import ENGINE_LABEL, PraConfig, simulate_pra
+from benchmarks.bras.bras_pra import PraConfig, env_diffraction, env_ray_tracing, simulate_pra
 from benchmarks.bras.bras_plots import plot_animation_preview, plot_average, plot_overview, plot_pair
 from benchmarks.bras.bras_report import write_report, write_results
 from benchmarks.bras.bras_setup_plots import plot_setup
@@ -92,7 +96,9 @@ class RunOptions:
     material_mode: str = "csv"
     animation: bool = True
     force: bool = False
-    pra: bool = True                      # also run pyroomacoustics (when the scene enables it)
+    pra: bool = True                      # also run the geometric-acoustics engine (when the scene enables it)
+    ga_ray_tracing: Optional[bool] = None # geometric acoustics: ray tracing (None: the scene's PraSpec)
+    ga_diffraction: Optional[str] = None  # geometric acoustics: udfa | off (None: GA_DIFFRACTION_DEFAULT)
     high_order: bool = True               # PFFDTD: the whole measured balloon, not the first-order fit
     ho_params: dict = field(default_factory=dict)   # directional_ho overrides (radius_cells, max_order, ...)
     gain_pair: str = GAIN_ON_AXIS         # on_axis | scene | a pair key
@@ -117,6 +123,10 @@ class RunPlan:
     est_s: float                          # rough GPU time, IR runs + animation
     sim_pairs: list = field(default_factory=list)   # the pairs at their simulated positions (see ``moved``)
     gain_pair: str = ""                   # the pair whose direct sound sets the global gain
+    ga: Optional[PraConfig] = None        # the geometric-acoustics run (None: off for this scene / run)
+    ga_geo: Optional[dict] = None         # its geometry (bras_geometry.ga_scene_geometry: shell, floor as its bottom)
+    ga_pairs_data: list = field(default_factory=list)   # its pairs: measured positions (not raised), same at every stage
+    ga_boxes: list = field(default_factory=list)        # PraSpec.boxes: the objects as boxes (bras_geometry.ObjectBox)
 
     @property
     def bounds(self) -> tuple:
@@ -163,7 +173,18 @@ def options_from_env(data: SceneData) -> RunOptions:
                       material_mode=os.environ.get(K.ENV_MATERIAL, "csv"), force=_env_flag(K.ENV_FORCE),
                       pra=os.environ.get(K.ENV_PRA, "on").strip().lower() not in ("off", "0", "no", "false"),
                       high_order=os.environ.get(K.ENV_HIGH_ORDER, "on").strip().lower() not in ("off", "0", "no", "false"),
-                      gain_pair=os.environ.get(K.ENV_GAIN_PAIR, GAIN_ON_AXIS).strip() or GAIN_ON_AXIS)
+                      gain_pair=os.environ.get(K.ENV_GAIN_PAIR, GAIN_ON_AXIS).strip() or GAIN_ON_AXIS,
+                      ga_ray_tracing=env_ray_tracing(), ga_diffraction=env_diffraction())
+
+
+def ga_config(data: SceneData, opts: RunOptions, pair_keys: list, directional: bool) -> Optional[PraConfig]:
+    """The geometric-acoustics run of a benchmark, or None when it is off."""
+    scene = data.scene
+    if not (opts.pra and scene.pra.enabled):
+        return None
+    rt = scene.pra.ray_tracing if opts.ga_ray_tracing is None else bool(opts.ga_ray_tracing)
+    return PraConfig(scene.name, scene.pra.max_order, rt, list(pair_keys), directional, opts.material_mode,
+                     temperature_c=scene.temperature_c, humidity=scene.humidity, diffraction=opts.ga_diffraction)
 
 
 def _ho_params(opts: RunOptions) -> dict:
@@ -302,7 +323,25 @@ def plan_run(data: SceneData, opts: RunOptions) -> RunPlan:
         est += 2 * plan.est_runtime_s * (1.0 + scene.animation.duration_ms * 1e-3 / bt.duration_s)
     return RunPlan(pairs, geoms, plan, padding, coeffs, scene_geo, ctl_geo, fit, label,
                    build_pairs_data(sim_pairs, specs), moved, cfg, engine_runs, est, sim_pairs,
-                   choose_gain_pair(pairs, geoms, opts.gain_pair, scene.gain_pair))
+                   choose_gain_pair(pairs, geoms, opts.gain_pair, scene.gain_pair),
+                   ga_config(data, opts, [p.key for p in pairs], fit is not None), *ga_inputs(data, coeffs, pairs, fit, label))
+
+
+def ga_inputs(data: SceneData, coeffs: dict, pairs: list, fit, label: str) -> tuple[dict, list, list]:
+    """Geometry, pairs and boxes of the geometric-acoustics run, independent of the fmax stage: the
+    shell encloses the objects and every measured position (not the stage's PFFDTD domain) and the
+    positions are the measured ones (the PFFDTD clearance above the floor depends on the grid)."""
+    scene, mesh = data.scene, data.mesh
+    boxes = object_boxes(mesh, layers=scene.geometry.extrude) if scene.pra.boxes else []
+    if boxes and scene.ground is not None:
+        boxes = lift_boxes(boxes, scene.ground.z, scene.pra.lift_m)
+    ga_mesh = box_scene_mesh(mesh, boxes)
+    positions = [x for p in data.measured for x in (p.source_position, p.receiver_position)]
+    geometry = ga_scene_geometry(ga_mesh, coeffs, ga_bounds(ga_mesh, positions), scene.ground)
+    specs = {sid: measured_spec(fit, source_forward(sid, pos, data.source), label,
+                                balloon_cache_path(data.source.directivity))
+             for sid, pos in unique_sources(pairs).items()} if fit else {}
+    return geometry, build_pairs_data(pairs, specs), boxes
 
 
 def _notes(data: SceneData, rp: RunPlan) -> list[str]:
@@ -334,11 +373,9 @@ def run_benchmark(data: SceneData, opts: RunOptions) -> dict:
     # the geometric-acoustics engine (compas_acoustics / pyroomacoustics) on the CPU, in a thread, while the GPU runs PFFDTD
     pool = ThreadPoolExecutor(max_workers=1)
     pra_future = None
-    if opts.pra and scene.pra.enabled:
-        pra_cfg = PraConfig(scene.name, scene.pra.max_order, scene.pra.ray_tracing, [p.key for p in pairs],
-                            fit is not None, opts.material_mode, temperature_c=scene.temperature_c, humidity=scene.humidity)
-        pra_geo = enclosed_geometry(rp.scene_geo, bounds) if K.PRA_CLOSED_ROOM else rp.scene_geo
-        pra_future = pool.submit(simulate_pra, pra_cfg, pra_geo, rp.pairs_data, runs, opts.force)
+    if rp.ga is not None:
+        print(f"[bras] {rp.ga.describe()}", flush=True)
+        pra_future = pool.submit(simulate_pra, rp.ga, rp.ga_geo, rp.ga_pairs_data, runs, opts.force)
     plate = simulate(rp.cfg, rp.scene_geo, rp.pairs_data, bounds, opts.force, out_root=runs)
     # without objects the scene run already is the empty-domain run
     control = plate if mesh.empty else simulate(replace(rp.cfg, control=True), rp.ctl_geo, rp.pairs_data, bounds,
@@ -347,10 +384,11 @@ def run_benchmark(data: SceneData, opts: RunOptions) -> dict:
     gain_db, results = analyze_run(pairs, plate.irs, control.irs, rp.geoms, bt, opts.fmax, bounds, rp.gain_pair,
                                    phase, ground_z)
     avg = average_response(results, bt, opts.fmax)
-    second = _second_engine(pra_future, pairs, rp, bt, opts.fmax, scene) if pra_future is not None else None
+    second = _second_engine(pra_future, pairs, rp, bt, opts.fmax, results) if pra_future is not None else None
     pool.shutdown()
     pra_by_key = {r.key: r for r in second["results"]} if second and second["results"] else {}
     pra_avg = second["average"] if pra_by_key else None
+    second_label = second["label"] if second else None
 
     plots = out / "plots"
     shutil.rmtree(plots, ignore_errors=True)
@@ -365,10 +403,11 @@ def run_benchmark(data: SceneData, opts: RunOptions) -> dict:
         traceback.print_exc()
     for r in results:
         files.append(plot_pair(r, band, opts.fmax, bt.smoothing_fraction, plots / f"pair_{r.key}.png", scene.label,
-                               pra_by_key.get(r.key)))
+                               pra_by_key.get(r.key), second_label))
     files.append(plot_average(avg, band, opts.fmax, bt.smoothing_fraction, len(results), plots / "average.png",
-                              scene.label, pra_avg))
-    files.append(plot_overview(results, plots / "overview.png", scene.label))
+                              scene.label, pra_avg, second_label))
+    files.append(plot_overview(results, plots / "overview.png", scene.label,
+                               second["results"] if pra_by_key else None, second_label))
     anim_files = write_animation(rp, data, results, ground_z, out, opts, phase)
 
     c_meas = speed_of_sound(scene.temperature_c)
@@ -396,33 +435,50 @@ def run_benchmark(data: SceneData, opts: RunOptions) -> dict:
     payload = {"info": info, "average": {k: v for k, v in avg.items() if k not in strip},
                "pairs": [r.as_dict() for r in results]}
     if second:
-        payload["pyroomacoustics"] = {"gain_db": second["gain_db"], "notes": second["notes"],
-                                      "average": {k: v for k, v in (second["average"] or {}).items() if k not in strip},
-                                      "pairs": [r.as_dict() for r in second["results"]]}
+        payload["geometric_acoustics"] = {"engine": second["engine"], "label": second["label"], "config": second["config"],
+                                          "gain_db": second["gain_db"], "notes": second["notes"],
+                                          "average": {k: v for k, v in (second["average"] or {}).items() if k not in strip},
+                                          "pairs": [r.as_dict() for r in second["results"]]}
     write_results(out / "results.json", payload)
     write_report(out / "report.md", info, results, avg, second if pra_by_key else None)
     return {"info": info, "gain_db": gain_db, "results": results, "average": avg, "plan": plan, "out_dir": out,
-            "animation_files": anim_files, "pyroomacoustics": second}
+            "animation_files": anim_files, "geometric_acoustics": second}
 
 
-def _second_engine(future, pairs, rp: RunPlan, bt, fmax: float, scene: Scene) -> dict:
-    """The pyroomacoustics comparison (same windows, bands and gain rule), or why there is none."""
+def _second_engine(future, pairs, rp: RunPlan, bt, fmax: float, first: list) -> dict:
+    """The geometric-acoustics comparison (same windows, bands and gain rule), or why there is none.
+    ``first``: the PFFDTD results, for the line-of-sight / shadowed split of the notes."""
     run = future.result()
-    spec = scene.pra
-    cfg_diffraction = (run.config or {}).get("diffraction", "off")
-    notes = [f"{ENGINE_LABEL}: image sources up to order {spec.max_order}"
-             + (" + ray tracing" if spec.ray_tracing else "") + ", the measured loudspeaker balloon, "
-             + ("no diffraction" if cfg_diffraction == "off" else f"{cfg_diffraction.upper()} edge diffraction")
-             + (f", air at {run.config['temperature_c']:g} degC / {run.config['humidity']:g} % RH"
-                if (run.config or {}).get("temperature_c") is not None else "")
+    cfg = rp.ga
+    notes = [cfg.describe() + ", the measured loudspeaker balloon"
              + (", inside a fully absorbing shell (a closed room, so the objects block paths)" if K.PRA_CLOSED_ROOM else "")
-             + f"; {run.wall_s:.0f} s on the CPU."]
+             + f"; {run.wall_s:.0f} s on the CPU" + (" (cached)" if run.cached else "") + "."]
+    out = {"engine": cfg.engine, "label": cfg.short_label(), "config": asdict(cfg), "results": [], "average": None,
+           "gain_db": 0.0, "notes": notes}
     if run.error:
-        return {"results": [], "average": None, "gain_db": 0.0, "notes": notes + [f"It failed: {run.error}"]}
+        notes.append(f"It failed: {run.error}")
+        return out
     if run.no_path:
         notes.append("No sound path (pair left out): " + ", ".join(run.no_path) + ".")
     gain_db, results = analyze_broadband_run(pairs, run.irs, run.fs, rp.geoms, bt, fmax, rp.gain_pair)
-    return {"results": results, "average": average_response(results, bt, fmax), "gain_db": gain_db, "notes": notes}
+    if not results:
+        notes.append("No pair to compare.")
+        return out
+    notes += shadow_split(first, results, cfg.short_label())
+    out.update(results=results, average=average_response(results, bt, fmax), gain_db=gain_db)
+    return out
+
+
+def shadow_split(first: list, second: list, label: str) -> list[str]:
+    """Mean |dL| of the line-of-sight and the shadowed pairs (diffraction only), per engine."""
+    lines = []
+    for los, what in ((True, "line of sight"), (False, "no line of sight (diffraction only)")):
+        a = [r.mean_abs_dl_db for r in first if r.line_of_sight == los]
+        b = [r.mean_abs_dl_db for r in second if r.line_of_sight == los]
+        if a or b:
+            fmt = lambda v: f"{np.mean(v):.2f} dB ({len(v)} pairs)" if v else "-"  # noqa: E731
+            lines.append(f"Pairs with {what}: mean |dL| PFFDTD {fmt(a)}, {label} {fmt(b)}.")
+    return lines
 
 
 def write_animation(rp: RunPlan, data: SceneData, results, ground_z, out: Path, opts: RunOptions, phase) -> list[Path]:
@@ -448,6 +504,11 @@ def write_animation(rp: RunPlan, data: SceneData, results, ground_z, out: Path, 
     return [bundle, *render(bundle, fmt="mp4"), preview]
 
 
+def ga_ray_tracing_arg(value: str) -> Optional[bool]:
+    """``--ga-ray-tracing``: on / off, or ``scene`` (the scene's setting unless BRAS_GA_RAY_TRACING says otherwise)."""
+    return env_ray_tracing() if value == "scene" else value == "on"
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--list", action="store_true", help="list the scenes of scenes.py and their missing inputs")
@@ -460,6 +521,10 @@ def main(argv=None) -> int:
     ap.add_argument("--material", default="csv", choices=K.MATERIAL_MODES)
     ap.add_argument("--no-animation", action="store_true")
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--ga-ray-tracing", choices=("on", "off", "scene"), default="scene",
+                    help="geometric acoustics: ray tracing (default: the scene's setting, or BRAS_GA_RAY_TRACING)")
+    ap.add_argument("--ga-diffraction", choices=K.GA_DIFFRACTION_MODELS, default=None,
+                    help=f"geometric acoustics: edge diffraction (default: {K.GA_DIFFRACTION_DEFAULT}, or BRAS_GA_DIFFRACTION)")
     args = ap.parse_args(argv)
     if args.list:
         for name, sc in SCENES.items():
@@ -474,7 +539,8 @@ def main(argv=None) -> int:
     for fmax in stages:
         opts = RunOptions(fmax=fmax, ppw=args.ppw or bt.stages.get(fmax, list(bt.stages.values())[0]), pair_keys=pairs,
                           directional=not args.omni, material_mode=args.material, animation=not args.no_animation,
-                          force=args.force)
+                          force=args.force, ga_ray_tracing=ga_ray_tracing_arg(args.ga_ray_tracing),
+                          ga_diffraction=args.ga_diffraction or env_diffraction())
         res = run_benchmark(data, opts)
         print((res["out_dir"] / "report.md").read_text(encoding="utf-8"))
     return 0

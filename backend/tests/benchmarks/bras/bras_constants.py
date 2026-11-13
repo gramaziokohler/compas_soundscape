@@ -32,11 +32,23 @@ PADDING_MIN_M = 0.5                             # never less free air than this 
 # and the report flags the run as not edge-clean
 PPW_MIN = 8.0
 
-# ── pyroomacoustics (second engine, image sources) ────────────────────────────
-PRA_INT16_SCALE = 32767.0                       # the app writes its pyroomacoustics IRs as int16 = IR x 32767
+# ── geometric acoustics (second engine: compas_acoustics, or the legacy pyroomacoustics path) ──
+ENV_GA_ENGINE = "BRAS_GA_ENGINE"                # compas_acoustics | pyroomacoustics (default: the app's ACOUSTICS_ENGINE)
+ENV_GA_DIFFRACTION = "BRAS_GA_DIFFRACTION"      # udfa (default with compas_acoustics) | off
+ENV_GA_RAY_TRACING = "BRAS_GA_RAY_TRACING"      # on | off (default: the scene's PraSpec.ray_tracing)
+# compas_acoustics' mono output diffracts with UDFA (BTMS needs an ambisonic output). The BRAS scenes
+# RS2-RS7 are diffraction problems (plate edges, a partition, a body, rows of blocks), so it is on.
+GA_DIFFRACTION_DEFAULT = "udfa"
+GA_DIFFRACTION_MODELS = ("off", "udfa")
+PRA_INT16_SCALE = 32767.0                       # the app writes its geometric-acoustics IRs as int16 = IR x 32767
 PRA_CLOSED_ROOM = True                         # pyroomacoustics: fully absorbing shell around the open scene (bras_geometry.enclosed_geometry)
 PRA_SHELL_KEY = "anechoic_shell"               # material / object key of that shell
-PRA_SHELL_MARGIN_M = 1.0                       # the shell sits this far beyond the padded domain
+PRA_FLOOR_KEY = "chamber_floor"                # object key of its bottom face when that is the floor (hemi-anechoic)
+PRA_SHELL_MARGIN_M = 1.0                       # the shell sits this far beyond the objects and every measured
+                                               # position (bras_geometry.ga_bounds; not the stage's PFFDTD domain)
+# PraSpec.boxes: each object becomes its oriented bounding box (bras_geometry.object_boxes); parts of
+# one material closer than this are one object (the RS6 body pieces, the RS7 row battens)
+GA_BOX_JOIN_M = 0.01
 # Mesh preparation for the pyroomacoustics runs (MeshPrepSettings). The BRAS RockFon absorbers are
 # tiled panels with ~1 mm slits between them: welding at 2 mm closes the slits, and the panel sides
 # left inside the slab (never reached by the air) are dropped, else the image source model mirrors

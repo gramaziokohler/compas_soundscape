@@ -5,14 +5,16 @@ From backend/, with the compas-toy python:
     python tests/benchmarks/bras/run_all.py --dry-run          # check everything first: no GPU
     python tests/benchmarks/bras/run_all.py                    # all scenes, all stages, every pair
     python tests/benchmarks/bras/run_all.py --scenes "RS1*" RS5 --stages 500 --pairs smoke
+    python tests/benchmarks/bras/run_all.py --scenes RS5 --stages 500 --ga-ray-tracing on   # + ray tracing
 
 Each benchmark writes its report, plots and animation MP4 as it finishes
 (<BRAS_OUTPUT_ROOT>/<scene>/f<fmax>/); ``index.md`` in the output root lists them all and is
 rewritten after every benchmark. A failing scene is recorded and the run goes on. Finished
 simulations are cached, so an interrupted run resumes where it stopped.
 
-``--dry-run`` reads every input, plans every grid and runs the app's geometry preflight, then
-prints what would be simulated (``plan.md`` in the output root).
+``--dry-run`` reads every input, plans every grid and runs the app's geometry preflight, builds the
+geometric-acoustics room (with compas_acoustics: the edges its diffraction will use), then prints what
+would be simulated (``plan.md`` in the output root).
 """
 from __future__ import annotations
 
@@ -31,9 +33,10 @@ for _p in (str(_TESTS.parent), str(_TESTS)):
 import numpy as np  # noqa: E402
 
 from benchmarks.bras import bras_constants as K  # noqa: E402
-from benchmarks.bras.bras_benchmark import RunOptions, SceneData, load_scene, output_dir, plan_run, run_benchmark  # noqa: E402
+from benchmarks.bras.bras_benchmark import (RunOptions, SceneData, ga_ray_tracing_arg, load_scene, output_dir,  # noqa: E402
+                                            plan_run, run_benchmark)
 from benchmarks.bras.bras_domain import describe_padding  # noqa: E402
-from benchmarks.bras.bras_pra import ENGINE_LABEL  # noqa: E402
+from benchmarks.bras.bras_pra import ENGINE_LABEL, env_diffraction, ga_scene  # noqa: E402
 from benchmarks.bras.bras_scene import onset_time  # noqa: E402
 from benchmarks.bras.scenes import RS_SCENES, SCENES, missing_inputs  # noqa: E402
 
@@ -58,7 +61,8 @@ def stage_options(data: SceneData, stages: list[str], pairs: str, args) -> list[
     return [RunOptions(fmax=f, ppw=bt.stages[f], pair_keys=keys, directional=not args.omni,
                        animation=not args.no_animation, force=args.force,
                        pra=not args.no_pra, high_order=not args.first_order,
-                       gain_pair=args.gain_pair) for f in fmaxes if f in bt.stages]
+                       gain_pair=args.gain_pair, ga_ray_tracing=ga_ray_tracing_arg(args.ga_ray_tracing),
+                       ga_diffraction=args.ga_diffraction or env_diffraction()) for f in fmaxes if f in bt.stages]
 
 
 def preflight_errors(rp) -> list[str]:
@@ -130,7 +134,32 @@ def describe_stage(data: SceneData, opts: RunOptions) -> tuple[list[str], float,
     for m in rp.moved:
         lines.append(f"  - {m['id']} at {m['z_m'] * 1e3:.0f} mm above the floor is simulated at {m['simulated_z_m'] * 1e3:.0f} mm")
     lines += [f"  - PREFLIGHT ERROR: {e}" for e in errors]
+    lines += describe_ga(rp, errors)
     return lines, rp.est_s, errors
+
+
+def describe_ga(rp, errors: list) -> list[str]:
+    """The geometric-acoustics run: settings, and the room the engine builds (walls, closure, the
+    edges its diffraction will use). A failure to build it is a dry-run error."""
+    if rp.ga is None:
+        return ["  - Geometric acoustics: off"]
+    lines = [f"  - {rp.ga.describe()}; {len(rp.pairs)} pairs on the CPU"]
+    try:
+        ga = ga_scene(rp.ga, rp.ga_geo, rp.ga_pairs_data)
+    except Exception as exc:  # reported, and the dry run goes on
+        errors.append(f"geometric-acoustics room: {exc}")
+        return lines + [f"  - GEOMETRIC-ACOUSTICS ERROR: {type(exc).__name__}: {exc}"]
+    lines.append(f"    - room: {ga.describe()} (inside the absorbing shell"
+                 + (", whose bottom is the floor)" if rp.ga_geo and K.PRA_FLOOR_KEY in rp.ga_geo["object_face_ranges"] else ")"))
+    shadowed = [p.key for p in rp.pairs if not rp.geoms[p.key].line_of_sight]
+    if rp.ga.diffracts and not ga.scene_edges:
+        lines.append("    - NO EDGE OF THE SCENE DIFFRACTS" + (": the shadowed pairs will get no diffracted sound" if shadowed else ""))
+        if shadowed:
+            errors.append("geometric acoustics: diffraction on, but no edge of the scene diffracts")
+    if shadowed:
+        lines.append(f"    - {len(shadowed)} pairs without line of sight (diffraction only): {', '.join(shadowed)}")
+    lines += [f"    - compas_acoustics warning: {w}" for w in ga.warnings]
+    return lines
 
 
 def dry_run(names: list[str], args) -> int:
@@ -167,7 +196,7 @@ def dry_run(names: list[str], args) -> int:
 
 def write_index(rows: list[dict]) -> Path:
     lines = ["# BRAS reference scenes vs PFFDTD", "",
-             f"| Scene | fmax (Hz) | Pairs | Mean abs dL, PFFDTD (dB) | Mean abs dL, {ENGINE_LABEL} (dB) | Report | Average response "
+             "| Scene | fmax (Hz) | Pairs | Mean abs dL, PFFDTD (dB) | Mean abs dL, geometric acoustics (dB) | Report | Average response "
              "| Animation | Time (min) |", "|---|---|---|---|---|---|---|---|---|"]
     for r in rows:
         if r.get("error"):
@@ -175,7 +204,7 @@ def write_index(rows: list[dict]) -> Path:
             continue
         rel = f"{r['scene']}/f{r['fmax']:g}"
         mp4 = f"[mp4]({rel}/{r['mp4']})" if r.get("mp4") else "-"
-        pra = f"{r['pra']:.2f}" if r.get("pra") is not None else "-"
+        pra = f"{r['pra']:.2f} ({r.get('pra_label') or ENGINE_LABEL})" if r.get("pra") is not None else "-"
         lines.append(f"| {r['label']} | {r['fmax']:g} | {r['pairs']} | {r['mean_abs_dl']:.2f} | {pra} | [report]({rel}/report.md) "
                      f"| ![average]({rel}/plots/average.png) | {mp4} | {r['minutes']:.0f} |")
     path = K.OUTPUT_ROOT / INDEX
@@ -205,7 +234,8 @@ def run(names: list[str], args) -> int:
                 mp4 = next((p for p in out["animation_files"] if p.suffix == ".mp4"), None)
                 rows.append({"scene": name, "label": scene.label, "fmax": opts.fmax, "pairs": len(out["results"]),
                              "mean_abs_dl": out["average"]["mean_abs_dl_db"],
-                             "pra": ((out.get("pyroomacoustics") or {}).get("average") or {}).get("mean_abs_dl_db"), "minutes": (time.time() - t0) / 60.0,
+                             "pra": ((out.get("geometric_acoustics") or {}).get("average") or {}).get("mean_abs_dl_db"),
+                             "pra_label": (out.get("geometric_acoustics") or {}).get("label"), "minutes": (time.time() - t0) / 60.0,
                              "mp4": mp4.relative_to(output_dir(scene, opts.fmax)).as_posix() if mp4 else None})
                 print(f"----- {name} f{opts.fmax:g}: mean |dL| {out['average']['mean_abs_dl_db']:.2f} dB -> {out['out_dir']}")
             except Exception as exc:
@@ -229,6 +259,10 @@ def main(argv=None) -> int:
     ap.add_argument("--first-order", action="store_true",
                     help="PFFDTD with the app's first-order directivity fit (default: the whole measured balloon)")
     ap.add_argument("--gain-pair", default="on_axis", help="on_axis (default), scene, or a pair key")
+    ap.add_argument("--ga-ray-tracing", choices=("on", "off", "scene"), default="scene",
+                    help="geometric acoustics: ray tracing (default: each scene's setting, or BRAS_GA_RAY_TRACING)")
+    ap.add_argument("--ga-diffraction", choices=K.GA_DIFFRACTION_MODELS, default=None,
+                    help=f"geometric acoustics: edge diffraction (default: {K.GA_DIFFRACTION_DEFAULT}, or BRAS_GA_DIFFRACTION)")
     args = ap.parse_args(argv)
     names = select_scenes(args.scenes)
     return dry_run(names, args) if args.dry_run else run(names, args)

@@ -6,7 +6,7 @@
    direction, microphones): plan (top view), section (the vertical grid plane through the level
    calibration pair; faces cut by it in ink, the rest behind it in light colour), perspective.
 2. What each engine gets: the PFFDTD boundary nodes on the run's own grid (plan slice through the
-   objects, the same section plane), and the pyroomacoustics walls (after the app's coplanar merge;
+   objects, the same section plane), and the geometric-acoustics walls and diffracting edges (after the app's coplanar merge;
    two-sided walls hatched).
 3. The materials: absorption and scattering exactly as read from the BRAS CSVs (third octaves),
    the compared band shaded; the run's numbers (grid, domain, engines).
@@ -58,6 +58,10 @@ FLOOR_COLOR = "#d9d4c7"
 RIGID_COLOR = "#52514e"
 SOURCE_COLOR = "#e34948"
 RECEIVER_COLOR = "#0b0b0b"
+# transparent faces of a hatch overlay: "none" gives Poly3DCollection no face colours, and its
+# depth sort (mplot3d art3d.do_3d_projection) then zips nothing and fails
+CLEAR = (0.0, 0.0, 0.0, 0.0)
+EDGE_COLOR = "#d10f7a"      # diffracting edges of the geometric-acoustics run
 VIEW_MARGIN_M = 0.4        # around the objects and the seeds
 ARROW_M = 0.35             # loudspeaker aiming arrow
 # must match pffdtd_backend/sim_prepare.py (GRID_OFFSET_CELLS, VOX_CACHE_VERSION)
@@ -293,17 +297,19 @@ def load_voxel_slices(rp, data, plots_dir: Path) -> dict:
     return _rasterised_slices(rp, data)
 
 
-# ── pyroomacoustics walls ───────────────────────────────────────────────────
+# ── geometric-acoustics walls ───────────────────────────────────────────────
 
 def pra_walls(rp) -> list[tuple[np.ndarray, str, bool]]:
-    """(corners, scene material key, two-sided) of each wall the pyroomacoustics run builds."""
+    """(corners, scene material key, two-sided) of each wall the geometric-acoustics run builds
+    (without its absorbing shell, which would hide the scene)."""
+    from benchmarks.bras.bras_constants import PRA_MESH_SETTINGS
     from services.simulation_mesh_service import MeshPrepOptions, MeshPrepSettings, SimulationMeshService
 
     g = rp.scene_geo
     mesh = SimulationMeshService.prepare(
         g["vertices"], g["faces"], g["object_face_ranges"], {int(k): v for k, v in g["face_materials"].items()},
         None, [p["source_position"] for p in rp.pairs_data] + [p["receiver_position"] for p in rp.pairs_data],
-        MeshPrepOptions.from_settings(MeshPrepSettings()),
+        MeshPrepOptions.from_settings(MeshPrepSettings(**PRA_MESH_SETTINGS)),
     )
     by_json = {json.dumps(v, sort_keys=True, default=str): k for k, v in rp.coeffs.items()}
     out = []
@@ -479,7 +485,42 @@ def _voxel_panel(ax, vox: dict, which: str, colors, keys: list, lo, hi, src, rcv
                 color=STYLE["div_pos"])
 
 
-def _pra_panel(ax, walls, colors, lo, hi, src, rcv, data) -> None:
+def _clip_segment(a: np.ndarray, b: np.ndarray, lo, hi) -> Optional[tuple]:
+    """The part of segment a-b inside the box (Liang-Barsky), or None."""
+    d = b - a
+    t0, t1 = 0.0, 1.0
+    for k in range(3):
+        for p_, q_ in ((-d[k], a[k] - lo[k]), (d[k], hi[k] - a[k])):
+            if abs(p_) < 1e-12:
+                if q_ < 0:
+                    return None
+                continue
+            t = q_ / p_
+            if p_ < 0:
+                t0 = max(t0, t)
+            else:
+                t1 = min(t1, t)
+            if t0 > t1:
+                return None
+    return a + t0 * d, a + t1 * d
+
+
+def _edges_3d(ax, edges, lo, hi) -> int:
+    """Draw the diffracting edges of the scene inside the view (not the absorbing shell's); how many are drawn."""
+    n = 0
+    for start, end, on_shell in edges:
+        if on_shell:
+            continue
+        seg = _clip_segment(np.asarray(start, float), np.asarray(end, float), np.asarray(lo, float), np.asarray(hi, float))
+        if seg is None:
+            continue
+        (x0, y0, z0), (x1, y1, z1) = seg
+        ax.plot([x0, x1], [y0, y1], [z0, z1], color=EDGE_COLOR, lw=1.8, zorder=5)
+        n += 1
+    return n
+
+
+def _pra_panel(ax, walls, colors, lo, hi, src, rcv, data, ga=None, cfg=None) -> None:
     ground_z = data.scene.ground.z if data.scene.ground is not None else None
     polys, fc, hatch_polys, floor, floor_fc = [], [], [], [], []
     for corners, key, two in walls:
@@ -500,11 +541,16 @@ def _pra_panel(ax, walls, colors, lo, hi, src, rcv, data) -> None:
         ax.add_collection3d(Poly3DCollection(polys, facecolors=fc, edgecolors=STYLE["ink"], linewidths=0.5, alpha=0.55,
                                              zorder=1))
     if hatch_polys:
-        ax.add_collection3d(Poly3DCollection(hatch_polys, facecolors="none", edgecolors=STYLE["ink"], linewidths=0.4,
+        ax.add_collection3d(Poly3DCollection(hatch_polys, facecolors=CLEAR, edgecolors=STYLE["ink"], linewidths=0.4,
                                              hatch="////", zorder=2))
+    n_edges = _edges_3d(ax, ga.edges, lo, hi) if ga is not None else 0
     _seeds_3d(ax, src, rcv, data)
     n_two = sum(1 for w in walls if w[2])
-    _set_3d(ax, lo, hi, f"pyroomacoustics: {len(walls)} walls after the coplanar merge ({n_two} two-sided, hatched)")
+    name = cfg.short_label() if cfg is not None else "geometric acoustics"
+    title = f"{name}: {len(walls)} walls after the coplanar merge ({n_two} two-sided, hatched)"
+    if cfg is not None and cfg.diffracts:
+        title += f"\n{len(ga.scene_edges) if ga is not None else '?'} diffracting edges ({n_edges} in view, magenta)"
+    _set_3d(ax, lo, hi, title)
 
 
 def _materials_panel(ax, scene, colors, band) -> list:
@@ -536,7 +582,13 @@ def _materials_panel(ax, scene, colors, band) -> list:
     return rows
 
 
-def _info_panel(ax, data, rp, vox: dict, n_walls: int) -> None:
+def _wrap(text: str, width: int = 52, indent: str = "  ") -> list[str]:
+    import textwrap
+
+    return textwrap.wrap(text, width, initial_indent=indent, subsequent_indent=indent + "  ")
+
+
+def _info_panel(ax, data, rp, vox: dict, n_walls: int, ga=None) -> None:
     scene, d = data.scene, rp.domain
     ax.axis("off")
     lines = [
@@ -556,10 +608,10 @@ def _info_panel(ax, data, rp, vox: dict, n_walls: int) -> None:
         + ("" if rp.padding["clean"] else " (NOT edge-clean)"),
         f"  voxels: {str(vox['source'])[:48]}",
         "",
-        "pyroomacoustics",
-        f"  image sources to order {scene.pra.max_order}" + (" + ray tracing" if scene.pra.ray_tracing else ""),
-        f"  {n_walls} walls; no diffraction",
-        "",
+        *(["Geometric acoustics: off", ""] if rp.ga is None else
+          [rp.ga.short_label(), *_wrap(rp.ga.describe().split(": ", 1)[1]),
+           *_wrap(ga.describe() if ga is not None else f"{n_walls} walls"),
+           *[w for msg in (ga.warnings if ga is not None else []) for w in _wrap("warning: " + msg)], ""]),
         f"Level calibrated on {scene.gain_pair}; {len(rp.pairs)} pairs",
     ]
     ax.text(0.0, 1.0, "\n".join(lines), va="top", ha="left", fontsize=8, family="monospace", color=STYLE["ink"],
@@ -607,8 +659,16 @@ def plot_setup(data, rp, plots_dir: Path, band: tuple) -> Path:
     try:
         walls = pra_walls(rp)
     except Exception as exc:  # the figure must not fail a benchmark
-        print(f"[bras] pyroomacoustics walls for the setup figure failed: {exc}")
+        print(f"[bras] geometric-acoustics walls for the setup figure failed: {exc}")
         walls = []
+    ga = None
+    if rp.ga is not None:
+        try:
+            from benchmarks.bras.bras_pra import ga_scene
+
+            ga = ga_scene(rp.ga, rp.ga_geo, rp.ga_pairs_data)
+        except Exception as exc:  # the figure must not fail a benchmark
+            print(f"[bras] diffracting edges for the setup figure failed: {exc}")
 
     fig = plt.figure(figsize=(19, 19))
     gs = fig.add_gridspec(4, 3, height_ratios=[1.0, 1.0, 0.8, 0.32], hspace=0.32, wspace=0.18)
@@ -617,13 +677,15 @@ def plot_setup(data, rp, plots_dir: Path, band: tuple) -> Path:
     _perspective(fig.add_subplot(gs[0, 2], projection="3d"), data, colors, lo, hi, src, rcv)
     _voxel_panel(fig.add_subplot(gs[1, 0]), vox, "plan", colors, keys, lo, hi, src, rcv, data)
     _voxel_panel(fig.add_subplot(gs[1, 1]), vox, "section", colors, keys, lo, hi, src, rcv, data)
-    _pra_panel(fig.add_subplot(gs[1, 2], projection="3d"), walls, colors, lo, hi, src, rcv, data)
+    _pra_panel(fig.add_subplot(gs[1, 2], projection="3d"), walls, colors, lo, hi, src, rcv, data, ga, rp.ga)
     rows = _materials_panel(fig.add_subplot(gs[2, 0:2]), scene, colors, band)
-    _info_panel(fig.add_subplot(gs[2, 2]), data, rp, vox, len(walls))
+    _info_panel(fig.add_subplot(gs[2, 2]), data, rp, vox, len(walls), ga)
     _table_panel(fig.add_subplot(gs[3, :]), rows, band)
     handles = [Patch(color=colors[k], label=k) for k in keys] + [Patch(color=RIGID_COLOR, label="rigid (PFFDTD)")]
     handles += [plt.Line2D([], [], marker="^", ls="", color=SOURCE_COLOR, label="loudspeaker (arrow: aim)"),
                 plt.Line2D([], [], marker="o", ls="", color=RECEIVER_COLOR, label="microphone")]
+    if ga is not None and ga.scene_edges:
+        handles.append(plt.Line2D([], [], color=EDGE_COLOR, lw=1.8, label="diffracting edge"))
     fig.subplots_adjust(top=0.95, bottom=0.03, left=0.05, right=0.97)
     fig.legend(handles=handles, loc="upper center", ncol=len(handles), frameon=False, fontsize=8,
                bbox_to_anchor=(0.5, 0.975))

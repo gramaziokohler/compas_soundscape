@@ -7,13 +7,15 @@ tiny corner markers (same bbox, so the same grid).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from fnmatch import fnmatch
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 
-from benchmarks.bras.bras_constants import (CONTROL_MARKER_EDGE_M, GROUND_INSET_CELLS, MATERIAL_MODES, PRA_SHELL_KEY,
+from benchmarks.bras.bras_constants import (CONTROL_MARKER_EDGE_M, GA_BOX_JOIN_M, GROUND_INSET_CELLS, GROUND_TOL_M,
+                                            MATERIAL_MODES, PRA_CLOSED_ROOM, PRA_FLOOR_KEY, PRA_SHELL_KEY,
                                             PRA_SHELL_MARGIN_M)
 from benchmarks.bras.scenes import RIGID, GeometryInput, MaterialInput, Scene
 
@@ -266,7 +268,8 @@ def scene_geometry(mesh: SceneMesh, coeffs: dict, ground=None, bounds=None, h: f
     return geometry_dict(parts, coeffs)
 
 
-def enclosed_geometry(geometry: dict, bounds, margin_m: float = PRA_SHELL_MARGIN_M) -> dict:
+def enclosed_geometry(geometry: dict, bounds, margin_m: float = PRA_SHELL_MARGIN_M,
+                      floor: Optional[tuple] = None) -> dict:
     """``geometry`` inside a fully absorbing box (alpha = 1) ``margin_m`` beyond ``bounds``.
 
     pyroomacoustics only tests the walls off the convex hull of all walls for obstruction
@@ -275,17 +278,50 @@ def enclosed_geometry(geometry: dict, bounds, margin_m: float = PRA_SHELL_MARGIN
     never blocks a path and the floor reflects through the objects. The shell makes the scene a
     closed room: the hull is the shell, every object face is checked again, and the shell itself
     reflects nothing. ``margin_m`` keeps it off the floor's edges (no coplanar faces).
+
+    ``floor = (z, coeffs)`` (hemi-anechoic chambers): the shell's bottom face is the floor, at ``z``
+    with its material, and ``geometry`` must not carry a floor of its own. The boundary then
+    closes a volume, which compas_acoustics needs to diffract on the objects standing on the floor
+    (they are part of the boundary: with a finite floor plane floating inside the shell, the model
+    is open and the boundary's edges are not searched).
     """
     lo = np.asarray(bounds[0], np.float64) - margin_m
     hi = np.asarray(bounds[1], np.float64) + margin_m
+    if floor is not None:
+        lo[2] = float(floor[0])
     sv, sf = box(lo, hi)
     offset = len(geometry["vertices"])
     start = len(geometry["faces"])
     shell = {"coeffs": [1.0] * len(CONSTANT_ALPHA_BANDS_HZ), "center_freqs": list(CONSTANT_ALPHA_BANDS_HZ)}
     faces = list(geometry["faces"]) + (sf + offset).tolist()
+    ranges = dict(geometry["object_face_ranges"])
+    materials = {**geometry["face_materials"], **{i: shell for i in range(start, len(faces))}}
+    if floor is None:
+        ranges[PRA_SHELL_KEY] = [start, len(faces) - 1]
+    else:  # box(): the first two triangles are the bottom face
+        ranges[PRA_FLOOR_KEY] = [start, start + 1]
+        ranges[PRA_SHELL_KEY] = [start + 2, len(faces) - 1]
+        materials.update({start: floor[1], start + 1: floor[1]})
     return {"vertices": list(geometry["vertices"]) + sv.tolist(), "faces": faces,
-            "object_face_ranges": {**geometry["object_face_ranges"], PRA_SHELL_KEY: [start, len(faces) - 1]},
-            "face_materials": {**geometry["face_materials"], **{i: shell for i in range(start, len(faces))}}}
+            "object_face_ranges": ranges, "face_materials": materials}
+
+
+def ga_scene_geometry(mesh: SceneMesh, coeffs: dict, bounds, ground=None) -> dict:
+    """The scene for the geometric-acoustics engine: the objects inside the absorbing shell
+    (``PRA_CLOSED_ROOM``), whose bottom face is the floor of a hemi-anechoic chamber. Without
+    objects (RS1 rigid), the shell alone."""
+    parts = [] if mesh.empty else [(mesh.vertices, mesh.faces, mesh.materials)]
+    if parts:
+        geometry = geometry_dict(parts, coeffs)
+    else:
+        geometry = {"vertices": [], "faces": [], "object_face_ranges": {}, "face_materials": {}}
+    if not PRA_CLOSED_ROOM:
+        if ground is not None:
+            gv, gf = ground_mesh(bounds[0], bounds[1], ground.z, 0.0)
+            geometry = geometry_dict(parts + [(gv, gf, [ground.material] * len(gf))], coeffs)
+        return geometry
+    floor = (ground.z, coeffs[ground.material]) if ground is not None else None
+    return enclosed_geometry(geometry, bounds, floor=floor)
 
 
 def control_scene_geometry(mesh: SceneMesh, coeffs: dict, ground=None, bounds=None, h: float = 0.0) -> dict:
@@ -297,3 +333,177 @@ def control_scene_geometry(mesh: SceneMesh, coeffs: dict, ground=None, bounds=No
         gv, gf = ground_mesh(bounds[0], bounds[1], ground.z, h)
         parts.append((gv, gf, [ground.material] * len(gf)))
     return geometry_dict(parts, coeffs)
+
+
+# ── Geometric acoustics: each object as one box ───────────────────────────────
+BOX_FACE = {(2, 0): 0, (2, 1): 1, (1, 0): 2, (0, 1): 3, (1, 1): 4, (0, 0): 5}   # (axis, +side) -> box() face
+
+
+@dataclass
+class ObjectBox:
+    """One object of the scene for the geometric-acoustics engine: an oriented box, 6 walls."""
+    material: str
+    center: np.ndarray
+    axes: np.ndarray             # (3, 3) rows: unit axes, right-handed
+    half: np.ndarray             # half extents along ``axes``
+    parts: int                   # mesh parts merged into it
+    # faces of another material: (axis index, 1 = the +axis side / 0 = the -axis side) -> material
+    # (the RS2 plate's front face is its absorber)
+    face_materials: dict = field(default_factory=dict)
+
+    def corners(self) -> np.ndarray:
+        v, _ = box(-self.half, self.half)
+        return self.center + v @ self.axes
+
+    def mesh(self) -> tuple[np.ndarray, np.ndarray, list]:
+        """Vertices, triangles (outward) and the material of each triangle."""
+        _, f = box(-self.half, self.half)
+        mats = [self.material] * len(f)
+        for face, key in self.face_materials.items():
+            q = BOX_FACE[face]
+            mats[2 * q] = mats[2 * q + 1] = key
+        return self.corners(), f, mats
+
+    def extend(self, points: np.ndarray) -> None:
+        """Grow the box (same axes) to contain ``points``."""
+        local = np.vstack([self.corners(), points]) @ self.axes.T
+        lo, hi = local.min(axis=0), local.max(axis=0)
+        self.center, self.half = ((lo + hi) / 2) @ self.axes, (hi - lo) / 2
+
+
+def _parts(vertices: np.ndarray, faces: np.ndarray, weld_m: float = 1e-3) -> np.ndarray:
+    """Connected part of each face (vertices welded at ``weld_m``)."""
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+
+    _, inv = np.unique(np.round(vertices / weld_m).astype(np.int64), axis=0, return_inverse=True)
+    f = inv.ravel()[faces]
+    e = np.vstack([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]])
+    n = int(inv.max()) + 1
+    _, label = connected_components(coo_matrix((np.ones(len(e)), (e[:, 0], e[:, 1])), shape=(n, n)), directed=False)
+    return label[f[:, 0]]
+
+
+def _box_axes(vertices: np.ndarray, faces: np.ndarray) -> np.ndarray:
+    """Axes of the box around an object: its dominant face normal (by area), the dominant normal
+    across it and their cross product; ordered and signed like the world axes they are closest to."""
+    t = vertices[faces]
+    n = np.cross(t[:, 1] - t[:, 0], t[:, 2] - t[:, 0])
+    area = np.linalg.norm(n, axis=1)
+    keep = area > 1e-12
+    n, area = n[keep] / area[keep, None], area[keep]
+    axes: list = []
+    for _ in range(2):
+        if axes:   # normals across the first axis only
+            sel = np.abs(n @ axes[0]) < 0.1
+            n, area = n[sel], area[sel]
+        if not len(n):
+            return np.eye(3)
+        weights = [float(area[np.abs(n @ c) > 0.99].sum()) for c in n[np.argsort(-area)[:50]]]
+        best = n[np.argsort(-area)[:50]][int(np.argmax(weights))]
+        if axes:
+            best = best - axes[0] * float(best @ axes[0])
+        axes.append(best / np.linalg.norm(best))
+    a = np.array([axes[0], axes[1], np.cross(axes[0], axes[1])])
+    order = np.argmax(np.abs(a), axis=1)
+    if len(set(order.tolist())) == 3:
+        a = a[np.argsort(order)]
+        a *= np.sign(np.diag(a))[:, None]
+    if np.linalg.det(a) < 0:
+        a[2] = -a[2]
+    return a
+
+
+def object_boxes(mesh: SceneMesh, join_m: float = GA_BOX_JOIN_M, layers: Optional[dict] = None) -> list:
+    """The scene's objects as boxes. Parts of one material closer than ``join_m`` are one object (the
+    rows and battens of RS7, the pieces of the RS6 body), replaced by its oriented bounding box: every
+    coplanar face of the object becomes one wall (and the stand slots of the RS2 / RS3 plates close).
+    ``layers`` (``GeometryInput.extrude``: material pattern -> thickness vector) are layers drawn as one
+    face, the RS2 absorber: the plate's facing face is duplicated, moved to the layer's front and joined
+    to the plate, so plate and layer are one box whose front face has the layer's material (a separate
+    sheet would put four more edges 22 mm in front of the plate's, and the mesh preparation's air
+    sampling does not always reach the gap behind it). A layer without a box within ``join_m`` stays its
+    own box."""
+    if mesh.empty:
+        return []
+    v, f = mesh.vertices, mesh.faces
+    part = _parts(v, f)
+    mats = np.asarray(mesh.materials, dtype=object)
+    labels = np.asarray(mesh.labels, dtype=object)
+    out, layer_boxes = [], []
+    for key in sorted(set(mesh.materials)):
+        ids = sorted(set(part[mats == key].tolist()))
+        lo = np.array([v[f[part == i]].reshape(-1, 3).min(axis=0) for i in ids])
+        hi = np.array([v[f[part == i]].reshape(-1, 3).max(axis=0) for i in ids])
+        root = list(range(len(ids)))
+
+        def find(i: int) -> int:
+            while root[i] != i:
+                root[i] = root[root[i]]
+                i = root[i]
+            return i
+
+        for a in range(len(ids)):
+            for b in range(a + 1, len(ids)):
+                if np.all(lo[a] <= hi[b] + join_m) and np.all(lo[b] <= hi[a] + join_m):
+                    root[find(a)] = find(b)
+        groups: dict = {}
+        for a, i in enumerate(ids):
+            groups.setdefault(find(a), []).append(i)
+        for members in groups.values():
+            sel = np.isin(part, members)
+            axes = _box_axes(v, f[sel])
+            pts = v[np.unique(f[sel])] @ axes.T
+            lo_l, hi_l = pts.min(axis=0), pts.max(axis=0)
+            ob = ObjectBox(key, ((lo_l + hi_l) / 2) @ axes, axes, (hi_l - lo_l) / 2, len(members))
+            vec = next((np.asarray(x, np.float64) for pat, x in (layers or {}).items() if fnmatch(labels[sel][0], pat)), None)
+            (out if vec is None else layer_boxes).append(ob if vec is None else (ob, vec))
+    for layer, vec in layer_boxes:
+        host = min(out, key=lambda b: _gap(b, layer), default=None)
+        if host is None or _gap(host, layer) > join_m:
+            out.append(layer)
+            continue
+        host.extend(layer.corners())
+        host.parts += layer.parts
+        k = int(np.argmax(np.abs(host.axes @ vec)))
+        host.face_materials[(k, 0 if float(host.axes[k] @ vec) > 0 else 1)] = layer.material
+    return out
+
+
+def _gap(a: ObjectBox, b: ObjectBox) -> float:
+    """Largest per-axis gap between the world bounding boxes of two boxes (<= 0: they touch)."""
+    ca, cb = a.corners(), b.corners()
+    return float(np.max(np.maximum(ca.min(axis=0) - cb.max(axis=0), cb.min(axis=0) - ca.max(axis=0))))
+
+
+def lift_boxes(boxes: list, floor_z: float, lift_m: float, tol_m: float = GROUND_TOL_M) -> list:
+    """The boxes standing on the floor at ``floor_z`` raised by ``lift_m`` (``PraSpec.lift_m``)."""
+    if not lift_m:
+        return boxes
+    return [replace(b, center=b.center + np.array([0.0, 0.0, lift_m]))
+            if abs(float(b.corners()[:, 2].min()) - floor_z) <= tol_m else b for b in boxes]
+
+
+def box_scene_mesh(mesh: SceneMesh, boxes: list) -> SceneMesh:
+    """``mesh`` with its objects replaced by ``boxes`` (labels ``box<n>``)."""
+    if not boxes:
+        return mesh
+    parts_v, parts_f, mats, labels, offset = [], [], [], [], 0
+    for n, b in enumerate(boxes):
+        bv, bf, bm = b.mesh()
+        parts_v.append(bv)
+        parts_f.append(bf + offset)
+        offset += len(bv)
+        mats += bm
+        labels += [f"box{n}"] * len(bf)
+    v, f = np.vstack(parts_v), np.vstack(parts_f)
+    used = np.unique(f)
+    return SceneMesh(v, f, labels, mats, v[used].min(axis=0), v[used].max(axis=0))
+
+
+def ga_bounds(mesh: SceneMesh, positions) -> tuple[np.ndarray, np.ndarray]:
+    """What the geometric-acoustics shell encloses: the objects and every measured position. Not the
+    PFFDTD domain, which grows with the fmax stage: the geometric scene must be the same at every stage."""
+    pts = np.vstack([np.asarray(mesh.bmin, np.float64), np.asarray(mesh.bmax, np.float64)]
+                    + [np.asarray(p, np.float64).reshape(1, 3) for p in positions])
+    return pts.min(axis=0), pts.max(axis=0)
