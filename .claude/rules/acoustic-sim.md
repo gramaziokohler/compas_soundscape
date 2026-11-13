@@ -6,8 +6,6 @@ paths:
   - "backend/services/simulation_preflight_service.py"
   - "backend/services/simulation_preflight_worker.py"
   - "backend/services/simulation_geometry_loader.py"
-  - "backend/utils/mesh_*.py"
-  - "backend/utils/air_visibility.py"
   - "backend/utils/preflight_payload.py"
   - "backend/routers/simulation_preflight.py"
   - "frontend/src/components/layout/sidebar/acoustics/SimulationPreflightPanel.tsx"

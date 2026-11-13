@@ -173,7 +173,7 @@ def compute_paths(
             if not edge["excluded"]:
                 active_index[len(active_index)] = edge["id"]
         progress(85, f"Tracing diffracted paths over {len(active_index)} edge(s)...")
-        with diffraction_edge_filter(excluded_edges, offset), edge_warnings(doc["notes"]):
+        with edge_warnings(doc["notes"]), diffraction_edge_filter(excluded_edges, offset, geometry):
             found = diffracted_paths(scene, max_order=1, geometry=geometry)
         paths = []
         for path in found:

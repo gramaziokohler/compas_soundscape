@@ -101,7 +101,7 @@ export interface GeometricEngineSettings {
   diffraction?: string;
   /** Ambisonic order of the 'hoa' mode (2 or 3). */
   ambisonic_order?: number;
-  /** Ambisonic late field: 'auto' | 'reference' | 'ray_tracing' | 'eyring' | 'sabine'. */
+  /** Ambisonic late field: 'auto' | 'reference' | 'eyring' | 'sabine'. */
   tail?: string;
   /** Decay slopes of the late field (2+ for coupled volumes). */
   n_slopes?: number;

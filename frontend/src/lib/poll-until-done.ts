@@ -9,6 +9,10 @@
  *
  * A `PollRegistry` lets a store cancel ALL of its own in-flight polls from a
  * single "stop" handler without touching other stores' jobs.
+ *
+ * Failure messages come from the legacy job envelope's `error` field (see
+ * `toLegacyJobStatus` / `isLegacyJobTerminal` in `services/api.ts`) — never
+ * from `status` alone, which is often just "Error".
  */
 
 export interface PollOptions {
@@ -86,6 +90,15 @@ export function startPolling(options: PollOptions): PollController {
       const status = await fetchStatus();
       if (settled) return;
 
+      // Prefer Redis `error` (clear exception text) over status_text "Error".
+      if (status?.error) {
+        stop(new Error(status.error));
+        return;
+      }
+      if (status?.cancelled) {
+        stop();
+        return;
+      }
       if (isTerminal(status)) {
         settled = true;
         if (interval !== null) {
@@ -93,14 +106,6 @@ export function startPolling(options: PollOptions): PollController {
           interval = null;
         }
         resolve(resolveValue(status));
-        return;
-      }
-      if (status?.cancelled) {
-        stop();
-        return;
-      }
-      if (status?.error) {
-        stop(new Error(status.error));
         return;
       }
       onStatus?.(status);

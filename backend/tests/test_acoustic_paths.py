@@ -143,13 +143,19 @@ def test_simulation_without_the_edges_equals_no_diffraction(mesh, doc):
 
 @pytest.mark.parametrize("tail, ray_tracing, expected", [
     ("auto", True, "reference"), ("auto", False, "eyring"), ("reference", False, "reference"),
-    ("ray_tracing", True, "ray_tracing"), ("eyring", True, "eyring"), ("sabine", True, "sabine"),
+    ("eyring", True, "eyring"), ("sabine", True, "sabine"),
 ])
 def test_tail_options(tail, ray_tracing, expected):
-    method, _ = engine.build_method(engine.EngineSettings(ambisonic_order=1, tail=tail, ray_tracing=ray_tracing))
+    method, _ = engine.build_method(engine.EngineSettings(
+        ambisonic_order=1, tail=tail, ray_tracing=ray_tracing, n_rays=1234, seed=9,
+    ))
     assert method.tail == expected
     if expected == "reference":
+        # The histogram is traced with this Mono, so the card's ray count and seed have to be on it.
         assert method.reference.ray_tracing is True
+        assert method.reference.n_rays == 1234
+        assert method.reference.seed == 9
+        assert method.reference.reciprocity is False
 
 
 def test_unknown_tail():
@@ -157,8 +163,10 @@ def test_unknown_tail():
         engine.build_method(engine.EngineSettings(ambisonic_order=1, tail="plate"))
 
 
-def test_open_model_says_why_its_corners_do_not_diffract():
-    """Without its ceiling the room does not close: only the panel's rims diffract, and the user is told."""
+def test_an_open_model_still_diffracts_and_raises_no_open_model_issue():
+    """Without its ceiling the room does not close. Its edges are still searched (compas_acoustics finds them
+    from the air around each edge): the panel's rims diffract, the open rim of the walls does not, and
+    neither the notes nor the preflight say the corners are skipped."""
     from services.simulation_preflight_service import (
         ENGINE_PYROOMACOUSTICS, PreflightContext, SeedMeta, SimulationPreflightService,
     )
@@ -174,8 +182,8 @@ def test_open_model_says_why_its_corners_do_not_diffract():
     )
     doc = compute_paths(mesh, PAIRS, ["diffraction"])
     edges = doc["diffraction"]["edges"]
-    assert edges and all(e["kind"] == "obstacle" for e in edges)
-    assert any("does not close" in note for note in doc["notes"])
+    assert len(edges) == 4 and all(e["kind"] == "obstacle" for e in edges)
+    assert not any("does not close" in note for note in doc["notes"])
 
     def issues(diffraction):
         ctx = PreflightContext(
@@ -187,5 +195,5 @@ def test_open_model_says_why_its_corners_do_not_diffract():
         )
         return {i.code: i.severity for i in SimulationPreflightService.analyze(mesh, ctx).issues}
 
-    assert issues("udfa").get("ca_diffraction_open_model") == "info"      # the panel still diffracts
+    assert "ca_diffraction_open_model" not in issues("udfa")
     assert "ca_diffraction_open_model" not in issues("off")

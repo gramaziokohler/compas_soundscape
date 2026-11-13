@@ -30,6 +30,7 @@ from config.constants import CA_DIFFRACTION_MODELS
 from config.constants import CA_DIFFRACTION_OFF
 from config.constants import CA_N_SLOPES_MAX
 from config.constants import CA_SEED_DEFAULT
+from config.constants import CA_TAIL_ALIASES
 from config.constants import CA_TAIL_DEFAULT
 from config.constants import CA_TAILS
 from config.constants import DEFAULT_SPEED_OF_SOUND
@@ -73,8 +74,13 @@ TEMP_DIR = Path(TEMP_SIMULATIONS_DIR)
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def normalize_tail(tail: str) -> str:
+    """Map removed aliases (``ray_tracing``, ``legacy``) onto the current CA_TAILS values."""
+    return CA_TAIL_ALIASES.get(tail, tail)
+
+
 def validate_tail_settings(tail: str, n_slopes: int) -> None:
-    if tail not in CA_TAILS:
+    if normalize_tail(tail) not in CA_TAILS:
         raise HTTPException(status_code=400, detail=f"tail must be one of {list(CA_TAILS)}")
     if not 1 <= n_slopes <= CA_N_SLOPES_MAX:
         raise HTTPException(status_code=400, detail=f"n_slopes must be 1 to {CA_N_SLOPES_MAX}")
@@ -245,8 +251,9 @@ async def run_simulation_speckle(
         object_scattering_dict: dict[str, float] = json.loads(object_scattering) if object_scattering else {}
         mesh_prep = parse_mesh_settings(mesh_settings)
 
-        validate_engine_settings(engine, simulation_mode, diffraction, ambisonic_order, air_temperature, air_humidity)
         validate_tail_settings(tail, n_slopes)
+        tail = normalize_tail(tail)
+        validate_engine_settings(engine, simulation_mode, diffraction, ambisonic_order, air_temperature, air_humidity)
         from routers.acoustic_paths import parse_excluded_edges
         excluded_edge_rows = parse_excluded_edges(excluded_edges)
 
@@ -348,11 +355,16 @@ async def run_simulation_geometry(body: PyroomacousticsGeometryRequest, http_req
 
     try:
         settings = req.settings
+        validate_tail_settings(settings.tail, settings.n_slopes)
+        engine = settings.engine
+        simulation_mode = settings.simulation_mode
+        diffraction = settings.diffraction
+        ray_tracing = settings.ray_tracing
+        tail = normalize_tail(settings.tail)
         validate_engine_settings(
-            settings.engine, settings.simulation_mode, settings.diffraction, settings.ambisonic_order,
+            engine, simulation_mode, diffraction, settings.ambisonic_order,
             settings.air_temperature, settings.air_humidity,
         )
-        validate_tail_settings(settings.tail, settings.n_slopes)
 
         if settings.max_order < PYROOMACOUSTICS_MAX_ORDER_MIN or settings.max_order > PYROOMACOUSTICS_MAX_ORDER_MAX:
             raise HTTPException(
@@ -404,7 +416,7 @@ async def run_simulation_geometry(body: PyroomacousticsGeometryRequest, http_req
         print(f"\n{'='*60}")
         print("Pyroomacoustics Geometry Simulation Request")
         print(f"Simulation ID: {simulation_id}")
-        print(f"Units: {req.units} (scaled to meters)  Mode: {settings.simulation_mode}")
+        print(f"Units: {req.units} (scaled to meters)  Mode: {simulation_mode}")
         print(f"Vertices: {len(vertices_m)}  Faces: {n_faces}  "
               f"Groups: {len(req.face_groups)}  Sources: {len(sources_m)}  "
               f"Receivers: {len(receivers_m)}")
@@ -448,9 +460,9 @@ async def run_simulation_geometry(body: PyroomacousticsGeometryRequest, http_req
             "kwargs": dict(
                 simulation_id=simulation_id,
                 geometry_file=geometry_file,
-                simulation_mode=settings.simulation_mode,
+                simulation_mode=simulation_mode,
                 max_order=settings.max_order,
-                ray_tracing=settings.ray_tracing,
+                ray_tracing=ray_tracing,
                 air_absorption=settings.air_absorption,
                 n_rays=settings.n_rays,
                 parallel=settings.parallel,
@@ -459,12 +471,12 @@ async def run_simulation_geometry(body: PyroomacousticsGeometryRequest, http_req
                 rir_output_dir=str(RIR_OUTPUT_DIR),
                 temp_dir=str(TEMP_DIR),
                 mesh_settings=(req.mesh_settings or MeshPrepSettings()).model_dump(),
-                engine=settings.engine,
-                diffraction=settings.diffraction,
+                engine=engine,
+                diffraction=diffraction,
                 ambisonic_order=settings.ambisonic_order,
                 air_temperature=settings.air_temperature,
                 air_humidity=settings.air_humidity,
-                tail=settings.tail,
+                tail=tail,
                 n_slopes=settings.n_slopes,
                 seed=settings.seed,
                 scattering_split=settings.scattering_split,

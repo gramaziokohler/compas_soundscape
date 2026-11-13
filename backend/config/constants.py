@@ -476,8 +476,11 @@ CA_AMBISONIC_NORMALIZATION = "SN3D"  # AmbiX: ACN order + SN3D, as the legacy FO
 CA_AIR_TEMPERATURE_RANGE_C = (0.0, 30.0)  # Cramer's range in compas_acoustics.AirConditions
 CA_AIR_HUMIDITY_DEFAULT = 50.0  # % relative humidity
 CA_HYBRID_SCATTERING_SPLIT = False  # Ambisonics(scattering=True): specular vs scattered early part
-CA_TAILS = ("auto", "reference", "ray_tracing", "eyring", "sabine")  # ambisonic late field (EngineSettings.tail)
+# Ambisonic late field (EngineSettings.tail). Removed values "ray_tracing" (CA Mono defaults)
+# and "legacy" (pyroomacoustics FOA capsules) alias to "auto".
+CA_TAILS = ("auto", "reference", "eyring", "sabine")
 CA_TAIL_DEFAULT = "auto"
+CA_TAIL_ALIASES = {"ray_tracing": "auto", "legacy": "auto"}
 CA_N_SLOPES_MAX = 3
 CA_SEED_DEFAULT = 42
 
@@ -678,11 +681,6 @@ SIM_MESH_COPLANAR_ANGLE_DEG_MAX = 10.0
 SIM_MESH_COPLANAR_DISTANCE_MM_DEFAULT = 1.0
 SIM_MESH_COPLANAR_DISTANCE_MM_MAX = 20.0
 SIM_MESH_DETECT_TWO_SIDED_DEFAULT = True
-# Leave the faces the air never reaches (class "skipped": seams between touching parts, faces
-# inside solids) out of the simulated walls. Off by default: they have no air path, but the
-# image source model still mirrors sources in them, so on models with internal seams (tiled
-# absorber panels) they add spurious reflections. Used by the BRAS benchmark.
-SIM_MESH_DROP_UNREACHED_FACES_DEFAULT = False
 SIM_MESH_VISIBILITY_QUALITY_DEFAULT = "standard"
 SIM_MESH_VISIBILITY_QUALITY_FACTORS = {"fast": 0.4, "standard": 1.0, "thorough": 2.5}
 SIM_MESH_ENCLOSING_OBJECT_MIN_FACES = 4        # Loose-face objects smaller than this are never "closed boxes"

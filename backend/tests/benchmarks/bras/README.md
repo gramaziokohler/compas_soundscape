@@ -216,9 +216,12 @@ it; `_cache/` holds the directivity balloons and the loudspeaker phase).
   only its convex edges (top and vertical) diffract. `PraSpec.lift_m` raises them instead, should a
   scene need it. RS1 keeps its mesh (tiled absorber, diffusor). PFFDTD always uses the full mesh.
 - **pyroomacoustics mesh settings** (`PRA_MESH_SETTINGS`). The RockFon absorbers are tiled panels with
-  ~1 mm slits: a 2 mm weld closes them, and `drop_unreached_faces` (an app setting, off by default)
-  leaves the panel sides inside the slab out of the walls. Otherwise the image source model mirrors
-  in them and repeats the absorber reflection (+10 dB on the RS1 specular pairs).
+  ~1 mm slits: a 2 mm weld closes them. The panel sides inside the slab used to be left out of the
+  walls with the `drop_unreached_faces` setting, which has been removed: "unreached" is a
+  seed-dependent observation and dropping a misjudged face opens a hole, so unreached faces are now
+  always simulated. Where those sides survive the weld the image source model mirrors in them and
+  repeats the absorber reflection (+10 dB on the RS1 specular pairs before the option existed);
+  the pyroomacoustics numbers here have not been re-run since the removal.
 - **Material bands.** The app maps a material's coefficients to pyroomacoustics' octave bands by
   frequency (`pyroomacoustics_room_builder._to_octave_bands`: mean of the 1/3-octave bands in each
   octave). It used to take the first eight values, which gave the BRAS CSVs (1/3 octave from 20 Hz)

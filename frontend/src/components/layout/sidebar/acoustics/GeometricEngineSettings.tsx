@@ -23,6 +23,7 @@ import { GA_ENGINE } from '@/utils/constants';
 import {
   effectiveEngineSettings,
   isAmbisonicMode,
+  normalizeTail,
   temperatureForSoundSpeed,
   usesCompasAcoustics,
 } from '@/lib/acoustics/geometric-engine';
@@ -62,7 +63,8 @@ export function GeometricEngineSettings({
   const ca = lockEngine || usesCompasAcoustics(settings, capabilities);
   const ambisonic = isAmbisonicMode(settings.simulation_mode);
   const diffraction = settings.diffraction ?? GA_ENGINE.DIFFRACTION_OFF;
-  const tail = settings.tail ?? GA_ENGINE.TAIL_DEFAULT;
+  const tail = normalizeTail(settings.tail) ?? GA_ENGINE.TAIL_DEFAULT;
+  const showTail = ambisonic && ca;
   const { changes } = effectiveEngineSettings(settings, lockEngine ? null : capabilities);
   const needsCa = 'Needs the compas_acoustics engine';
   const customAir = settings.air_temperature !== undefined && settings.air_temperature !== null;
@@ -75,6 +77,11 @@ export function GeometricEngineSettings({
     disabled: value !== GA_ENGINE.AUTO && capabilities ? !capabilities.engines[value]?.available : false,
     title: value !== GA_ENGINE.AUTO && capabilities && !capabilities.engines[value]?.available
       ? 'Not installed on the server' : undefined,
+  }));
+  const tailOptions = Object.keys(GA_ENGINE.TAIL_NAMES).map((value) => ({
+    value,
+    label: GA_ENGINE.TAIL_NAMES[value],
+    title: GA_ENGINE.TAIL_HINTS[value],
   }));
 
   return (
@@ -99,8 +106,8 @@ export function GeometricEngineSettings({
         />
       </div>
 
-      {/* Reverb tail of the ambisonic (hybrid ISM + feedback-delay-network) method */}
-      {ambisonic && ca && (
+      {/* Ambisonic late field (compas_acoustics FDN) */}
+      {showTail && (
         <div>
           <label className="text-xxs card-label text-secondary-hover" title={GA_ENGINE.TAIL_HINTS[tail]}>
             Reverb tail{isModified('tail') && <ModifiedMark />}
@@ -109,11 +116,7 @@ export function GeometricEngineSettings({
             value={tail}
             onChange={(v) => onChange('tail', v)}
             disabled={disabled}
-            options={Object.keys(GA_ENGINE.TAIL_NAMES).map((value) => ({
-              value,
-              label: GA_ENGINE.TAIL_NAMES[value],
-              title: GA_ENGINE.TAIL_HINTS[value],
-            }))}
+            options={tailOptions}
           />
           <p className="text-xxs text-secondary-hover">{GA_ENGINE.TAIL_HINTS[tail]}</p>
         </div>

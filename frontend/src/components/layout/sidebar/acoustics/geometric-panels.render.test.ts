@@ -46,7 +46,7 @@ const CAPS: EngineCapabilities = {
 };
 
 const PAYLOAD: AcousticPathsPayload = {
-  paths_id: 'p', speed_of_sound: 343, notes: ['The model does not close, so the room\'s own corners do not diffract.'],
+  paths_id: 'p', speed_of_sound: 343, notes: ['Diffraction: 2 edge pieces where the faces disagree on which side is air: no diffraction there.'],
   sources: [{ id: 's1', position: [0, 0, 0] }, { id: 's2', position: [5, 0, 0] }],
   receivers: [{ id: 'r1', position: [2, 0, 0] }],
   reflections: { max_order: 2, truncated: false, paths: [{ s: 0, r: 0, order: 1, points: [0, 0, 0, 1, 1, 0, 2, 0, 0], distance: 2.8, delay_ms: 8.2, level_db: -10 }] },
@@ -156,10 +156,10 @@ describe('engine settings', () => {
 
   it('says what the run will change', () => {
     expect(engine({ diffraction: 'btms' })).toContain('BTMS diffraction needs an ambisonic output');
-    const legacy = engine({ simulation_mode: 'hoa', diffraction: 'udfa', engine: 'pyroomacoustics' });
-    expect(legacy).toContain('Higher-order ambisonics needs compas_acoustics');
-    expect(legacy).toContain('Edge diffraction needs compas_acoustics');
-    expect(legacy).not.toContain('Reverb tail'); // the legacy engine has none
+    const praEngine = engine({ simulation_mode: 'hoa', diffraction: 'udfa', engine: 'pyroomacoustics' });
+    expect(praEngine).toContain('Higher-order ambisonics needs compas_acoustics');
+    expect(praEngine).toContain('Edge diffraction needs compas_acoustics');
+    expect(praEngine).not.toContain('Reverb tail'); // engine=pra has no FDN reverb-tail control
   });
 
   it('renders before the capabilities are known', () => {

@@ -1,6 +1,6 @@
 ---
 description: Room acoustics simulation — pyroomacoustics and PFFDTD GPU FDTD solvers, plus applying simulation results to sounds (IR matching, muting, IR panel, mismatch coloring)
-globs: backend/services/pyroomacoustics_service.py,backend/services/pyroomacoustics_room_builder.py,backend/services/simulation_mesh_service.py,backend/services/simulation_preflight_service.py,backend/services/simulation_preflight_worker.py,backend/services/simulation_geometry_loader.py,backend/utils/mesh_*.py,backend/utils/air_visibility.py,backend/utils/preflight_payload.py,backend/routers/simulation_preflight.py,frontend/src/components/layout/sidebar/acoustics/SimulationPreflightPanel.tsx,frontend/src/lib/three/simulation-mesh-*.ts,frontend/src/store/simulationPreflightStore.ts,frontend/src/utils/simulationRequest.ts,backend/services/pffdtd_job.py,backend/services/pffdtd_scene_export.py,backend/routers/pffdtd.py,backend/utils/pffdtd_grid.py,backend/pffdtd_backend/*.py,backend/routers/pyroomacoustics.py,backend/workers/**,backend/routers/jobs.py,backend/utils/acoustic_measurement.py,backend/services/pyroomacoustics_worker.py,frontend/src/lib/audio/AudioOrchestrator.ts,frontend/src/lib/audio/modes/AmbisonicIRMode.ts,frontend/src/components/layout/sidebar/AcousticsSection.tsx,frontend/src/components/audio/ImpulseResponseUpload.tsx,frontend/src/components/scene/hooks/useSpeckleSimulationMismatch.ts,frontend/src/components/scene/hooks/useSpeckleSoundHighlight.ts
+globs: backend/services/pyroomacoustics_service.py,backend/services/pyroomacoustics_room_builder.py,backend/services/simulation_mesh_service.py,backend/services/simulation_preflight_service.py,backend/services/simulation_preflight_worker.py,backend/services/simulation_geometry_loader.py,backend/utils/preflight_payload.py,backend/routers/simulation_preflight.py,frontend/src/components/layout/sidebar/acoustics/SimulationPreflightPanel.tsx,frontend/src/lib/three/simulation-mesh-*.ts,frontend/src/store/simulationPreflightStore.ts,frontend/src/utils/simulationRequest.ts,backend/services/pffdtd_job.py,backend/services/pffdtd_scene_export.py,backend/routers/pffdtd.py,backend/utils/pffdtd_grid.py,backend/pffdtd_backend/*.py,backend/routers/pyroomacoustics.py,backend/workers/**,backend/routers/jobs.py,backend/utils/acoustic_measurement.py,backend/services/pyroomacoustics_worker.py,frontend/src/lib/audio/AudioOrchestrator.ts,frontend/src/lib/audio/modes/AmbisonicIRMode.ts,frontend/src/components/layout/sidebar/AcousticsSection.tsx,frontend/src/components/audio/ImpulseResponseUpload.tsx,frontend/src/components/scene/hooks/useSpeckleSimulationMismatch.ts,frontend/src/components/scene/hooks/useSpeckleSoundHighlight.ts
 ---
 
 # Acoustic Simulation Rules
@@ -81,10 +81,10 @@ Step 5 above is the **legacy** engine. Since the compas_acoustics migration
   parallel, `reciprocity=True` (CA swaps the roles only when every source is omni and there are
   more sources than listeners), and `diffraction="udfa"` when asked.
 - **FOA (`foa`) / HOA (`hoa` + `ambisonic_order` 2–3)** use `ca.Ambisonics`: a hybrid of an ISM
-  early part and a directional FDN tail shaped by a ray-traced `Mono` reference that uses the
-  request's ray settings. Diffraction is `udfa` or `btms`. Output is AmbiX ACN/SN3D in the
-  listener frame (forward −Y, left +X, up +Z), the same as the legacy FOA. With ray tracing off,
-  the tail follows Eyring.
+  early part and a directional FDN tail. The mono reference and the directional histogram are one
+  ray trace, with the request's `n_rays`, seed and receiver radius (not a second trace at the mono
+  defaults). Diffraction is `udfa` or `btms`. Output is AmbiX ACN/SN3D in the listener frame
+  (forward −Y, left +X, up +Z), the same as the legacy FOA. With ray tracing off, the tail follows Eyring.
 - **Air:** CA derives the speed of sound from temperature and humidity. The request's
   `sound_speed` becomes the temperature (343 m/s ≈ 20 °C), clamped to 0–30 °C. `air_temperature`
   and `air_humidity` override it.
@@ -95,8 +95,10 @@ Step 5 above is the **legacy** engine. Since the compas_acoustics migration
   (CA `Analyser`: per-band EDT/T20/T30/C50/C80/D50/DRR/Ts/STI + reliability), plus header blocks
   `engine` and `compas_acoustics` (method, seed, air, closed, volume, notes).
 - **Routing rules** (`validate_engine_settings`): BTMS needs ambisonic output. HOA and diffraction
-  need compas_acoustics. Preflight adds `ca_hybrid_open_model` (warning) and
-  `ca_hybrid_no_volume` (error) for ambisonic output in a model that does not close.
+  need compas_acoustics. Preflight adds `ca_hybrid_no_volume` (error) when ambisonic
+  output has no air volume, and `ca_hybrid_open_model` (warning) only when the model
+  does not close *and* the leak share is above `PREFLIGHT_LEAK_WARNING_FRACTION`
+  (openings absorb in the late field). Unwelded topology with no escaping rays is silent.
 - **Install:** `compas_acoustics[hybrid]` (requirements.txt, git URL). The `[worker]` extra is never
   installed, because tensorflow pins protobuf < 6 and compas_pb needs ≥ 6.31. spharpy needs
   scipy ≥ 1.17.
@@ -116,7 +118,8 @@ Step 5 above is the **legacy** engine. Since the compas_acoustics migration
   offers. `ACOUSTICS_ENGINE_DEFAULT` falls back to `pyroomacoustics` when compas_acoustics is not
   installed. The card disables what the engine cannot run and lists what the run will adjust.
 - **Tail** (`CA_TAILS`, ambisonic output only): `auto` (ray-traced reference when ray tracing is
-  on, else Eyring), `reference`, `ray_tracing`, `eyring`, `sabine`.
+  on, else Eyring), `reference`, `eyring`, `sabine`. Removed values `ray_tracing` and `legacy`
+  alias to `auto`.
 - **Sound paths:** `POST /api/acoustics/paths-speckle` (CPU job, variant `acoustic_paths`) →
   `GET /api/acoustics/paths/{id}`. `services/acoustic_paths_service.py` prepares the same mesh as
   the run and returns reflections (`SpecularReflections`), billiard rays (`RayField`) and the
@@ -129,11 +132,15 @@ Step 5 above is the **legacy** engine. Since the compas_acoustics migration
   position** (`edge_excluded`, 2 cm, either direction, pieces of a split edge), never by index, so
   a changed weld or merge does not shift the selection. Clicking an edge in 3D is a primary-button
   press and release without a drag (pointer events; same on Windows and macOS).
-- **compas_acoustics is not modified for this.** It has no edge selection and builds display paths
-  from `RoomGeometry.from_scene`, so the wrapper swaps two of its functions while it runs:
-  `diffraction_edge_filter` wraps `hybrid.diffraction.diffraction_edges`, and `scene_geometry`
-  replaces `RoomGeometry.from_scene` with the prepared room. Both depend on compas_acoustics
-  internals: `tests/test_acoustic_paths.py` fails if an upgrade breaks them.
+- **Edges come from the prepared room.** `RoomGeometry.from_prepared` finds them with CA's sector
+  detector (the air around each edge, from the walls' normals, two-sided flags and hits), so an
+  open model's corners and fused pillars diffract too; there is no "open model" preflight issue.
+  CA's `AmbiguousEdgeWarning` (faces disagreeing on the air side) becomes a note via `edge_warnings`.
+- **Edge selection uses CA's API:** `diffraction_edge_filter(excluded, offset, geometry)` calls
+  `hybrid.diffraction.set_diffraction_edges` on that geometry instance (cleared on exit); pass the
+  instance that is simulated or traced, and enter it inside `edge_warnings`. Display paths are still
+  built from `RoomGeometry.from_scene`, which `scene_geometry` swaps for the prepared room (a CA
+  internal: `tests/test_acoustic_paths.py` fails if an upgrade breaks it).
 - **Per-band metrics:** `acoustic_parameters_bands` per pair → `BandMetricsTable.tsx`
   (`lib/acoustics/band-metrics.ts`).
 - **IR import** (`impulse_response_service`): 9–15 channels are stored as second order (9
@@ -189,7 +196,10 @@ architectural meshes from Rhino/Revit via Speckle.
 
 ### Simulation Mesh Preparation (replaces weld_mesh + fix_outward_winding)
 
-`SimulationMeshService.prepare()` is the **only** way geometry reaches an engine. The
+`SimulationMeshService.prepare()` is the **only** way geometry reaches an engine. It is a thin
+adapter: the preparation is `compas_acoustics.geometry.prepare_mesh` and `SimulationMesh` is its
+`PreparedMesh`; the preflight's geometry checks are `compas_acoustics.geometry.analyze`. Fix the
+algorithm in compas_acoustics, never by re-adding mesh utilities here. The
 pyroomacoustics worker (Speckle and Grasshopper), the PFFDTD job and the geometry preflight all
 call it with identical inputs. **Invariant: what the preflight shows is what is simulated.** It is
 deterministic (`SIM_MESH_RAY_SEED`).
@@ -200,8 +210,8 @@ deterministic (`SIM_MESH_RAY_SEED`).
    **Never prune non-manifold faces.** The old pruning deleted the shared wall of two adjoining
    rooms and holed T-junctions. pra does not need a manifold mesh.
 3. **Orient from the air.** A diffuse random walk from every source/receiver records which SIDE of
-   each face sound reaches (`utils/air_visibility.py`). Seeds that are outside the model don't vote.
-   The orientation is decided hierarchically (`utils/mesh_orientation.py`):
+   each face sound reaches (`compas_acoustics.geometry.visibility`). Seeds that are outside the model don't vote.
+   The orientation is decided hierarchically (`compas_acoustics.geometry.orientation`):
    - closed welded component: whole-component majority vote, one-sided;
    - loose-face object that encloses a volume: parity test. A solid object gets normals pointing in;
      a room shell made of loose panels gets normals pointing out. Never two-sided;

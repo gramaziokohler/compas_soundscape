@@ -47,7 +47,7 @@ import { useBubbleFrontLayer } from '@/hooks/useBubbleFrontLayer';
 import { BubbleScrollColumn } from '@/components/ui/BubbleScrollColumn';
 import { RangeSlider } from '@/components/ui/RangeSlider';
 import { ToggleField } from '@/components/ui/ToggleField';
-import { apiService } from '@/services/api';
+import { apiService, isLegacyJobTerminal } from '@/services/api';
 import { CARD_TYPE_LABELS } from '@/types/card';
 import { useSpeckleStore, useAcousticsSimulationStore, useReceiversStore, useGridListenersStore, useAudioControlsStore, useSoundscapeStore, useAcousticLayerStore, useRightSidebarStore, notifyError, runWithoutUndo } from '@/store';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
@@ -593,16 +593,15 @@ export function AcousticsSection(props: AcousticsSectionProps) {
           try {
             const statusData = await apiService.getPyroomacousticsSimulationStatus(simulationId);
             handleUpdateConfig(index, { progress: statusData.progress, status: statusData.status } as any);
-            if (statusData.completed) {
-              clearInterval(pollInterval);
-              pollIntervalsRef.current.delete(index);
-              if (statusData.cancelled) {
-                handleUpdateConfig(index, { isRunning: false, progress: 0, status: 'Cancelled', currentSimulationRunId: null } as any);
-              } else if (statusData.error) {
-                handleUpdateConfig(index, { isRunning: false, status: 'Error', error: statusData.error, currentSimulationRunId: null } as any);
-              } else {
-                handleUpdateConfig(index, { isRunning: false, progress: 100, status: 'Complete!', currentSimulationRunId: null } as any);
-              }
+            if (!isLegacyJobTerminal(statusData)) return;
+            clearInterval(pollInterval);
+            pollIntervalsRef.current.delete(index);
+            if (statusData.cancelled) {
+              handleUpdateConfig(index, { isRunning: false, progress: 0, status: 'Cancelled', currentSimulationRunId: null } as any);
+            } else if (statusData.error) {
+              handleUpdateConfig(index, { isRunning: false, status: 'Error', error: statusData.error, currentSimulationRunId: null } as any);
+            } else {
+              handleUpdateConfig(index, { isRunning: false, progress: 100, status: 'Complete!', currentSimulationRunId: null } as any);
             }
           } catch {
             clearInterval(pollInterval);
@@ -816,7 +815,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
 
           handleUpdateConfig(index, { progress: statusData.progress, status: statusStr } as any);
 
-          if (!statusData.completed) return; // keep polling
+          if (!isLegacyJobTerminal(statusData)) return; // keep polling
 
           // ── Terminal states ──────────────────────────────────────────────
           clearInterval(pollInterval);

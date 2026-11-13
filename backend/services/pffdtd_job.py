@@ -313,7 +313,7 @@ def _run_from_geometry(
     geometry_diagnostics = {
         **summarize(analysis.issues),
         "issues": [{"severity": i.severity, "code": i.code, "title": i.title} for i in analysis.issues if i.severity != "info"],
-        "stats": {**mesh.stats, "air_volume_m3": mesh.air_volume_m3, "air_volume_method": mesh.air_volume_method},
+        "stats": {**mesh.stats, "air_volume_m3": mesh.air_volume, "air_volume_method": mesh.air_volume_method},
     }
 
     plane_z = field.plane_z if field.plane_z is not None else float(np.mean([r[2] for r in receivers.values()]))

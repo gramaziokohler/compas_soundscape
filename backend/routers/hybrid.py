@@ -56,7 +56,7 @@ from fastapi import APIRouter, Form, HTTPException, Request
 from models.schemas import JobEnqueueResponse
 from routers.acoustic_paths import parse_excluded_edges
 from routers.pffdtd import RIR_OUTPUT_DIR, TEMP_DIR, _check_directional_runs, _check_range, _parse_geometry_fields
-from routers.pyroomacoustics import validate_engine_settings, validate_tail_settings
+from routers.pyroomacoustics import normalize_tail, validate_engine_settings, validate_tail_settings
 from services.job_store import job_store
 from services.pffdtd_job import pffdtd_available
 from services.pyroomacoustics_service import PyroomacousticsService
@@ -161,6 +161,7 @@ async def run_simulation_speckle(
     _check_range("max_order", max_order, PYROOMACOUSTICS_MAX_ORDER_MIN, PYROOMACOUSTICS_MAX_ORDER_MAX)
     validate_engine_settings("compas_acoustics", simulation_mode, diffraction, None, air_temperature, air_humidity)
     validate_tail_settings(tail, n_slopes)
+    tail = normalize_tail(tail)
     excluded_edge_rows = parse_excluded_edges(excluded_edges)
 
     simulation_id = str(uuid.uuid4())

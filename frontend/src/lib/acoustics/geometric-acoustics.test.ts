@@ -187,13 +187,18 @@ describe('geometric engine settings', () => {
   });
 
   it('adjusts what the engine cannot run and says so', () => {
-    const legacy = effectiveEngineSettings({ simulation_mode: 'hoa', diffraction: 'udfa', engine: 'pyroomacoustics' }, CAPS);
-    expect(legacy.settings.simulation_mode).toBe('foa');
-    expect(legacy.settings.diffraction).toBe('off');
-    expect(legacy.changes).toHaveLength(2);
+    const legacyEngine = effectiveEngineSettings({ simulation_mode: 'hoa', diffraction: 'udfa', engine: 'pyroomacoustics' }, CAPS);
+    expect(legacyEngine.settings.simulation_mode).toBe('foa');
+    expect(legacyEngine.settings.diffraction).toBe('off');
+    expect(legacyEngine.changes).toHaveLength(2);
     const btmsMono = effectiveEngineSettings({ simulation_mode: 'mono', diffraction: 'btms' }, CAPS);
     expect(btmsMono.settings.diffraction).toBe('udfa');
     expect(effectiveEngineSettings({ simulation_mode: 'foa', diffraction: 'btms' }, CAPS).changes).toEqual([]);
+  });
+
+  it('maps removed reverb-tail values to Automatic', () => {
+    expect(effectiveEngineSettings({ simulation_mode: 'foa', tail: 'legacy' }, CAPS).settings.tail).toBe('auto');
+    expect(effectiveEngineSettings({ simulation_mode: 'foa', tail: 'ray_tracing' }, CAPS).settings.tail).toBe('auto');
   });
 
   it('sends only what is set', () => {

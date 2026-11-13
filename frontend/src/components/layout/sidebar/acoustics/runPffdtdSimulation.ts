@@ -7,7 +7,7 @@
  * results view fetches it lazily from the results JSON.
  */
 
-import { apiService } from '@/services/api';
+import { apiService, isLegacyJobTerminal } from '@/services/api';
 import { useUIStore } from '@/store/uiStore';
 import { recordInflightJob, removeInflightJob } from '@/lib/job-tracker';
 import { logSimulationResult } from '@/lib/study/simulationEvents';
@@ -88,7 +88,7 @@ export async function runPffdtdSimulation(deps: RunPffdtdSimulationDeps): Promis
         // grid problems arrive with the voxelisation and stay with the result
         ...(st.partial?.problems ? { runProblems: st.partial.problems } : {}),
       });
-      if (!st.completed && !st.cancelled && !st.error) return; // keep polling
+      if (!isLegacyJobTerminal(st)) return; // keep polling
 
       // ── Terminal states ──────────────────────────────────────────────
       stop();

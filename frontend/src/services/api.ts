@@ -1,4 +1,4 @@
-import { engineFormFields, type EngineCapabilities } from '@/lib/acoustics/geometric-engine';
+import { effectiveEngineSettings, engineFormFields, type EngineCapabilities } from '@/lib/acoustics/geometric-engine';
 import type { HybridSettings } from '@/types/acoustics';
 import { hybridFormFields } from '@/lib/acoustics/hybrid';
 import type { GeometricEngineSettings } from '@/types/acoustics';
@@ -326,6 +326,15 @@ function toLegacyJobStatus(job: UnifiedJobStatus) {
     queue_position: job.queue_position,
     queue_total: job.queue_total,
   };
+}
+
+/** True when a legacy job envelope is done polling (success, cancel, or error). */
+export function isLegacyJobTerminal(status: {
+  completed?: boolean;
+  cancelled?: boolean;
+  error?: string | null;
+}): boolean {
+  return !!(status.completed || status.cancelled || status.error);
 }
 
 /** Geometry form fields shared by the PFFDTD run and voxel preview (pyroomacoustics fields, no scattering). */
@@ -1754,13 +1763,15 @@ export const apiService = {
       }
       formData.append('object_scattering', JSON.stringify(objectScattering || {}));
 
-      formData.append('simulation_mode', settings.simulation_mode);
+      // Apply what the chosen engine can actually run (e.g. drop HOA/diffraction on pra).
+      const { settings: effective } = effectiveEngineSettings(settings, null);
+      formData.append('simulation_mode', effective.simulation_mode);
       formData.append('enable_grid', (settings.enable_grid ?? false).toString());
       if (settings.sound_speed !== undefined) {
         formData.append('sound_speed', settings.sound_speed.toString());
       }
       // compas_acoustics engine settings (diffraction, HOA order, tail, air, seed, edge selection)
-      for (const [key, value] of Object.entries(engineFormFields(settings))) formData.append(key, value);
+      for (const [key, value] of Object.entries(engineFormFields(effective))) formData.append(key, value);
 
       // Send explicit geometry object IDs from the frontend to bypass layer-name filtering
       if (geometryObjectIds && geometryObjectIds.length > 0) {

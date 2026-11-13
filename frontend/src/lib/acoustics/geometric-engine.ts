@@ -30,6 +30,7 @@ export function pickGeometricEngineSettings(settings: GeometricEngineSettings | 
     const value = settings[key];
     if (value !== undefined && value !== null) out[key] = value;
   }
+  if (typeof out.tail === 'string') out.tail = normalizeTail(out.tail);
   return out as GeometricEngineSettings;
 }
 
@@ -51,15 +52,24 @@ export function resolveEngine(settings: GeometricEngineSettings, capabilities: E
   return chosen ?? capabilities?.default ?? GA_ENGINE.COMPAS_ACOUSTICS;
 }
 
-/** True when the card runs on compas_acoustics (the engine with diffraction, HOA and sound paths). */
-export function usesCompasAcoustics(settings: GeometricEngineSettings, capabilities: EngineCapabilities | null): boolean {
-  const engine = resolveEngine(settings, capabilities);
-  if (engine !== GA_ENGINE.COMPAS_ACOUSTICS) return false;
-  return capabilities ? !!capabilities.engines[engine]?.available : true;
+/** Map removed aliases (``ray_tracing``, ``legacy``) onto the current tail values. */
+export function normalizeTail(tail: string | undefined | null): string | undefined {
+  if (tail == null) return undefined;
+  return GA_ENGINE.TAIL_ALIASES[tail] ?? tail;
 }
 
 export function isAmbisonicMode(mode: string): boolean {
   return mode === PYROOMACOUSTICS_SIMULATION_MODE_FOA || mode === PYROOMACOUSTICS_SIMULATION_MODE_HOA;
+}
+
+/** True when the card runs on compas_acoustics (the engine with diffraction, HOA and sound paths). */
+export function usesCompasAcoustics(
+  settings: GeometricEngineSettings & { simulation_mode?: string },
+  capabilities: EngineCapabilities | null,
+): boolean {
+  const engine = resolveEngine(settings, capabilities);
+  if (engine !== GA_ENGINE.COMPAS_ACOUSTICS) return false;
+  return capabilities ? !!capabilities.engines[engine]?.available : true;
 }
 
 /** Ambisonic order of a mode: 0 mono, 1 FOA, the card's order (2-3) for HOA. */
@@ -101,7 +111,10 @@ export function effectiveEngineSettings<T extends GeometricEngineSettings & { si
 ): { settings: T; changes: string[] } {
   const changes: string[] = [];
   const out: T = { ...settings };
-  const ca = usesCompasAcoustics(settings, capabilities);
+  const normalized = normalizeTail(out.tail);
+  if (normalized !== undefined && normalized !== out.tail) out.tail = normalized;
+
+  const ca = usesCompasAcoustics(out, capabilities);
   if (!ca) {
     if (out.simulation_mode === PYROOMACOUSTICS_SIMULATION_MODE_HOA) {
       out.simulation_mode = PYROOMACOUSTICS_SIMULATION_MODE_FOA;
@@ -169,8 +182,9 @@ export function engineSummaryRows(settings: GeometricEngineSettings & { simulati
     rows.push({ label: 'Edge Diffraction', value: GA_ENGINE.DIFFRACTION_NAMES[settings.diffraction] ?? settings.diffraction });
     if (settings.excluded_edges?.length) rows.push({ label: 'Edges Switched Off', value: String(settings.excluded_edges.length) });
   }
-  if (isAmbisonicMode(settings.simulation_mode) && settings.tail && settings.tail !== GA_ENGINE.TAIL_DEFAULT) {
-    rows.push({ label: 'Reverb Tail', value: GA_ENGINE.TAIL_NAMES[settings.tail] ?? settings.tail });
+  const tail = normalizeTail(settings.tail);
+  if (isAmbisonicMode(settings.simulation_mode) && tail && tail !== GA_ENGINE.TAIL_DEFAULT) {
+    rows.push({ label: 'Reverb Tail', value: GA_ENGINE.TAIL_NAMES[tail] ?? tail });
   }
   if (settings.n_slopes && settings.n_slopes > 1) rows.push({ label: 'Decay Slopes', value: String(settings.n_slopes) });
   if (settings.scattering_split) rows.push({ label: 'Scattered Early Part', value: 'Yes' });

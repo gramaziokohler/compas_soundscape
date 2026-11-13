@@ -7,7 +7,7 @@
  * tracked as a 'pffdtd' job and recovered by the same code after a refresh.
  */
 
-import { apiService } from '@/services/api';
+import { apiService, isLegacyJobTerminal } from '@/services/api';
 import { useUIStore } from '@/store/uiStore';
 import { recordInflightJob, removeInflightJob } from '@/lib/job-tracker';
 import { logSimulationResult } from '@/lib/study/simulationEvents';
@@ -79,7 +79,7 @@ export async function runHybridSimulation(deps: RunHybridSimulationDeps): Promis
         ? `Queued — position ${st.queue_position} of ${st.queue_total}`
         : st.status;
       update({ progress: st.progress, status: statusStr });
-      if (!st.completed && !st.cancelled && !st.error) return; // keep polling
+      if (!isLegacyJobTerminal(st)) return; // keep polling
 
       stop();
       if (st.cancelled) {

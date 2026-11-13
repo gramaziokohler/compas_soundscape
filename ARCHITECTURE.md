@@ -70,11 +70,6 @@ compas_soundscape/
 │   │   ├── resampling.py            # Single resampler → AUDIO_SAMPLE_RATE (numpy/scipy only)
 │   │   ├── file_operations.py       # File I/O and cleanup
 │   │   ├── helpers.py               # General helpers
-│   │   ├── mesh_topology.py         # KD-tree weld, dedupe, edges, components, loops
-│   │   ├── mesh_raycast.py          # numba ray/triangle queries
-│   │   ├── air_visibility.py        # Diffuse random walk from sources/receivers
-│   │   ├── mesh_orientation.py      # Hierarchical one-/two-sided orientation
-│   │   ├── mesh_coplanar.py         # Coplanar triangles → polygon walls, hull test
 │   │   ├── pffdtd_grid.py           # PFFDTD grid spacing (bbox-aligned), cost, oblique walls
 │   │   ├── preflight_payload.py     # Preview payload for the frontend
 │   │   └── sed_processing.py        # SED processing utilities
@@ -1145,12 +1140,13 @@ Speckle layer ──simulation_geometry_loader──▶ vertices, faces, object 
         │                                    (identical for the pyroom worker, the PFFDTD job, the preflight)
         ▼
 SimulationMeshService.prepare(seeds = sources + receivers, MeshPrepSettings)
+  = compas_acoustics.geometry.prepare_mesh (the app only maps its settings and constants onto PrepareOptions)
   1. drop faces without material (both engines, Speckle + Grasshopper)
   2. KD-tree weld · drop degenerate/sliver · dedupe   (NO non-manifold pruning)
   3. topology: components, closed/manifold, BFS winding, open-edge loops
-  4. air_visibility: diffuse random walk from each seed → hits per face SIDE,
+  4. geometry.visibility: diffuse random walk from each seed → hits per face SIDE,
      seed inside/leaky/outside, leaks, reachable faces per seed, mean free path
-  5. mesh_orientation (hierarchical):
+  5. geometry.orientation (hierarchical):
        closed welded component  → whole-component vote, one-sided
        loose-face closed object → parity test (solid: normals in; air shell: normals out)
        open manifold component  → vote; two-sided if air clearly hits both sides
@@ -1161,7 +1157,7 @@ SimulationMeshService.prepare(seeds = sources + receivers, MeshPrepSettings)
         │
         ├─ pyroomacoustics_worker → pyroomacoustics_room_builder.build_room (recentred, two_sided walls)
         ├─ pffdtd_job → pffdtd_scene_export.build_scene (triangles as-is, no merge)
-        └─ simulation_preflight_worker → SimulationPreflightService.analyze → preflight_<id>.json
+        └─ simulation_preflight_worker → SimulationPreflightService.analyze (compas_acoustics.geometry.analyze + engine checks) → preflight_<id>.json
 ```
 
 - **Endpoints:**
