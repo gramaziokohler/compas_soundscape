@@ -38,7 +38,9 @@ from benchmarks.bras.bras_geometry import (
     load_scene_mesh,
     material_table,
     object_boxes,
+    panel_boxes,
     scene_geometry,
+    strip_scene_mesh,
 )
 from benchmarks.bras.bras_pra import PraConfig, env_diffraction, env_ray_tracing, simulate_pra
 from benchmarks.bras.bras_plots import plot_animation_preview, plot_average, plot_overview, plot_pair
@@ -66,6 +68,7 @@ from config.constants import (
     PFFDTD_HO_BESSEL_FLOOR,
     PFFDTD_HO_MAX_ORDER,
     PFFDTD_HO_PROBE_RADIUS_CELLS,
+    PFFDTD_PRECISION_ENV,
     PFFDTD_SEED_CLEARANCE_CELLS,
 )
 from services.directivity_formats import FORMAT_BRAS_CSV
@@ -102,6 +105,7 @@ class RunOptions:
     high_order: bool = True               # PFFDTD: the whole measured balloon, not the first-order fit
     ho_params: dict = field(default_factory=dict)   # directional_ho overrides (radius_cells, max_order, ...)
     gain_pair: str = GAIN_ON_AXIS         # on_axis | scene | a pair key
+    precision: str = "double"             # PFFDTD engine: double (the app's) | single (half the GPU memory)
 
 
 @dataclass
@@ -294,6 +298,7 @@ def plan_run(data: SceneData, opts: RunOptions) -> RunPlan:
     ground_z = scene.ground.z if scene.ground is not None else None
     c_meas = speed_of_sound(scene.temperature_c)
     geoms = {p.key: pair_geometry(p, mesh.vertices, mesh.faces, data.source, c_meas) for p in pairs}
+    use_precision(opts.precision)   # before the plan: single precision needs half the GPU memory per node
     plan, padding = _plan_domain(data, opts, pairs, ground_z)
     bounds = (plan.bmin, plan.bmax)
     coeffs = material_table(scene, opts.material_mode)
@@ -314,7 +319,8 @@ def plan_run(data: SceneData, opts: RunOptions) -> RunPlan:
              for sid, pos in unique_sources(sim_pairs).items()} if fit else {}
     cfg = RunConfig(scene=scene.name, fmax=opts.fmax, ppw=padding["ppw"], grid_spacing=plan.h, duration=bt.duration_s,
                     pair_keys=[p.key for p in pairs], directional=fit is not None, material_mode=opts.material_mode,
-                    padding_m=float(max(padding["lo"] + padding["hi"])), high_order=high_order)
+                    padding_m=float(max(padding["lo"] + padding["hi"])), high_order=high_order,
+                    extra={"precision": "single"} if opts.precision == "single" else {})
     # a directional job runs once per microphone (reciprocity), an omni one once per loudspeaker
     per_geometry = len({p.receiver_id for p in pairs}) if fit else len({p.source_id for p in pairs})
     engine_runs = per_geometry * (1 if mesh.empty else 2)
@@ -335,13 +341,32 @@ def ga_inputs(data: SceneData, coeffs: dict, pairs: list, fit, label: str) -> tu
     boxes = object_boxes(mesh, layers=scene.geometry.extrude) if scene.pra.boxes else []
     if boxes and scene.ground is not None:
         boxes = lift_boxes(boxes, scene.ground.z, scene.pra.lift_m)
+    if scene.pra.panels:
+        boxes = panel_boxes(boxes)
     ga_mesh = box_scene_mesh(mesh, boxes)
+    if scene.pra.strips:
+        ga_mesh = strip_scene_mesh(ga_mesh, scene.pra.strips)
+    if (boxes or scene.pra.strips) and scene.ground is not None:   # model rounding: bottoms onto the floor
+        on_floor = np.abs(ga_mesh.vertices[:, 2] - scene.ground.z) <= K.GROUND_TOL_M
+        ga_mesh.vertices = ga_mesh.vertices.copy()
+        ga_mesh.vertices[on_floor, 2] = scene.ground.z
+        ga_mesh.bmin, ga_mesh.bmax = ga_mesh.vertices.min(axis=0), ga_mesh.vertices.max(axis=0)
     positions = [x for p in data.measured for x in (p.source_position, p.receiver_position)]
     geometry = ga_scene_geometry(ga_mesh, coeffs, ga_bounds(ga_mesh, positions), scene.ground)
     specs = {sid: measured_spec(fit, source_forward(sid, pos, data.source), label,
                                 balloon_cache_path(data.source.directivity))
              for sid, pos in unique_sources(pairs).items()} if fit else {}
     return geometry, build_pairs_data(pairs, specs), boxes
+
+
+def use_precision(precision: str) -> None:
+    """The PFFDTD engine precision of this process's next runs (benchmark-only override, PFFDTD_PRECISION_ENV)."""
+    if precision not in ("single", "double"):
+        raise ValueError(f"precision {precision!r}: single or double")
+    if precision == "single":
+        os.environ[PFFDTD_PRECISION_ENV] = "single"
+    else:
+        os.environ.pop(PFFDTD_PRECISION_ENV, None)
 
 
 def _notes(data: SceneData, rp: RunPlan) -> list[str]:

@@ -14,8 +14,8 @@ from typing import Optional
 
 import numpy as np
 
-from benchmarks.bras.bras_constants import (CONTROL_MARKER_EDGE_M, GA_BOX_JOIN_M, GROUND_INSET_CELLS, GROUND_TOL_M,
-                                            MATERIAL_MODES, PRA_CLOSED_ROOM, PRA_FLOOR_KEY, PRA_SHELL_KEY,
+from benchmarks.bras.bras_constants import (CONTROL_MARKER_EDGE_M, GA_BOX_JOIN_M, GA_PANEL_MAX_M, GROUND_INSET_CELLS,
+                                            GROUND_TOL_M, MATERIAL_MODES, PRA_CLOSED_ROOM, PRA_FLOOR_KEY, PRA_SHELL_KEY,
                                             PRA_SHELL_MARGIN_M)
 from benchmarks.bras.scenes import RIGID, GeometryInput, MaterialInput, Scene
 
@@ -350,19 +350,35 @@ class ObjectBox:
     # faces of another material: (axis index, 1 = the +axis side / 0 = the -axis side) -> material
     # (the RS2 plate's front face is its absorber)
     face_materials: dict = field(default_factory=dict)
+    panel: bool = False          # drawn as one two-sided rectangle across its thinnest axis (``panel_boxes``)
 
     def corners(self) -> np.ndarray:
         v, _ = box(-self.half, self.half)
         return self.center + v @ self.axes
 
     def mesh(self) -> tuple[np.ndarray, np.ndarray, list]:
-        """Vertices, triangles (outward) and the material of each triangle."""
+        """Vertices, triangles (outward) and the material of each triangle; a panel: its rectangle."""
+        if self.panel:
+            return self.panel_mesh()
         _, f = box(-self.half, self.half)
         mats = [self.material] * len(f)
         for face, key in self.face_materials.items():
             q = BOX_FACE[face]
             mats[2 * q] = mats[2 * q + 1] = key
         return self.corners(), f, mats
+
+    def panel_mesh(self) -> tuple[np.ndarray, np.ndarray, list]:
+        """The box as one rectangle across its thinnest axis: in the face that carries a layer (the RS2
+        absorber, whose material it takes), else in the mid-plane. One face has one material, so the back
+        of a layered plate takes the layer's too (it only sees the shadowed side)."""
+        k = int(np.argmin(self.half))
+        u, w = (i for i in range(3) if i != k)
+        side = next((s for (axis, s), _ in self.face_materials.items() if axis == k), None)
+        material = self.face_materials.get((k, side), self.material) if side is not None else self.material
+        c = self.center + (0.0 if side is None else (1.0 if side else -1.0) * self.half[k]) * self.axes[k]
+        v = np.array([c + su * self.half[u] * self.axes[u] + sw * self.half[w] * self.axes[w]
+                      for su, sw in ((-1, -1), (1, -1), (1, 1), (-1, 1))])
+        return v, np.array([[0, 1, 2], [0, 2, 3]]), [material, material]
 
     def extend(self, points: np.ndarray) -> None:
         """Grow the box (same axes) to contain ``points``."""
@@ -484,6 +500,11 @@ def lift_boxes(boxes: list, floor_z: float, lift_m: float, tol_m: float = GROUND
             if abs(float(b.corners()[:, 2].min()) - floor_z) <= tol_m else b for b in boxes]
 
 
+def panel_boxes(boxes: list, max_m: float = GA_PANEL_MAX_M) -> list:
+    """``boxes`` with every box at most ``max_m`` thick drawn as a panel (``PraSpec.panels``)."""
+    return [replace(b, panel=True) if 2.0 * float(np.min(b.half)) <= max_m + 1e-9 else b for b in boxes]
+
+
 def box_scene_mesh(mesh: SceneMesh, boxes: list) -> SceneMesh:
     """``mesh`` with its objects replaced by ``boxes`` (labels ``box<n>``)."""
     if not boxes:
@@ -499,6 +520,116 @@ def box_scene_mesh(mesh: SceneMesh, boxes: list) -> SceneMesh:
     v, f = np.vstack(parts_v), np.vstack(parts_f)
     used = np.unique(f)
     return SceneMesh(v, f, labels, mats, v[used].min(axis=0), v[used].max(axis=0))
+
+
+AXES = {"x": 0, "y": 1}
+
+
+def _strips(mesh: SceneMesh, faces_sel: np.ndarray, part: np.ndarray, cross: int) -> list[dict]:
+    """Parts overlapping across ``cross`` are one strip: its extent across, along and in height."""
+    v, f = mesh.vertices, mesh.faces
+    boxes = []
+    for i in sorted(set(part[faces_sel].tolist())):
+        p = v[f[part == i]].reshape(-1, 3)
+        boxes.append([p.min(axis=0), p.max(axis=0)])
+    boxes.sort(key=lambda b: b[0][cross])
+    strips: list = []
+    for lo, hi in boxes:   # sorted by their start across: a part overlapping the last strip joins it
+        if strips and lo[cross] < strips[-1]["hi"][cross] - 1e-4:
+            strips[-1]["lo"] = np.minimum(strips[-1]["lo"], lo)
+            strips[-1]["hi"] = np.maximum(strips[-1]["hi"], hi)
+        else:
+            strips.append({"lo": lo.copy(), "hi": hi.copy()})
+    return strips
+
+
+def strip_scene_mesh(mesh: SceneMesh, along: str, join_m: float = GA_BOX_JOIN_M) -> SceneMesh:
+    """``mesh`` (battens lying side by side, e.g. the RS1 diffusor) as the union of longitudinal boxes.
+
+    Parts of one material that overlap across the ``along`` axis are one batten, its bounding box.
+    Battens closer than ``join_m`` touch (the gap split in the middle) and form one closed solid: the
+    castellated profile extruded along ``along``. Its faces between battens are gone, and each top,
+    each step between two heights, the sides, the bottom and the two end caps are one plane each (the
+    mesh preparation merges their triangles into one wall)."""
+    if mesh.empty:
+        return mesh
+    a = AXES[along]
+    c = 1 - a
+    part = _parts(mesh.vertices, mesh.faces)
+    mats = np.asarray(mesh.materials, dtype=object)
+    tris, tri_mats, labels = [], [], []
+    for key in sorted(set(mesh.materials)):
+        strips = _strips(mesh, mats == key, part, c)
+        runs: list = [[strips[0]]]
+        for s in strips[1:]:
+            if s["lo"][c] - runs[-1][-1]["hi"][c] > join_m:
+                runs.append([])
+            runs[-1].append(s)
+        for n, run in enumerate(runs):
+            new = _extruded_profile(run, a, c)
+            tris += new
+            tri_mats += [key] * len(new)
+            labels += [f"strips{n}"] * len(new)
+    t = np.asarray(tris, np.float64)
+    verts, inv = np.unique(np.round(t.reshape(-1, 3), 9), axis=0, return_inverse=True)
+    faces = inv.reshape(-1, 3)
+    return SceneMesh(verts, faces, labels, tri_mats, verts.min(axis=0), verts.max(axis=0))
+
+
+def _extruded_profile(run: list, a: int, c: int) -> list:
+    """Outward triangles of the solid of a run of battens side by side (across ``c``, along ``a``)."""
+    n = len(run)
+    b = [float(run[0]["lo"][c])] + [(float(run[i - 1]["hi"][c]) + float(run[i]["lo"][c])) / 2 for i in range(1, n)] \
+        + [float(run[-1]["hi"][c])]
+    h = [float(s["hi"][2]) for s in run]
+    z0 = min(float(s["lo"][2]) for s in run)
+    l0, l1 = min(float(s["lo"][a]) for s in run), max(float(s["hi"][a]) for s in run)
+
+    def P(u, ll, z):   # profile coordinates (across, along, height) -> world
+        p = [0.0, 0.0, z]
+        p[c], p[a] = u, ll
+        return np.array(p)
+
+    def axis(k, sign):
+        e = np.zeros(3)
+        e[k] = sign
+        return e
+
+    out: list = []
+
+    def poly(pts, outward):   # convex polygon (collinear points allowed): fan from its centroid
+        pts = [np.asarray(p) for p in pts]
+        if len(pts) == 4 and not any(np.linalg.norm(np.cross(pts[(i + 1) % 4] - pts[i], pts[(i + 2) % 4] - pts[(i + 1) % 4])) < 1e-12
+                                     for i in range(4)):
+            fan = [(pts[0], pts[1], pts[2]), (pts[0], pts[2], pts[3])]
+        else:
+            m = np.mean(pts, axis=0)
+            fan = [(m, pts[i], pts[(i + 1) % len(pts)]) for i in range(len(pts))]
+        for t in fan:
+            nrm = np.cross(t[1] - t[0], t[2] - t[0])
+            if np.linalg.norm(nrm) < 1e-12:
+                continue
+            out.append(t if nrm @ outward > 0 else (t[0], t[2], t[1]))
+
+    for i in range(n):
+        # top and bottom of batten i
+        poly([P(b[i], l0, h[i]), P(b[i + 1], l0, h[i]), P(b[i + 1], l1, h[i]), P(b[i], l1, h[i])], np.array([0, 0, 1.0]))
+        poly([P(b[i], l0, z0), P(b[i + 1], l0, z0), P(b[i + 1], l1, z0), P(b[i], l1, z0)], np.array([0, 0, -1.0]))
+        # its end caps: the batten's rectangle, with the neighbours' heights on its sides (no T-junction)
+        left = [P(b[i], 0, h[i - 1])] if i > 0 and h[i - 1] < h[i] else []
+        right = [P(b[i + 1], 0, h[i + 1])] if i < n - 1 and h[i + 1] < h[i] else []
+        ring = [P(b[i], 0, z0), P(b[i + 1], 0, z0), *right, P(b[i + 1], 0, h[i]), P(b[i], 0, h[i]), *left[::-1]]
+        for ll, sign in ((l0, -1.0), (l1, 1.0)):
+            poly([p + axis(a, ll) for p in ring], axis(a, sign))
+    # sides of the run and the steps between two heights
+    poly([P(b[0], l0, z0), P(b[0], l1, z0), P(b[0], l1, h[0]), P(b[0], l0, h[0])], axis(c, -1.0))
+    poly([P(b[n], l0, z0), P(b[n], l1, z0), P(b[n], l1, h[-1]), P(b[n], l0, h[-1])], axis(c, 1.0))
+    for i in range(1, n):
+        if abs(h[i] - h[i - 1]) > 1e-9:
+            lo_h, hi_h = sorted((h[i - 1], h[i]))
+            poly([P(b[i], l0, lo_h), P(b[i], l1, lo_h), P(b[i], l1, hi_h), P(b[i], l0, hi_h)],
+                 axis(c, 1.0 if h[i - 1] > h[i] else -1.0))
+    return out
 
 
 def ga_bounds(mesh: SceneMesh, positions) -> tuple[np.ndarray, np.ndarray]:

@@ -112,10 +112,11 @@ found), without the GPU:
   (`sim_prepare.voxelise_only`, run in the compas-pffdtd env on the benchmark's grid and padded domain),
   coloured by material; the floor is the plane. The voxelisation lands in the solver's voxel cache, so
   the benchmark run reuses it. Checked: materials lost to thin geometry, asymmetric links, seed clearance.
-- **Geometric acoustics** (bottom, same views): the walls the engine builds, by material; objects left in
-  the room boundary (red, hatched), obstacles without a diffracting edge (red outline), and the edges
-  compas_acoustics diffracts on (magenta). Checked: closure, objects in the boundary, obstacles its edge
-  search cannot handle, shadowed pairs without any edge.
+- **Geometric acoustics** (bottom, same views): the walls the engine builds, by material; objects in an
+  open room boundary (red, hatched), objects without a diffracting edge (red outline), and the edges
+  compas_acoustics diffracts on (magenta). compas_acoustics treats only two-sided faces as obstacles;
+  a closed object is part of the room boundary and its convex edges diffract. Checked: closure, objects
+  without edges, shapes its edge search cannot handle, shadowed pairs without any edge.
 - **Plan** of the whole domain (PFFDTD domain, absorbing shell, pairs with the shadowed ones dashed) and the
   numbers (grid, nodes per material, clearance, edges, compas_acoustics warnings, materials, problems).
 
@@ -212,9 +213,23 @@ it; `_cache/` holds the directivity balloons and the loudspeaker phase).
   plate's front face is duplicated, moved to the absorber's front (22 mm) and joined to the plate, one
   box whose front face is RockFon. As a separate sheet it added four edges 22 mm in front of the plate's
   (double diffraction) and left the 2 m model open (the air sampling missed the gap behind it). Boxes on the floor
-  stand on it: the mesh preparation drops their unreached bottom, the box joins the room boundary, and
-  only its convex edges (top and vertical) diffract. `PraSpec.lift_m` raises them instead, should a
-  scene need it. RS1 keeps its mesh (tiled absorber, diffusor). PFFDTD always uses the full mesh.
+  stand on it: the box joins the room boundary (its bottom lies on the floor, facing it) and only its
+  convex edges (top and vertical) diffract. `PraSpec.lift_m` raises them instead, should a
+  scene need it. The RS1 absorber's 49 tiles (1 mm slits) are one slab, one box. Vertices within
+  `GROUND_TOL_M` of the floor are put on it (model rounding). PFFDTD always uses the full mesh.
+- **Thin objects as panels** (`PraSpec.panels`, RS2-RS5; `bras_geometry.panel_boxes`). A box at most
+  `GA_PANEL_MAX_M` (60 mm) thick, the 25 mm MDF plates and partition (47 mm with the RS2 absorber), is one
+  two-sided rectangle across its thinnest axis: in the absorber's face (whose material it takes on both
+  sides) or in its mid-plane. Each side is then one knife edge instead of two 90 deg edges a plate's
+  thickness apart; first-order diffraction cannot cross both, so behind a box most shadowed pairs got no
+  diffracted sound (RS5: 2 of 11). The plates are thin below about 3 kHz. The RS6 body, the RS7 rows and the
+  RS1 absorber slab stay boxes.
+- **The RS1 diffusor as one solid** (`PraSpec.strips`, `bras_geometry.strip_scene_mesh`). Its 82 parts
+  are 33 battens (0.12 / 0.24 m high, 1 mm apart, 4.14 m long in y, each in two halves with end
+  pieces). Parts overlapping across y are one batten, its bounding box; touching battens (gap split in
+  the middle) form one closed solid, the castellated profile extruded along y. The faces between
+  battens are gone; each top, each step between heights, the sides, the bottom and the two end caps
+  are one plane (39 planes, closed, its volume the battens' 2.95 m^3).
 - **pyroomacoustics mesh settings** (`PRA_MESH_SETTINGS`). The RockFon absorbers are tiled panels with
   ~1 mm slits: a 2 mm weld closes them. The panel sides inside the slab used to be left out of the
   walls with the `drop_unreached_faces` setting, which has been removed: "unreached" is a
@@ -230,5 +245,5 @@ it; `_cache/` holds the directivity balloons and the loudspeaker phase).
   loudspeaker's axis (`on_axis`); scenes whose pairs are all 30 deg off use their least off-axis one.
 - **Comparison.** Both IRs get the solver's band limits (10 Hz high-pass, zero-phase low-pass at
   fmax). The simulation is resampled to 44.1 kHz, aligned on the direct sound and scaled by one
-  global gain fitted on `gain_pair`'s direct sound. Both are gated identically. Level differences
+  global gain fitted on `gain_pair`'s direct sound (`bras_final.py`: compas_acoustics with UDFA keeps the gain of its run without diffraction, `FinalSpec.ga_shared_gain`, so diffraction near the calibration pair does not turn the whole scene down). Both are gated identically. Level differences
   are simulated minus measured, per band.

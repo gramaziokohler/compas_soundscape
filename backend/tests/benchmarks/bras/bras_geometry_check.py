@@ -164,8 +164,9 @@ def _wall_key(value, by_json: dict) -> str:
     return by_json.get(json.dumps(value, sort_keys=True, default=str), "?")
 
 
-def ga_walls(ga, rp, shell_key: str) -> list[dict]:
-    """The engine's walls: corners, material key, two-sided, obstacle, component."""
+def ga_walls(ga, rp, shell_key: str, ground_key=None) -> list[dict]:
+    """The engine's walls: corners, material key, two-sided, obstacle, component, and whether it belongs to
+    an object of the scene (not the absorbing shell or the floor)."""
     mesh = ga.mesh
     by_json = {json.dumps(v, sort_keys=True, default=str): k for k, v in rp.coeffs.items()}
     shell_rng = rp.ga_geo["object_face_ranges"].get(shell_key) if rp.ga_geo else None
@@ -178,14 +179,15 @@ def ga_walls(ga, rp, shell_key: str) -> list[dict]:
         out.append({"corners": np.asarray(w.corners, np.float64), "key": _wall_key(mesh.face_material[f0], by_json),
                     "two_sided": bool(mesh.two_sided[f0]), "obstacle": bool(ga.obstacle[f0]),
                     "component": int(np.asarray(mesh.component)[f0]), "faces": np.asarray(w.faces)})
+        out[-1]["object"] = out[-1]["obstacle"] or out[-1]["key"] not in (shell_key, ground_key)
     return out
 
 
-def _components_without_edges(walls: list, edges: list, ground_key) -> set:
-    """Obstacle components that no diffracting edge touches."""
+def _components_without_edges(walls: list, edges: list) -> set:
+    """Object components (obstacles, or closed objects in the room boundary) that no diffracting edge touches."""
     comps = {}
     for w in walls:
-        if w["obstacle"]:
+        if w["object"]:
             lo, hi = comps.get(w["component"], (np.full(3, np.inf), np.full(3, -np.inf)))
             comps[w["component"]] = (np.minimum(lo, w["corners"].min(0)), np.maximum(hi, w["corners"].max(0)))
     silent = set()
@@ -241,7 +243,7 @@ def _voxel_panel(ax, vox, colors, data, lo, hi, src, rcv, view, title_extra: str
     ax.view_init(*view)
 
 
-def _ga_panel(ax, walls, edges, silent, colors, data, lo, hi, src, rcv, view, shell_key, title) -> None:
+def _ga_panel(ax, walls, edges, silent, colors, data, lo, hi, src, rcv, view, shell_key, title, closed=True) -> None:
     from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
     from benchmarks.bras.bras_plots import STYLE
@@ -260,7 +262,9 @@ def _ga_panel(ax, walls, edges, silent, colors, data, lo, hi, src, rcv, view, sh
             floor.append(p)
             floor_fc.append(colors.get(w["key"], FLOOR_COLOR))
             continue
-        role = "boundary" if not w["obstacle"] else ("silent" if w["component"] in silent else "obstacle")
+        # compas_acoustics: closed objects belong to the room boundary (their convex edges diffract);
+        # hatched only when that boundary is open (its edges are not searched)
+        role = "silent" if w["component"] in silent else ("boundary" if not (closed or w["obstacle"]) else "obstacle")
         g = groups[role]
         g[0].append(p)
         g[1].append(colors.get(w["key"], "#888888"))
@@ -398,20 +402,19 @@ def check_stage(data, opts, out_dir: Path, voxels: bool = True) -> dict:
     ga, walls, edges, silent = None, [], [], set()
     if rp.ga is not None:
         ga = ga_scene(rp.ga, rp.ga_geo, rp.ga_pairs_data)
-        walls = ga_walls(ga, rp, K.PRA_SHELL_KEY)
+        walls = ga_walls(ga, rp, K.PRA_SHELL_KEY, ground_key)
         edges = ga.edges
-        silent = _components_without_edges(walls, ga.scene_edges, ground_key) if rp.ga.diffracts else set()
+        silent = _components_without_edges(walls, ga.scene_edges) if rp.ga.diffracts else set()
     shell_key = K.PRA_SHELL_KEY
-    objects = [w for w in walls if w["key"] not in (shell_key, ground_key) or w["obstacle"]]
+    objects = [w for w in walls if w["object"]]
     boundary_objects = {w["component"] for w in objects if not w["obstacle"]}
     shadowed = [p.key for p in rp.pairs if not rp.geoms[p.key].line_of_sight]
     if rp.ga is not None and rp.ga.diffracts:
         if not ga.closed:
-            problems.append("GA: model open (room-boundary edges not searched)")
-        if boundary_objects:
-            problems.append(f"GA: {len(boundary_objects)} object component(s) left in the room boundary")
+            problems.append("GA: model open (room-boundary edges not searched)"
+                            + (f", {len(boundary_objects)} object component(s) in it" if boundary_objects else ""))
         if silent:
-            problems.append(f"GA: {len(silent)} obstacle component(s) give no diffracting edge")
+            problems.append(f"GA: {len(silent)} object component(s) give no diffracting edge")
         if shadowed and not ga.scene_edges:
             problems.append("GA: shadowed pairs but no diffracting edge")
         # compas_acoustics' own count: obstacles whose shape its edge search does not handle (their
@@ -428,7 +431,7 @@ def check_stage(data, opts, out_dir: Path, voxels: bool = True) -> dict:
               f"{len(ga.scene_edges)} diffracting edges ({'closed' if ga.closed else 'OPEN'} model)") if ga else "Geometric acoustics: off"
     for i, view in enumerate(VIEWS):
         _ga_panel(fig.add_subplot(gs[1, i], projection="3d"), walls, edges, silent, colors, data, lo, hi, src, rcv, view,
-                  shell_key, gtitle)
+                  shell_key, gtitle, bool(ga is None or ga.closed))
     _plan_panel(fig.add_subplot(gs[0, 2]), data, rp, walls, edges, colors, src, rcv, shell_key)
 
     lines = [f"{scene.label}", f"fmax {opts.fmax:g} Hz, {len(rp.pairs)} pairs ({len(shadowed)} without line of sight)", "",
@@ -452,8 +455,8 @@ def check_stage(data, opts, out_dir: Path, voxels: bool = True) -> dict:
     if ga is not None:
         lines += _wrap(rp.ga.describe(), 76)
         n_obst = len({w['component'] for w in objects if w['obstacle']})
-        lines += _wrap(f"{ga.describe()}; {n_obst} obstacle component(s), {len(boundary_objects)} object component(s) in the "
-                       f"boundary, {len(silent)} obstacle(s) without edges", 76)
+        lines += _wrap(f"{ga.describe()}; objects: {len(boundary_objects)} closed in the room boundary, {n_obst} two-sided "
+                       f"obstacle(s), {len(silent)} without edges", 76)
         length = sum(float(np.linalg.norm(np.asarray(b) - np.asarray(a))) for a, b, _ in ga.scene_edges)
         lines.append(f"  diffracting edges: {len(ga.scene_edges)}, {length:.1f} m in total")
         for w in ga.warnings:
@@ -472,8 +475,8 @@ def check_stage(data, opts, out_dir: Path, voxels: bool = True) -> dict:
     _text_panel(fig.add_subplot(gs[1, 2]), lines)
 
     handles = [Patch(color=colors[k], label=k) for k in scene.materials] + [Patch(color=RIGID_COLOR, label="rigid (PFFDTD)")]
-    handles += [Patch(facecolor="none", edgecolor=BOUNDARY_OBJECT_COLOR, hatch="xxx", label="object left in the boundary"),
-                Patch(facecolor="none", edgecolor=BOUNDARY_OBJECT_COLOR, label="obstacle without edges"),
+    handles += [Patch(facecolor="none", edgecolor=BOUNDARY_OBJECT_COLOR, hatch="xxx", label="object in an open boundary"),
+                Patch(facecolor="none", edgecolor=BOUNDARY_OBJECT_COLOR, label="object without edges"),
                 plt.Line2D([], [], color=EDGE_COLOR, lw=2, label="diffracting edge"),
                 plt.Line2D([], [], color=SHADOW_COLOR, lw=1, ls="--", label="shadowed pair"),
                 plt.Line2D([], [], marker="^", ls="", color=SOURCE_COLOR, label="loudspeaker (arrow: aim)"),

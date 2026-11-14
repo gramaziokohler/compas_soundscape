@@ -1022,6 +1022,9 @@ PFFDTD_DEFAULT_DURATION = 1.0        # s, IR length
 PFFDTD_DURATION_MIN = 0.05
 PFFDTD_DURATION_MAX = 5.0
 PFFDTD_PRECISION = "double"          # single precision fails A3 (long low-loss IRs)
+# Benchmark only: this env variable set to "single" runs the single-precision engine (half the GPU
+# memory per node) for short anechoic IRs (tests/benchmarks/bras); unset, the app keeps PFFDTD_PRECISION.
+PFFDTD_PRECISION_ENV = "PFFDTD_PRECISION_OVERRIDE"
 PFFDTD_TEMPERATURE_C = 20.0          # PFFDTD c(20 degC) = 343.2 m/s
 PFFDTD_RELATIVE_HUMIDITY = 50.0
 PFFDTD_DEFAULT_AIR_ABSORPTION = True

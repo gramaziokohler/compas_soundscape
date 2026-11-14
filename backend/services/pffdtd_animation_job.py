@@ -27,10 +27,10 @@ from config.constants import (
     PFFDTD_ANIM_FRAMES,
     PFFDTD_FIELD_DIR,
     PFFDTD_FIELD_MAX_PX,
-    PFFDTD_PRECISION,
     PFFDTD_TEMP_DIR,
 )
 from services.pffdtd_job import _atomic_write, _write_progress, pffdtd_available, run_pipeline_job
+from utils.pffdtd_grid import pffdtd_precision
 
 EXPIRED = "The simulation's voxel grid has expired; re-run the simulation to animate it."
 
@@ -74,7 +74,7 @@ def run_pffdtd_animation(
             "out_dir": str(out_dir),
             "sources": [positions[sid] for sid in source_ids],
             "fmax": float(field["band_hz"][1]),
-            "precision": PFFDTD_PRECISION,
+            "precision": pffdtd_precision(),
             "plane_z": float(plane_z),
             "field_max_px": PFFDTD_FIELD_MAX_PX,
             "animation_s": float(animation_ms) / 1000.0,

@@ -121,6 +121,11 @@ class PraSpec:
     boxes: bool = False                   # each object as its bounding box: one wall per side (plates, partition,
                                           # body, rows); a layer drawn as one face (``extrude``) stays that face
     lift_m: float = 0.0                   # boxes standing on the floor raised this much (0: they stand on it)
+    panels: bool = False                  # with boxes: a box at most GA_PANEL_MAX_M thick becomes one two-sided
+                                          # rectangle (bras_geometry.ObjectBox.panel): one knife edge per side
+                                          # instead of two 90 deg edges a plate's thickness apart
+    strips: Optional[str] = None          # "x" | "y": battens lying side by side along that axis become one solid,
+                                          # the union of their boxes (the RS1 diffusor; bras_geometry.strip_scene_mesh)
 
 
 @dataclass(frozen=True)
@@ -162,8 +167,12 @@ FLOOR = GroundPlane(z=0.0, material="floor")                                 # k
 
 GENELEC = SourceInput(directivity=GENELEC_8020C)   # orientations: the (phi, theta) of each LS label in the .skp
 # geometric acoustics on RS1_absorbing and RS2-RS7: every object is a box (the absorber slab, a plate,
-# the partition, the body, a row of blocks), so each side is one wall; the RS1 diffusor keeps its mesh
+# the partition, the body, a row of blocks), so each side is one wall; the RS1 diffusor is its battens
+# as one solid (PraSpec.strips)
 BOXES = PraSpec(boxes=True)
+# the 25 mm MDF plates and partition (RS2-RS5) as single two-sided surfaces: first-order diffraction
+# cannot cross a box's two edges, so most shadowed pairs got no diffracted sound
+PANELS = PraSpec(boxes=True, panels=True)
 
 # Band test: two stages; the final one compares 125 Hz - 2 kHz (0.8 x 2.5 kHz). 27.456 points per
 # wavelength at 500 Hz = 25 mm cells (the plate thickness). The free air per domain face is computed
@@ -182,7 +191,7 @@ RS2_MATERIALS = {"MDF12mm": MDF_25MM, "Plaster_Mortar_White": ROCKFON}
 RS2_ABSORBER_SLAB = {"Plaster_Mortar_White": (-0.020, 0.0, 0.0)}   # 20 mm RockFon, drawn as its front face only
 RS2_COMMON = dict(source=RS2_SOURCE, temperature_c=17.6, humidity=47.0, gain_pair="LS1-MP1", band_test=RS_BANDS,
                   smoke_pairs=("LS1-MP1", "LS4-MP4"), animation=AnimationSpec(source="LS1", receiver="MP1"),
-                  chamber=TU_BERLIN, pra=BOXES)
+                  chamber=TU_BERLIN, pra=PANELS)
 RS2_2M = {**RS2_COMMON}
 # RS1 (RWTH, 20.3 degC, 41.5 %): loudspeakers and microphones at 30 / 45 / 60 deg above a 4.2 x 4.2 m
 # sample on the floor; all in the plane y = 2.985.
@@ -209,7 +218,8 @@ SCENES: dict[str, Scene] = {s.name: s for s in [
     Scene(name="RS1_diffuse", label="RS1: reflection on the MDF diffusor",
           geometry=_skp(RS1, "RS1_RIR_Diffuse.skp"),
           materials={"mat_MDF12mm_plane": MDF_12MM, "floor": TILES},
-          measurements=RS1 / "RIRs/RS1_RIRs_Diffuse.sofa", **RS1_COMMON),
+          measurements=RS1 / "RIRs/RS1_RIRs_Diffuse.sofa", **RS1_COMMON,
+          pra=PraSpec(strips="y")),   # 33 battens (0.12 / 0.24 m high, 4.14 m long in y): one castellated solid
     # ── RS2: single reflection and diffraction, finite plate ──────────────────
     Scene(name="RS2_1m_rigid", label="RS2: 1 m MDF plate, rigid",
           geometry=_skp(RS2, "RS2_RIR_1mPlate_rigid.skp", expected_bbox=((-0.027, -0.5, 0.52), (-0.002, 0.5, 1.52))),
@@ -231,25 +241,25 @@ SCENES: dict[str, Scene] = {s.name: s for s in [
           geometry=_skp(RS3, "RS3_RIR_2mPlateRigid.skp"), materials={"MDF12mm": MDF_25MM},
           measurements=RS3 / "RIRs/RS3_RIRs.sofa", source=GENELEC, temperature_c=17.3, humidity=49.5,
           gain_pair="LS1-MP1", smoke_pairs=("LS1-MP1",), band_test=RS3_BANDS,
-          pra=PraSpec(max_order=8, boxes=True),   # three round trips between the plates in the 100 ms window
+          pra=PraSpec(max_order=8, boxes=True, panels=True),   # three round trips between the plates in the 100 ms window
           animation=AnimationSpec(source="LS1", receiver="MP1", duration_ms=70.0), chamber=TU_BERLIN),
     # ── RS4: reflector array of nine 68 cm MDF plates (17.6 degC, 45.5 %) ─────
     Scene(name="RS4_on_center", label="RS4: reflector array, aimed at a plate centre",
           geometry=_skp(RS4, "RS4_RIR_onCenter.skp"), materials={"MDF12mm": MDF_25MM_B},
           measurements=RS4 / "RIRs/RS4_RIRs_onCenter.sofa", source=GENELEC, temperature_c=17.6, humidity=45.5,
           gain_pair="LS1-MP1", smoke_pairs=("LS1-MP1", "LS3-MP3"), band_test=RS_BANDS,
-          animation=AnimationSpec(source="LS1", receiver="MP1"), chamber=TU_BERLIN, pra=BOXES),
+          animation=AnimationSpec(source="LS1", receiver="MP1"), chamber=TU_BERLIN, pra=PANELS),
     Scene(name="RS4_off_center", label="RS4: reflector array, aimed between two plates",
           geometry=_skp(RS4, "RS4_RIR_offCenter.skp"), materials={"MDF12mm": MDF_25MM_B},
           measurements=RS4 / "RIRs/RS4_RIRs_offCenter.sofa", source=GENELEC, temperature_c=17.6, humidity=45.5,
           gain_pair="LS4-MP4", smoke_pairs=("LS4-MP4", "LS6-MP6"), band_test=RS_BANDS,
-          animation=AnimationSpec(source="LS4", receiver="MP4"), chamber=TU_BERLIN, pra=BOXES),
+          animation=AnimationSpec(source="LS4", receiver="MP4"), chamber=TU_BERLIN, pra=PANELS),
     # ── RS5: diffraction at a 2.07 m partition (RWTH, 20.3 degC, 40.3 %) ──────
     Scene(name="RS5", label="RS5: diffraction at a 2.07 m MDF partition",
           geometry=_skp(RS5, "RS5_RIR.skp"), materials={"mat_MDF25mmB_plane": MDF_25MM_B, "floor": TILES},
           measurements=RS5 / "RIRs/RS5_RIRs.sofa", source=GENELEC, temperature_c=20.3, humidity=40.3, ground=FLOOR,
           gain_pair="LS3-MP4", smoke_pairs=("LS3-MP4", "LS1-MP1"), band_test=RS_BANDS,
-          animation=AnimationSpec(source="LS1", receiver="MP1"), chamber=RWTH, pra=BOXES),
+          animation=AnimationSpec(source="LS1", receiver="MP1"), chamber=RWTH, pra=PANELS),
     # ── RS6: diffraction around a 0.72 x 0.72 x 4.14 m body (RWTH, 19.9 degC, 40.1 %) ──
     Scene(name="RS6", label="RS6: diffraction around a finite MDF body",
           geometry=_skp(RS6, "RS6_RIR.skp"), materials={"mat_MDF12mm_plane": MDF_12MM, "floor": TILES},
