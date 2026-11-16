@@ -2509,7 +2509,11 @@ function AcousticsBubbles({
     return () => useUIStore.getState().setBubbleColumnCount('acoustics', 0);
   }, [simulationCount]);
 
-  useDismissOnSceneClick(onReduce, openIndex !== null);
+  useDismissOnSceneClick(
+    onReduce,
+    openIndex !== null,
+    () => useUIStore.getState().showObjectExplorer,
+  );
 
   const isReady = (config: SimulationConfig) => config.state === 'completed' || config.type === 'resonance';
   const canEdit = useCanEdit();
