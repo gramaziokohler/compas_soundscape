@@ -9,6 +9,7 @@ puts the maximum planes on cell faces, so axis-aligned walls are represented exa
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import dataclass
 from typing import Optional
 
@@ -23,8 +24,22 @@ from config.constants import (
     PFFDTD_GRID_PADDING_CELLS,
     PFFDTD_NODE_UPDATES_PER_S,
     PFFDTD_OBLIQUE_WALL_TOLERANCE_DEG,
+    PFFDTD_PRECISION,
+    PFFDTD_PRECISION_ENV,
     PFFDTD_SPEED_OF_SOUND,
 )
+
+
+def pffdtd_precision() -> str:
+    """The engine precision: PFFDTD_PRECISION, unless the benchmark-only PFFDTD_PRECISION_ENV override says
+    ``single`` or ``double`` (read per call, so a benchmark can switch between runs)."""
+    value = os.environ.get(PFFDTD_PRECISION_ENV, "").strip().lower()
+    return value if value in ("single", "double") else PFFDTD_PRECISION
+
+
+def bytes_per_node() -> int:
+    """GPU bytes per node: two pressure fields, float64 (double) or float32 (single)."""
+    return PFFDTD_BYTES_PER_NODE // 2 if pffdtd_precision() == "single" else PFFDTD_BYTES_PER_NODE
 
 
 @dataclass
@@ -111,7 +126,7 @@ def plan_grid(extents, fmax: float, ppw: float, duration: float, domain_extents=
         shape=shape,
         nodes=nodes,
         steps=steps,
-        gpu_bytes=nodes * PFFDTD_BYTES_PER_NODE,
+        gpu_bytes=nodes * bytes_per_node(),
         gpu_budget_bytes=int(PFFDTD_GPU_MEMORY_GB * 1e9 * PFFDTD_GPU_MEMORY_USABLE_FRACTION),
         est_runtime_s=nodes * steps / PFFDTD_NODE_UPDATES_PER_S,
         domain_extents=None if domain_extents is None else sized.tolist(),

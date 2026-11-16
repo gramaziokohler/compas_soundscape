@@ -175,6 +175,26 @@ def test_a_layer_drawn_as_one_face_becomes_the_front_face_of_its_plate_box():
     assert np.cross(tri[0, 1] - tri[0, 0], tri[0, 2] - tri[0, 0])[0] > 0       # facing away from the plate
 
 
+def test_thin_boxes_become_one_rectangle_in_their_layered_or_mid_plane():
+    from benchmarks.bras.bras_geometry import SceneMesh, box, box_scene_mesh, object_boxes, panel_boxes
+
+    boxes = panel_boxes(sorted(object_boxes(_slotted_plate_and_battens()), key=lambda b: b.center[0]))
+    assert [b.panel for b in boxes] == [True, False]        # the 25 mm plate; the 0.12 m batten stays a box
+    out = box_scene_mesh(_slotted_plate_and_battens(), boxes)
+    assert len(out.faces) == 2 + 12
+    plate = out.vertices[out.faces[:2]]
+    assert np.allclose(plate[..., 0], 0.0125)                                     # mid-plane
+    assert np.isclose(np.abs(np.cross(plate[:, 1] - plate[:, 0], plate[:, 2] - plate[:, 0])).sum() / 2, 1.0)
+
+    pv, pf = box((-0.047, -0.5, 0.5), (-0.022, 0.5, 1.5))
+    lv, lf = box((-0.02, -0.5, 0.5), (0.0, 0.5, 1.5))
+    v, f = np.vstack([pv, lv]), np.vstack([pf, lf + 8])
+    mats = ["mdf"] * 12 + ["rockfon"] * 12
+    layered = SceneMesh(v, f, mats, mats, v.min(axis=0), v.max(axis=0))
+    out = box_scene_mesh(layered, panel_boxes(object_boxes(layered, layers={"rockfon": (-0.020, 0.0, 0.0)})))
+    assert out.materials == ["rockfon", "rockfon"] and np.allclose(out.vertices[..., 0], 0.0)   # the absorber's face
+
+
 def test_lift_raises_only_the_boxes_standing_on_the_floor():
     from benchmarks.bras.bras_geometry import lift_boxes, object_boxes
 
@@ -202,3 +222,28 @@ def test_the_geometric_scene_does_not_depend_on_the_fmax_stage():
     assert bras_pra._hash(plans[0].ga, plans[0].ga_geo, plans[0].ga_pairs_data) == \
         bras_pra._hash(plans[1].ga, plans[1].ga_geo, plans[1].ga_pairs_data)
     assert len(plans[0].ga_boxes) == 1
+
+
+def test_battens_side_by_side_become_one_closed_castellated_solid():
+    from benchmarks.bras.bras_geometry import SceneMesh, box, strip_scene_mesh
+
+    parts = []
+    for i, height in enumerate([0.12, 0.24, 0.12]):   # 1 mm apart; the tall one in two halves along y
+        x0 = i * 0.121
+        if height > 0.2:
+            parts += [box((x0, 0, 0), (x0 + 0.12, 1.0, height)), box((x0, 1.0, 0), (x0 + 0.12, 2.0, height))]
+        else:
+            parts.append(box((x0, 0, 0), (x0 + 0.12, 2.0, height)))
+    v = np.vstack([p[0] for p in parts])
+    f = np.vstack([p[1] + 8 * k for k, p in enumerate(parts)])
+    mesh = SceneMesh(v, f, ["mdf"] * len(f), ["mdf"] * len(f), v.min(axis=0), v.max(axis=0))
+    out = strip_scene_mesh(mesh, "y")
+    e = np.sort(np.vstack([out.faces[:, [0, 1]], out.faces[:, [1, 2]], out.faces[:, [2, 0]]]), axis=1)
+    assert set(np.unique(e, axis=0, return_counts=True)[1].tolist()) == {2}          # closed, manifold
+    t = out.vertices[out.faces]
+    n = np.cross(t[:, 1] - t[:, 0], t[:, 2] - t[:, 0])
+    volume = float(np.einsum("ij,ij->i", t[:, 0], n).sum()) / 6                        # outward: positive
+    assert volume == pytest.approx((0.12 + 0.24 + 0.12) * 0.121 * 2.0, rel=0.02)
+    planes = np.unique(np.round(np.c_[n / np.linalg.norm(n, axis=1)[:, None],
+                                       np.einsum("ij,ij->i", n / np.linalg.norm(n, axis=1)[:, None], t[:, 0])], 6), axis=0)
+    assert len(planes) == 1 + 2 + 2 + 2 + 2   # bottom, two top heights, two sides, two ends, two steps

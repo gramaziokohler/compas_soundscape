@@ -76,7 +76,12 @@ overwriting them). If a build fails, the old files are put back. A failure is re
 - **A new requirement isn't installed but the supervisor logs nothing about deps:** the supervisor
   is running old code. Run `compas restart supervisor`.
 - **A room-acoustics package is missing or stale:** run `compas deps`, then
-  `compas restart api` and `compas restart cpu`.
+  `compas restart api`, `compas restart cpu` and `compas restart pffdtd` (the pffdtd worker runs
+  the hybrid jobs, which import compas_acoustics).
+- **A new compas_acoustics commit was pushed to `engine-integration`:** the auto-deploy does not
+  pick it up. It re-runs deps only when the `requirements.txt` hash changes, and the line pins
+  the branch, not a commit. Run `compas deps` (uv resolves the branch to its new head) and the
+  three restarts above.
 - Everything else (tunnel, Access, nginx, SA3): see `C:\compas\README.md` § Troubleshooting.
 
 ## Public share links

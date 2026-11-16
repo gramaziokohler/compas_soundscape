@@ -285,7 +285,7 @@ export interface AudioControlsStoreState {
   /** Last status reported by the orchestrator (session-only). */
   ambisonicSendStatus: AmbisonicSendStatus | null;
   setAmbisonicSendStatus: (status: AmbisonicSendStatus | null) => void;
-  /** Master output volume (0..1). Session-only; mirrored onto the AudioOrchestrator by SceneVolumeButton. */
+  /** Master output volume (0..1), persisted as a UI preference and mirrored onto the AudioOrchestrator by SceneVolumeButton. */
   masterVolume: number;
   setMasterVolume: (volume: number) => void;
   /** Mute (volume 0) or restore the default master volume — bottom-bar button and `M` shortcut. */
@@ -2000,7 +2000,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
     partialize: (state: AudioControlsStoreState) => {
       const { individualSoundStates, previewingSoundId, _generatedSounds, _soundConfigs,
         soundBufferDurations, isBakingSchedule, isDeferredCycleBakePending,
-        _pendingPlayAllStagger, _generationInProgress, loopAnalysisInProgress, masterVolume,
+        _pendingPlayAllStagger, _generationInProgress, loopAnalysisInProgress,
         ambisonicSendEnabled, ambisonicSendStatus, ambisonicSendTransport, ...persistable } = state;
       return {
         ...persistable,

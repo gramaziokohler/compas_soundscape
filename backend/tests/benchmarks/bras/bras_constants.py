@@ -49,6 +49,10 @@ PRA_SHELL_MARGIN_M = 1.0                       # the shell sits this far beyond 
 # PraSpec.boxes: each object becomes its oriented bounding box (bras_geometry.object_boxes); parts of
 # one material closer than this are one object (the RS6 body pieces, the RS7 row battens)
 GA_BOX_JOIN_M = 0.01
+# PraSpec.panels: a box at most this thick becomes one two-sided rectangle (a knife edge on every side).
+# The 25 mm MDF plates and partition (47 mm with the RS2 absorber) are thin below ~3 kHz; the RS6 body
+# (0.72 m), the RS7 rows and the RS1 absorber slab (on the floor) stay boxes.
+GA_PANEL_MAX_M = 0.06
 # Mesh preparation for the pyroomacoustics runs (MeshPrepSettings). The BRAS RockFon absorbers are
 # tiled panels with ~1 mm slits between them: welding at 2 mm closes the slits. The panel sides left
 # inside the slab (never reached by the air) used to be dropped with the removed

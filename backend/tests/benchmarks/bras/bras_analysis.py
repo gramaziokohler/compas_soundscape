@@ -192,18 +192,26 @@ def analyze_run(measured: list[MeasuredPair], sims: dict, ctls: Optional[dict], 
 
 
 def _compare(measured: list[MeasuredPair], sims: dict, geoms: dict, bt: BandTest, fmax: float, gain_pair: str,
-             max_lag_s: float) -> tuple[float, list[PairResult]]:
+             max_lag_s: float, gain_db: Optional[float] = None) -> tuple[float, list[PairResult]]:
     """Align each simulated IR (measured rate and length) on the direct sound, fit the one global
-    gain and analyse every pair that has a simulated IR."""
+    gain (or take ``gain_db``) and analyse every pair that has a simulated IR."""
     pairs = [p for p in measured if p.key in sims]
     meas_bl, shifts, aligned = {}, {}, {}
     for p in pairs:
         meas_bl[p.key] = bandlimit_like_sim(p.ir, FS, fmax)
         shifts[p.key] = align_shift_s(meas_bl[p.key], sims[p.key], geoms[p.key], bt, max_lag_s)
-        aligned[p.key] = fractional_shift(sims[p.key], shifts[p.key], FS)
     los = [p for p in pairs if geoms[p.key].line_of_sight]
-    ref = next((p for p in pairs if p.key == gain_pair and geoms[p.key].line_of_sight), los[0] if los else pairs[0])
-    gain_db = -direct_level_db(meas_bl[ref.key], aligned[ref.key], geoms[ref.key], bt, fmax)
+    # the shift is the engine's own delay (the loudspeaker's in a broadband engine), the same for every pair:
+    # a shadowed pair takes the line-of-sight pairs' median, so its diffracted arrival keeps its own timing
+    # (aligned on its own, the cross-correlation would move the diffracted pulse onto the measured one)
+    if los:
+        common = float(np.median([shifts[p.key] for p in los]))
+        shifts.update({p.key: common for p in pairs if not geoms[p.key].line_of_sight})
+    for p in pairs:
+        aligned[p.key] = fractional_shift(sims[p.key], shifts[p.key], FS)
+    if gain_db is None:
+        ref = next((p for p in pairs if p.key == gain_pair and geoms[p.key].line_of_sight), los[0] if los else pairs[0])
+        gain_db = -direct_level_db(meas_bl[ref.key], aligned[ref.key], geoms[ref.key], bt, fmax)
     g = 10.0 ** (gain_db / 20.0)
     results = []
     for p in pairs:
@@ -214,14 +222,14 @@ def _compare(measured: list[MeasuredPair], sims: dict, geoms: dict, bt: BandTest
 
 
 def analyze_broadband_run(measured: list[MeasuredPair], irs: dict, fs: float, geoms: dict, bt: BandTest, fmax: float,
-                          gain_pair: str) -> tuple[float, list[PairResult]]:
+                          gain_pair: str, gain_db: Optional[float] = None) -> tuple[float, list[PairResult]]:
     """Same comparison for a broadband engine (pyroomacoustics): its IRs get the solver's band
     limits, as the measured ones do. No domain edge to remove, and the loudspeaker's own response
     (its delay included, hence the wider alignment search) is already in the IRs. Pairs the engine
-    has no IR for are left out."""
+    has no IR for are left out. ``gain_db``: a fixed global gain instead of the fitted one."""
     n = {p.key: len(p.ir) for p in measured}
     sims = {k: bandlimit_like_sim(_fit_length(resample_ir(x, fs, FS), n[k]), FS, fmax) for k, x in irs.items() if k in n}
-    return _compare(measured, sims, geoms, bt, fmax, gain_pair, K.BROADBAND_MAX_LAG_S)
+    return _compare(measured, sims, geoms, bt, fmax, gain_pair, K.BROADBAND_MAX_LAG_S, gain_db)
 
 
 def average_response(results: list[PairResult], bt: BandTest, fmax: float) -> dict:

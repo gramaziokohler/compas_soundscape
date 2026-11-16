@@ -156,7 +156,7 @@ def export_animation(cfg: RunConfig, scene_geometry: dict, control_geometry: dic
     highlight = next((p for p in anim_pairs if p.receiver_id == spec.receiver), anim_pairs[0])
     z = plane_height(spec, highlight.source_position)
     anim_cfg = replace(cfg, pair_keys=[p.key for p in anim_pairs], directional=False, control=False,
-                       extra={"animation_ms": spec.duration_ms, "plane_z": z})
+                       extra={**cfg.extra, "animation_ms": spec.duration_ms, "plane_z": z})   # keeps the precision
     path = bundle_path(out_dir, sid, z)
     meta_path = path.with_suffix(".json")
     digest = _hash(anim_cfg, bounds, z, spec.duration_ms,

@@ -41,7 +41,6 @@ from config.constants import (
     PFFDTD_LOWPASS_ORDER,
     PFFDTD_MATERIAL_CACHE_DIR,
     PFFDTD_PIPELINE_SCRIPT,
-    PFFDTD_PRECISION,
     PFFDTD_PYTHON,
     PFFDTD_RELATIVE_HUMIDITY,
     PFFDTD_SPL_REFERENCE_M,
@@ -68,7 +67,7 @@ from services.simulation_preflight_service import (
 )
 from utils.acoustic_measurement import AcousticMeasurement
 from utils.geometry import seeds_from_pairs
-from utils.pffdtd_grid import oblique_area_fraction, plan_grid
+from utils.pffdtd_grid import oblique_area_fraction, pffdtd_precision, plan_grid
 
 # progress bands of the whole job (pipeline progress is mapped into the middle band)
 PROGRESS_GEOMETRY_END = 15
@@ -336,7 +335,7 @@ def _run_from_geometry(
         "h": plan.h,
         "fmax": fmax,
         "duration": duration,
-        "precision": PFFDTD_PRECISION,
+        "precision": pffdtd_precision(),
         "foa": foa,
         "foa_offset_cells": PFFDTD_FOA_OFFSET_CELLS,
         "air_absorption": bool(air_absorption),
@@ -387,7 +386,7 @@ def _run_from_geometry(
         "oblique_area_fraction": oblique,
         "band_limited": True,
         "ir_reference": "free field at 1 m (direct path 1/r, as pyroomacoustics)",
-        "precision": PFFDTD_PRECISION,
+        "precision": pffdtd_precision(),
     }
     for p in pairs_data:
         sid, rid = str(p["source_id"]), str(p["receiver_id"])

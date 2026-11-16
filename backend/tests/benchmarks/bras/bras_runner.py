@@ -47,7 +47,8 @@ class RunConfig:
             pairs = f"p{len(self.pair_keys)}_" + hashlib.sha1(pairs.encode()).hexdigest()[:6]
         src = ("dirho" if self.high_order else "dir") if self.directional else "omni"
         mat = "ctl" if self.control else self.material_mode
-        return f"{self.scene}_f{self.fmax:g}_ppw{self.ppw:g}_{src}_{pairs}_{mat}"
+        prec = "_sp" if self.extra.get("precision") == "single" else ""   # double: the tag of every earlier run
+        return f"{self.scene}_f{self.fmax:g}_ppw{self.ppw:g}_{src}_{pairs}_{mat}{prec}"
 
 
 @dataclass
@@ -89,6 +90,17 @@ def _load(run_dir: Path, manifest: dict) -> dict:
         fs, x = wavfile.read(str(run_dir / "rir" / name))
         irs[key] = np.asarray(x, np.float64)
     return irs
+
+
+def is_cached(cfg: RunConfig, geometry: dict, pairs_data: list, domain_bounds, out_root: Path = OUTPUT_ROOT) -> bool:
+    """Whether ``simulate`` would return this run from its cache (same inputs, WAVs on disk)."""
+    run_dir = Path(out_root) / cfg.tag()
+    manifest_path = run_dir / MANIFEST
+    if not manifest_path.exists():
+        return False
+    manifest = json.loads(manifest_path.read_text())
+    return (manifest.get("hash") == _hash(cfg, geometry, pairs_data, domain_bounds)
+            and all((run_dir / "rir" / n).exists() for n in manifest["wavs"].values()))
 
 
 def simulate(cfg: RunConfig, geometry: dict, pairs_data: list, domain_bounds, force: bool = False,
