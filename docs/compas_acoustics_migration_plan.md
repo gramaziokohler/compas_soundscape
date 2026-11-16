@@ -28,6 +28,10 @@ Open items:
 
 ## Context
 
+> **Checkout (2026-11-14):** one clone only, `C:\Users\soundisblue\repos\compas_acoustics` on
+> `engine-integration` (→ `origin/engine-integration`); no worktrees. Rules: AGENTS.md
+> § "compas_acoustics (CA) checkout — exactly one".
+
 First step of the migration below: make compas_acoustics (CA) able to serve as the engine, with
 no change to compas_soundscape (CS) yet. Work happens in `bouiz/compas_acoustics`, on top of its
 `hil-d24-1-benchmark` branch (one commit ahead of upstream `main`; it adds `examples/hil_d24_1.py`,

@@ -183,6 +183,7 @@ def run_scene(name: str, spec: FinalSpec, pairs: str, root: Path, force: bool = 
     bt = scene.band_test
     bt_ga = replace(bt, fmin_hz=spec.fmin_hz, fmax_fraction=1.0)
     opts, rp, precision = scene_plan(data, spec, pairs)
+    opts = replace(opts, force=force)   # the animation bundle is cached on the inputs, not the prepared mesh
     fmax = spec.pffdtd_fmax_hz
     out = root / name
     plots = out / "plots"
@@ -302,6 +303,25 @@ def report(info: dict, engines: list, rp, files: list) -> str:
     return "\n".join(lines)
 
 
+def ca_source() -> str:
+    """The compas_acoustics code in use: its git branch and commit when run from a checkout, else the installed commit."""
+    import subprocess
+
+    import compas_acoustics
+
+    pkg = Path(compas_acoustics.__file__).parent
+    try:
+        out = subprocess.run(["git", "-C", str(pkg), "log", "-1", "--format=%h %D"], capture_output=True, text=True,
+                             check=True).stdout.strip()
+        return f"{out} ({pkg})"
+    except (OSError, subprocess.CalledProcessError):
+        pass
+    for url in pkg.parent.glob("compas_acoustics-*.dist-info/direct_url.json"):
+        info = json.loads(url.read_text())
+        return f"installed {info.get('vcs_info', {}).get('commit_id', '?')[:7]} ({info.get('url', '')})"
+    return str(pkg)
+
+
 def write_index(rows: list, root: Path, spec: FinalSpec) -> Path:
     ok = [r for r in rows if not r.get("error") and "labels" in r]
     used = [k for k in ENGINE_KEYS if any(k[0] in r["engines"] for r in ok)]
@@ -314,6 +334,7 @@ def write_index(rows: list, root: Path, spec: FinalSpec) -> Path:
              "global gain per scene; with UDFA, compas_acoustics keeps the gain of its run without diffraction. Mean |dL| "
              "in dB (number of pairs). A pair an engine finds no sound path for is left out of its means: without "
              "diffraction that is every shadowed pair, so its 'all' covers the line-of-sight pairs only.", "",
+             f"compas_acoustics (mesh preparation for both engines, and the geometric engine): {ca_source()}.", "",
              "PFFDTD runs in double precision, except the RS2 rigid plates (single precision, which makes their 2.5 kHz "
              "domain edge-clean; single vs double differs by <= 0.02 dB per band). RS3's domain is not edge-clean for its "
              "100 ms window (it would need 15-17 m of free air); a 31 ms window or a ~0.9 kHz edge-clean run moved its "

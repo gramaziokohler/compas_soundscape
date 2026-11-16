@@ -65,6 +65,23 @@ pnpm build
 - Transient output goes under `backend/temp/` (gitignored); durable data under `backend/data/`
   (`app.db`, `soundscapes/`, `directivities/<user_hash>/`).
 
+## compas_acoustics (CA) checkout — exactly one
+
+CA engine work happens in the fork `bouiz/compas_acoustics` (remote `origin`; `upstream` =
+gramaziokohler, never push or open PRs there without asking). There is **one** local clone:
+`C:\Users\soundisblue\repos\compas_acoustics`, on branch `engine-integration`, pushed to
+`origin/engine-integration`. Env `compas-acoustics-bouiz` has it installed editable; the production
+env `compas-soundscape` installs CA from GitHub `engine-integration`, so push before `compas deps`.
+
+- **No `git worktree add`, no second clone** (`compas_acoustics_dev`/`_orient` were folded back on
+  2026-11-14). For a side fix, `git switch -c fix/<name>` in this clone, push it, merge it into
+  `engine-integration`, switch back.
+- Results and test reports live under `examples/results/` (gitignored, never delete):
+  `reference/<commit>/` regression recordings + `record_*.log`, `geometry/*.pkl` prepared-geometry
+  comparisons. Before discarding any CA checkout or branch, copy its `examples/results/` here.
+- Push with gh's credential helper:
+  `git -c credential.helper= -c "credential.helper=!'/c/Program Files/GitHub CLI/gh.exe' auth git-credential" push`.
+
 ## Global Hard Rules
 
 1. **Metadata in SQLite, media on disk.** Durable metadata (users, sessions, workspaces,
