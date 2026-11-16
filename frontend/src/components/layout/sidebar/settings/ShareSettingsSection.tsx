@@ -140,6 +140,15 @@ export function ShareSettingsSection() {
       <div className="flex flex-col gap-1">
         <span className={HEADING_CLASS}>{SHARE_SETTINGS.LINKS}</span>
         <span className="text-[10px] leading-snug text-secondary-hover">{SHARE_SETTINGS.LINKS_HINT}</span>
+        <label className="flex items-center gap-1.5 text-[10px] text-foreground cursor-pointer">
+          <Checkbox
+            size={12}
+            checked={share.linksInEditor}
+            label={SHARE_SETTINGS.LINKS_IN_EDITOR}
+            onChange={share.setLinksInEditor}
+          />
+          <span>{SHARE_SETTINGS.LINKS_IN_EDITOR}</span>
+        </label>
         <ShareLinkBoard items={sharedItems} links={share.links} />
       </div>
 

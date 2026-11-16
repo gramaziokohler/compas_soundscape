@@ -1063,6 +1063,11 @@ login and can only select and play. It also works inside an iframe.
   middle column.
 - The selection lives in `shareConfigStore` and is saved by autosave as `soundscape.json` →
   `share_config`. Ids that no longer exist are pruned at save time (`pruneShareConfig`).
+- "Also apply links while editing" (`share_config.linksInEditor`) runs `useShareLinkActivation`
+  in the editor too, on the designer's links. Only activation propagates; the Acoustics and
+  Listeners columns are not filtered. In Expert mode, a linked scene moves the left Sidebar to its
+  Sounds step (`uiStore.navigateSidebar`). The public filter rebuilds `share_config`, so the flag
+  is never served to viewers.
 - Scenes get a stable `scene_id` from `utils/scene-id.ts`. It is installed on `analysisStore`
   and assigned outside undo history.
 - The link itself is a `model_shares` row in `app.db`, holding one live share per workspace and

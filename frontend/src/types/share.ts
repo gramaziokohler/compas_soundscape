@@ -27,6 +27,8 @@ export interface ShareConfig {
   /** Single listener ids and grid listener ids. */
   listenerIds: string[];
   links: ShareLink[];
+  /** Designer option: links also apply in the editor. Never sent to share viewers. */
+  linksInEditor?: boolean;
 }
 
 /** GET /api/public/share/{share_id} — the filtered soundscape for anonymous viewers. */

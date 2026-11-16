@@ -10,7 +10,7 @@ import { devtools } from 'zustand/middleware';
 import type { ShareConfig, ShareItemKind, ShareLink } from '@/types/share';
 import { newConfigId } from '@/utils/config-id';
 
-export const EMPTY_SHARE_CONFIG: ShareConfig = { sceneIds: [], simulationIds: [], listenerIds: [], links: [] };
+export const EMPTY_SHARE_CONFIG: ShareConfig = { sceneIds: [], simulationIds: [], listenerIds: [], links: [], linksInEditor: false };
 
 const ID_LIST_KEY: Record<ShareItemKind, 'sceneIds' | 'simulationIds' | 'listenerIds'> = {
   scene: 'sceneIds',
@@ -31,6 +31,7 @@ export interface ShareLinkEnd {
 }
 
 export interface ShareConfigStoreState extends ShareConfig {
+  linksInEditor: boolean;
   toggleItem: (kind: ShareItemKind, id: string, shared: boolean) => void;
   /**
    * Connect two items of different kinds, or disconnect them when a link already
@@ -40,6 +41,7 @@ export interface ShareConfigStoreState extends ShareConfig {
    */
   toggleConnection: (a: ShareLinkEnd, b: ShareLinkEnd) => void;
   removeLink: (linkId: string) => void;
+  setLinksInEditor: (enabled: boolean) => void;
   /** Replace from a loaded soundscape (or reset with `null`). */
   restore: (config: Partial<ShareConfig> | null | undefined) => void;
 }
@@ -51,6 +53,7 @@ export function selectShareConfig(state: ShareConfigStoreState): ShareConfig {
     simulationIds: state.simulationIds,
     listenerIds: state.listenerIds,
     links: state.links,
+    linksInEditor: state.linksInEditor,
   };
 }
 
@@ -79,6 +82,7 @@ export function pruneShareConfig(config: ShareConfig, existing: Record<ShareItem
     simulationIds: [...shared.simulation],
     listenerIds: [...shared.listener],
     links,
+    linksInEditor: config.linksInEditor,
   };
 }
 
@@ -152,6 +156,8 @@ export const useShareConfigStore = create<ShareConfigStoreState>()(
 
       removeLink: (linkId) => set({ links: get().links.filter((l) => l.id !== linkId) }, false, 'share/removeLink'),
 
+      setLinksInEditor: (enabled) => set({ linksInEditor: enabled }, false, 'share/setLinksInEditor'),
+
       restore: (config) =>
         set(
           {
@@ -159,6 +165,7 @@ export const useShareConfigStore = create<ShareConfigStoreState>()(
             simulationIds: config?.simulationIds ?? [],
             listenerIds: config?.listenerIds ?? [],
             links: config?.links ?? [],
+            linksInEditor: config?.linksInEditor ?? false,
           },
           false,
           'share/restore',

@@ -2641,7 +2641,8 @@ function HomeContent() {
       });
       const hasShareSelection =
         shareConfig.sceneIds.length + shareConfig.simulationIds.length + shareConfig.listenerIds.length > 0 ||
-        shareConfig.links.length > 0;
+        shareConfig.links.length > 0 ||
+        !!shareConfig.linksInEditor;
       if (hasShareSelection) payload.soundscape_data.share_config = shareConfig;
 
       // Persist project_id and version_id so the URL bootstrap can reconstruct the viewer
@@ -3584,7 +3585,8 @@ function HomeContent() {
     if (uiMode === 'expert') requestListenerCardExpand(receiverId);
   }, [handleGoToReceiver, requestListenerCardExpand, uiMode]);
 
-  // Share view: activating one item of a link group activates the others.
+  // Share view (and the editor, when Settings → Share opts in): activating one
+  // item of a link group activates the others.
   const isShareView = useShareViewStore((s) => s.isShareView);
   const shareActiveListenerId = activeIRGroupId
     ? receivers.receivers.some((r) => r.id === activeIRGroupId)
@@ -3594,12 +3596,11 @@ function HomeContent() {
   const activateShareListener = useCallback((listenerId: string) => {
     if (receivers.receivers.some((r) => r.id === listenerId)) {
       if (activeIRGroupId !== listenerId) handleGoToReceiver(listenerId);
-    } else if (activeGridListenerId !== listenerId) {
+    } else if (activeGridListenerId !== listenerId && gridListeners.gridListeners.some((g) => g.id === listenerId)) {
       handleToggleGridListenerPower(listenerId);
     }
-  }, [receivers.receivers, activeIRGroupId, activeGridListenerId, handleGoToReceiver, handleToggleGridListenerPower]);
+  }, [receivers.receivers, gridListeners.gridListeners, activeIRGroupId, activeGridListenerId, handleGoToReceiver, handleToggleGridListenerPower]);
   useShareLinkActivation({
-    enabled: isShareView,
     activeListenerId: shareActiveListenerId,
     activateListener: activateShareListener,
   });

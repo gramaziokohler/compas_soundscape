@@ -479,6 +479,7 @@ export const SHARE_SETTINGS = {
   LISTENERS: 'Listeners',
   LINKS: 'Linked groups',
   LINKS_HINT: 'Click an item, then an item in another column to link them; repeat for each link. Click a linked pair again to unlink it. An item can be in several links. Activating one item of a link activates the others.',
+  LINKS_IN_EDITOR: 'Also apply links while editing',
   /** Groups list under the board. */
   BOARD_NO_LINKS: 'No links yet',
   BOARD_REMOVE_LINK: 'Remove this link',
