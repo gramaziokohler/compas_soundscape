@@ -143,6 +143,7 @@ function CardView<TConfig extends CardBaseConfig>({
   headerBadge,
   footerPrefix,
   footerSuffix,
+  footerNote,
   // Simulation action button props
   onRun,
   onCancel,
@@ -376,6 +377,13 @@ function CardView<TConfig extends CardBaseConfig>({
   const showFooterPrefix = !!footerPrefix && generateStatus !== 'generating';
   const showFooterSuffix = !!footerSuffix && generateStatus !== 'generating';
   const showFooterExtras = showFooterPrefix || showFooterSuffix;
+  const showFooterNote = !!footerNote && isExpanded && generateStatus === 'done';
+  // `empty:hidden`: a note component that renders nothing takes no row (nor the shell's gap).
+  const footerNoteEl = (
+    <div className={`text-xxs min-w-0 truncate empty:hidden ${isGeneratedActive ? 'text-on-blue-muted' : 'text-text-3'}`}>
+      {footerNote}
+    </div>
+  );
 
   return (
     <div
@@ -649,9 +657,11 @@ function CardView<TConfig extends CardBaseConfig>({
         </div>
       )}
 
-      {/* Floating cards: confirmed remove, bottom-right */}
-      {isFloating && canRemove && (
-        <div className="flex justify-end">
+      {/* Footer row: note (generated + expanded, bottom-left) and, on floating
+          cards, the confirmed remove (bottom-right) */}
+      {isFloating && canRemove ? (
+        <div className="flex items-center justify-between gap-2 min-w-0">
+          {showFooterNote ? footerNoteEl : <span />}
           <DeleteConfirmButton
             title={closeButtonTitle}
             message={removeConfirmMessage ?? `${closeButtonTitle}?`}
@@ -659,7 +669,7 @@ function CardView<TConfig extends CardBaseConfig>({
             onBlueBackground={isGeneratedActive}
           />
         </div>
-      )}
+      ) : showFooterNote ? footerNoteEl : null}
       </div>
 
       {/* Right-click context menu — portaled to <body> (CardContextMenu) so it escapes the

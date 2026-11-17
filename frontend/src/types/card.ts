@@ -367,6 +367,8 @@ export interface CardProps<TConfig extends CardBaseConfig = CardBaseConfig, TRes
   footerPrefix?: ReactNode;
   /** Optional element rendered to the right of the bottom-bar action (e.g. a small refresh button). Hidden while generating. */
   footerSuffix?: ReactNode;
+  /** Small muted line at the bottom of an expanded generated card (e.g. "Solved in 2min 14s"). */
+  footerNote?: ReactNode;
 
   // Variants Bar (letter-square selector for sound cards)
   /**

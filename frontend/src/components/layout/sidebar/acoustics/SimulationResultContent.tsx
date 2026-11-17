@@ -16,7 +16,7 @@ import { ImpulseResponseUpload } from '@/components/audio/ImpulseResponseUpload'
 import type { SimulationConfig } from '@/types/acoustics';
 import { ACOUSTIC_METRICS, AcousticMetricsTable, acousticMetricMeta } from './AcousticMetricsTable';
 import { aggregateMappedBandMetrics, metricBlocksByPair, withBandHeadline } from '@/lib/acoustics/band-metrics';
-import { useRunResults } from '@/hooks/useRunResults';
+import { runResultsEngine, useRunResults } from '@/hooks/useRunResults';
 import { hybridRunSummary } from '@/lib/acoustics/hybrid';
 import type { ImpulseResponseMetadata, SourceReceiverIRMapping } from '@/types/audio';
 import { Notice } from '@/components/ui/Notice';
@@ -168,9 +168,7 @@ export function SimulationResultContent({
 
   const sourceReceiverIRMapping: SourceReceiverIRMapping | undefined = simulationConfig.sourceReceiverIRMapping;
   const simulationId: string | undefined = simulationConfig.currentSimulationId;
-  const simType: 'pyroomacoustics' | 'pffdtd' | undefined =
-    // hybrid results are written and served like the wave-based ones
-    config.type === 'pyroomacoustics' ? 'pyroomacoustics' : config.type === 'pffdtd' || config.type === 'hybrid' ? 'pffdtd' : undefined;
+  const simType = runResultsEngine(config.type);
   // Wave-based IRs carry no content above the grid's max frequency.
   const bandLimitHz = config.type === 'pffdtd' ? config.settings.fmax : null;
   // Import-irs cards carry per-IR metrics in their mapping — no simulation to fetch.

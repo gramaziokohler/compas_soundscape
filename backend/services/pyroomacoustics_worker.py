@@ -59,6 +59,7 @@ from utils.audio_processing import trim_ir
 from utils.child_pool import child_pool
 from utils.geometry import seeds_from_pairs
 from utils.reciprocity import decide_reciprocity, group_pairs_by_emitter
+from utils.run_timing import solve_started, solve_time_s
 
 
 def _atomic_replace(src: str, dst: str) -> None:
@@ -112,18 +113,25 @@ def _export_pair(
 
     The metrics describe the UNTRIMMED response (W channel): ``metrics`` when the engine already
     measured it (compas_acoustics, anchored at the geometric direct sound), else measured here.
+
+    A pair with no sound path (direct path and every reflection blocked) is not an error: its IR
+    is exported silent, without metrics, and the entry is flagged ``no_sound_path``. The frontend
+    treats it as a low-energy IR (peak 0).
     """
     source_id = pair_dict["source_id"]
     receiver_id = pair_dict["receiver_id"]
     if rir is None or len(rir) == 0:
         raise ValueError(f"Empty RIR for '{source_id}' -> '{receiver_id}'")
-    if not np.any(rir):
-        raise ValueError(
-            f"No sound path from '{source_id}' to '{receiver_id}': the direct path and every "
-            "reflection are blocked (a point inside a closed object, or outside the model?)"
-        )
     rir = np.asarray(rir, dtype=np.float64)
-    if not metrics:
+    no_sound_path = not np.any(rir)
+    if no_sound_path:
+        print(
+            f"  Warning: no sound path from '{source_id}' to '{receiver_id}' (the direct path and "
+            "every reflection are blocked: a point inside a closed object, or outside the model?); "
+            "exporting a silent IR"
+        )
+        metrics = {}
+    elif not metrics:
         metrics = try_measure_ir(rir, PYROOMACOUSTICS_SAMPLE_RATE, f"{source_id}->{receiver_id}")
     metrics = {key: dict(value) for key, value in (metrics or {}).items()}
     if metrics.get("acoustic_parameters") and not ctx["ray_tracing"]:
@@ -160,6 +168,8 @@ def _export_pair(
         result_entry.update(ctx["ray_tracing_entry_meta"])
     result_entry.update(extra)
     result_entry.update(metrics)  # acoustic_parameters + acoustic_parameters_bands
+    if no_sound_path:
+        result_entry["no_sound_path"] = True
     return ir_filename, result_entry
 
 
@@ -229,12 +239,7 @@ def _simulate_emitter(ctx: dict, task: dict, progress: Callable[[float, str], No
             rir = room.rir[mic_start_idx][source_in_room]
             if rir is None or len(rir) == 0:
                 raise ValueError(f"Empty RIR for '{source_id}' -> '{receiver_id}'")
-            if not np.any(rir):
-                raise ValueError(
-                    f"No sound path from '{source_id}' to '{receiver_id}': the direct path and every "
-                    "reflection are blocked (a point inside a closed object, or outside the model?)"
-                )
-            rir_data = rir
+            rir_data = rir  # an all-zero RIR (no sound path) is exported silent by _export_pair
         else:
             rir_channels = []
             for ch in range(num_channels):
@@ -348,6 +353,7 @@ def _run_pyroomacoustics_compute_loop(
     seed: int = CA_SEED_DEFAULT,
     scattering_split: bool = False,
     excluded_edges: Optional[list] = None,
+    started: Optional[float] = None,
 ) -> None:
     """
     Shared per-source compute pipeline used by both the Speckle worker and the
@@ -358,8 +364,10 @@ def _run_pyroomacoustics_compute_loop(
     detection, coplanar merge — identical to the geometry preflight), then
     runs one room.compute_rir() per unique source (with all receivers for
     that source). Progress is reported via atomic JSON file writes;
-    result/error is written to result_file on exit.
+    result/error is written to result_file on exit. ``started`` (``time.monotonic()``,
+    default now) is the start of the results' ``solve_time_s``.
     """
+    started = solve_started(started)
     # ── Prepare the simulation mesh ONCE ───────────────────────────────────
     _write_progress(progress_file, 15, "Preparing simulation mesh (weld, orientation, merge)...")
     seed_meta = seeds_from_pairs(pairs_data)
@@ -411,7 +419,7 @@ def _run_pyroomacoustics_compute_loop(
             ambisonic_order=ambisonic_order, air_temperature=air_temperature, air_humidity=air_humidity,
             geometry_diagnostics=geometry_diagnostics,
             tail=tail, n_slopes=n_slopes, seed=seed, scattering_split=scattering_split,
-            excluded_edges=excluded_edges,
+            excluded_edges=excluded_edges, started=started,
         )
         return
     if engine != ACOUSTICS_ENGINE_PYROOMACOUSTICS:
@@ -522,6 +530,7 @@ def _run_pyroomacoustics_compute_loop(
     results_json["geometry_diagnostics"] = geometry_diagnostics
     results_json["reciprocity"] = reciprocity.as_dict()
     results_json["engine"] = ACOUSTICS_ENGINE_PYROOMACOUSTICS
+    results_json["solve_time_s"] = solve_time_s(started)
     with open(tmp_dir / results_filename, "w") as f:
         json.dump(results_json, f, indent=2)
 
@@ -550,9 +559,11 @@ def _run_compas_acoustics(
     air_temperature: Optional[float], air_humidity: float, geometry_diagnostics: dict,
     tail: str = CA_TAIL_DEFAULT, n_slopes: int = 1, seed: int = CA_SEED_DEFAULT,
     scattering_split: bool = False, excluded_edges: Optional[list] = None,
+    started: Optional[float] = None,
 ) -> None:
     """The compute half of the job on compas_acoustics (services/compas_acoustics_engine.py):
     every pair in one or a few scenes, then the same export and results file as the legacy path."""
+    started = solve_started(started)
     from services.compas_acoustics_engine import EngineSettings, simulate_pairs
 
     order = _ambisonic_order(simulation_mode, ambisonic_order)
@@ -639,6 +650,7 @@ def _run_compas_acoustics(
         "flipped": bool(run.generation.get("reciprocal", False)),
         "reason": "compas_acoustics Mono(reciprocity=...)",
     }
+    results_json["solve_time_s"] = solve_time_s(started)
     with open(tmp_dir / results_filename, "w") as f:
         json.dump(results_json, f, indent=2)
 
@@ -698,6 +710,7 @@ def run_pyroomacoustics_simulation(
     Progress is reported via atomic JSON file writes; result/error is written
     to result_file on exit.
     """
+    started = solve_started()
     try:
         # ── Phase 1-2: Speckle geometry + per-face materials / scattering ────
         inputs = load_speckle_simulation_geometry(
@@ -763,6 +776,7 @@ def run_pyroomacoustics_simulation(
             seed=seed,
             scattering_split=scattering_split,
             excluded_edges=excluded_edges,
+            started=started,
         )
 
     except Exception as exc:

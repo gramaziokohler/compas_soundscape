@@ -104,6 +104,17 @@ class EngineRun:
     generation: dict = field(default_factory=dict)
 
 
+def get_service_version_info() -> dict:
+    """Name and installed version for /api/versions (package metadata only: never imports it)."""
+    import importlib.metadata
+
+    try:
+        version = importlib.metadata.version("compas_acoustics")
+    except importlib.metadata.PackageNotFoundError:
+        version = "not installed"
+    return {"name": "compas_acoustics", "version": version}
+
+
 # ─── Air ──────────────────────────────────────────────────────────────────────
 
 def temperature_for_sound_speed(c: float) -> float:

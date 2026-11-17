@@ -93,7 +93,16 @@ Step 5 above is the **legacy** engine. Since the compas_acoustics migration
 - **Export:** both engines write **float32** WAVs through `_export_pair()` (the old int16 export
   wrapped above 1.0 near a source). Every result carries `acoustic_parameters` and
   `acoustic_parameters_bands` per pair (see Acoustic Metrics below); CA results also carry header
-  blocks `engine` and `compas_acoustics` (method, seed, air, closed, volume, notes).
+  blocks `engine` and `compas_acoustics` (method, seed, air, closed, volume, notes). A pair with
+  **no sound path** (all-zero RIR: direct path and every reflection blocked) never fails the run:
+  it is exported as a silent IR without metrics, flagged `no_sound_path: true`, and the frontend
+  treats it as low energy (peak 0).
+- **Solve time:** every engine's results JSON (ray tracing, PFFDTD, hybrid) carries `solve_time_s`
+  (job start incl. the Speckle fetch → results written; `utils/run_timing.py`). Generated cards show
+  it as the footer note "Solved in 2min 14s" (`SimulationSolveTime`, `Card.footerNote`), read
+  through the shared, cached results fetch in `hooks/useRunResults.ts`; older runs show nothing.
+  The ray-tracing card's version line names the engine it runs on (`resolveEngine`):
+  `compas_acoustics <version>` (from `/api/versions`), or pyroomacoustics for the legacy engine.
 - **Routing rules** (`validate_engine_settings`): BTMS needs ambisonic output. HOA and diffraction
   need compas_acoustics. Preflight adds `ca_hybrid_no_volume` (error) when ambisonic
   output has no air volume, and `ca_hybrid_open_model` (warning) only when the model

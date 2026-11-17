@@ -68,6 +68,7 @@ from services.simulation_preflight_service import (
 from utils.acoustic_measurement import try_measure_ir
 from utils.geometry import seeds_from_pairs
 from utils.pffdtd_grid import oblique_area_fraction, pffdtd_precision, plan_grid
+from utils.run_timing import solve_started, solve_time_s
 
 # progress bands of the whole job (pipeline progress is mapped into the middle band)
 PROGRESS_GEOMETRY_END = 15
@@ -177,6 +178,7 @@ def run_pffdtd_simulation(
     free_mode: str = PFFDTD_DEFAULT_FREE_MODE,
     free_grid_spacing: float = PFFDTD_FREE_GRID_SPACING_DEFAULT,
 ) -> None:
+    started = solve_started()
     try:
         reason = pffdtd_available()
         if reason:
@@ -192,6 +194,7 @@ def run_pffdtd_simulation(
             FieldOptions(field_plane_z),
             header_meta={"speckle_source": {"project_id": speckle_project_id, "version_id": speckle_version_id, "layer_name": layer_name}},
             free=FreeOptions(free_mode, free_grid_spacing),
+            started=started,
         )
     except Exception as exc:
         tb = traceback.format_exc()
@@ -273,8 +276,11 @@ def _run_from_geometry(
     duration, air_absorption, simulation_name, rir_output_dir, temp_dir, mesh_settings,
     field: Optional[FieldOptions] = None, header_meta=None, free: Optional[FreeOptions] = None,
     domain_bounds: Optional[tuple] = None, grid_spacing: Optional[float] = None,
+    started: Optional[float] = None,
 ) -> None:
-    """Shared by the Speckle entry point and tests (geometry given directly)."""
+    """Shared by the Speckle entry point and tests (geometry given directly). ``started``
+    (``time.monotonic()``, default now) is the start of the results' ``solve_time_s``."""
+    started = solve_started(started)
     field = field or FieldOptions()
     free = free or FreeOptions()
     _write_progress(progress_file, PROGRESS_GEOMETRY_END, "Preparing simulation mesh...")
@@ -427,6 +433,7 @@ def _run_from_geometry(
         "free": free_results_block(simulation_id, meta["free"], list(sources), list(receivers)) if meta.get("free") else None,
         "geometry_diagnostics": geometry_diagnostics,
         **(header_meta or {}),
+        "solve_time_s": solve_time_s(started),
     }
     with open(Path(temp_dir) / results_filename, "w") as f:
         json.dump(results_json, f, indent=2)

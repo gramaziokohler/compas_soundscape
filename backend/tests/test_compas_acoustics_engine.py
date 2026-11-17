@@ -95,6 +95,7 @@ def test_mono_direct_sound_at_the_app_level(tmp_path):
     entry = results["results"][0]
     assert entry["engine"] == "compas_acoustics" and entry["num_channels"] == 1
     assert results["engine"] == "compas_acoustics"
+    assert results["solve_time_s"] > 0                        # card footer "Solved in ..."
     params, bands = entry["acoustic_parameters"], entry["acoustic_parameters_bands"]
     assert "t30" in params and "sti" in params
     if params["t30"] is not None:   # one analysis: the card's T30 is the bands' ISO single number
@@ -165,6 +166,7 @@ def test_legacy_engine_still_runs(tmp_path):
     results, irs = _run(tmp_path, engine_name="pyroomacoustics", sources=[{"id": "s1", "position": [1.5, 2.5, 1.5]}],
                         receivers=[{"id": "r1", "position": [4.5, 2.5, 1.5]}])
     assert results["engine"] == "pyroomacoustics"
+    assert results["solve_time_s"] > 0
     assert irs[("s1", "r1")].dtype == np.float32
 
 

@@ -382,6 +382,8 @@ export interface LLMProviders {
 
 export interface ServiceVersions {
   pyroomacoustics: ServiceVersionInfo;
+  /** Default geometric engine of ray-tracing / hybrid cards (absent on older backends). */
+  compas_acoustics?: ServiceVersionInfo;
   tangoflux: ServiceVersionInfo;
   audioldm2: ServiceVersionInfo;
   stable_audio_3: ServiceVersionInfo;

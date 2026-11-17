@@ -360,6 +360,7 @@ def read_root():
 def get_service_versions(llm_model: str = None):
     """Return name and version of every backend service library."""
     from services.pyroomacoustics_service import PyroomacousticsService
+    from services.compas_acoustics_engine import get_service_version_info as compas_acoustics_version_info
     from services.audio_service import AudioService
     from services.audioldm2_service import AudioLDM2Service
     from services.stable_audio_service import StableAudioService
@@ -371,6 +372,7 @@ def get_service_versions(llm_model: str = None):
 
     return {
         "pyroomacoustics": PyroomacousticsService.get_service_version_info(),
+        "compas_acoustics": compas_acoustics_version_info(),
         "tangoflux": AudioService.get_service_version_info(),
         "audioldm2": AudioLDM2Service.get_service_version_info(),
         "stable_audio_3": StableAudioService.get_service_version_info(),

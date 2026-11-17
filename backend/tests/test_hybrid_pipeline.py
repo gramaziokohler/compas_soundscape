@@ -89,6 +89,7 @@ def test_crossover_is_the_schroeder_frequency(mono):
     result, results, entry, _ = mono
     hybrid = results["hybrid"]
     assert results["method"] == METHOD_NAME and results["engine"] == "hybrid"
+    assert results["solve_time_s"] > 0                        # both parts + the join
     assert hybrid["mode"] == "schroeder" and hybrid["limited_by"] is None
     assert hybrid["volume_m3"] == pytest.approx(VOLUME, rel=0.02)
     assert 0.15 < hybrid["rt60"] < 1.5

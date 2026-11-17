@@ -55,6 +55,7 @@ from services.simulation_mesh_service import MeshPrepOptions, SimulationMeshServ
 from utils.acoustic_measurement import try_measure_ir
 from utils.audio_processing import trim_ir
 from utils.geometry import seeds_from_pairs
+from utils.run_timing import solve_started, solve_time_s
 from utils.hybrid_crossover import (
     CROSSOVER_SCHROEDER, CrossoverPlan, combine, plan_crossover, wave_ppw,
 )
@@ -180,6 +181,7 @@ def run_hybrid_simulation(
     **options,
 ) -> None:
     """Job entry (PFFDTD queue, variant "hybrid"): Speckle geometry, then ``run_hybrid_from_geometry``."""
+    started = solve_started()
     try:
         reason = pffdtd_available()
         if reason:
@@ -198,6 +200,7 @@ def run_hybrid_simulation(
         simulation_id, progress_file, result_file,
         {**geometry_dict(inputs), "face_scattering": inputs.face_scattering}, pairs_data,
         header_meta={"speckle_source": {"project_id": speckle_project_id, "version_id": speckle_version_id, "layer_name": layer_name}},
+        started=started,
         **options,
     )
 
@@ -238,7 +241,9 @@ def run_hybrid_from_geometry(
     air_humidity: float = 50.0,
     excluded_edges: Optional[list] = None,
     parallel: bool = True,
+    started: Optional[float] = None,
 ) -> None:
+    started = solve_started(started)
     stop = threading.Event()
     try:
         reason = pffdtd_available()
@@ -340,6 +345,7 @@ def run_hybrid_from_geometry(
             "median_overlap_mismatch_db": round(float(np.median(mismatches)), 2) if mismatches else None,
         }
         results_json["compas_acoustics"] = {**ga.generation, "notes": ga.notes}
+        results_json["solve_time_s"] = solve_time_s(started)  # both parts + the join
         with open(results_path, "w") as f:
             json.dump(results_json, f, indent=2)
 

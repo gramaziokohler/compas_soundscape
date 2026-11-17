@@ -57,6 +57,7 @@ import { useSimulationPreflightStore, usePffdtdVisualsStore, type RunPreflightAr
 import { useModelVersionStore } from '@/store';
 import { SimulationOutdatedNotice } from '@/components/layout/sidebar/acoustics/SimulationOutdatedNotice';
 import { SimulationVersionBadge } from '@/components/layout/sidebar/acoustics/SimulationVersionBadge';
+import { SimulationSolveTime } from '@/components/layout/sidebar/acoustics/SimulationSolveTime';
 import { buildSimulationGeometryRequest, simulationRequestSignature, simulationSourceSnapshot, speckleCardFields, type BuildResult } from '@/utils/simulationRequest';
 import type { SimulationEngine } from '@/types/simulationPreflight';
 
@@ -2251,14 +2252,20 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       } else if (!serviceVersions) {
         return undefined;
       } else if (config.type === 'pyroomacoustics') {
-        const v = serviceVersions.pyroomacoustics;
+        // The ray-tracing card runs on compas_acoustics unless it picked the legacy engine.
+        const ca = serviceVersions.compas_acoustics;
+        const v = resolveEngine(config.settings, engineCapabilities) === GA_ENGINE.COMPAS_ACOUSTICS && ca
+          ? ca
+          : serviceVersions.pyroomacoustics;
         versionLine = `${v.name} ${v.version}`;
       } else if (config.type === 'pffdtd') {
         const v = serviceVersions.pffdtd;
         versionLine = v ? `${v.name} ${v.version}` : undefined;
       } else if (config.type === 'hybrid') {
-        const v = serviceVersions.pffdtd;
-        versionLine = v ? `${v.name} ${v.version} + compas_acoustics` : 'compas_acoustics';
+        const wave = serviceVersions.pffdtd;
+        const ca = serviceVersions.compas_acoustics;
+        const rays = ca ? `${ca.name} ${ca.version}` : 'compas_acoustics';
+        versionLine = wave ? `${wave.name} ${wave.version} + ${rays}` : rays;
       }
       return versionLine;
     })();
@@ -2325,6 +2332,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             actionButtonColor='primary'
             color="primary"
             version={cardVersion}
+            footerNote={isEngineSimulation(config) && isCompleted ? <SimulationSolveTime config={config} /> : undefined}
             headerBadge={isEngineSimulation(config) && isCompleted
               ? <SimulationVersionBadge config={config} />
               : undefined}
