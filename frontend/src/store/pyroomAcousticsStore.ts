@@ -488,7 +488,7 @@ export const usePyroomAcousticsStore = create<PyroomAcousticsStoreState>()(
                     }
                   }
 
-                  const resultsText = await buildSimulationResultsText(result.simulation_id);
+                  const resultsText = await buildSimulationResultsText(result.simulation_id, irImportResult.sourceReceiverMapping);
 
                   patchInstance(
                     set,

@@ -672,8 +672,8 @@ async function recoverAcousticsJob(
   }
 
   const resultsText = jobType === 'pyroom'
-    ? await buildSimulationResultsText(simulationId)
-    : await buildPffdtdSimulationResultsText(simulationId);
+    ? await buildSimulationResultsText(simulationId, irImportResult.sourceReceiverMapping)
+    : await buildPffdtdSimulationResultsText(simulationId, irImportResult.sourceReceiverMapping);
 
   const simulationPositions = buildRecoveredSimulationPositions();
 

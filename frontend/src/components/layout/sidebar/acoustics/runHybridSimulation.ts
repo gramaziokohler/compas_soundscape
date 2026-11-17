@@ -105,7 +105,7 @@ export async function runHybridSimulation(deps: RunHybridSimulationDeps): Promis
       }
 
       const hybridInfo = result.hybrid ?? null;
-      const metricsText = await buildPffdtdSimulationResultsText(result.simulation_id);
+      const metricsText = await buildPffdtdSimulationResultsText(result.simulation_id, irImportResult.sourceReceiverMapping);
       update({
         importedIRMetadata: irImportResult.importedIRMetadataList[0],
         isRunning: false,

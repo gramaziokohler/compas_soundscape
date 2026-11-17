@@ -433,7 +433,7 @@ export function SimulationResultContent({
     if (!canUseGrid || !simulationId || !simType) return;
     let cancelled = false;
     setMetricsLoading(true);
-    fetchPerReceiverMetrics(simulationId, simType)
+    fetchPerReceiverMetrics(simulationId, simType, sourceReceiverIRMapping)
       .then((m) => {
         if (cancelled) return;
         if (Object.keys(m).length > 0) setPerReceiverMetrics(m);
@@ -442,7 +442,7 @@ export function SimulationResultContent({
         if (!cancelled) setMetricsLoading(false);
       });
     return () => { cancelled = true; };
-  }, [canUseGrid, simulationId, simType]);
+  }, [canUseGrid, simulationId, simType, sourceReceiverIRMapping]);
 
   // Import-irs: derive the aggregate metrics from the assigned IRs' upload-time
   // metrics. Re-runs whenever the mapping changes (i.e. whenever an IR is added).
@@ -469,12 +469,12 @@ export function SimulationResultContent({
         .then((m) => { if (!cancelled) setPairMetrics(m); })
         .finally(() => { if (!cancelled) setMetricsLoading(false); });
     } else {
-      fetchPyroomAcousticMetrics(simulationId)
+      fetchPyroomAcousticMetrics(simulationId, sourceReceiverIRMapping)
         .then((params) => { if (!cancelled) setAcousticParams(params); })
         .finally(() => { if (!cancelled) setMetricsLoading(false); });
     }
     return () => { cancelled = true; };
-  }, [isImportIrs, canUseGrid, simulationId, simType]);
+  }, [isImportIrs, canUseGrid, simulationId, simType, sourceReceiverIRMapping]);
 
   const wavePairParams = useMemo(
     () => (simType === 'pffdtd' && !canUseGrid ? aggregateMappedPairMetrics(sourceReceiverIRMapping, pairMetrics) : null),

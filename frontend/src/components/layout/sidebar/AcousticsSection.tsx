@@ -843,7 +843,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
           logSimulationResult(index, 'pyroomacoustics', result.simulation_id, irImportResult);
 
           if (irImportResult.importedCount > 0) {
-            const resultsText = await buildSimulationResultsText(result.simulation_id);
+            const resultsText = await buildSimulationResultsText(result.simulation_id, irImportResult.sourceReceiverMapping);
 
             handleUpdateConfig(index, {
               importedIRMetadata: irImportResult.importedIRMetadataList[0],
@@ -2271,6 +2271,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             beforeContent={beforeContent}
             afterContent={afterContent}
             // Completed ray-tracing / wave-based cards: editable settings + Regenerate
+            // (footerPrefix dots also sit left of Regenerate)
             settingsContent={isSimulationType && isCompleted ? simulationSetup : undefined}
             settingsDirty={isSimulationType && isCompleted && isGenerationDirty(config)}
             onRegenerate={isSimulationType ? () => runSimulation(index) : undefined}

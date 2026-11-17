@@ -16,7 +16,8 @@ import { Badge } from '@/components/ui/Badge';
 import { Spinner } from '@/components/ui/Spinner';
 import { EmptyState } from '@/components/ui/EmptyState';
 import type { ImpulseResponseMetadata, SourceReceiverIRMapping } from "@/types/audio";
-import { API_BASE_URL, AUDIO_SAMPLE_RATE, IR_HOVER_LINE, IR_LOW_ENERGY_THRESHOLD, IR_PREVIEW_PANEL, AUDIO_VISUALIZATION, IMPULSE_RESPONSE, SIMULATION_POSITION_MATCH_THRESHOLD } from "@/utils/constants";
+import { API_BASE_URL, AUDIO_SAMPLE_RATE, IR_HOVER_LINE, IR_PREVIEW_PANEL, AUDIO_VISUALIZATION, IMPULSE_RESPONSE, SIMULATION_POSITION_MATCH_THRESHOLD } from "@/utils/constants";
+import { isLowEnergyPeak } from "@/utils/irEnergy";
 import { clampToViewport } from "@/utils/scale";
 import { trimDisplayName } from "@/utils/utils";
 import { parsePositionKey } from "@/utils/positionKey";
@@ -75,14 +76,6 @@ type ReceiverGroup = {
   sources: Array<{ sourceId: string; receiverId: string; ir: ImpulseResponseMetadata | null }>;
 };
 
-/** True when a peak amplitude marks a low-energy / silent IR: non-finite or non-positive
- *  values (a negative value means the peak is stored/displayed in dB, e.g. -89.9 dB) or an
- *  amplitude below IR_LOW_ENERGY_THRESHOLD. */
-function isLowEnergyPeak(peak: number | null | undefined): boolean {
-  if (peak === undefined || peak === null) return false;
-  if (!Number.isFinite(peak) || peak <= 0) return true;
-  return peak < IR_LOW_ENERGY_THRESHOLD;
-}
 
 export function ImpulseResponseUpload({
   refreshTrigger = 0,

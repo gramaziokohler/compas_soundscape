@@ -115,7 +115,7 @@ export async function runPffdtdSimulation(deps: RunPffdtdSimulationDeps): Promis
         return;
       }
 
-      const resultsText = await buildPffdtdSimulationResultsText(result.simulation_id);
+      const resultsText = await buildPffdtdSimulationResultsText(result.simulation_id, irImportResult.sourceReceiverMapping);
       update({
         importedIRMetadata: irImportResult.importedIRMetadataList[0],
         isRunning: false,

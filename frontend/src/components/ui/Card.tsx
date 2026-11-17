@@ -587,7 +587,13 @@ function CardView<TConfig extends CardBaseConfig>({
               onExpandedChange={setSettingsExpanded}
               onRevert={canRegenerate ? onRevertSettings : undefined}
               footer={canRegenerate ? (
-                <div ref={regenerateBarRef}>
+                // Same footerPrefix (e.g. source / listener / material dots) as the Run footer.
+                <div
+                  ref={regenerateBarRef}
+                  className={showFooterPrefix ? 'flex items-stretch gap-1.5 overflow-visible' : undefined}
+                >
+                  {showFooterPrefix ? footerPrefix : null}
+                  <div className={showFooterPrefix ? 'min-w-0 flex-1' : undefined}>
                     <GenerateButton
                       shortcut={canSubmitFromKeyboard ? 'SUBMIT_PROMPT' : undefined}
                       status="idle"
@@ -598,6 +604,7 @@ function CardView<TConfig extends CardBaseConfig>({
                       disabledReason={actionButtonDisabledReason}
                       onGenerate={handleRunAction}
                     />
+                  </div>
                 </div>
               ) : undefined}
             >
