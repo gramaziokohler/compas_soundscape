@@ -10,7 +10,8 @@ import { devtools } from 'zustand/middleware';
 import type { ShareConfig, ShareItemKind, ShareLink } from '@/types/share';
 import { newConfigId } from '@/utils/config-id';
 
-export const EMPTY_SHARE_CONFIG: ShareConfig = { sceneIds: [], simulationIds: [], listenerIds: [], links: [], linksInEditor: false };
+// `linksInEditor` is optional in saved configs (older soundscapes) but always set in the store.
+export const EMPTY_SHARE_CONFIG: ShareConfig & { linksInEditor: boolean } = { sceneIds: [], simulationIds: [], listenerIds: [], links: [], linksInEditor: false };
 
 const ID_LIST_KEY: Record<ShareItemKind, 'sceneIds' | 'simulationIds' | 'listenerIds'> = {
   scene: 'sceneIds',
