@@ -32,13 +32,18 @@ mamba activate compas-toy
 python -m pip install -r requirements.txt
 ```
 
-`requirements.txt` installs the acoustics engine, `compas_acoustics[hybrid]`, non-editably from the
+`requirements.txt` installs the acoustics engine, `compas_acoustics`, non-editably from the
 `bouiz/compas_acoustics` fork (branch `engine-integration`) into the backend's `compas-toy`
-environment. To work on the engine itself, clone the fork and install it editable in a separate
-development environment:
-`pip install -e "<clone>[hybrid]" "protobuf<6"`. Don't install its `[worker]` extra: it needs
-protobuf ≥ 6.31, and tensorflow pins < 6. To run the legacy pyroomacoustics engine instead, set
-`ACOUSTICS_ENGINE=pyroomacoustics` in `.env`.
+environment. CA has no extras: like upstream, it always installs pyFDN (with torch) and
+`compas_pb`, which needs protobuf ≥ 6.31. That is why TensorFlow is pinned to 2.20, the first
+release that accepts protobuf 6. To work on the engine itself, clone the fork and install it
+editable in a separate development environment: `pip install -e "<clone>"`. To run the legacy
+pyroomacoustics engine instead, set `ACOUSTICS_ENGINE=pyroomacoustics` in `.env`.
+
+Upgrading an environment that still has TensorFlow 2.18: on Windows, 2.18's files belong to the
+`tensorflow_intel` package, so remove it before installing 2.20, or a later uninstall of it deletes
+2.20's files: `python -m pip uninstall -y tensorflow tensorflow_intel tf_keras`, then install the
+requirements.
 
 Frontend dependencies:
 

@@ -65,6 +65,8 @@ export interface GridListenersStoreState {
   /** Use a drawn polygon as the grid boundary (points are clipped to it). */
   setGridListenerArea: (id: string, area: DrawnArea) => void;
   toggleGridListenerHiddenForSimulation: (id: string) => void;
+  /** Show `shownId` for simulation and hide every other grid (any other id hides them all). */
+  showOnlyGridListenerForSimulation: (shownId: string) => void;
 
   /** Restore grid listener configurations from a saved soundscape (bulk replace). */
   restoreGridListeners: (savedGridListeners: GridListenerData[]) => void;
@@ -200,6 +202,21 @@ export const useGridListenersStore = create<GridListenersStoreState>()(
             false,
             'gridListeners/setArea',
           ),
+
+        showOnlyGridListenerForSimulation: (shownId) => {
+          const { gridListeners } = get();
+          // Replace only the grids whose flag changes, and skip a no-op write.
+          if (gridListeners.every((g) => g.hiddenForSimulation === (g.id !== shownId))) return;
+          set(
+            {
+              gridListeners: gridListeners.map((g) =>
+                g.hiddenForSimulation === (g.id !== shownId) ? g : { ...g, hiddenForSimulation: g.id !== shownId },
+              ),
+            },
+            false,
+            'gridListeners/showOnlyForSimulation',
+          );
+        },
 
         toggleGridListenerHiddenForSimulation: (id) =>
           set(

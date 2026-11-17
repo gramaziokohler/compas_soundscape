@@ -516,14 +516,13 @@ ACOUSTIC_PATHS_RAYS_MAX = 2000
 ACOUSTIC_PATHS_RAY_ORDER_DEFAULT = 8
 ACOUSTIC_PATHS_RAY_ORDER_MAX = 30
 ACOUSTIC_PATHS_MAX_EXCLUDED_EDGES = 5000
-# An ambisonic response is rendered only as long as it will be kept: the exported IR is cut where it
-# falls PYROOMACOUSTICS_IR_TRIM_THRESHOLD below its peak, so the render stops where the mono
-# reference is this many dB lower still (the two differ a little), plus a short pad. compas_acoustics'
-# own default (1.5 x the longest reverberation time) renders several times more than is kept.
+# An ambisonic response is rendered only as long as it will be kept: the exported IR is cut where its
+# energy decay reaches IR_TRIM_DECAY_DB, so the render stops where the mono reference's decay is this
+# many dB further still (the two differ a little), plus a short pad. compas_acoustics' own default
+# (1.5 x the longest reverberation time) renders more than is kept.
 CA_RENDER_MARGIN_DB = 12.0
 CA_RENDER_PAD_S = 0.05
 CA_RENDER_MIN_S = 0.2
-CA_BAND_METRICS = True          # also store compas_acoustics Analyser per-band metrics per pair
 # compas_acoustics writes responses at 1/(4 pi r) ("package scale"); the app's IRs (legacy engine,
 # PFFDTD, saved soundscapes, playback gains) are at 1/r. Multiplied by this at export.
 CA_TO_APP_LEVEL_SCALE = 4.0 * 3.141592653589793
@@ -716,20 +715,20 @@ PREFLIGHT_MAX_ISSUE_FACE_IDS = 5000           # Max face ids attached to one iss
 PREFLIGHT_PAYLOAD_DECIMALS = 4                # Vertex rounding in the preview payload (0.1 mm)
 PYROOMACOUSTICS_SAMPLE_RATE = AUDIO_SAMPLE_RATE  # Sample rate -- uses n_bands = math.floor(np.log2(SAMPLE_RATE / BASE_FREQUENCY))
 PYROOMACOUSTICS_USE_RAND_ISM = False  # Use randomized ISM for better realism
-PYROOMACOUSTICS_IR_TRIM_THRESHOLD = 0.01  # Fraction of peak amplitude below which trailing IR samples are trimmed
 PYROOMACOUSTICS_TASK_CLEANUP_DELAY_SECONDS = 600  # 10 minutes after completion
 
-# Acoustic Metrics Measurement (utils/acoustic_measurement.py)
-# ISO 3382-style robust estimation. A metric is only reported when the measured
-# Schroeder decay covers at least MIN_DYNAMIC_RANGE_DB of level drop; otherwise
-# it is returned as None and flagged unreliable instead of being extrapolated
-# from a flattened/truncated tail (the classic cause of inflated RT60).
-PYROOMACOUSTICS_METRICS_RT60_MIN_DYNAMIC_RANGE_DB = 15.0   # T30-style: 5→35 dB must be observable
-PYROOMACOUSTICS_METRICS_EDT_MIN_DYNAMIC_RANGE_DB = 6.0    # T10-style: 5→15 dB must be observable
-PYROOMACOUSTICS_METRICS_RT60_SLOPE_REF_RANGE_DB = 10.0    # Reference decay slope fit over the first 10 dB after headroom (T10), not a fixed time window
-PYROOMACOUSTICS_METRICS_DIRECT_SEARCH_FRACTION_S = 0.5    # Direct-arrival search window (s) from sample 0
-PYROOMACOUSTICS_METRICS_DIRECT_THRESHOLD_FRACTION = 0.1   # Fraction of global peak used to detect arrival
-PYROOMACOUSTICS_METRICS_DIRECT_WINDOW_S = 0.002           # Direct-sound window (s) AFTER the arrival for DRR
+# Exported IR length (utils/audio_processing.trim_ir). An IR is cut where its backward-integrated
+# energy (Schroeder curve, all channels) has fallen IR_TRIM_DECAY_DB below its start, then faded out
+# over IR_TRIM_FADE_S. A cut at a fraction of the peak amplitude (the old rule, -40 dB re the direct
+# sound) left a near listener only 15-25 dB of reverberation and shortened every decay time.
+IR_TRIM_DECAY_DB = 60.0
+IR_TRIM_FADE_S = 0.01
+
+# Acoustic metrics (utils/acoustic_measurement.measure_ir): every IR is analysed by the
+# compas_acoustics Analyser, on the untrimmed response. Per octave band 125 Hz - 8 kHz plus the
+# ISO 3382-1 single numbers (mean of 500 Hz and 1 kHz; STI its own).
+ACOUSTIC_METRIC_PARAMETERS = ("T30", "EDT", "C50", "C80", "D50", "STI")
+ACOUSTIC_METRIC_HEADLINE_BANDS = (500, 1000)   # the bands whose T30 / EDT reliability the headline needs
 
 # Parameter Ranges
 PYROOMACOUSTICS_MAX_ORDER_MIN = 0  # Direct path only

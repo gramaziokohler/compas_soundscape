@@ -131,6 +131,7 @@ class ImpulseResponseService:
         file_path: str, 
         name: str,
         workspace_id: Optional[str] = None,
+        known_metrics: Optional[dict] = None,
     ) -> Tuple[ImpulseResponseMetadata, str]:
         """
         Process uploaded IR file and save in appropriate format
@@ -141,6 +142,8 @@ class ImpulseResponseService:
             workspace_id: Owning workspace — the IR is stored under
                 ``impulse_responses/<workspace_id>/`` so one workspace never
                 sees or shares another's uploaded IRs.
+            known_metrics: ``acoustic_parameters`` / ``acoustic_parameters_bands`` already measured
+                for this IR (a simulation run's, on its untrimmed response); else the file is measured.
 
         Returns:
             Tuple of (metadata, output_file_path)
@@ -210,19 +213,13 @@ class ImpulseResponseService:
         # Peak absolute amplitude (max across channels) in float domain
         peak_amplitude = self._compute_peak(audio_data)
 
-        # Acoustic metrics — same computation the pyroomacoustics worker runs after
-        # compute_rir(). Use the first channel, matching its FOA convention
-        # (W = channel 0). Failure must not break the upload.
-        acoustic_parameters = None
-        try:
-            # Lazy import: utils.acoustic_measurement pulls in pyroomacoustics, only
-            # needed when an IR is actually uploaded.
-            from utils.acoustic_measurement import AcousticMeasurement
-            acoustic_parameters = AcousticMeasurement.calculate_acoustic_parameters_from_rir(
-                audio_data[0], sample_rate
-            )
-        except Exception as ap_err:
-            print(f"Warning: acoustic parameters failed for IR '{name}': {ap_err}")
+        # Acoustic metrics: the run's own for an imported simulation IR, else measured here on the
+        # first channel (W of an ambisonic IR), with the analysis every simulation uses. A failure
+        # must not break the upload. Lazy import: compas_acoustics is only needed here.
+        metrics = known_metrics
+        if not metrics:
+            from utils.acoustic_measurement import try_measure_ir
+            metrics = try_measure_ir(audio_data[0], sample_rate, f"IR '{name}'")
 
         # Create metadata
         metadata = ImpulseResponseMetadata(
@@ -236,9 +233,10 @@ class ImpulseResponseService:
             duration=duration,
             file_size=file_size,
             peak_amplitude=peak_amplitude,
-            acoustic_parameters=acoustic_parameters
+            acoustic_parameters=metrics.get("acoustic_parameters"),
+            acoustic_parameters_bands=metrics.get("acoustic_parameters_bands"),
         )
-        
+
         return metadata, output_path
     
     def list_impulse_responses(self, workspace_id: Optional[str] = None) -> list[ImpulseResponseMetadata]:

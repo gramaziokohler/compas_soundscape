@@ -7,6 +7,10 @@ import { AudioWaveformDisplay, getDefaultWaveformHeight } from '@/components/aud
 import { FrequencyResponseDisplay } from '@/components/audio/FrequencyResponseDisplay';
 import { clampToViewport, clampToViewportHeight, clampToViewportWidth } from '@/utils/scale';
 import { AUDIO_VISUALIZATION, IR_PREVIEW_PANEL } from '@/utils/constants';
+import { AcousticMetricsTable } from '@/components/layout/sidebar/acoustics/AcousticMetricsTable';
+import type { BandMetrics } from '@/lib/acoustics/band-metrics';
+import type { AcousticParameters } from '@/utils/acousticMetrics';
+import { useUIStore } from '@/store';
 
 export type IRPreviewMode = 'impulse' | 'frequency';
 
@@ -20,9 +24,11 @@ export interface IRPreviewLayout {
 /** Panel border (CSS px, both sides) added to the content size. */
 const PANEL_BORDER = 2;
 
-/** Default panel height for an IR with `channels` channels: header + one waveform row per channel. */
-function defaultPanelHeight(channels: number): number {
-  return IR_PREVIEW_PANEL.HEADER_HEIGHT + getDefaultWaveformHeight(channels) + PANEL_BORDER;
+/** Default panel height for an IR with `channels` channels: header + the metrics table when the IR
+ *  has one (with its band rows when expanded) + one waveform row per channel. */
+function defaultPanelHeight(channels: number, withMetrics: boolean, bandsShown: boolean): number {
+  const metrics = withMetrics ? IR_PREVIEW_PANEL.METRICS_HEIGHT + (bandsShown ? IR_PREVIEW_PANEL.METRICS_BANDS_HEIGHT : 0) : 0;
+  return IR_PREVIEW_PANEL.HEADER_HEIGHT + metrics + getDefaultWaveformHeight(channels) + PANEL_BORDER;
 }
 
 const MODES: Array<{ id: IRPreviewMode; label: string; title: string }> = [
@@ -47,6 +53,10 @@ export interface IRPreviewContentProps {
   fullScale?: boolean;
   /** Graph fills the parent's remaining space (parent needs a definite height). */
   fill?: boolean;
+  /** Single numbers of this IR, shown under the graph (both views). */
+  acousticParams?: AcousticParameters | null;
+  /** Per-octave-band metrics of this IR: the metrics table's expandable band rows. */
+  bandMetrics?: BandMetrics | null;
 }
 
 /**
@@ -66,9 +76,12 @@ export function IRPreviewContent({
   amplitudeScale,
   fullScale,
   fill = false,
+  acousticParams,
+  bandMetrics,
 }: IRPreviewContentProps) {
   const iconBtn = 'shrink-0 flex items-center justify-center rounded p-1 transition-colors hover:bg-secondary-light';
   const draggable = dragHandlers !== undefined;
+  const bandsExpanded = useUIStore((s) => s.irPreviewBandsExpanded);
 
   return (
     <div
@@ -160,6 +173,21 @@ export function IRPreviewContent({
           <FrequencyResponseDisplay audioBuffer={audioBuffer} amplitudeScale={amplitudeScale} fill={fill} />
         )}
       </div>
+
+      {(acousticParams || bandMetrics) && (
+        <div
+          className="shrink-0 overflow-x-auto px-2 py-1.5"
+          style={{ backgroundColor: 'var(--color-secondary-lighter)', borderTop: '1px solid var(--color-border)' }}
+        >
+          <AcousticMetricsTable
+            params={acousticParams ?? null}
+            bands={bandMetrics ?? null}
+            tone="surface"
+            expanded={bandsExpanded}
+            onExpandedChange={(v) => useUIStore.getState().setIrPreviewBandsExpanded(v)}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -190,6 +218,8 @@ export function IRPreviewPanel({
 }: IRPreviewPanelProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const channels = content.audioBuffer.numberOfChannels;
+  const withMetrics = !!content.bandMetrics || !!content.acousticParams;
+  const bandsShown = useUIStore((s) => s.irPreviewBandsExpanded) && !!content.bandMetrics;
   const [layout, setLayout] = useState<IRPreviewLayout>(() => {
     const width = clampToViewportWidth(
       savedLayout?.width ?? AUDIO_VISUALIZATION.WAVEFORM_WIDTH + PANEL_BORDER,
@@ -198,7 +228,7 @@ export function IRPreviewPanel({
     );
     const savedHeight = savedLayout?.channels === channels ? savedLayout.height : undefined;
     const height = clampToViewportHeight(
-      savedHeight ?? defaultPanelHeight(channels),
+      savedHeight ?? defaultPanelHeight(channels, withMetrics, bandsShown),
       IR_PREVIEW_PANEL.MIN_HEIGHT,
       IR_PREVIEW_PANEL.MARGIN * 2,
     );
@@ -223,15 +253,27 @@ export function IRPreviewPanel({
     setLayout(next);
   }, []);
 
-  // Pinning an IR with another channel count re-fits the height to its rows.
-  const shownChannelsRef = useRef(channels);
+  // Pinning an IR with another channel count, or with / without metrics, re-fits the height;
+  // showing / hiding the band rows grows / shrinks it by their height, so the graph keeps its size.
+  const shownKeyRef = useRef(`${channels}:${withMetrics}`);
+  const bandsShownRef = useRef(bandsShown);
   useEffect(() => {
-    if (shownChannelsRef.current === channels) return;
-    shownChannelsRef.current = channels;
+    const key = `${channels}:${withMetrics}`;
+    const bandsToggled = bandsShownRef.current !== bandsShown;
+    bandsShownRef.current = bandsShown;
     const l = layoutRef.current;
-    const height = clampToViewportHeight(defaultPanelHeight(channels), IR_PREVIEW_PANEL.MIN_HEIGHT, IR_PREVIEW_PANEL.MARGIN * 2);
+    let target: number;
+    if (shownKeyRef.current !== key) {
+      shownKeyRef.current = key;
+      target = defaultPanelHeight(channels, withMetrics, bandsShown);
+    } else if (bandsToggled) {
+      target = l.height + (bandsShown ? 1 : -1) * IR_PREVIEW_PANEL.METRICS_BANDS_HEIGHT;
+    } else {
+      return;
+    }
+    const height = clampToViewportHeight(target, IR_PREVIEW_PANEL.MIN_HEIGHT, IR_PREVIEW_PANEL.MARGIN * 2);
     updateLayout({ ...l, ...clampToViewport(l.x, l.y, l.width, height, IR_PREVIEW_PANEL.MARGIN), height });
-  }, [channels, updateLayout]);
+  }, [channels, withMetrics, bandsShown, updateLayout]);
 
   // Re-fit after a viewport resize.
   useEffect(() => {

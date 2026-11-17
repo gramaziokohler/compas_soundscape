@@ -175,10 +175,11 @@ class ImpulseResponseMetadata(BaseModel):
     # Peak absolute amplitude (max across channels, float-normalised [-1, 1] domain).
     # Used by the import-irs gain slider to place clip/mute thresholds.
     peak_amplitude: Optional[float] = None
-    # Acoustic metrics (RT60/EDT/C50/D50/DRR/relative level) measured from this IR
-    # with utils.acoustic_measurement.AcousticMeasurement — same method as the
-    # pyroomacoustics simulation cards.
+    # Acoustic metrics of this IR (utils.acoustic_measurement.measure_ir, the compas_acoustics
+    # Analyser): single numbers (T30/EDT/C50/C80/D50/STI, relative level) and per octave band.
+    # Measured at upload, or carried over from the simulation results for an imported run IR.
     acoustic_parameters: Optional[dict] = None
+    acoustic_parameters_bands: Optional[dict] = None
 
 
 class ImpulseResponseListResponse(BaseModel):
@@ -230,13 +231,14 @@ class PyroomacousticsSimulationRequest(BaseModel):
 
 
 class AcousticParameters(BaseModel):
-    """Acoustic parameters calculated from RIR"""
-    rt60: float  # Reverberation time (s)
-    edt: float  # Early decay time (s)
-    c50: float  # Speech clarity (dB)
-    spl: float  # Sound pressure level (dB); physical for wave-based, relative energy for others
-    d50: float  # Definition (0-1)
-    drr: float  # Direct-to-reverberant ratio (dB)
+    """Single-number acoustic parameters of an IR (utils.acoustic_measurement.measure_ir):
+    ISO 3382-1 values, mean of the 500 Hz and 1 kHz bands; None where not measurable."""
+    t30: Optional[float] = None  # Reverberation time from the -5 to -35 dB decay (s)
+    edt: Optional[float] = None  # Early decay time (s)
+    c50: Optional[float] = None  # Speech clarity (dB)
+    c80: Optional[float] = None  # Music clarity (dB)
+    d50: Optional[float] = None  # Definition (0-1)
+    sti: Optional[float] = None  # Speech transmission index (0-1)
 
 
 class PyroomacousticsSimulationResponse(BaseModel):
@@ -664,6 +666,7 @@ class SoundscapeReceiver(BaseModel):
     pitch: Optional[float] = None
     roll: Optional[float] = None
     orientation_saved: Optional[bool] = None
+    hidden_for_simulation: bool = False
 
 
 class SoundscapeGridListener(BaseModel):
@@ -698,6 +701,7 @@ class SoundscapeIRMetadata(BaseModel):
     channel_ordering: Optional[str] = None
     peak_amplitude: Optional[float] = None
     acoustic_parameters: Optional[dict] = None
+    acoustic_parameters_bands: Optional[dict] = None
 
 
 class SoundscapeSimulationSettings(BaseModel):
@@ -746,7 +750,8 @@ class PffdtdFreeIRRequest(BaseModel):
 class PffdtdFreeIRFile(BaseModel):
     fixed_id: str                        # the fixed source (free listener) or listener (free source)
     ir_file: str                         # GET /api/pffdtd/get-result-file/{simulation_id}/wav?ir_filename=
-    acoustic_parameters: Optional[dict] = None  # RT60 / EDT / D50 / C50 / energy of this IR (same method as the run's)
+    acoustic_parameters: Optional[dict] = None        # single numbers of this IR (same analysis as the run's)
+    acoustic_parameters_bands: Optional[dict] = None  # per octave band, nothing above the run's fmax
 
 
 class PffdtdFreeIRResponse(BaseModel):

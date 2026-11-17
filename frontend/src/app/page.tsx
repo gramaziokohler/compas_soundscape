@@ -3605,12 +3605,6 @@ function HomeContent() {
     activateListener: activateShareListener,
   });
 
-  // Handler: Acoustics IR group "go to listener" → power on (FPS) + expand its card
-  const handleAcousticsGoToReceiver = useCallback((receiverId: string) => {
-    handleGoToReceiver(receiverId);
-    requestListenerCardExpand(receiverId);
-  }, [handleGoToReceiver, requestListenerCardExpand]);
-
   // Keyboard navigation between IR groups while in FPS mode (Shift+ArrowRight / Shift+ArrowLeft)
   useEffect(() => {
     if (!isFPSModeActive) return;
@@ -4203,7 +4197,6 @@ function HomeContent() {
         onUpdateReceiverName={receivers.updateReceiverName}
         onUpdateReceiverPosition={receivers.updateReceiverPosition}
         onGoToReceiver={handleGoToReceiver}
-        onAcousticsGoToReceiver={handleAcousticsGoToReceiver}
         onToggleReceiverHiddenForSimulation={receivers.toggleReceiverHiddenForSimulation}
         onExitFPS={exitGoToListenerMode}
         isFPSModeActive={isFPSModeActive}

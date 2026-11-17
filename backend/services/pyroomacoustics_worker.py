@@ -36,7 +36,6 @@ from config.constants import CA_DIFFRACTION_DEFAULT
 from config.constants import CA_SEED_DEFAULT
 from config.constants import CA_TAIL_DEFAULT
 from config.constants import PYROOMACOUSTICS_DEFAULT_PARALLEL
-from config.constants import PYROOMACOUSTICS_IR_TRIM_THRESHOLD
 from config.constants import PYROOMACOUSTICS_RECIPROCITY_ENABLED
 from config.constants import PYROOMACOUSTICS_SAMPLE_RATE
 from config.constants import PYROOMACOUSTICS_SIMULATION_MODE_FOA
@@ -55,7 +54,7 @@ from services.simulation_preflight_service import (
     SimulationPreflightService,
     summarize,
 )
-from utils.acoustic_measurement import AcousticMeasurement
+from utils.acoustic_measurement import try_measure_ir
 from utils.audio_processing import trim_ir
 from utils.child_pool import child_pool
 from utils.geometry import seeds_from_pairs
@@ -105,9 +104,15 @@ def _ambisonic_order(simulation_mode: str, ambisonic_order: Optional[int]) -> in
     return int(ambisonic_order or constants.CA_AMBISONIC_ORDER_DEFAULT)
 
 
-def _export_pair(ctx: dict, pair_dict: dict, rir: np.ndarray, num_channels: int, extra: dict) -> tuple[str, dict]:
-    """Trim, measure and write one pair's IR (float32 WAV, the app's 1/r level); returns
-    ``(IR file name, result entry)``. ``rir`` is (samples,) or (samples, channels)."""
+def _export_pair(
+    ctx: dict, pair_dict: dict, rir: np.ndarray, num_channels: int, extra: dict, metrics: Optional[dict] = None,
+) -> tuple[str, dict]:
+    """Measure, trim and write one pair's IR (float32 WAV, the app's 1/r level); returns
+    ``(IR file name, result entry)``. ``rir`` is (samples,) or (samples, channels).
+
+    The metrics describe the UNTRIMMED response (W channel): ``metrics`` when the engine already
+    measured it (compas_acoustics, anchored at the geometric direct sound), else measured here.
+    """
     source_id = pair_dict["source_id"]
     receiver_id = pair_dict["receiver_id"]
     if rir is None or len(rir) == 0:
@@ -117,23 +122,14 @@ def _export_pair(ctx: dict, pair_dict: dict, rir: np.ndarray, num_channels: int,
             f"No sound path from '{source_id}' to '{receiver_id}': the direct path and every "
             "reflection are blocked (a point inside a closed object, or outside the model?)"
         )
-    rir_data = trim_ir(np.asarray(rir, dtype=np.float64), threshold_fraction=PYROOMACOUSTICS_IR_TRIM_THRESHOLD)
-
-    # Metrics are computed on the TRIMMED signal that is written to disk, so
-    # RT60/EDT/DRR/C50/D50 describe the exact exported IR. Ambisonic metrics use
-    # the W (omni) channel, rir_data[:, 0].
-    acoustic_params = None
-    try:
-        metric_rir = rir_data if rir_data.ndim == 1 else rir_data[:, 0]
-        acoustic_params = AcousticMeasurement.calculate_acoustic_parameters_from_rir(
-            metric_rir, PYROOMACOUSTICS_SAMPLE_RATE
-        )
-        if acoustic_params and not ctx["ray_tracing"]:
-            # Pure ISM has no diffuse late field; its decay estimate is
-            # inherently less trustworthy than the hybrid ray-traced one.
-            acoustic_params["rt60_is_estimate"] = True
-    except Exception as ap_err:
-        print(f"  Warning: acoustic params failed for {source_id}->{receiver_id}: {ap_err}")
+    rir = np.asarray(rir, dtype=np.float64)
+    if not metrics:
+        metrics = try_measure_ir(rir, PYROOMACOUSTICS_SAMPLE_RATE, f"{source_id}->{receiver_id}")
+    metrics = {key: dict(value) for key, value in (metrics or {}).items()}
+    if metrics.get("acoustic_parameters") and not ctx["ray_tracing"]:
+        # Pure ISM has no diffuse late field: its decay times are an estimate.
+        metrics["acoustic_parameters"]["t30_is_estimate"] = True
+    rir_data = trim_ir(rir, PYROOMACOUSTICS_SAMPLE_RATE)
 
     ir_filename = f"sim_{ctx['simulation_id']}_src_{source_id}_rcv_{receiver_id}.wav"
     # float32: 1/r IRs exceed 1.0 near a source, which int16 wrapped
@@ -163,8 +159,7 @@ def _export_pair(ctx: dict, pair_dict: dict, rir: np.ndarray, num_channels: int,
     if ctx["ray_tracing"] and ctx["ray_tracing_entry_meta"]:
         result_entry.update(ctx["ray_tracing_entry_meta"])
     result_entry.update(extra)
-    if acoustic_params:
-        result_entry["acoustic_parameters"] = acoustic_params
+    result_entry.update(metrics)  # acoustic_parameters + acoustic_parameters_bands
     return ir_filename, result_entry
 
 
@@ -624,9 +619,7 @@ def _run_compas_acoustics(
         spec = pair_dict.get("source_directivity_spec")
         if spec:
             extra["source_directivity"] = directivity_result_entry(spec)
-        if response.band_metrics:
-            extra["acoustic_parameters_bands"] = response.band_metrics
-        ir_filename, entry = _export_pair(ctx, pair_dict, rir, num_channels, extra)
+        ir_filename, entry = _export_pair(ctx, pair_dict, rir, num_channels, extra, metrics=response.metrics)
         ir_files.append(ir_filename)
         results_data.append(entry)
 

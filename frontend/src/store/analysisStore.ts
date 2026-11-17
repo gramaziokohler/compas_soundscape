@@ -924,35 +924,28 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           ),
 
         handleReorderConfigs: (from, to) => {
+          if (from === to) return;
           const { analysisConfigs, analysisResults, activeAnalysisTab } = get();
-          const newConfigs = [...analysisConfigs];
-          const [removed] = newConfigs.splice(from, 1);
-          newConfigs.splice(to, 0, removed);
-          const newResults = analysisResults.map((r) => {
-            let idx = r.configIndex;
-            if (idx === from) idx = to;
-            else if (from < to && idx > from && idx <= to) idx--;
-            else if (from > to && idx >= to && idx < from) idx++;
-            return { ...r, configIndex: idx };
-          });
-          let newTab = activeAnalysisTab;
-          if (newTab === from) newTab = to;
-          else if (from < to && newTab > from && newTab <= to) newTab--;
-          else if (from > to && newTab >= to && newTab < from) newTab++;
+          if (!analysisConfigs[from] || to < 0 || to >= analysisConfigs.length) return;
+          // Same remap path as insert / remove: every index link (sounds → scene,
+          // usage → context, results, card flow, runs, areas …) follows its card.
           const mapIndex = createMoveIndexMapper(from, to);
+          const newConfigs = remapCardLinks(analysisConfigs, mapIndex);
+          const [moved] = newConfigs.splice(from, 1);
+          newConfigs.splice(to, 0, moved);
+          const newResults = analysisResults.map((r) => ({ ...r, configIndex: mapIndex(r.configIndex) ?? r.configIndex }));
           remapCardRefs(mapIndex);
           set(
             {
               analysisConfigs: newConfigs,
               analysisResults: newResults,
-              activeAnalysisTab: newTab,
-              analyzingConfigIndices: remapIndexSet(get().analyzingConfigIndices, mapIndex),
-              analysisStatusByIndex: remapIndexKeyedRecord(get().analysisStatusByIndex, mapIndex),
-              analyzingConfigIndex: remapNullableIndex(get().analyzingConfigIndex, mapIndex),
+              activeAnalysisTab: mapIndex(activeAnalysisTab) ?? activeAnalysisTab,
+              ...remapConfigIndexState(get(), mapIndex),
             },
             false,
             'analysis/reorderConfigs',
           );
+          remapLinkedCardIndices(mapIndex);
         },
 
         duplicateConfigAt: (from, toInsertion, options) => {

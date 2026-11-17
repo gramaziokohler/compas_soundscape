@@ -126,8 +126,13 @@ def test_pffdtd_mono_end_to_end(tmp_path):
     level_db = 20 * np.log10(np.mean(H) * r)
     assert abs(level_db) < 1.5, level_db
 
-    params = entry.get("acoustic_parameters") or {}
-    assert params.get("rt60") is not None and 0.1 < params["rt60"] < 3.0
+    # band-limited to 500 Hz: only the octaves below it are measured (125 and 250 Hz); the single
+    # numbers need 500 Hz - 1 kHz and are left out
+    bands = entry["acoustic_parameters_bands"]
+    t30 = dict(zip(bands["frequency_bands"], bands["T30"]))
+    assert t30[250] is not None and 0.1 < t30[250] < 3.0
+    assert t30[500] is None and t30[8000] is None
+    assert entry["acoustic_parameters"]["t30"] is None
     assert entry["band_limited"] and entry["fmax"] == FMAX
 
 

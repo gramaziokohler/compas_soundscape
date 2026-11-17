@@ -22,6 +22,8 @@ import { useSimpleSceneHighlights } from '@/hooks/useSimpleSceneHighlights';
 import { useBubbleFrontLayer } from '@/hooks/useBubbleFrontLayer';
 import { useSoundSphereReveal } from '@/hooks/useSoundSphereReveal';
 import { useSceneBubbleMenu, type SceneRenameProps } from '@/hooks/useSceneBubbleMenu';
+import { useCanReorderScenes } from '@/hooks/useCanReorderScenes';
+import { createMoveIndexMapper } from '@/utils/cardIndexRemap';
 import {
   useAnalysisStore,
   useAudioControlsStore,
@@ -166,7 +168,8 @@ export interface SimpleSoundscapesProps {
  * most one scene is powered, and none is a valid state (nothing shown). A
  * plain click on the 3D scene reduces the panel; a click on a sound sphere
  * keeps it and expands that sound's card. A right-click on a bubble opens a
- * Rename / Duplicate menu (rename edits the panel title inline).
+ * Rename / Duplicate menu (rename edits the panel title inline). Bubbles can be
+ * dragged to reorder scenes (not while a scene runs or a card is analyzing).
  *
  * Usage:
  * ```tsx
@@ -320,6 +323,20 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
   const openPanel = useCallback((kind: 'scene' | 'workflow', usageIndex: number) => setPanel({ kind, usageIndex }), []);
   const sceneMenu = useSceneBubbleMenu({ openPanel, panelKindFor: panelKind });
 
+  // Drag a bubble to reorder scenes: moves the usage card (the store re-keys every
+  // index link — sounds, runs, powered scene); local panel state follows here.
+  const canReorderScenes = useCanReorderScenes();
+  const { clearRenameRequest } = sceneMenu;
+  const handleSceneReorder = useCallback((from: number, to: number) => {
+    const fromUsage = scenes[from]?.usageIndex;
+    const toUsage = scenes[to]?.usageIndex;
+    if (fromUsage === undefined || toUsage === undefined || fromUsage === toUsage) return;
+    useAnalysisStore.getState().handleReorderConfigs(fromUsage, toUsage);
+    const mapIndex = createMoveIndexMapper(fromUsage, toUsage);
+    setPanel((p) => (p && p.kind !== 'composer' ? { ...p, usageIndex: mapIndex(p.usageIndex) ?? p.usageIndex } : p));
+    clearRenameRequest();
+  }, [scenes, clearRenameRequest]);
+
   const panelScene =
     panel && panel.kind !== 'composer' ? scenes.find((s) => s.usageIndex === panel.usageIndex) : undefined;
 
@@ -338,9 +355,11 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
         availablePx={columnSpace.soundscapes}
         focusIndex={focusIndex}
         style={{ left: SIMPLE_MODE.EDGE_MARGIN, top: COLUMN_TOP, zIndex: SIMPLE_MODE.Z_INDEX }}
+        onReorder={canEdit && canReorderScenes ? handleSceneReorder : undefined}
         items={scenes.map((scene) => (
           <SceneBubble
-            key={scene.usageIndex}
+            // scene_id follows the scene when its index changes (reorder / removal).
+            key={scene.sceneId || scene.usageIndex}
             scene={scene}
             selected={isPowered(scene.usageIndex)}
             open={panel !== null && panel.kind !== 'composer' && panel.usageIndex === scene.usageIndex}

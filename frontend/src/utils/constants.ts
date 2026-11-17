@@ -1694,6 +1694,10 @@ export const IR_PREVIEW_PANEL = {
   /** Estimated height used to place and clamp the panel before it is measured */
   ESTIMATED_HEIGHT: 260,
   HEADER_HEIGHT: 40,
+  /** Metrics table under the graph, collapsed (title + header row + single numbers) */
+  METRICS_HEIGHT: 80,
+  /** Height the metrics table gains when expanded into its 7 octave-band rows */
+  METRICS_BANDS_HEIGHT: 140,
   MIN_WIDTH: 240,
   MIN_HEIGHT: 150,
   /** Gap kept to the sidebar when the panel first opens */
@@ -1939,6 +1943,8 @@ export const RECEIVER_CONFIG = {
   MIN_SCALE: 0.5,
   /** Maximum scale factor (prevents objects from becoming huge when far away) */
   MAX_SCALE: 10,
+  /** Mesh + label opacity of a listener hidden for simulation (faint in the viewer). */
+  HIDDEN_FOR_SIMULATION_OPACITY: 0.3,
 } as const;
 
 // Object Label Sprites (shown above sound spheres and receivers)
@@ -2906,7 +2912,8 @@ export const SIMPLE_MODE = {
   HEADING_HEIGHT: 24,           // px — column heading row above / below a bubble column
   SCROLL_BUTTON_HEIGHT: 18,     // px — "more above / below" arrow pill of an overflowing column
   SCROLL_WHEEL_STEP_PX: 60,     // px of wheel delta per one-bubble scroll step
-  SCROLL_DRAG_THRESHOLD_PX: 6,  // px — pointer travel before a press becomes a column drag
+  SCROLL_DRAG_THRESHOLD_PX: 6,  // px — pointer travel before a press becomes a column / reorder drag
+  REORDER_SHIFT_MS: 150,        // ms — neighbour slide while a bubble is dragged to a new position
   RIGHT_COLUMNS_GAP: 16,        // px — minimum space kept between the Acoustics and Listeners columns
   PANEL_WIDTH: 'var(--sidebar-default-width)',
   PANEL_MAX_HEIGHT: 'min(720px, calc(var(--ui-dvh) - var(--scene-bottom-bar-height) - 80px))',

@@ -42,7 +42,6 @@ from config.constants import (
     PFFDTD_DURATION_MAX,
     PFFDTD_DURATION_MIN,
     PFFDTD_FMAX_MAX,
-    PYROOMACOUSTICS_IR_TRIM_THRESHOLD,
     PYROOMACOUSTICS_MAX_PROCESSES,
     PYROOMACOUSTICS_RECIPROCITY_ENABLED,
     PYROOMACOUSTICS_SIMULATION_MODE_FOA,
@@ -53,7 +52,7 @@ from services.pffdtd_job import _atomic_write, _run_from_geometry, _write_progre
 from services.pyroomacoustics_room_builder import room_offset
 from services.simulation_geometry_loader import load_speckle_simulation_geometry
 from services.simulation_mesh_service import MeshPrepOptions, SimulationMeshService
-from utils.acoustic_measurement import AcousticMeasurement
+from utils.acoustic_measurement import try_measure_ir
 from utils.audio_processing import trim_ir
 from utils.geometry import seeds_from_pairs
 from utils.hybrid_crossover import (
@@ -64,17 +63,15 @@ METHOD_NAME = "Hybrid (PFFDTD + compas_acoustics)"
 
 
 def measured_rt60(responses, fs: int = AUDIO_SAMPLE_RATE) -> Optional[float]:
-    """Median RT60 over the geometric responses whose decay is reliable (W channel); None if none is."""
+    """Median reverberation time (ISO T30 of 500 Hz - 1 kHz) over the geometric responses whose
+    decay is reliable; None if none is. Uses the metrics the engine already measured."""
     values = []
     for response in responses:
-        rir = response.rir if response.rir.ndim == 1 else response.rir[:, 0]
-        try:
-            params = AcousticMeasurement.calculate_acoustic_parameters_from_rir(rir, fs) or {}
-        except Exception:  # noqa: BLE001 - a pair without a usable decay does not vote
-            continue
-        rt60 = params.get("rt60")
-        if rt60 and np.isfinite(rt60) and rt60 > 0 and params.get("rt60_reliable", True):
-            values.append(float(rt60))
+        metrics = getattr(response, "metrics", None) or try_measure_ir(response.rir, fs)
+        params = metrics.get("acoustic_parameters") or {}
+        t30 = params.get("t30")
+        if t30 and np.isfinite(t30) and t30 > 0 and params.get("t30_reliable", False):
+            values.append(float(t30))
     return float(np.median(values)) if values else None
 
 
@@ -151,7 +148,8 @@ def join_pairs(
             raise RuntimeError(f"Wave response at {fs} Hz, expected {AUDIO_SAMPLE_RATE}")
         wave = np.asarray(wave, dtype=np.float64)  # already in the listener frame
         joined, info = combine(wave, ga_by_pair[key], AUDIO_SAMPLE_RATE, plan.crossover_hz, level_match=level_match)
-        joined = trim_ir(joined, threshold_fraction=PYROOMACOUSTICS_IR_TRIM_THRESHOLD)
+        metrics = try_measure_ir(joined, AUDIO_SAMPLE_RATE, f"{key[0]}->{key[1]}")   # before the trim
+        joined = trim_ir(joined, AUDIO_SAMPLE_RATE)
         wavfile.write(str(path), AUDIO_SAMPLE_RATE, np.ascontiguousarray(joined, dtype=np.float32))
 
         updated = dict(entry)
@@ -161,13 +159,9 @@ def join_pairs(
         })
         if foa:
             updated["encoding_method"] = "hybrid (pressure gradient below, compas_acoustics above the crossover)"
-        try:
-            w = joined if joined.ndim == 1 else joined[:, 0]
-            params = AcousticMeasurement.calculate_acoustic_parameters_from_rir(w, AUDIO_SAMPLE_RATE)
-            if params:
-                updated["acoustic_parameters"] = params
-        except Exception as exc:  # noqa: BLE001
-            print(f"  Warning: acoustic params failed for {key[0]}->{key[1]}: {exc}")
+        updated.pop("acoustic_parameters", None)        # the wave part's own, below the crossover only
+        updated.pop("acoustic_parameters_bands", None)
+        updated.update(metrics)
         entries.append(updated)
     return entries
 

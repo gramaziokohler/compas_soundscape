@@ -89,7 +89,7 @@
       {
         "name": "metrics",
         "nickname": "metrics",
-        "description": "Per source-receiver pair result dicts (source_id, receiver_id, ir_file, acoustic_parameters: rt60/edt/c50/d50/drr/spl).",
+        "description": "Per source-receiver pair result dicts (source_id, receiver_id, ir_file, acoustic_parameters: t30/edt/c50/c80/d50/sti, acoustic_parameters_bands: the same per octave band).",
         "typeHintID": "none",
         "scriptParamAccess": "list"
       },

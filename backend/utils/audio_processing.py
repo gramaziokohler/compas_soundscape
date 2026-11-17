@@ -18,6 +18,8 @@ from config.constants import (
     DENOISING_ONSET_HOP_LENGTH,
     DENOISING_ONSET_PRE_MARGIN,
     DENOISING_TRIM_MERGE_THRESHOLD,
+    IR_TRIM_DECAY_DB,
+    IR_TRIM_FADE_S,
     LOOP_FINDER_HOP_SEC,
     LOOP_FINDER_MIN_LOOP_SEC,
     LOOP_FINDER_MAX_SCAN_SEC,
@@ -54,41 +56,40 @@ def ensure_mono(audio_np: np.ndarray) -> np.ndarray:
     raise ValueError(f"Unexpected audio array shape: {audio_np.shape}")
 
 
-def trim_ir(ir_data: np.ndarray, threshold_fraction: float = 0.05) -> np.ndarray:
-    """Trim an impulse response by removing trailing samples below a threshold.
+def trim_ir(
+    ir_data: np.ndarray,
+    fs: int,
+    decay_db: float = IR_TRIM_DECAY_DB,
+    fade_s: float = IR_TRIM_FADE_S,
+) -> np.ndarray:
+    """Cut an impulse response where its reverberation has decayed, with a short fade-out.
 
-    Finds the last sample whose absolute amplitude exceeds
-    `threshold_fraction * peak_amplitude` and discards everything after it.
+    The end is where the backward-integrated energy of all channels (Schroeder curve) has fallen
+    ``decay_db`` below its start, lengthened 5 % (compas_acoustics ``decay_end``), so the cut
+    follows the decay of the room, not the level of the direct sound. The last ``fade_s`` seconds
+    are faded out with a raised cosine so the cut is inaudible.
 
     Args:
-        ir_data: NumPy array of shape (samples,) or (samples, channels).
-        threshold_fraction: Fraction of the peak amplitude used as the
-            cut-off threshold (default 0.05 = 5%).
+        ir_data: (samples,) or (samples, channels).
+        fs: Sample rate in Hz.
+        decay_db: Energy decay at which the response ends.
+        fade_s: Fade-out length in seconds.
 
     Returns:
-        Trimmed NumPy array with the same number of dimensions.
+        A trimmed copy with the same number of dimensions (the input itself when empty or silent).
     """
-    if ir_data.size == 0:
+    from compas_acoustics.analyser import decay_end
+
+    if ir_data.size == 0 or not np.any(ir_data):
         return ir_data
-
-    # Compute the absolute envelope across all channels
-    if ir_data.ndim == 2:
-        envelope = np.max(np.abs(ir_data), axis=1)
-    else:
-        envelope = np.abs(ir_data)
-
-    peak = np.max(envelope)
-    if peak == 0:
-        return ir_data
-
-    threshold = threshold_fraction * peak
-    # Find last sample above threshold
-    indices_above = np.where(envelope > threshold)[0]
-    if len(indices_above) == 0:
-        return ir_data
-
-    last_idx = indices_above[-1]
-    return ir_data[: last_idx + 1]
+    channels_first = np.atleast_2d(np.asarray(ir_data, dtype=np.float64).T)
+    end = decay_end(channels_first, decay_db)
+    out = np.array(ir_data[:end], copy=True)
+    n_fade = min(int(round(fade_s * fs)), len(out))
+    if n_fade > 0:
+        ramp = 0.5 * (1.0 + np.cos(np.linspace(0.0, np.pi, n_fade)))
+        out[-n_fade:] = (out[-n_fade:].T * ramp).T.astype(out.dtype, copy=False)
+    return out
 
 
 def calculate_rms(audio_tensor: torch.Tensor) -> float:

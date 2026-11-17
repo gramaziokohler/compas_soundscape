@@ -27,6 +27,7 @@ import { isEngineSimulation, isGeometricSimulation } from '@/types/acoustics';
 import { useAcousticPathsStore, type RunAcousticPathsArgs } from '@/store';
 import { runHybridSimulation } from './acoustics/runHybridSimulation';
 import { useCanEdit } from '@/hooks/useCanEdit';
+import { createMoveIndexMapper, remapIndexKeyedRecord, remapNullableIndex } from '@/utils/cardIndexRemap';
 import { useShareLinkedSimulations } from '@/hooks/useShareLinkedSimulations';
 import React, { useCallback, useEffect, useState, useRef, useMemo } from 'react';
 import { Power, ChevronDown, ChevronRight, Eye, Copy } from 'lucide-react';
@@ -1541,6 +1542,21 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   // A bubble's "Rename": the floating card opens with its title editable.
   const [renameRequest, setRenameRequest] = useState<{ index: number; seq: number } | null>(null);
 
+  // Running polls write their results by config index, so a running simulation pins the order.
+  const isAnySimulationRunning = simulationConfigs.some((c) => (c as { isRunning?: boolean }).isRunning);
+  // Move a card (drag in the bubble column or the card list) and keep every
+  // index-keyed UI state on the same card. The store remaps the active / expanded tab.
+  const handleReorderSimulations = useCallback((from: number, to: number) => {
+    if (from === to || isAnySimulationRunning) return;
+    handleReorderSimulationConfigs(from, to);
+    const mapIndex = createMoveIndexMapper(from, to);
+    setExpandedCardIndex((i) => remapNullableIndex(i, mapIndex));
+    setRenameRequest((r) => (r ? { ...r, index: mapIndex(r.index) ?? r.index } : r));
+    setIrPeaksByCard((prev) => remapIndexKeyedRecord(prev, mapIndex));
+    const ui = useUIStore.getState();
+    ui.setExpandedSimulationTabIndex(remapNullableIndex(ui.expandedSimulationTabIndex, mapIndex));
+  }, [isAnySimulationRunning, handleReorderSimulationConfigs]);
+
   // Card / bubble right-click rows: the same menu on an expanded card and on its bubble.
   const buildSimulationMenu = (index: number): CustomMenuItem[] => {
     const config = simulationConfigs[index];
@@ -2379,6 +2395,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             setRenameRequest({ index, seq: Date.now() });
           } : undefined}
           onOpen={openBubbleCard}
+          onReorder={canEdit && !isAnySimulationRunning ? handleReorderSimulations : undefined}
           onReduce={() => {
             // Reduce is not deactivate: the auralization keeps running with the panel closed.
             setExpandedCardIndex(null);
@@ -2406,7 +2423,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
           header={header}
           expandedIndex={expandedCardIndex}
           onExpandedIndexChange={handleExpandedIndexChange}
-          onReorder={handleReorderSimulationConfigs}
+          onReorder={handleReorderSimulations}
           onDuplicate={(from, toInsertion) => {
             duplicateConfigAt(from, toInsertion);
           }}
@@ -2443,6 +2460,8 @@ interface AcousticsBubblesProps {
   buildMenu?: (index: number) => CustomMenuItem[];
   /** "Rename" row of the menu: opens the card with its title editable. */
   onRename?: (index: number) => void;
+  /** Drag a bubble to a new place (config indices). Undefined = not reorderable. */
+  onReorder?: (from: number, to: number) => void;
   renderCard: (
     config: SimulationConfig,
     index: number,
@@ -2468,7 +2487,8 @@ function simRuntime(config: SimulationConfig): { isRunning: boolean; progress: n
  * Click: open / reduce the card only. Ready (completed / resonance) bubbles
  * carry a power button in their hover flyout (auralization on / off); the card
  * floats beside the column (no wrapper) with the same power button and a "−"
- * in its header.
+ * in its header. Bubbles can be dragged up / down to reorder them (not while a
+ * simulation runs).
  */
 function AcousticsBubbles({
   simulationConfigs,
@@ -2482,6 +2502,7 @@ function AcousticsBubbles({
   onReduce,
   buildMenu,
   onRename,
+  onReorder,
   renderCard,
 }: AcousticsBubblesProps) {
   const [addMenu, setAddMenu] = useState<{ x: number; y: number } | null>(null);
@@ -2554,6 +2575,13 @@ function AcousticsBubbles({
         align="flex-end"
         labelSide="left"
         style={{ right: SIMPLE_MODE.EDGE_MARGIN, top: columnTop, zIndex: SIMPLE_MODE.Z_INDEX }}
+        onReorder={onReorder
+          ? (from, to) => {
+            const fromIndex = shown[from]?.index;
+            const toIndex = shown[to]?.index;
+            if (fromIndex !== undefined && toIndex !== undefined) onReorder(fromIndex, toIndex);
+          }
+          : undefined}
         items={shown.map(({ config, index }) => {
           const rt = simRuntime(config);
           const label = config.display_name || CARD_TYPE_LABELS[config.type] || 'Simulation';

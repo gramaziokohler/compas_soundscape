@@ -129,7 +129,7 @@ def test_joined_response_is_full_band_and_keeps_the_direct_sound(mono):
     assert low > 0 and high > 0
     # a wave-only response would have nothing up there; here the rays fill it
     assert high > 1e-3 * band_energy(ir, AUDIO_SAMPLE_RATE, 40.0, 20000.0)
-    assert "rt60" in entry["acoustic_parameters"]
+    assert "t30" in entry["acoustic_parameters"] and entry["acoustic_parameters_bands"]["T30"]
 
 
 def test_manual_crossover_and_level_match(tmp_path):

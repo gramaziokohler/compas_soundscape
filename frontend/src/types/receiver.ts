@@ -69,7 +69,7 @@ export interface GridListenerData {
  * ListenerExpandRequest
  *
  * Ask the listeners section to expand a listener / grid card from outside
- * (viewer click, double-click, acoustics "go to listener"). `seq` increments on
+ * (viewer click, double-click, FPS listener switching). `seq` increments on
  * every request so the same id re-expands a card the user collapsed meanwhile.
  */
 export interface ListenerExpandRequest {

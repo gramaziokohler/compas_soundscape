@@ -52,11 +52,14 @@ overwriting them). If a build fails, the old files are put back. A failure is re
   `compas restart <api|gpu|cpu|sa3|pffdtd|frontend|nginx|all>`.
 - **Never `pip install -r requirements.txt` by hand.** Use `compas deps`, which applies the
   exclusions and writes the stamp.
-- **Room acoustics dependencies:** `compas deps` installs both `compas_acoustics[hybrid]`
-  non-editably and its compatible `pyroomacoustics>=0.10.1` dependency into the
-  `compas-soundscape` environment. Neither package is excluded from the requirements file.
-  Never install the CA `[worker]` extra: `compas_pb` needs protobuf >= 6.31, while TensorFlow
-  pins protobuf < 6.
+- **Room acoustics dependencies:** `compas deps` installs both `compas_acoustics` (no extras;
+  it always brings pyFDN and `compas_pb`) non-editably and its compatible
+  `pyroomacoustics>=0.10.1` dependency into the `compas-soundscape` environment. Neither package
+  is excluded from the requirements file. `compas_pb` needs protobuf >= 6.31, so TensorFlow is
+  pinned to 2.20 (2.18/2.19 cap protobuf below 6). The first `compas deps` after the 2.18 -> 2.20
+  bump must start from an env without 2.18: run
+  `python -m pip uninstall -y tensorflow tensorflow_intel tf_keras` in `compas-soundscape` first
+  (2.18's Windows files belong to `tensorflow_intel`, which pip would otherwise leave behind).
   To fall back to the legacy engine, set `ACOUSTICS_ENGINE=pyroomacoustics` in `.env` and restart
   `api` and `cpu`.
 - **PFFDTD:** provisioned with `compas pffdtd-setup` (CUDA compiler env, `compas-pffdtd` env,

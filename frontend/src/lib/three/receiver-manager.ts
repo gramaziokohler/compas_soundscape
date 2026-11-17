@@ -152,6 +152,30 @@ export class ReceiverManager {
 
     // Sync label sprites with the current receiver set
     this.syncLabelSprites(result.meshes);
+
+    // Listeners hidden for simulation look faint (mesh + label).
+    result.meshes.forEach(mesh => {
+      const receiver = updatedReceivers.find(r => r.id === mesh.userData.receiverId);
+      this.applySimulationHidden(mesh, !!receiver?.hiddenForSimulation);
+    });
+  }
+
+  /**
+   * Fade a receiver that is hidden for simulation. Only colour / emissive are
+   * touched elsewhere (mismatch colouring), so opacity stays owned here.
+   */
+  private applySimulationHidden(mesh: THREE.Mesh, hidden: boolean): void {
+    const opacity = hidden ? RECEIVER_CONFIG.HIDDEN_FOR_SIMULATION_OPACITY : 1;
+    const mat = mesh.material as THREE.MeshStandardMaterial;
+    if (mat.opacity !== opacity || mat.transparent !== hidden) {
+      mat.transparent = hidden;
+      mat.opacity = opacity;
+      // A faint mesh must not hide what is behind it.
+      mat.depthWrite = !hidden;
+      mat.needsUpdate = true;
+    }
+    const label = this.labelSprites.get(mesh.userData.receiverId as string);
+    if (label) (label.material as THREE.SpriteMaterial).opacity = opacity;
   }
 
   /**

@@ -357,6 +357,23 @@ describe('per-band metrics', () => {
     expect(formatBandFrequency(500)).toBe('500');
     expect(formatBandFrequency(2000)).toBe('2k');
   });
+
+  it('reads the single numbers off the 500 Hz and 1 kHz bands, keeping STI as measured', async () => {
+    const { averageBandMetrics, withBandHeadline } = await import('./band-metrics');
+    const bands = averageBandMetrics([
+      { frequency_bands: [250, 500, 1000], T30: [3, 1.0, 2.0], D50: [10, 40, 60], EDT: [1, null, 1.5] },
+      { frequency_bands: [250, 500, 1000], T30: [3, 2.0, 3.0], D50: [10, 50, 70], EDT: [1, null, 1.5] },
+    ]);
+    const measured = { t30: 9, edt: 0.7, c50: 1, c80: 2, d50: 0.1, sti: 0.6, t30Reliable: false };
+    const out = withBandHeadline(measured, bands);
+    expect(out?.t30).toBe(2.0);              // mean of the pairs' 500 Hz and 1 kHz columns
+    expect(out?.d50).toBeCloseTo(0.55);      // % → 0-1
+    expect(out?.edt).toBe(0.7);              // 500 Hz missing: kept as measured
+    expect(out?.c50).toBe(1);                // no band values: kept
+    expect(out?.sti).toBe(0.6);
+    expect(out?.t30Reliable).toBe(false);
+    expect(withBandHeadline(measured, null)).toBe(measured);
+  });
 });
 
 describe('SOA / TOA output choices', () => {

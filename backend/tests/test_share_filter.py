@@ -120,8 +120,8 @@ def test_simulation_results_are_allowlisted_and_pruned(tmp_path, monkeypatch):
     model_dir = tmp_path / "model"
     model_dir.mkdir()
     (model_dir / "simulation_run-pub_results.json").write_text(json.dumps({"results": [
-        {"source_id": "p0", "receiver_id": "r-pub", "acoustic_parameters": {"rt60": 1.0}},
-        {"source_id": "p0", "receiver_id": "r-priv", "acoustic_parameters": {"rt60": 2.0}},
+        {"source_id": "p0", "receiver_id": "r-pub", "acoustic_parameters": {"t30": 1.0}},
+        {"source_id": "p0", "receiver_id": "r-priv", "acoustic_parameters": {"t30": 2.0}},
     ]}))
     (model_dir / "simulation_run-priv_results.json").write_text(json.dumps({"results": []}))
     monkeypatch.setattr(share_module, "user_model_dir", lambda _ws, _model: model_dir)

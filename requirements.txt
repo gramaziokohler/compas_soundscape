@@ -51,13 +51,16 @@ peft==0.12.0
 soundfile==0.13.1
 librosa==0.11.0
 noisereduce==3.0.3
-tensorflow==2.18.1
+# 2.20: first TF that accepts protobuf 6, which compas_acoustics' compas_pb needs (2.18/2.19 cap it below 6).
+# tf_keras must match the TF minor version.
+tensorflow==2.20.0
+tf_keras~=2.20.0
 tensorflow-hub==0.16.1
 setuptools==78.1.1
 importlib
 
 # --- Room Acoustics ---
-compas_acoustics[hybrid] @ git+https://github.com/bouiz/compas_acoustics.git@engine-integration
+compas_acoustics @ git+https://github.com/bouiz/compas_acoustics.git@engine-integration
 # Keep this compatible with compas_acoustics' supported runtime.
 pyroomacoustics==0.10.1
 # Reads SOFA files: the fork's measured directivities and our directivity import
@@ -66,7 +69,8 @@ h5py==3.15.1
 scipy==1.17.1
 numpy==1.26.4
 matplotlib==3.10.7
-protobuf<6
+# compas_pb (compas_acoustics' wire format) needs >=6.31.1 and leaves the top open; 7 is untested with TF.
+protobuf>=6.31.1,<7
 
 # --- Speckle (3D model platform) ---
 # 2026.9.0b3 is required for bundle-only versions: Speckle's 2026.9 file ingestion

@@ -145,12 +145,13 @@ namespace CompasAcoustics
                         : null;
                     if (ap != null)
                     {
-                        if (ap.ContainsKey("rt60") && ap["rt60"] != null) parts.Add("RT60=" + Format2(ap["rt60"]) + "s");
+                        // ISO 3382-1 single numbers (mean of 500 Hz and 1 kHz; STI over all bands)
+                        if (ap.ContainsKey("t30") && ap["t30"] != null) parts.Add("T30=" + Format2(ap["t30"]) + "s");
                         if (ap.ContainsKey("edt") && ap["edt"] != null) parts.Add("EDT=" + Format2(ap["edt"]) + "s");
                         if (ap.ContainsKey("c50") && ap["c50"] != null) parts.Add("C50=" + Format1(ap["c50"]) + "dB");
+                        if (ap.ContainsKey("c80") && ap["c80"] != null) parts.Add("C80=" + Format1(ap["c80"]) + "dB");
                         if (ap.ContainsKey("d50") && ap["d50"] != null) parts.Add("D50=" + Format2(ap["d50"]));
-                        if (ap.ContainsKey("drr") && ap["drr"] != null) parts.Add("DRR=" + Format1(ap["drr"]) + "dB");
-                        if (ap.ContainsKey("spl") && ap["spl"] != null) parts.Add("SPL=" + Format1(ap["spl"]) + "dB");
+                        if (ap.ContainsKey("sti") && ap["sti"] != null) parts.Add("STI=" + Format2(ap["sti"]));
                     }
                     lines.Add(string.Join(" | ", parts));
                 }

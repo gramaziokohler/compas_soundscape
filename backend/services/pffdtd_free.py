@@ -20,7 +20,7 @@ from typing import Optional
 import numpy as np
 from scipy.io import wavfile
 
-from utils.acoustic_measurement import AcousticMeasurement
+from utils.acoustic_measurement import measure_ir
 from config.constants import (
     PFFDTD_DEFAULT_FREE_MODE,
     PFFDTD_FREE_DIR,
@@ -139,18 +139,19 @@ def nearest_point(simulation_id: str, position) -> tuple[int, list, float]:
 
 
 @lru_cache(maxsize=512)
-def _measure_ir(path: str, _mtime: int) -> dict:
+def _measure_ir(path: str, _mtime: int, fmax: Optional[float]) -> dict:
     fs, data = wavfile.read(path)
     w = data if data.ndim == 1 else data[:, 0]  # mono, or the W channel of an FOA IR
-    return AcousticMeasurement.calculate_acoustic_parameters_from_rir(w.astype(np.float64), int(fs))
+    return measure_ir(w.astype(np.float64), int(fs), band_limit_hz=fmax)
 
 
-def ir_metrics(path: Path) -> Optional[dict]:
-    """Acoustic parameters of one rendered IR WAV (cached per file; a few ms for a 1 s IR)."""
+def ir_metrics(path: Path, fmax: Optional[float]) -> dict:
+    """``{"acoustic_parameters", "acoustic_parameters_bands"}`` of one rendered IR WAV, nothing
+    above the run's ``fmax`` (cached per file); ``{}`` when it cannot be analysed."""
     try:
-        return _measure_ir(str(path), path.stat().st_mtime_ns) or None
+        return _measure_ir(str(path), path.stat().st_mtime_ns, fmax)
     except Exception:
-        return None
+        return {}
 
 
 def ir_filename(simulation_id: str, point: int, fixed_id: str) -> str:

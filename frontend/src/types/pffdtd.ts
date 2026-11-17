@@ -8,7 +8,7 @@
  */
 
 import type { HybridRunInfo } from '@/types/acoustics';
-import type { IRAcousticParameters } from '@/types/audio';
+import type { IRMetricBlocks } from '@/types/audio';
 
 /** GET /api/pffdtd/status */
 export interface PffdtdStatus {
@@ -180,10 +180,9 @@ export const PFFDTD_MASK = {
 export interface PffdtdResultsJson {
   simulation_id: string;
   method: string;
-  results: Array<{
+  results: Array<IRMetricBlocks & {
     source_id: string;
     receiver_id: string;
-    acoustic_parameters?: Record<string, number | boolean | null>;
     fmax?: number;
   }>;
   grid?: { h?: number; fmax?: number };
@@ -225,7 +224,7 @@ export interface PffdtdFreeIRResponse {
   num_channels: number;
   sample_rate: number;
   duration_s: number;
-  irs: Array<{ fixed_id: string; ir_file: string; acoustic_parameters?: IRAcousticParameters | null }>;
+  irs: Array<IRMetricBlocks & { fixed_id: string; ir_file: string }>;
   render_ms: number;
 }
 

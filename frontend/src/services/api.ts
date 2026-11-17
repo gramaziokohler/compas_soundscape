@@ -8,7 +8,7 @@ import { isShareViewActive, useShareViewStore } from '@/store/shareViewStore';
 import type { CompasGeometry, SoundEvent, SoundGenerationConfig, FileUploadResponse, JobType, JobRecord, UserPreferences, BugReportPayload, BugReportCreated } from '@/types';
 import { recordFailedRequest } from '@/lib/diagnostics/diagnosticsBuffer';
 import type { TtsCustomVoice, TtsCustomVoiceCreateRequest, TtsDialectsResponse, TtsLanguageMatch } from '@/types/ttsLanguage';
-import type { ImpulseResponseMetadata } from '@/types/audio';
+import type { ImpulseResponseMetadata, IRMetricBlocks } from '@/types/audio';
 import type { CustomMaterialCoefficients, CustomMaterialInput, CustomMaterialRecord } from '@/types/materials';
 import type {
   AnalyticalDirectivityPreview,
@@ -1344,13 +1344,17 @@ export const apiService = {
   // Impulse Response Management
 
   /**
-   * Upload an impulse response file
+   * Upload an impulse response file. `acousticMetrics`: the metrics a simulation run already
+   * measured for this IR (on its untrimmed response), stored instead of measuring the file again.
    */
-  async uploadImpulseResponse(file: File, name: string): Promise<ImpulseResponseMetadata> {
+  async uploadImpulseResponse(file: File, name: string, acousticMetrics?: IRMetricBlocks): Promise<ImpulseResponseMetadata> {
     try {
       const formData = new FormData();
       formData.append('file', file);
       formData.append('name', name);
+      if (acousticMetrics?.acoustic_parameters) {
+        formData.append('acoustic_metrics', JSON.stringify(acousticMetrics));
+      }
 
       const response = await fetchWithErrorHandling(
         `${API_BASE_URL}/api/impulse-responses/upload`,

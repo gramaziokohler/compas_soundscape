@@ -10,7 +10,7 @@
 
 import { PFFDTD } from '@/utils/constants';
 import { computePositionKey } from '@/utils/positionKey';
-import type { ImpulseResponseMetadata, IRAcousticParameters, SourceReceiverIRMapping } from '@/types/audio';
+import type { ImpulseResponseMetadata, IRMetricBlocks, SourceReceiverIRMapping } from '@/types/audio';
 import type { PffdtdFreeIRResponse, PffdtdFreeMode } from '@/types/pffdtd';
 
 type Vec3 = [number, number, number];
@@ -73,7 +73,7 @@ export function freeIRMetadata(
   file: string,
   data: PffdtdFreeIRResponse,
   name: string,
-  acousticParameters?: IRAcousticParameters | null,
+  metrics?: IRMetricBlocks,
 ): ImpulseResponseMetadata {
   const foa = data.num_channels === 4;
   return {
@@ -86,7 +86,8 @@ export function freeIRMetadata(
     sampleRate: data.sample_rate,
     duration: data.duration_s,
     fileSize: 0,
-    ...(acousticParameters ? { acoustic_parameters: acousticParameters } : {}),
+    ...(metrics?.acoustic_parameters ? { acoustic_parameters: metrics.acoustic_parameters } : {}),
+    ...(metrics?.acoustic_parameters_bands ? { acoustic_parameters_bands: metrics.acoustic_parameters_bands } : {}),
     ...(foa ? { normalizationConvention: 'SN3D' as const, channelOrdering: 'AmbiX' as const } : {}),
   };
 }
@@ -123,7 +124,7 @@ export function applyFreeIRs(
 ): { mapping: SourceReceiverIRMapping; positions: FreeSimPositions; newSourceKey: string | null } {
   const next: SourceReceiverIRMapping = { ...mapping };
   const metadata = (ir: PffdtdFreeIRResponse['irs'][number]) =>
-    freeIRMetadata(ir.ir_file, data, `${moved.label} (free) – ${ir.fixed_id}`, ir.acoustic_parameters);
+    freeIRMetadata(ir.ir_file, data, `${moved.label} (free) – ${ir.fixed_id}`, ir);
   if (mode === 'listener') {
     for (const ir of data.irs) {
       next[ir.fixed_id] = { ...(next[ir.fixed_id] ?? {}), [moved.objectId]: metadata(ir) };

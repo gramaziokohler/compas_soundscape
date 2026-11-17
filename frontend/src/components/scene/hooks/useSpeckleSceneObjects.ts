@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
+import { useGridListenersStore } from '@/store';
 import type { ReceiverData, SoundEvent } from '@/types';
 
 interface SceneObjectsProps {
@@ -43,10 +44,15 @@ export function useSpeckleSceneObjects({
     }
   }, [isViewerReady, receivers, soundscapeData]);
 
+  // The shown (powered) grid is hidden for simulation → its points are drawn faint.
+  const isShownGridHidden = useGridListenersStore((s) =>
+    s.gridListeners.some((g) => g.id === expandedGridListenerId && g.hiddenForSimulation),
+  );
+
   // Update grid listener points
   useEffect(() => {
     const { coordinator } = useSpeckleEngineStore.getState();
     if (!coordinator || !isViewerReady) return;
-    coordinator.updateGridListeners(gridListenerPoints, expandedGridListenerId, gridListenerPointIds);
-  }, [isViewerReady, gridListenerPoints, expandedGridListenerId, gridListenerPointIds]);
+    coordinator.updateGridListeners(gridListenerPoints, expandedGridListenerId, gridListenerPointIds, isShownGridHidden);
+  }, [isViewerReady, gridListenerPoints, expandedGridListenerId, gridListenerPointIds, isShownGridHidden]);
 }

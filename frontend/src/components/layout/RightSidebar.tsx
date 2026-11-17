@@ -67,8 +67,6 @@ interface RightSidebarProps {
   onIRHover?: (sourceId: string | null, receiverId: string | null) => void;
   /** Power a single listener on / off (listener card power button). */
   onGoToReceiver?: (receiverId: string) => void;
-  /** Acoustics IR-group "go to listener": powers it on and expands its card. */
-  onAcousticsGoToReceiver?: (receiverId: string) => void;
   fpsExitTrigger?: number;
   isFPSModeActive?: boolean;
   forcedActiveGroupId?: string | null;
@@ -127,7 +125,6 @@ export function RightSidebar({
   onUpdateSimulationName,
   onIRHover,
   onGoToReceiver,
-  onAcousticsGoToReceiver,
   fpsExitTrigger,
   isFPSModeActive,
   forcedActiveGroupId,
@@ -370,7 +367,7 @@ export function RightSidebar({
             onUpdateSimulationConfig={onUpdateSimulationConfig}
             onSetActiveSimulation={onSetActiveSimulation}
             onUpdateSimulationName={onUpdateSimulationName}
-            onGoToReceiver={onAcousticsGoToReceiver ?? onGoToReceiver}
+            onGoToReceiver={onGoToReceiver}
             fpsExitTrigger={fpsExitTrigger}
             isFPSModeActive={isFPSModeActive}
             forcedActiveGroupId={forcedActiveGroupId}

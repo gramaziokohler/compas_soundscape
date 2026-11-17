@@ -240,9 +240,10 @@ FOA tags), the "parallel" toggle, `enable_grid`, the dead API methods, the CS Gr
 
 Ordered by how much they block the wrapper.
 
-- **U1. Make the hybrid dependencies optional.** Move pyFDN / multislope (and so flamo, torch,
-  onnxruntime) to an extra such as `compas_acoustics[hybrid]`; `Mono`, `Analyser`, rays and the
-  energy map work without them. Loosen the protobuf pin if `compas_pb` allows.
+- **U1. Make the hybrid dependencies optional — dropped (2026-11-17).** CS uses `Ambisonics`, so
+  it needs pyFDN and torch anyway; the protobuf clash is solved in CS by TensorFlow 2.20. CA keeps
+  upstream's requirements; the fork merged gramaziokohler/compas_acoustics#22 (hybrid on
+  pyFDN 0.7, pinned `>=0.7, <0.8`).
 - **U2. Public progress and cancel hook.** Promote `worker/jobs.py` to a library-level callback
   (`progress=callable`, raising on cancel) passed to `compute`, `RayField`, `EnergyMap`. Report
   per source inside ray tracing by tracing in chunks.

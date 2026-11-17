@@ -50,6 +50,8 @@ export interface ReceiversStoreState {
   updateReceiverOrientation: (id: string, yaw: number, pitch: number, roll: number) => void;
   updateReceiverName: (id: string, name: string) => void;
   toggleReceiverHiddenForSimulation: (id: string) => void;
+  /** Show `shownId` for simulation and hide every other receiver (any other id hides them all). */
+  showOnlyReceiverForSimulation: (shownId: string) => void;
   selectReceiver: (id: string | null) => void;
   clearReceivers: () => void;
   restoreReceivers: (savedReceivers: ReceiverData[], savedSelectedId?: string | null) => void;
@@ -171,6 +173,21 @@ export const useReceiversStore = create<ReceiversStoreState>()(
             false,
             'receivers/toggleReceiverHiddenForSimulation',
           ),
+
+        showOnlyReceiverForSimulation: (shownId) => {
+          const { receivers } = get();
+          // Replace only the receivers whose flag changes, and skip a no-op write.
+          if (receivers.every((r) => !!r.hiddenForSimulation === (r.id !== shownId))) return;
+          set(
+            {
+              receivers: receivers.map((r) =>
+                !!r.hiddenForSimulation === (r.id !== shownId) ? r : { ...r, hiddenForSimulation: r.id !== shownId },
+              ),
+            },
+            false,
+            'receivers/showOnlyForSimulation',
+          );
+        },
 
         selectReceiver: (id) =>
           set({ selectedReceiverId: id }, false, 'receivers/selectReceiver'),

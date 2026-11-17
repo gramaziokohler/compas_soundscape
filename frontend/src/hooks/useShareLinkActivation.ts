@@ -11,6 +11,7 @@ import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import type { ShareItemKind, ShareLink } from '@/types/share';
 import { selectSceneByIndex } from '@/utils/sceneSelection';
 import { useActiveSceneId } from '@/hooks/useActiveSceneId';
+import { showOnlyListenerForSimulation } from '@/utils/listenerSimulationVisibility';
 
 type ActiveItems = Record<ShareItemKind, string | null>;
 
@@ -30,6 +31,9 @@ interface UseShareLinkActivationArgs {
  * Runs in the share view (served links), and in the editor when Settings →
  * Share › "Also apply links while editing" is on (the designer's links). Nothing
  * is activated on load — the app opens idle.
+ *
+ * In the editor, activating a link that has a listener also makes that listener
+ * the only one shown for simulation (the others get "Hide for simulation").
  *
  * Changes made by the hook itself are recorded as the new baseline, so they
  * never re-trigger it.
@@ -93,6 +97,8 @@ export function useShareLinkActivation({
           next.simulation = link.simulationId;
         }
       }
+      // Editor: the group's listener is the one simulated; the share view never edits.
+      if (link.listenerId && !isShareView) showOnlyListenerForSimulation(link.listenerId);
       if (link.listenerId && link.listenerId !== current.listener) {
         activateListenerRef.current(link.listenerId);
         next.listener = link.listenerId;
@@ -110,5 +116,5 @@ export function useShareLinkActivation({
     const satisfied = candidates.find((l) => KINDS.every((kind) => !l[linkKey(kind)] || l[linkKey(kind)] === current[kind]));
     const link = satisfied ?? candidates[0];
     if (link) baselineRef.current = applyLink(link);
-  }, [links, isExpertMode, activeSceneId, activeSimulationId, activeListenerId, analysisConfigs, simulationConfigs, isViewerReady]);
+  }, [links, isShareView, isExpertMode, activeSceneId, activeSimulationId, activeListenerId, analysisConfigs, simulationConfigs, isViewerReady]);
 }

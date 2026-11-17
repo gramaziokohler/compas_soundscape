@@ -247,18 +247,19 @@ def _format_metrics(results):
         rcv = entry.get("receiver_id", "?")
         parts = ["src=%s rcv=%s" % (src, rcv)]
         ap = entry.get("acoustic_parameters") or {}
-        if ap.get("rt60") is not None:
-            parts.append("RT60=%.2fs" % ap["rt60"])
+        # ISO 3382-1 single numbers (mean of 500 Hz and 1 kHz; STI over all bands)
+        if ap.get("t30") is not None:
+            parts.append("T30=%.2fs" % ap["t30"])
         if ap.get("edt") is not None:
             parts.append("EDT=%.2fs" % ap["edt"])
         if ap.get("c50") is not None:
             parts.append("C50=%.1fdB" % ap["c50"])
+        if ap.get("c80") is not None:
+            parts.append("C80=%.1fdB" % ap["c80"])
         if ap.get("d50") is not None:
             parts.append("D50=%.2f" % ap["d50"])
-        if ap.get("drr") is not None:
-            parts.append("DRR=%.1fdB" % ap["drr"])
-        if ap.get("spl") is not None:
-            parts.append("SPL=%.1fdB" % ap["spl"])
+        if ap.get("sti") is not None:
+            parts.append("STI=%.2f" % ap["sti"])
         lines.append(" | ".join(parts))
     return lines
 

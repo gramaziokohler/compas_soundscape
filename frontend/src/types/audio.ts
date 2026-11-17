@@ -159,21 +159,41 @@ export type IRFormat = "mono" | "binaural" | "foa" | "soa" | "toa";
 // Ambisonic order types
 export type AmbisonicOrder = 1 | 2 | 3; // First-order, Second-order, or Third-order
 
-// Raw acoustic parameters measured from an IR by the backend
-// (utils/acoustic_measurement.AcousticMeasurement — same method as pyroomacoustics cards).
+// Single-number acoustic parameters of an IR, measured by the backend with the compas_acoustics
+// Analyser (utils/acoustic_measurement.measure_ir) on the untrimmed response: the ISO 3382-1 values
+// (mean of the 500 Hz and 1 kHz bands of `IRBandMetrics`; STI over all bands). Null = not measurable.
 export interface IRAcousticParameters {
-  rt60?: number | null;
+  t30?: number | null;
   edt?: number | null;
   c50?: number | null;
+  c80?: number | null;
+  /** 0-1 (the per-band values are in %). */
   d50?: number | null;
-  drr?: number | null;
-  spl?: number | null;
-  energy_level_db?: number | null;
-  spl_is_relative?: boolean;
-  rt60_reliable?: boolean;
+  sti?: number | null;
+  /** T30 / EDT decay long and straight enough at both 500 Hz and 1 kHz. */
+  t30_reliable?: boolean;
   edt_reliable?: boolean;
-  rt60_is_estimate?: boolean;
-  rt60_dynamic_range_db?: number;
+  /** Image-source-only run (no diffuse tail): the decay times are an estimate. */
+  t30_is_estimate?: boolean;
+}
+
+/** Per-octave-band metrics of one IR (same analysis as `IRAcousticParameters`); null where a band
+ *  cannot be measured or lies above a band-limited (PFFDTD) IR's limit. D50 in %. */
+export interface IRBandMetrics {
+  frequency_bands?: number[];
+  T30?: Array<number | null>;
+  EDT?: Array<number | null>;
+  C50?: Array<number | null>;
+  C80?: Array<number | null>;
+  D50?: Array<number | null>;
+  STI?: Array<number | null>;
+  reliability?: { freqs?: number[]; T30_reliable?: boolean[]; EDT_reliable?: boolean[]; range_db?: Array<number | null> };
+}
+
+/** The two metric blocks the backend stores per IR / per source-listener pair. */
+export interface IRMetricBlocks {
+  acoustic_parameters?: IRAcousticParameters | null;
+  acoustic_parameters_bands?: IRBandMetrics | null;
 }
 
 // Impulse Response Metadata
@@ -191,6 +211,7 @@ export interface ImpulseResponseMetadata {
   peak_amplitude?: number; // snake_case variant returned by the backend
   acousticParameters?: IRAcousticParameters; // Metrics measured at upload time (camel alias)
   acoustic_parameters?: IRAcousticParameters; // snake_case variant returned by the backend
+  acoustic_parameters_bands?: IRBandMetrics; // the same analysis per octave band
   normalizationConvention?: 'N3D' | 'SN3D'; // Ambisonic normalization scheme (simulation metadata)
   channelOrdering?: 'AmbiX' | 'FuMa' | 'ACN'; // Ambisonic channel ordering (AmbiX=W,Y,Z,X, FuMa=W,X,Y,Z)
 }

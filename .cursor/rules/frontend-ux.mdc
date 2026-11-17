@@ -64,6 +64,10 @@ Rules:
     edge). Overflow renders a window of bubbles between "N more" arrow pills (wheel / drag / click);
     the selected / active / open bubble is the `focusIndex` and stays in view. It slices instead of
     clipping (`overflow`/`clip-path` would cut hover labels and the bubbles' backdrop blur).
+    Columns reorder by dragging a bubble (`onReorder` → `useBubbleReorder`; a reorderable column
+    no longer drag-scrolls). Scenes move through `analysisStore.handleReorderConfigs` (full index
+    remap, blocked by `useCanReorderScenes` while work runs); simulations are pinned while one
+    runs; listeners move within their type (single / grid). Key scene bubbles by `sceneId`.
 12. Mode switch → Expert expands the left sidebar on the selected scene's Sounds step; → Simple
     reopens the panel of the scene the expert sidebar showed (`pendingSimpleFocus`).
 13. **Scene bubble right-click** (`useSceneBubbleMenu`, native `contextmenu` — also macOS

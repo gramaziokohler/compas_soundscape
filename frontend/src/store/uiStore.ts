@@ -252,6 +252,9 @@ export interface UIStoreState {
   setIrPreviewPanel: (layout: { x: number; y: number; width?: number; height?: number; channels?: number } | null) => void;
   irPreviewMode: 'impulse' | 'frequency';
   setIrPreviewMode: (mode: 'impulse' | 'frequency') => void;
+  /** IR previews show the metrics table expanded into its per-band rows. */
+  irPreviewBandsExpanded: boolean;
+  setIrPreviewBandsExpanded: (expanded: boolean) => void;
   /** Which IR list currently owns the open pinned panel (transient, not persisted). */
   irPreviewOwnerId: string | null;
   setIrPreviewOwnerId: (id: string | null) => void;
@@ -292,7 +295,8 @@ export interface UIStoreState {
   setShowLoadModelPanel: (open: boolean | ((open: boolean) => boolean)) => void;
 }
 
-export type GradientMetric = 'rt60' | 'edt' | 'd50' | 'c50' | 'spl';
+/** A card single number the gradient map can show (keys of `AcousticParameters`). */
+export type GradientMetric = 't30' | 'edt' | 'c50' | 'c80' | 'd50' | 'sti';
 
 export interface GradientMapState {
   metric: GradientMetric;
@@ -580,6 +584,8 @@ export const useUIStore = create<UIStoreState>()(
       setIrPreviewPanel: (pos) => set({ irPreviewPanel: pos }, false, 'ui/setIrPreviewPanel'),
       irPreviewMode: 'impulse' as const,
       setIrPreviewMode: (mode) => set({ irPreviewMode: mode }, false, 'ui/setIrPreviewMode'),
+      irPreviewBandsExpanded: false,
+      setIrPreviewBandsExpanded: (expanded) => set({ irPreviewBandsExpanded: expanded }, false, 'ui/setIrPreviewBandsExpanded'),
       irPreviewOwnerId: null,
       setIrPreviewOwnerId: (id) => set({ irPreviewOwnerId: id }, false, 'ui/setIrPreviewOwnerId'),
       timelineDock: { height: 260, autoFit: true },

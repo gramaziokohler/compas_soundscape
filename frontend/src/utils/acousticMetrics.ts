@@ -6,27 +6,31 @@
  */
 
 import { apiService, simulationResultsJsonUrl } from '@/services/api';
-import type { ImpulseResponseMetadata, SourceReceiverIRMapping } from '@/types/audio';
+import type { ImpulseResponseMetadata, IRAcousticParameters, IRMetricBlocks, SourceReceiverIRMapping } from '@/types/audio';
 import { isLowEnergyIR } from '@/utils/irEnergy';
 
 /**
- * Acoustic parameters from simulation results
+ * Acoustic parameters of a card: the mean over its source-listener pairs of each pair's ISO 3382-1
+ * single numbers (the 500 Hz - 1 kHz mean of the same per-band analysis the band table shows).
  */
 export interface AcousticParameters {
-  rt60: number | null;
+  t30: number | null;
   edt: number | null;
-  d50: number | null;
   c50: number | null;
-  spl?: number | null;
-  drr?: number | null;
-  /** RT60/EDT measured over an adequate decay range (backend *_reliable) */
-  rt60Reliable?: boolean;
+  c80: number | null;
+  /** 0-1 */
+  d50: number | null;
+  sti: number | null;
+  /** T30 / EDT decay long and straight enough at 500 Hz and 1 kHz in every pair (backend *_reliable) */
+  t30Reliable?: boolean;
   edtReliable?: boolean;
-  /** Pure ISM simulation (no ray-traced diffuse tail) — RT60 is an estimate */
-  rt60IsEstimate?: boolean;
-  /** spl is a relative energy level, not physical SPL (pyroomacoustics path) */
-  splIsRelative?: boolean;
+  /** Image-source-only simulation (no ray-traced diffuse tail): the decay times are an estimate */
+  t30IsEstimate?: boolean;
 }
+
+/** The single-number keys a card averages (and the gradient map can show). */
+export const ACOUSTIC_PARAMETER_KEYS = ['t30', 'edt', 'c50', 'c80', 'd50', 'sti'] as const;
+export type AcousticParameterKey = (typeof ACOUSTIC_PARAMETER_KEYS)[number];
 
 /**
  * Result of importing IRs from a simulation
@@ -90,16 +94,15 @@ function aggregateParamList(allParams: any[]): AcousticParameters | null {
     contributing(key).every((p: any) => p[`${key}_reliable`] === undefined || p[`${key}_reliable`] === true);
 
   return {
-    rt60: calculateAverage(allParams, 'rt60'),
+    t30: calculateAverage(allParams, 't30'),
     edt: calculateAverage(allParams, 'edt'),
-    d50: calculateAverage(allParams, 'd50'),
     c50: calculateAverage(allParams, 'c50'),
-    spl: calculateAverage(allParams, 'spl'),
-    drr: calculateAverage(allParams, 'drr'),
-    rt60Reliable: allReliable('rt60'),
+    c80: calculateAverage(allParams, 'c80'),
+    d50: calculateAverage(allParams, 'd50'),
+    sti: calculateAverage(allParams, 'sti'),
+    t30Reliable: allReliable('t30'),
     edtReliable: allReliable('edt'),
-    rt60IsEstimate: allParams.some((p: any) => p.rt60_is_estimate === true),
-    splIsRelative: true,
+    t30IsEstimate: allParams.some((p: any) => p.t30_is_estimate === true),
   };
 }
 
@@ -130,28 +133,9 @@ export async function fetchPyroomAcousticMetrics(
   }
 }
 
-/**
- * Aggregate acoustic metrics from a source-receiver IR mapping (import-irs card).
- * IRs tagged low energy are skipped.
- *
- * Each assigned IR carries `acoustic_parameters` measured at upload time by the
- * backend with the same method as the pyroomacoustics cards. This averages those
- * per-pair parameters exactly like `fetchPyroomAcousticMetrics` averages a
- * simulation's per-pair results. Returns null when no IR has metrics.
- */
-export function buildAcousticMetricsFromIRMapping(
-  mapping: SourceReceiverIRMapping | undefined,
-): AcousticParameters | null {
-  const allParams: any[] = [];
-  for (const receiverMap of Object.values(mapping || {})) {
-    for (const meta of Object.values(receiverMap)) {
-      if (isLowEnergyIR(meta)) continue;
-      const params = (meta as any)?.acoustic_parameters ?? (meta as any)?.acousticParameters;
-      if (params) allParams.push(params);
-    }
-  }
-
-  return aggregateParamList(allParams);
+/** The acoustic parameters of one IR (its own measurement, no averaging); null without any. */
+export function acousticParametersOfIR(params: IRAcousticParameters | null | undefined): AcousticParameters | null {
+  return params ? aggregateParamList([params]) : null;
 }
 
 /**
@@ -168,30 +152,23 @@ export function formatAcousticMetrics(
 
   const metrics: string[] = [];
 
-  if (params.rt60 !== null) {
-    metrics.push(`RT60: ${params.rt60.toFixed(2)}s`);
-  }
+  if (params.t30 !== null) metrics.push(`T30: ${params.t30.toFixed(2)}s`);
   if (params.edt !== null) metrics.push(`EDT: ${params.edt.toFixed(2)}s`);
-  if (params.d50 !== null) metrics.push(`D50: ${(params.d50 * 100).toFixed(1)}%`);
   if (params.c50 !== null) metrics.push(`C50: ${params.c50.toFixed(1)} dB`);
-  if (params.spl !== null && params.spl !== undefined) {
-    metrics.push(
-      params.splIsRelative
-        ? `Energy: ${params.spl.toFixed(1)} dB (relative)`
-        : `SPL: ${params.spl.toFixed(1)} dB`,
-    );
-  }
+  if (params.c80 !== null) metrics.push(`C80: ${params.c80.toFixed(1)} dB`);
+  if (params.d50 !== null) metrics.push(`D50: ${(params.d50 * 100).toFixed(1)}%`);
+  if (params.sti !== null) metrics.push(`STI: ${params.sti.toFixed(2)}`);
 
   if (metrics.length === 0) return '';
 
   // Warnings are emitted as a separate "Note:" section (rendered in warning
   // color and smaller type by the card) — never inline in the metric line.
   const warnings: string[] = [];
-  if (params.rt60 !== null && params.rt60IsEstimate) {
-    warnings.push('RT60 is an estimate: ISM-only simulation, no ray-traced diffuse tail');
+  if (params.t30 !== null && params.t30IsEstimate) {
+    warnings.push('T30 is an estimate: ISM-only simulation, no ray-traced diffuse tail');
   }
-  if (params.rt60 !== null && params.rt60Reliable === false) {
-    warnings.push('RT60 is unreliable (low measured decay range)');
+  if (params.t30 !== null && params.t30Reliable === false) {
+    warnings.push('T30 is unreliable (decay too short or bent at 500 Hz - 1 kHz)');
   }
   if (params.edt !== null && params.edtReliable === false) {
     warnings.push('EDT is unreliable (low measured decay range)');
@@ -213,6 +190,7 @@ export function formatAcousticMetrics(
  *   Defaults to ``apiService.getPyroomacousticsIRFile`` (backward-compatible).
  * @param sourceDisplayNames - Optional map from sourceId to human-readable display name.
  * @param receiverDisplayNames - Optional map from receiverId to human-readable name.
+ * @param resultsType - Which results JSON holds the run's per-pair metrics.
  * @returns Import result with all metadata and mappings
  */
 export async function importPyroomIRFiles(
@@ -221,11 +199,15 @@ export async function importPyroomIRFiles(
   fetchIRFile?: (simId: string, filename: string) => Promise<Blob>,
   sourceDisplayNames?: Record<string, string>,
   receiverDisplayNames?: Record<string, string>,
+  resultsType: 'pyroomacoustics' | 'pffdtd' = 'pyroomacoustics',
 ): Promise<IRImportResult> {
   const importedIRMetadataList: ImpulseResponseMetadata[] = [];
   const sourceReceiverMapping: SourceReceiverIRMapping = {};
 
   const _fetchIR = fetchIRFile ?? ((simId, fn) => apiService.getPyroomacousticsIRFile(simId, fn));
+  // The run measured each pair on its untrimmed response: the library keeps those metrics
+  // instead of measuring the exported (trimmed) WAV again.
+  const runMetrics = await fetchPairMetricBlocks(simulationId, resultsType);
 
   for (const irFilename of irFiles) {
     try {
@@ -245,7 +227,9 @@ export async function importPyroomIRFiles(
       const irName = `${sourceName} – ${receiverName}`;
       
       // Upload to IR library
-      const irMetadata = await apiService.uploadImpulseResponse(file, irName);
+      const irMetadata = await apiService.uploadImpulseResponse(
+        file, irName, runMetrics[pairMetricsKey(sourceId, receiverId)],
+      );
       importedIRMetadataList.push(irMetadata);
       
       // Build source-receiver mapping
@@ -296,55 +280,42 @@ export interface PerReceiverMetrics {
 }
 
 /**
- * Fetch per-receiver acoustic metrics from a simulation results JSON.
- * Values are averaged across all sources that share the same receiver,
- * skipping pairs whose imported IR is tagged low energy in `mapping`.
+ * Per-receiver acoustic metrics of a run's per-pair results (`metricBlocksByPair`), averaged
+ * across all sources that share the same receiver, skipping pairs whose imported IR is tagged
+ * low energy in `mapping`. Null when no receiver has metrics.
  */
-export async function fetchPerReceiverMetrics(
-  simulationId: string,
-  type: 'pyroomacoustics' | 'pffdtd',
+export function perReceiverMetricsOf(
+  pairs: Record<string, IRMetricBlocks>,
   mapping?: SourceReceiverIRMapping,
-): Promise<PerReceiverMetrics> {
-  try {
-    const response = await fetch(simulationResultsJsonUrl(simulationId, type));
-    if (!response.ok) return {};
-    const data = await response.json();
-    if (!data.results || !Array.isArray(data.results)) return {};
+): PerReceiverMetrics | null {
+  // Accumulate per-receiver metric samples (averaged across sources)
+  const sums: Record<string, Record<AcousticParameterKey, number[]>> = {};
 
-    // Accumulate per-receiver metric samples (averaged across sources)
-    const sums: Record<string, { rt60: number[]; edt: number[]; d50: number[]; c50: number[]; spl: number[] }> = {};
+  for (const [key, blocks] of Object.entries(pairs)) {
+    const [sourceId, receiverId] = key.split('::');
+    const params = blocks.acoustic_parameters;
+    if (!receiverId || !params) continue;
+    if (isLowEnergyPair(mapping, sourceId, receiverId)) continue;
 
-    for (const result of data.results) {
-      const receiverId: string = result.receiver_id;
-      const params = result.acoustic_parameters;
-      if (!receiverId || !params) continue;
-      if (isLowEnergyPair(mapping, result.source_id, receiverId)) continue;
-
-      if (!sums[receiverId]) sums[receiverId] = { rt60: [], edt: [], d50: [], c50: [], spl: [] };
-
-      const extract = (key: string): number | null => {
-        const v = params[key];
-        return typeof v === 'number' && !isNaN(v) ? v : null;
-      };
-
-      const rt60 = extract('rt60'); if (rt60 !== null) sums[receiverId].rt60.push(rt60);
-      const edt  = extract('edt');  if (edt  !== null) sums[receiverId].edt.push(edt);
-      const d50  = extract('d50');  if (d50  !== null) sums[receiverId].d50.push(d50);
-      const c50  = extract('c50');  if (c50  !== null) sums[receiverId].c50.push(c50);
-      const spl  = extract('spl');  if (spl  !== null) sums[receiverId].spl.push(spl);
+    const s = (sums[receiverId] ??= Object.fromEntries(
+      ACOUSTIC_PARAMETER_KEYS.map((k) => [k, [] as number[]]),
+    ) as Record<AcousticParameterKey, number[]>);
+    for (const k of ACOUSTIC_PARAMETER_KEYS) {
+      const v = params[k];
+      if (typeof v === 'number' && !isNaN(v)) s[k].push(v);
     }
-
-    const avg = (arr: number[]) =>
-      arr.length > 0 ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
-
-    const out: PerReceiverMetrics = {};
-    for (const [receiverId, s] of Object.entries(sums)) {
-      out[receiverId] = { rt60: avg(s.rt60), edt: avg(s.edt), d50: avg(s.d50), c50: avg(s.c50), spl: avg(s.spl) };
-    }
-    return out;
-  } catch {
-    return {};
   }
+
+  const avg = (arr: number[]) =>
+    arr.length > 0 ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+
+  const out: PerReceiverMetrics = {};
+  for (const [receiverId, s] of Object.entries(sums)) {
+    out[receiverId] = Object.fromEntries(
+      ACOUSTIC_PARAMETER_KEYS.map((k) => [k, avg(s[k])]),
+    ) as Partial<AcousticParameters>;
+  }
+  return Object.keys(out).length > 0 ? out : null;
 }
 
 // ─── PFFDTD (wave-based) helpers ───────────────────────────────────────────────
@@ -365,7 +336,34 @@ export async function importPffdtdIRFiles(
     (simId, fn) => apiService.getPffdtdIRFile(simId, fn),
     sourceDisplayNames,
     receiverDisplayNames,
+    'pffdtd',
   );
+}
+
+/**
+ * The metric blocks of every pair of a run's results JSON, keyed by `pairMetricsKey`
+ * (empty when the JSON cannot be read: the upload then measures each IR itself).
+ */
+async function fetchPairMetricBlocks(
+  simulationId: string,
+  type: 'pyroomacoustics' | 'pffdtd',
+): Promise<Record<string, IRMetricBlocks>> {
+  try {
+    const response = await fetch(simulationResultsJsonUrl(simulationId, type));
+    if (!response.ok) return {};
+    const data: { results?: Array<IRMetricBlocks & { source_id?: string; receiver_id?: string }> } = await response.json();
+    const out: Record<string, IRMetricBlocks> = {};
+    for (const r of data.results ?? []) {
+      if (r.source_id == null || r.receiver_id == null || !r.acoustic_parameters) continue;
+      out[pairMetricsKey(String(r.source_id), String(r.receiver_id))] = {
+        acoustic_parameters: r.acoustic_parameters,
+        acoustic_parameters_bands: r.acoustic_parameters_bands ?? null,
+      };
+    }
+    return out;
+  } catch {
+    return {};
+  }
 }
 
 /** Aggregate acoustic metrics of a wave-based simulation (same per-pair shape as pyroomacoustics). */
@@ -381,41 +379,28 @@ export async function fetchPffdtdAcousticMetrics(
   }
 }
 
-/** Per-pair metrics of a run's results JSON, keyed by `pairMetricsKey(source_id, receiver_id)`. */
-export type PairMetrics = Record<string, Record<string, number | boolean | null>>;
-
 export const pairMetricsKey = (sourceId: string, receiverId: string) => `${sourceId}::${receiverId}`;
-
-/** Fetch a wave-based run's per-pair metrics once; free-positioning updates then need no refetch. */
-export async function fetchPffdtdPairMetrics(simulationId: string): Promise<PairMetrics | null> {
-  try {
-    const data = await apiService.getPffdtdResults(simulationId);
-    if (!data) return null;
-    const out: PairMetrics = {};
-    for (const r of data.results) {
-      if (r.acoustic_parameters) out[pairMetricsKey(r.source_id, r.receiver_id)] = r.acoustic_parameters;
-    }
-    return out;
-  } catch {
-    return null;
-  }
-}
 
 /**
  * Aggregate metrics of the IRs a card currently plays: each mapped pair uses the
- * parameters measured for its IR (a free-positioning IR carries its own) and falls back
- * to the run's per-pair result. IRs tagged low energy are skipped. O(pairs), so it
- * can follow every move.
+ * parameters measured for its IR (a free-positioning or imported IR carries its own) and falls
+ * back to the run's per-pair result (`metricBlocksByPair`). IRs tagged low energy are skipped.
+ * Without a mapping, the run's pairs are averaged. O(pairs), so it can follow every move.
  */
 export function aggregateMappedPairMetrics(
   mapping: SourceReceiverIRMapping | undefined,
-  base: PairMetrics | null,
+  base: Record<string, IRMetricBlocks> | null | undefined,
 ): AcousticParameters | null {
+  const pairs = Object.entries(mapping ?? {});
+  if (pairs.length === 0) {
+    return aggregateParamList(Object.values(base ?? {}).map((b) => b.acoustic_parameters).filter(Boolean));
+  }
   const params: unknown[] = [];
-  for (const [sourceId, receivers] of Object.entries(mapping ?? {})) {
+  for (const [sourceId, receivers] of pairs) {
     for (const [receiverId, meta] of Object.entries(receivers)) {
       if (isLowEnergyIR(meta)) continue;
-      const p = meta.acoustic_parameters ?? meta.acousticParameters ?? base?.[pairMetricsKey(sourceId, receiverId)];
+      const p = meta.acoustic_parameters ?? meta.acousticParameters
+        ?? base?.[pairMetricsKey(sourceId, receiverId)]?.acoustic_parameters;
       if (p) params.push(p);
     }
   }

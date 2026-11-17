@@ -38,6 +38,8 @@ export interface UseSceneBubbleMenuResult {
   items: ContextMenuItem[];
   /** Props for the scene panel of `usageIndex` (inline title rename). */
   renamePropsFor: (usageIndex: number) => SceneRenameProps;
+  /** Drop a pending rename (e.g. the scenes were reordered under it). */
+  clearRenameRequest: () => void;
 }
 
 /**
@@ -113,5 +115,5 @@ export function useSceneBubbleMenu({ openPanel, panelKindFor }: UseSceneBubbleMe
   }), [renameUsageIndex, clearRenameRequest]);
 
   const menu = useMemo(() => (state ? { x: state.x, y: state.y } : null), [state]);
-  return { menu, openMenu, closeMenu, items, renamePropsFor };
+  return { menu, openMenu, closeMenu, items, renamePropsFor, clearRenameRequest };
 }

@@ -65,7 +65,7 @@ compas_soundscape/
 │   │   └── speckle_service.py       # Speckle integration service
 │   ├── utils/
 │   │   ├── __init__.py
-│   │   ├── acoustic_measurement.py  # Acoustic measurement utilities
+│   │   ├── acoustic_measurement.py  # measure_ir: every IR's metrics (compas_acoustics Analyser; ISO single numbers + per band)
 │   │   ├── audio_processing.py      # Audio manipulation utilities
 │   │   ├── resampling.py            # Single resampler → AUDIO_SAMPLE_RATE (numpy/scipy only)
 │   │   ├── file_operations.py       # File I/O and cleanup
@@ -414,7 +414,7 @@ compas_soundscape/
 │                │  ┌─────────────────────────────────────┐ │     │
 │                │  │    PyroomAcousticsService           │ │     │
 │                │  │  - ISM simulation                   │ │     │
-│                │  │  - RT60, EDT, C80 computation       │ │     │
+│                │  │  - metrics via CA Analyser (utils)  │ │     │
 │                │  │  - RIR generation                   │ │     │
 │                │  └─────────────────────────────────────┘ │     │
 │                │                                           │     │
@@ -606,19 +606,24 @@ no longer reset it — the assignments are part of the signature, so they surfac
 
 ### Analysis Card Index Links
 
-Context/usage cards are addressed by array index, so inserting or removing one shifts every
-later card. `analysisStore.handleRemoveConfig` / `duplicateConfigAt` build an `IndexMapper`
-(`utils/cardIndexRemap.ts`: old index → new index, `null` = removed) and pass every link through it:
+Context/usage cards are addressed by array index, so inserting, removing or moving one shifts
+other cards. `analysisStore.handleRemoveConfig` / `duplicateConfigAt` / `handleReorderConfigs` build an
+`IndexMapper` (`utils/cardIndexRemap.ts`: old index → new index, `null` = removed) and pass every
+link through it:
 
 ```
 analysisStore (own state)   parentContextOriginalIndex, drawnArea.cardIndex, analysisResults[].configIndex,
                             activeAnalysisTab, uploading/rehydrating sets, analyzingConfigIndex
 store/cardIndexLinks.ts     soundscapeStore parentUsageOriginalIndex (incl. -(contextIndex + 1) namespace),
   remapLinkedCardIndices    uiStore.activeSoundParentIndex, cardFlowStore (active indices, advance sets/maps),
-                            areaDrawingStore, analysisPreviewStore, sceneWorkflowStore.remapUsageIndices
+                            areaDrawingStore, analysisPreviewStore, sceneWorkflowStore.remapUsageIndices,
+                            sceneHighlightStore, homeComposerStore.submittedUsageIndex
 ```
 
 Any new state keyed by an analysis card index must be added to `remapLinkedCardIndices`.
+Reorder (card drag, Simple-mode scene bubble drag) is blocked while a scene runs or a card is
+analyzing / uploading (`hooks/useCanReorderScenes.ts`): in-flight LLM job records keep a raw
+`configIndex` for refresh recovery (`lib/job-tracker.ts`), which no remap reaches.
 
 ### Speckle Integration Architecture
 

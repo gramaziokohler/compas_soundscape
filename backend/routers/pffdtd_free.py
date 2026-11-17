@@ -90,12 +90,13 @@ async def free_ir(body: PffdtdFreeIRRequest):
             raise HTTPException(status_code=409, detail={"code": "superseded", "message": "A newer position was requested"})
         except IrServerError as exc:
             raise HTTPException(status_code=500, detail=f"IR rendering failed: {exc}")
-    metrics = await run_blocking(lambda: [ir_metrics(rir_dir / n) for n in names])
+    fmax = meta["post"].get("fmax")
+    metrics = await run_blocking(lambda: [ir_metrics(rir_dir / n, fmax) for n in names])
     return PffdtdFreeIRResponse(
         point_index=point, snapped_position=snapped, distance_m=distance,
         num_channels=4 if meta["foa"] else 1, sample_rate=int(meta["post"]["out_fs"]) or AUDIO_SAMPLE_RATE,
         duration_s=float(meta["post"]["duration"]),
-        irs=[PffdtdFreeIRFile(fixed_id=fid, ir_file=n, acoustic_parameters=m) for fid, n, m in zip(fixed_ids, names, metrics)],
+        irs=[PffdtdFreeIRFile(fixed_id=fid, ir_file=n, **m) for fid, n, m in zip(fixed_ids, names, metrics)],
         render_ms=render_ms,
     )
 

@@ -45,6 +45,8 @@ interface ListenerBubblesProps {
   onExitFps: () => void;
   onOpenChange: (index: number | null) => void;
   onAddItem: (type: CardType) => void;
+  /** Drag a bubble to a new place (item indices). Undefined = not reorderable (read-only). */
+  onReorder?: (from: number, to: number) => void;
   renderCard: (
     item: ListenerItemConfig,
     index: number,
@@ -73,7 +75,8 @@ function isListenerReady(item: ListenerItemConfig): boolean {
  * (first-person view for a single listener, show a grid's points). A viewer
  * click on a listener opens its card too. While a single listener is powered with its
  * card closed, a red exit button to its left leaves the first-person view, and
- * the first time ever a help popup explains the FPS controls.
+ * the first time ever a help popup explains the FPS controls. Bubbles can be
+ * dragged up / down to reorder them, each within its type (single / grid).
  */
 export function ListenerBubbles({
   items,
@@ -87,6 +90,7 @@ export function ListenerBubbles({
   onExitFps,
   onOpenChange,
   onAddItem,
+  onReorder,
   renderCard,
 }: ListenerBubblesProps) {
   const [addMenu, setAddMenu] = useState<{ x: number; y: number } | null>(null);
@@ -163,6 +167,21 @@ export function ListenerBubbles({
     return () => observer.disconnect();
   }, [openItemId, itemCount, layout.visibleSlots, layout.overflow]);
 
+  // Bubbles move within their own type: single listeners stay before grid listeners.
+  const getReorderBounds = (from: number) => {
+    const type = shown[from]?.item.type;
+    let min = from;
+    let max = from;
+    while (min > 0 && shown[min - 1].item.type === type) min--;
+    while (max < shown.length - 1 && shown[max + 1].item.type === type) max++;
+    return { min, max };
+  };
+  const handleReorder = (from: number, to: number) => {
+    const fromIndex = shown[from]?.index;
+    const toIndex = shown[to]?.index;
+    if (fromIndex !== undefined && toIndex !== undefined) onReorder?.(fromIndex, toIndex);
+  };
+
   const handleClick = (index: number) => {
     if (!canEdit) {
       if (isClickPowerable(items[index])) onTogglePower(activeIndex === index ? null : index);
@@ -184,6 +203,8 @@ export function ListenerBubbles({
         labelSide="left"
         tone="listener"
         style={{ right: SIMPLE_MODE.EDGE_MARGIN, bottom, zIndex: SIMPLE_MODE.Z_INDEX }}
+        onReorder={onReorder ? handleReorder : undefined}
+        getReorderBounds={getReorderBounds}
         addButton={
           <BubbleAddButton
             label="Add listener"

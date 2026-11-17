@@ -391,6 +391,7 @@ export function ListenersSection({
           handleExpandedIndexChange(index);
         }}
         onAddItem={handleAddItem}
+        onReorder={canEdit ? handleReorder : undefined}
         renderCard={renderCard}
       />
     );

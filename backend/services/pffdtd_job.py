@@ -65,7 +65,7 @@ from services.simulation_preflight_service import (
     SimulationPreflightService,
     summarize,
 )
-from utils.acoustic_measurement import AcousticMeasurement
+from utils.acoustic_measurement import try_measure_ir
 from utils.geometry import seeds_from_pairs
 from utils.pffdtd_grid import oblique_area_fraction, pffdtd_precision, plan_grid
 
@@ -410,12 +410,8 @@ def _run_from_geometry(
         if spec_by_sid.get(sid):
             approx = "high_order_measured" if (spec_by_sid[sid].get("high_order") and high_order_enabled()) else "first_order_per_band"
             entry["source_directivity"] = {**directivity_result_entry(spec_by_sid[sid]), "approximation": approx}
-        try:
-            params = AcousticMeasurement.calculate_acoustic_parameters_from_rir(ir[0].astype(np.float64), AUDIO_SAMPLE_RATE)
-            if params:
-                entry["acoustic_parameters"] = params
-        except Exception as exc:
-            print(f"  Warning: acoustic params failed for {sid}->{rid}: {exc}")
+        # W channel; nothing above fmax, so the bands reaching above it are left out
+        entry.update(try_measure_ir(ir[0].astype(np.float64), AUDIO_SAMPLE_RATE, f"{sid}->{rid}", band_limit_hz=fmax))
         results.append(entry)
 
     results_filename = f"pffdtd_{simulation_id}_results.json"

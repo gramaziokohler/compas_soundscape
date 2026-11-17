@@ -14,7 +14,9 @@ import { useCanEdit } from '@/hooks/useCanEdit';
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { ImpulseResponseUpload } from '@/components/audio/ImpulseResponseUpload';
 import type { SimulationConfig } from '@/types/acoustics';
-import { BandMetricsTable } from './BandMetricsTable';
+import { ACOUSTIC_METRICS, AcousticMetricsTable, acousticMetricMeta } from './AcousticMetricsTable';
+import { aggregateMappedBandMetrics, metricBlocksByPair, withBandHeadline } from '@/lib/acoustics/band-metrics';
+import { useRunResults } from '@/hooks/useRunResults';
 import { hybridRunSummary } from '@/lib/acoustics/hybrid';
 import type { ImpulseResponseMetadata, SourceReceiverIRMapping } from '@/types/audio';
 import { Notice } from '@/components/ui/Notice';
@@ -24,7 +26,7 @@ import { NumberField } from '@/components/ui/NumberField';
 import type { GradientMetric } from '@/store/uiStore';
 import { useUIStore } from '@/store/uiStore';
 import { useGridListenersStore, usePffdtdFreeStore } from '@/store';
-import { fetchPerReceiverMetrics, fetchPyroomAcousticMetrics, fetchPffdtdPairMetrics, aggregateMappedPairMetrics, buildAcousticMetricsFromIRMapping, type PairMetrics, type PerReceiverMetrics, type AcousticParameters } from '@/utils/acousticMetrics';
+import { aggregateMappedPairMetrics, perReceiverMetricsOf } from '@/utils/acousticMetrics';
 import { PffdtdFieldResults } from './PffdtdFieldResults';
 import { PffdtdFreePositioningResults } from './PffdtdFreePositioningResults';
 import { Badge } from '@/components/ui/Badge';
@@ -32,17 +34,6 @@ import { GradientMapManager } from '@/lib/three/gradient-map-manager';
 import { SIMULATION_POSITION_THRESHOLD } from '@/utils/constants';
 import { directivityKeySuffix, positionKeyBase } from '@/utils/positionKey';
 import { useSoundscapeStore } from '@/store/soundscapeStore';
-
-// ─── Metric metadata ──────────────────────────────────────────────────────────
-
-const METRICS: Array<{ key: GradientMetric; label: string; unit: string; format: (v: number) => string }> = [
-  { key: 'rt60', label: 'RT60', unit: 's',  format: (v) => `${v.toFixed(2)}s`  },
-  { key: 'edt',  label: 'EDT',  unit: 's',  format: (v) => `${v.toFixed(2)}s`  },
-  { key: 'd50',  label: 'D50',  unit: '%',  format: (v) => `${(v*100).toFixed(0)}%` },
-  { key: 'c50',  label: 'C50',  unit: 'dB', format: (v) => `${v.toFixed(1)}dB` },
-  // 'spl' is a relative energy level for pyroomacoustics (not physical SPL).
-  { key: 'spl',  label: 'Level', unit: 'dB', format: (v) => `${v.toFixed(1)}dB` },
-];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -76,36 +67,6 @@ function detectGridReceivers(mapping: SourceReceiverIRMapping | undefined): bool
   return false;
 }
 
-type MetricWarning = { metricKey: string; message: string };
-
-function getMetricWarnings(params: AcousticParameters): MetricWarning[] {
-  const warnings: MetricWarning[] = [];
-  if (params.rt60 !== null && params.rt60IsEstimate) {
-    warnings.push({
-      metricKey: 'rt60',
-      message: 'RT60 is an estimate: ISM-only simulation, no ray-traced diffuse tail',
-    });
-  }
-  if (params.rt60 !== null && params.rt60Reliable === false) {
-    warnings.push({
-      metricKey: 'rt60',
-      message: 'RT60 is unreliable (low measured decay range)',
-    });
-  }
-  if (params.edt !== null && params.edtReliable === false) {
-    warnings.push({
-      metricKey: 'edt',
-      message: 'EDT is unreliable (low measured decay range)',
-    });
-  }
-  return warnings;
-}
-
-function getWarningForMetric(warnings: MetricWarning[], metricKey: string): string | undefined {
-  const matches = warnings.filter((w) => w.metricKey === metricKey);
-  return matches.length > 0 ? matches.map((w) => w.message).join(' · ') : undefined;
-}
-
 /** Compact spinner shown while the acoustic-metrics JSON is fetched from the backend. */
 function MetricsLoading() {
   return (
@@ -115,97 +76,6 @@ function MetricsLoading() {
     >
       <Spinner size={12} />
       Loading metrics…
-    </div>
-  );
-}
-
-function AcousticMetricsPanel({ params }: { params: AcousticParameters }) {
-  const warnings = getMetricWarnings(params);
-  const columns: Array<{ key: string; label: string; value: string; unit?: string; warning?: string }> = [];
-
-  if (params.rt60 !== null) {
-    columns.push({
-      key: 'rt60',
-      label: 'RT60',
-      value: params.rt60.toFixed(2),
-      unit: 's',
-      warning: getWarningForMetric(warnings, 'rt60'),
-    });
-  }
-  if (params.edt !== null) {
-    columns.push({
-      key: 'edt',
-      label: 'EDT',
-      value: params.edt.toFixed(2),
-      unit: 's',
-      warning: getWarningForMetric(warnings, 'edt'),
-    });
-  }
-  if (params.d50 !== null) {
-    columns.push({
-      key: 'd50',
-      label: 'D50',
-      value: (params.d50 * 100).toFixed(0),
-      unit: '%',
-    });
-  }
-  if (params.c50 !== null) {
-    columns.push({
-      key: 'c50',
-      label: 'C50',
-      value: params.c50.toFixed(1),
-      unit: ' dB',
-    });
-  }
-  if (params.spl !== null && params.spl !== undefined) {
-    columns.push({
-      key: 'spl',
-      label: params.splIsRelative ? 'Energy' : 'SPL',
-      value: params.spl.toFixed(1),
-      unit: ' dB',
-    });
-  }
-
-  if (columns.length === 0) return null;
-
-  const cellBorder = { borderColor: 'var(--color-on-blue-faint)' };
-
-  return (
-    <div className="card-stack--md">
-      <h3 className="text-xs font-semibold" style={{ color: 'var(--color-on-blue)' }}>
-        Acoustic Metrics
-      </h3>
-      <table className="w-full border-collapse table-fixed">
-        <thead>
-          <tr>
-            {columns.map((col) => (
-              <th
-                key={col.key}
-                className="border px-1.5 py-0.5 text-[9px] font-medium"
-                style={{ ...cellBorder, color: 'var(--color-on-blue-muted)' }}
-              >
-                {col.label}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            {columns.map((col) => (
-              <td
-                key={col.key}
-                className={`border px-1.5 py-1 text-center text-[10px] font-semibold tabular-nums ${col.warning ? 'text-warning' : ''}`}
-                style={col.warning ? cellBorder : { ...cellBorder, color: 'var(--color-on-blue)' }}
-                title={col.warning}
-              >
-                {col.value}
-                {col.warning ? '*' : ''}
-                {col.unit}
-              </td>
-            ))}
-          </tr>
-        </tbody>
-      </table>
     </div>
   );
 }
@@ -417,10 +287,8 @@ export function SimulationResultContent({
   // Import-irs cards show the aggregate metrics table only (no per-listener gradient).
   const canUseGrid = hasGridReceivers && !isImportIrs;
 
-  const [perReceiverMetrics, setPerReceiverMetrics] = useState<PerReceiverMetrics | null>(null);
-  const [acousticParams, setAcousticParams] = useState<AcousticParameters | null>(null);
-  const [metricsLoading, setMetricsLoading] = useState(false);
-  const selectedMetric = controlledMetric;
+  // A metric key saved by an older version (e.g. 'rt60') reads as no selection
+  const selectedMetric = acousticMetricMeta(controlledMetric) ? controlledMetric : null;
   const setSelectedMetric = onMetricChange ?? (() => {});
 
   // User-editable range — initialised from data, reset when metric/data changes
@@ -428,59 +296,29 @@ export function SimulationResultContent({
   const [userMax, setUserMax] = useState<number | null>(null);
   const prevMetricRef = useRef<string | null>(null);
 
-  // Fetch per-receiver metrics once when grid receivers are present and we have a simulationId
-  useEffect(() => {
-    if (!canUseGrid || !simulationId || !simType) return;
-    let cancelled = false;
-    setMetricsLoading(true);
-    fetchPerReceiverMetrics(simulationId, simType, sourceReceiverIRMapping)
-      .then((m) => {
-        if (cancelled) return;
-        if (Object.keys(m).length > 0) setPerReceiverMetrics(m);
-      })
-      .finally(() => {
-        if (!cancelled) setMetricsLoading(false);
-      });
-    return () => { cancelled = true; };
-  }, [canUseGrid, simulationId, simType, sourceReceiverIRMapping]);
+  // The run's per-pair results, fetched once: the single numbers, band rows, grid gradient map and
+  // each IR preview's fallback (IRs imported before their metadata kept metrics) all derive from
+  // it, and re-aggregate locally when the mapping changes (free-positioning moves, imported IRs).
+  const runResults = useRunResults(simulationId, simType);
+  const metricsLoading = !!simulationId && !!simType && runResults === undefined;
+  const runPairMetrics = useMemo(() => metricBlocksByPair(runResults), [runResults]);
 
-  // Import-irs: derive the aggregate metrics from the assigned IRs' upload-time
-  // metrics. Re-runs whenever the mapping changes (i.e. whenever an IR is added).
-  useEffect(() => {
-    if (!isImportIrs) return;
-    setAcousticParams(buildAcousticMetricsFromIRMapping(sourceReceiverIRMapping));
-    setPerReceiverMetrics(null);
-  }, [isImportIrs, sourceReceiverIRMapping]);
-
-  // Fetch aggregate acoustic metrics for the text-metrics panel (non-grid simulations)
-  const [pairMetrics, setPairMetrics] = useState<PairMetrics | null>(null);
-  useEffect(() => {
-    if (isImportIrs) return;
-    if (canUseGrid || !simulationId || !simType) {
-      setAcousticParams(null);
-      setPairMetrics(null);
-      return;
-    }
-    let cancelled = false;
-    setMetricsLoading(true);
-    if (simType === 'pffdtd') {
-      // Per-pair, fetched once: free-positioning moves re-aggregate locally (below).
-      fetchPffdtdPairMetrics(simulationId)
-        .then((m) => { if (!cancelled) setPairMetrics(m); })
-        .finally(() => { if (!cancelled) setMetricsLoading(false); });
-    } else {
-      fetchPyroomAcousticMetrics(simulationId, sourceReceiverIRMapping)
-        .then((params) => { if (!cancelled) setAcousticParams(params); })
-        .finally(() => { if (!cancelled) setMetricsLoading(false); });
-    }
-    return () => { cancelled = true; };
-  }, [isImportIrs, canUseGrid, simulationId, simType, sourceReceiverIRMapping]);
-
-  const wavePairParams = useMemo(
-    () => (simType === 'pffdtd' && !canUseGrid ? aggregateMappedPairMetrics(sourceReceiverIRMapping, pairMetrics) : null),
-    [simType, canUseGrid, sourceReceiverIRMapping, pairMetrics],
+  const perReceiverMetrics = useMemo(
+    () => (canUseGrid ? perReceiverMetricsOf(runPairMetrics, sourceReceiverIRMapping) : null),
+    [canUseGrid, runPairMetrics, sourceReceiverIRMapping],
   );
-  const shownParams = simType === 'pffdtd' ? wavePairParams : acousticParams;
+  // Band rows of the metrics table (undefined while loading, null without any), averaged over the
+  // IRs the card plays; its single numbers are read off them so both always agree.
+  const bandMetrics = useMemo(
+    () => (canUseGrid || runResults === undefined
+      ? undefined
+      : aggregateMappedBandMetrics(sourceReceiverIRMapping, runResults ?? undefined)),
+    [canUseGrid, runResults, sourceReceiverIRMapping],
+  );
+  const shownParams = useMemo(
+    () => (canUseGrid ? null : withBandHeadline(aggregateMappedPairMetrics(sourceReceiverIRMapping, runPairMetrics), bandMetrics)),
+    [canUseGrid, sourceReceiverIRMapping, runPairMetrics, bandMetrics],
+  );
 
   // ── Gradient map: compute point values and dispatch to uiStore ──────────
   useEffect(() => {
@@ -539,8 +377,8 @@ export function SimulationResultContent({
     if (vals.length === 0) return null;
     const minVal = Math.min(...vals);
     const maxVal = Math.max(...vals);
-    const meta = METRICS.find((m) => m.key === selectedMetric)!;
-    return { min: minVal, max: maxVal, format: meta.format };
+    if (!acousticMetricMeta(selectedMetric)) return null;
+    return { min: minVal, max: maxVal };
   }, [selectedMetric, perReceiverMetrics]);
 
   useEffect(() => {
@@ -596,7 +434,7 @@ export function SimulationResultContent({
               compact
               className="flex-1"
               placeholder="— select —"
-              options={METRICS.map((m) => ({
+              options={ACOUSTIC_METRICS.map((m) => ({
                 value: m.key,
                 label: `${m.label} (${m.unit})`,
               }))}
@@ -621,7 +459,7 @@ export function SimulationResultContent({
                 />
 
                 <span className="text-[9px] pb-0.5" style={{ color: 'var(--color-on-blue-muted)' }}>
-                  {METRICS.find((m) => m.key === selectedMetric)?.label}
+                  {acousticMetricMeta(selectedMetric)?.label}
                 </span>
 
                 {/* Max input */}
@@ -641,13 +479,9 @@ export function SimulationResultContent({
       ) : metricsLoading ? (
         <MetricsLoading />
       ) : (
-        shownParams && <AcousticMetricsPanel params={shownParams} />
+        <AcousticMetricsTable params={shownParams} bands={bandMetrics} showPairCount />
       )}
 
-      {/* Per-octave-band metrics (compas_acoustics engine runs) */}
-      {config.type === 'pyroomacoustics' && simulationId && isExpanded && !canUseGrid && (
-        <BandMetricsTable simulationId={simulationId} />
-      )}
       {config.type === 'hybrid' && config.hybridInfo && (
         <p className="text-[11px]" style={{ color: 'var(--color-on-blue-muted)' }}>
           {hybridRunSummary(config.hybridInfo)}
@@ -688,6 +522,7 @@ export function SimulationResultContent({
         onBlueBackground={onBlueBackground}
         simulationIRIds={simulationConfig.importedIRIds}
         sourceReceiverIRMapping={sourceReceiverIRMapping}
+        runPairMetrics={runPairMetrics}
         onIRHover={onIRHover}
         sourceDisplayNames={sourceDisplayNames}
         receiverDisplayNames={receiverDisplayNames}

@@ -95,7 +95,10 @@ def test_mono_direct_sound_at_the_app_level(tmp_path):
     entry = results["results"][0]
     assert entry["engine"] == "compas_acoustics" and entry["num_channels"] == 1
     assert results["engine"] == "compas_acoustics"
-    assert "rt60" in entry["acoustic_parameters"]
+    params, bands = entry["acoustic_parameters"], entry["acoustic_parameters_bands"]
+    assert "t30" in params and "sti" in params
+    if params["t30"] is not None:   # one analysis: the card's T30 is the bands' ISO single number
+        assert params["t30"] == pytest.approx(bands["T30_overall"])
     assert results["compas_acoustics"]["closed"] is True
 
 
@@ -234,13 +237,13 @@ def test_parallel_rendering_gives_the_serial_responses():
         # The pool returns float32.
         assert a.rir.shape == b.rir.shape
         np.testing.assert_allclose(b.rir, a.rir, rtol=1e-6, atol=1e-6)
-        assert b.band_metrics is not None
+        assert b.metrics is not None and b.metrics["acoustic_parameters_bands"]
     fractions = [f for f, _ in stages]
     assert fractions == sorted(fractions) and fractions[-1] <= 1.0
     assert any("rendering" in t and "at once" in t for _, t in stages)
 
 
-def test_mono_band_metrics_from_the_pool_match():
+def test_mono_metrics_from_the_pool_match():
     from services.pyroomacoustics_room_builder import room_offset
 
     source = [1.5, 2.5, 1.5]
@@ -253,21 +256,25 @@ def test_mono_band_metrics_from_the_pool_match():
     pooled = engine.simulate_pairs(mesh, offset, pairs, engine.EngineSettings(**base, n_jobs=2), lambda f, t: None)
     for a, b in zip(serial.responses, pooled.responses):
         np.testing.assert_allclose(b.rir, a.rir)
-        assert b.band_metrics is not None
+        assert a.metrics is not None and b.metrics is not None
+        bands_a, bands_b = a.metrics["acoustic_parameters_bands"], b.metrics["acoustic_parameters_bands"]
         for key in ("C50", "D50"):   # float32 hand-over to the pool: equal to rounding
-            np.testing.assert_allclose(b.band_metrics[key], a.band_metrics[key], atol=0.05)
+            np.testing.assert_allclose(bands_b[key], bands_a[key], atol=0.05)
 
 
 def test_render_duration_follows_what_the_export_keeps():
-    from config.constants import CA_RENDER_MIN_S, CA_RENDER_PAD_S
+    from config.constants import CA_RENDER_MARGIN_DB, CA_RENDER_MIN_S, CA_RENDER_PAD_S, IR_TRIM_DECAY_DB
 
     t = np.arange(FS * 3) / FS
-    decay = np.exp(-6.91 * t / 1.0)            # T60 = 1 s: -60 dB at 1 s, so -52 dB (trim 40 + margin 12) at 0.87 s
+    # T60 = 1 s: the energy decay falls 60 dB per second, so it reaches the trim (60 dB) plus the
+    # margin (12 dB) at 1.2 s
+    decay = np.exp(-6.91 * t / 1.0)
+    reach = (IR_TRIM_DECAY_DB + CA_RENDER_MARGIN_DB) / 60.0
     length = engine.render_duration([decay])
-    assert length == pytest.approx(52.0 / 60.0 + CA_RENDER_PAD_S, abs=0.01)
+    assert length == pytest.approx(reach + CA_RENDER_PAD_S, abs=0.01)
     # the slowest of several decides; a second channel is ignored (W decides)
     slow = np.exp(-6.91 * t / 2.0)
-    assert engine.render_duration([decay, np.column_stack([slow, slow * 0])]) == pytest.approx(2 * 52.0 / 60.0 + CA_RENDER_PAD_S, abs=0.02)
+    assert engine.render_duration([decay, np.column_stack([slow, slow * 0])]) == pytest.approx(2 * reach + CA_RENDER_PAD_S, abs=0.02)
     # a lone click still gets a minimum length; silence gives no opinion
     click = np.zeros(FS)
     click[100] = 1.0

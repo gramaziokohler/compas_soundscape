@@ -91,17 +91,17 @@ Step 5 above is the **legacy** engine. Since the compas_acoustics migration
 - **Level:** CA writes 1/(4πr). The adapter multiplies by `CA_TO_APP_LEVEL_SCALE` (4π), so IRs stay
   at the app's 1/r level (legacy engine, PFFDTD, saved soundscapes, playback gains).
 - **Export:** both engines write **float32** WAVs through `_export_pair()` (the old int16 export
-  wrapped above 1.0 near a source). CA results also carry `acoustic_parameters_bands` per pair
-  (CA `Analyser`: per-band EDT/T20/T30/C50/C80/D50/DRR/Ts/STI + reliability), plus header blocks
-  `engine` and `compas_acoustics` (method, seed, air, closed, volume, notes).
+  wrapped above 1.0 near a source). Every result carries `acoustic_parameters` and
+  `acoustic_parameters_bands` per pair (see Acoustic Metrics below); CA results also carry header
+  blocks `engine` and `compas_acoustics` (method, seed, air, closed, volume, notes).
 - **Routing rules** (`validate_engine_settings`): BTMS needs ambisonic output. HOA and diffraction
   need compas_acoustics. Preflight adds `ca_hybrid_no_volume` (error) when ambisonic
   output has no air volume, and `ca_hybrid_open_model` (warning) only when the model
   does not close *and* the leak share is above `PREFLIGHT_LEAK_WARNING_FRACTION`
   (openings absorb in the late field). Unwelded topology with no escaping rays is silent.
-- **Install:** `compas_acoustics[hybrid]` (requirements.txt, git URL). The `[worker]` extra is never
-  installed, because tensorflow pins protobuf < 6 and compas_pb needs ≥ 6.31. spharpy needs
-  scipy ≥ 1.17.
+- **Install:** `compas_acoustics` (requirements.txt, git URL), no extras: as upstream, it always
+  installs pyFDN (0.7, pinned by CA via upstream PR #22) and compas_pb (protobuf ≥ 6.31, hence TensorFlow 2.20 and
+  `protobuf>=6.31.1,<7`). spharpy needs scipy ≥ 1.17.
 
 ### Engine settings, sound paths and edge selection (compas_acoustics)
 
@@ -141,8 +141,8 @@ Step 5 above is the **legacy** engine. Since the compas_acoustics migration
   instance that is simulated or traced, and enter it inside `edge_warnings`. Display paths are still
   built from `RoomGeometry.from_scene`, which `scene_geometry` swaps for the prepared room (a CA
   internal: `tests/test_acoustic_paths.py` fails if an upgrade breaks it).
-- **Per-band metrics:** `acoustic_parameters_bands` per pair → `BandMetricsTable.tsx`
-  (`lib/acoustics/band-metrics.ts`).
+- **Per-band metrics:** `acoustic_parameters_bands` per pair → the band rows of
+  `AcousticMetricsTable.tsx` (`lib/acoustics/band-metrics.ts`), every engine.
 - **IR import** (`impulse_response_service`): 9–15 channels are stored as second order (9
   channels, format `soa`); they used to be padded to 16 with silent third-order channels, and
   before that cut to 4. The IR list previews drop trailing silent orders
@@ -156,7 +156,7 @@ One job on the PFFDTD queue (`JOB_TYPE_PFFDTD`, payload `variant: "hybrid"`,
 
 1. **Geometric part first** (compas_acoustics, mono or FOA; no HOA).
 2. **Crossover** (`utils/hybrid_crossover.plan_crossover`): `crossover_factor ×` the Schroeder
-   frequency `2000·√(T60/V)`, with T60 the median reliable RT60 of the geometric IRs (Eyring's
+   frequency `2000·√(T60/V)`, with T60 the median reliable T30 (500 Hz – 1 kHz) of the geometric IRs (Eyring's
    prediction otherwise) and V the prepared air volume; or a manual frequency. The wave solver runs
    to `HYBRID_WAVE_FMAX_MARGIN` (1.5) × the crossover (headroom; no user cap). Limits 40–2000 Hz,
    fallback 200 Hz when the room is unknown. Before a run the card shows an Eyring estimate of the
@@ -361,15 +361,43 @@ Ids: analytical Cardioid family (`omni`, `subcardioid`, `cardioid`, `supercardio
   next to the soundscape. A changed directivity outdates a result like a moved source
   (`useSpeckleSimulationMismatch`, `SimulationResultContent`).
 
-### Acoustic Metrics (`utils/acoustic_measurement.py`)
+### Acoustic Metrics (`utils/acoustic_measurement.measure_ir`) — one analysis for everything
 
-| Metric | Description |
-| ------ | ----------- |
-| RT60 | `pra.measure_rt60(rir, fs)` — reverberation time |
-| EDT | Early decay time — first 10 dB drop |
-| C80 | Clarity index (< 0 = reverberant, > 0 = clear) |
+- **One analyser:** every IR (CA and legacy engine, PFFDTD, hybrid, free positioning, uploads) is
+  measured by the compas_acoustics `Analyser` (`analyse(parameters=ACOUSTIC_METRIC_PARAMETERS)` +
+  `reliability()`), channel 0 (W). Never add a second metric implementation: the old broadband one
+  disagreed with the per-band table by 35-60 % on T30 (it weighted the whole 0-24 kHz spectrum and
+  ran on the trimmed IR).
+- **Measured before the trim**, on the untrimmed response. A CA response passes its `generation`
+  so the analysis starts at the geometric direct sound. Imported run IRs keep the run's metrics
+  (`acoustic_metrics` form field on upload) instead of measuring the trimmed WAV again.
+- **Two blocks per pair / IR:** `acoustic_parameters` = ISO 3382-1 single numbers `t30`, `edt`,
+  `c50`, `c80`, `d50` (0-1) = mean of the 500 Hz and 1 kHz bands, `sti`, `t30_reliable` /
+  `edt_reliable` (both bands), `t30_is_estimate` (ISM only). There is no level metric (the relative
+  `spl` / `energy_level_db` was removed; older results may still carry it and it is ignored);
+  `acoustic_parameters_bands` = the same per octave 125 Hz - 8 kHz (D50 in %) + `reliability`.
+- **Band-limited IRs** (PFFDTD, `band_limit_hz=fmax`): bands reaching above fmax are null; the
+  single numbers are null when the 1 kHz band is out, STI when any band is.
+- **Frontend:** `AcousticMetricsTable` is one expandable table on the card and on each IR preview
+  panel (under the graph, on the preview's `--color-secondary-lighter`): the single-number row,
+  and a chevron beside the title that expands each column into its 125 Hz - 8 kHz band rows (IR
+  previews share the flag `uiStore.irPreviewBandsExpanded`). A card fetches its run's results JSON
+  **once** (`hooks/useRunResults`); the single numbers (`aggregateMappedPairMetrics`), band rows
+  (`aggregateMappedBandMetrics`), grid gradient map (`perReceiverMetricsOf`) and IR-preview
+  fallbacks (`metricBlocksByPair`) all derive from it, preferring each mapped IR's own metrics, so
+  free-positioning moves re-aggregate without a refetch. Low-energy IRs are skipped.
+  `withBandHeadline` reads T30 / EDT / C50 / C80 / D50 off the band table's 500 Hz and 1 kHz
+  columns (the Analyser's `*_overall` rule), so the row matches its bands. STI (IEC-weighted), the
+  reliability flags and results without bands use the backend's per-pair values. The backend keeps
+  measuring the single numbers too: the hybrid crossover, uploads and results text read them.
 
-Computed from the WAV IR after `compute_rir()`, reported in the result JSON.
+### Exported IR length (`utils/audio_processing.trim_ir`)
+
+Cut where the backward-integrated energy of all channels has fallen `IR_TRIM_DECAY_DB` (60 dB)
+below its start (CA `decay_end`, +5 %), then a `IR_TRIM_FADE_S` raised-cosine fade. Never cut at a
+fraction of the peak amplitude: that follows the direct sound, leaving a near listener only
+15-25 dB of reverberation. CA ambisonic renders stop where the mono reference's decay reaches
+`IR_TRIM_DECAY_DB + CA_RENDER_MARGIN_DB` (`render_duration`).
 
 ### Output Paths
 

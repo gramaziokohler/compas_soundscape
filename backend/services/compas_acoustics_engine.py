@@ -37,12 +37,11 @@ from config.constants import (
     CA_AIR_HUMIDITY_DEFAULT,
     CA_AIR_TEMPERATURE_RANGE_C,
     CA_AMBISONIC_NORMALIZATION,
-    CA_BAND_METRICS,
     CA_DIFFRACTION_OFF,
     CA_RENDER_MARGIN_DB,
     CA_RENDER_MIN_S,
     CA_RENDER_PAD_S,
-    PYROOMACOUSTICS_IR_TRIM_THRESHOLD,
+    IR_TRIM_DECAY_DB,
     CA_HYBRID_SCATTERING_SPLIT,
     CA_TO_APP_LEVEL_SCALE,
     PYROOMACOUSTICS_CUSTOM_MATERIALS,
@@ -93,7 +92,9 @@ class PairResponse:
     pair_index: int
     rir: np.ndarray
     generation: dict
-    band_metrics: Optional[dict] = None
+    # utils.acoustic_measurement.measure_ir of the untrimmed response:
+    # {"acoustic_parameters": ..., "acoustic_parameters_bands": ...}; None when it failed
+    metrics: Optional[dict] = None
 
 
 @dataclass
@@ -422,22 +423,13 @@ def _json_safe(value):
     return str(value)
 
 
-def band_metrics(ir) -> Optional[dict]:
-    """compas_acoustics ``Analyser`` per-band metrics of a response (W channel), JSON-ready."""
-    from compas_acoustics import Analyser
+def pair_metrics(rir: np.ndarray, generation: dict, label: str = "") -> Optional[dict]:
+    """Metrics of one response at the app level, untrimmed (``utils.acoustic_measurement.measure_ir``,
+    anchored at its geometric direct sound), JSON-ready; None when it cannot be analysed."""
+    from utils.acoustic_measurement import try_measure_ir
 
-    analyser = Analyser(ir, channel=0)
-    result = analyser.analyse()
-    keep = ("frequency_bands", "EDT", "T20", "T30", "C50", "C80", "D50", "DRR", "Ts", "STI")
-    out = {k: result[k] for k in result if k in keep or k.endswith("_overall")}
-    from compas_acoustics.defaults import Defaults
-
-    out.setdefault("frequency_bands", list(Defaults().DEFAULT_FREQUENCY_BANDS))
-    try:
-        out["reliability"] = analyser.reliability()
-    except Exception:  # noqa: BLE001 - extras only
-        pass
-    return _json_safe(out)
+    found = try_measure_ir(rir, PYROOMACOUSTICS_SAMPLE_RATE, label, generation=generation)
+    return _json_safe(found) if found else None
 
 
 def _groups(pairs: list[dict]) -> list[list[int]]:
@@ -481,18 +473,17 @@ def build_scene(pairs: list[dict], indices: list[int], offset: np.ndarray, name:
 
 
 def render_duration(references: list, fs: int = PYROOMACOUSTICS_SAMPLE_RATE) -> Optional[float]:
-    """How long (s) to render pairs whose mono references are ``references``: until the slowest one
-    has fallen CA_RENDER_MARGIN_DB below the level the export trims at, plus a pad. None without a
-    usable reference."""
-    floor = PYROOMACOUSTICS_IR_TRIM_THRESHOLD * 10.0 ** (-CA_RENDER_MARGIN_DB / 20.0)
+    """How long (s) to render pairs whose mono references are ``references``: until the slowest
+    one's energy decay (Schroeder curve of its W channel) has fallen CA_RENDER_MARGIN_DB further
+    than the export trims at (IR_TRIM_DECAY_DB), plus a pad. None without a usable reference."""
+    from compas_acoustics.analyser import decay_end
+
     longest = 0
     for rir in references:
-        x = np.abs(np.asarray(rir, dtype=np.float64).reshape(len(rir), -1)[:, 0])
-        peak = float(x.max()) if x.size else 0.0
-        if peak <= 0.0:
+        x = np.asarray(rir, dtype=np.float64).reshape(len(rir), -1)[:, 0]
+        if not np.any(x):
             continue
-        above = np.flatnonzero(x > floor * peak)
-        longest = max(longest, int(above[-1]) + 1)
+        longest = max(longest, decay_end(x[None, :], IR_TRIM_DECAY_DB + CA_RENDER_MARGIN_DB, margin=0.0))
     if longest == 0:
         return None
     return max(longest / float(fs) + CA_RENDER_PAD_S, CA_RENDER_MIN_S)
@@ -535,7 +526,7 @@ def _simulate_group(
     settings: EngineSettings,
     references: Optional[dict] = None,
     report: Optional[Callable] = None,
-    metrics: bool = CA_BAND_METRICS,
+    metrics: bool = True,
     geometry=None,
 ) -> tuple[list[PairResponse], list[str]]:
     """The responses of one group of pairs, in this process: ``(responses, notes)``.
@@ -579,16 +570,10 @@ def _simulate_group(
         if key_of(i) not in results:
             raise RuntimeError(f"compas_acoustics returned no response for '{p['source_id']}' -> '{p['receiver_id']}'")
         ir = results[key_of(i)]
-        band = None
-        if metrics:
-            try:
-                band = band_metrics(ir)
-            except Exception as exc:  # noqa: BLE001 - extras only
-                print(f"  Warning: compas_acoustics band metrics failed for {p['source_id']}->{p['receiver_id']}: {exc}")
-        responses.append(PairResponse(
-            pair_index=i, rir=np.asarray(ir.denormalized(), dtype=np.float64) * CA_TO_APP_LEVEL_SCALE,
-            generation=_json_safe(dict(ir.generation or {})), band_metrics=band,
-        ))
+        rir = np.asarray(ir.denormalized(), dtype=np.float64) * CA_TO_APP_LEVEL_SCALE
+        generation = _json_safe(dict(ir.generation or {}))
+        found = pair_metrics(rir, generation, f"{p['source_id']}->{p['receiver_id']}") if metrics else None
+        responses.append(PairResponse(pair_index=i, rir=rir, generation=generation, metrics=found))
     return responses, notes
 
 
@@ -636,24 +621,11 @@ def _simulate_group_task(mesh, offset, pairs, indices, settings, references):
     return responses, notes
 
 
-def _band_metrics_task(items: list) -> list:
-    """Pool entry: band metrics of mono responses ``[(pair index, response at the app level, generation)]``."""
-    import compas_acoustics as ca
-
+def _metrics_task(items: list) -> list:
+    """Pool entry: metrics of mono responses ``[(pair index, response at the app level, generation)]``."""
     _one_thread_per_process()
-    source, receiver = ca.Source("s", 0.0, 0.0, 0.0), ca.Receiver("r", 1.0, 0.0, 0.0)
-    out = []
-    for index, rir, generation in items:
-        ir = ca.ImpulseResponse(
-            f"ir{index}", source, receiver, np.asarray(rir, dtype=np.float64) / CA_TO_APP_LEVEL_SCALE,
-            PYROOMACOUSTICS_SAMPLE_RATE, normalized=False, generation=generation,
-        )
-        try:
-            out.append((index, band_metrics(ir)))
-        except Exception as exc:  # noqa: BLE001 - extras only
-            print(f"  Warning: compas_acoustics band metrics failed for pair {index}: {exc}")
-            out.append((index, None))
-    return out
+    return [(index, pair_metrics(np.asarray(rir, dtype=np.float64), generation, f"pair {index}"))
+            for index, rir, generation in items]
 
 
 def _gather(pool, tasks: list, on_done: Callable[[int], None]) -> list:
@@ -686,12 +658,12 @@ def simulate_pairs(
 
     compas_acoustics spreads its ray tracing over ``settings.n_jobs`` processes, but renders an
     ambisonic response (image sources + the 96-line feedback delay network + its shaping) and the
-    band metrics one pair after another in one process — several seconds per pair, which outweighs
+    acoustic metrics one pair after another in one process — several seconds per pair, which outweighs
     the ray tracing as soon as there are a few pairs. With ``n_jobs > 1`` this function therefore:
 
-    * ambisonic output: renders the pairs in ``n_jobs`` processes, each on a part of the sources
-      (or listeners). Each part traces its reference and its directional histogram once, together;
-    * mono output: computes the band metrics of the responses in ``n_jobs`` processes.
+    * ambisonic output: renders (and measures) the pairs in ``n_jobs`` processes, each on a part of
+      the sources (or listeners). Each part traces its reference and its directional histogram once;
+    * mono output: computes the acoustic metrics of the responses in ``n_jobs`` processes.
 
     Each source and each listener restarts from the run seed, so cutting the pairs across
     processes does not change a response.
@@ -775,15 +747,15 @@ def simulate_pairs(
         print(f"  compas_acoustics: {len(pairs)} pairs rendered in {time.perf_counter() - started:.0f} s "
               f"({len(tasks)} part(s), {min(n_workers, len(tasks))} process(es))")
     else:
-        # one process renders everything; the band metrics of many mono responses go to the pool
-        pooled_metrics = CA_BAND_METRICS and spread and not ambisonic and len(pairs) >= 4
+        # one process renders everything; the metrics of many mono responses go to the pool
+        pooled_metrics = spread and not ambisonic and len(pairs) >= 4
         top = 0.7 if pooled_metrics else 1.0
         for g, indices in enumerate(groups):
             lo, hi = top * g / len(groups), top * (g + 1) / len(groups)
             prefix = f"Group {g + 1}/{len(groups)}: " if len(groups) > 1 else ""
             progress(lo, f"compas_acoustics: {prefix}simulating {len(indices)} pair(s)...")
             found, new = _simulate_group(mesh, offset, pairs, indices, settings, report=staged(lo, lo + 0.95 * (hi - lo), prefix),
-                                         metrics=CA_BAND_METRICS and not pooled_metrics, geometry=geometry)
+                                         metrics=not pooled_metrics, geometry=geometry)
             add_notes(new)
             responses.extend(found)
         if pooled_metrics:
@@ -794,13 +766,13 @@ def simulate_pairs(
             def measured(weight: int) -> None:
                 done_pairs[0] += weight
                 progress(min(top + (1.0 - top) * done_pairs[0] / len(pairs), 0.999),
-                         f"compas_acoustics: band metrics {done_pairs[0]}/{len(pairs)}...")
+                         f"compas_acoustics: acoustic metrics {done_pairs[0]}/{len(pairs)}...")
 
-            progress(top, f"compas_acoustics: band metrics of {len(pairs)} responses...")
+            progress(top, f"compas_acoustics: acoustic metrics of {len(pairs)} responses...")
             with child_pool(len(parts)) as pool:
-                for part in _gather(pool, [(_band_metrics_task, (items,), len(items)) for items in parts], measured):
-                    for index, band in part:
-                        by_index[index].band_metrics = band
+                for part in _gather(pool, [(_metrics_task, (items,), len(items)) for items in parts], measured):
+                    for index, found in part:
+                        by_index[index].metrics = found
 
     run_generation = responses[-1].generation if responses else {}
     responses.sort(key=lambda r: r.pair_index)

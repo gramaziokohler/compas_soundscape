@@ -21,6 +21,7 @@ import { AnalyzeModelResultContent } from '@/components/layout/sidebar/analysis/
 import { useSpeckleStore, useAnalysisStore, useSoundscapeStore, useAudioControlsStore } from '@/store';
 import { useUIStore } from '@/store/uiStore';
 import { useServiceVersions } from '@/hooks/useServiceVersions';
+import { useCanReorderScenes } from '@/hooks/useCanReorderScenes';
 import { LLM_MODEL_TO_PROVIDER } from '@/utils/constants';
 import { getAnalysisGroupColor } from '@/utils/utils';
 
@@ -120,6 +121,7 @@ export function ContextSection({
   const handlePreviewPlayPause = useAudioControlsStore((s) => s.handlePreviewPlayPause);
   const handlePreviewStop = useAudioControlsStore((s) => s.handlePreviewStop);
   const serviceVersions = useServiceVersions();
+  const canReorderScenes = useCanReorderScenes();
   const llmModel = useSoundscapeStore((s) => s.llmModel);
   // Cards analyze concurrently — each card follows only its own run.
   const analyzingConfigIndices = useAnalysisStore((s) => s.analyzingConfigIndices);
@@ -587,13 +589,14 @@ export function ContextSection({
         color="primary"
         expandedIndex={filteredExpandedIndex}
         onExpandedIndexChange={handleCardSectionExpandedChange}
-        onReorder={(from, to) => {
+        // Scene order is pinned while a scene runs or a card is analyzing (raw-index job records).
+        onReorder={canReorderScenes ? (from, to) => {
           const fromOriginal = indexMap[from];
           const toOriginal = indexMap[to];
           if (fromOriginal !== undefined && toOriginal !== undefined) {
             handleReorderConfigs(fromOriginal, toOriginal);
           }
-        }}
+        } : undefined}
         onDuplicate={(from, toInsertion) => {
           const fromOriginal = indexMap[from];
           const toOriginal = toInsertion < indexMap.length ? indexMap[toInsertion] : analysisConfigs.length;

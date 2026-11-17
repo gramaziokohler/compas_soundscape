@@ -34,9 +34,13 @@ describe('free positioning helpers', () => {
   it('writes a moved listener’s IRs for every fixed source', () => {
     const moved = { objectId: 'r1', position: [2, 2, 1] as [number, number, number], label: 'Ear', soundIds: [] };
     const res = response(['pos_a']);
-    res.irs[0].acoustic_parameters = { rt60: 0.4 };
+    res.irs[0].acoustic_parameters = { t30: 0.4 };
+    res.irs[0].acoustic_parameters_bands = { frequency_bands: [500], T30: [0.4] };
     const next = applyFreeIRs('listener', moved, res, {}, positions());
-    expect(next.mapping.pos_a.r1).toMatchObject({ url: '/static/pffdtd_rir/pffdtd_x_free_p7_pos_a.wav', channels: 4, format: 'foa', acoustic_parameters: { rt60: 0.4 } });
+    expect(next.mapping.pos_a.r1).toMatchObject({
+      url: '/static/pffdtd_rir/pffdtd_x_free_p7_pos_a.wav', channels: 4, format: 'foa',
+      acoustic_parameters: { t30: 0.4 }, acoustic_parameters_bands: { T30: [0.4] },
+    });
     expect(next.positions.receivers.r1).toEqual([2, 2, 1]);
   });
 

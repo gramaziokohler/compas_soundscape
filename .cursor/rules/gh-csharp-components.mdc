@@ -263,7 +263,7 @@ escaping, and parsing numbers as `long` (integral) or `double`. Serialize the pa
 - Throw a custom `BackendException("HTTP " + status + ": " + detail)` on non-2xx, parsing FastAPI's
   `{"detail": …}` body.
 - Parse arrays defensively (`as IList`, null-guarded) — the backend shape is
-  `{results: [{source_id, receiver_id, acoustic_parameters:{rt60, edt, c50, d50, drr, spl}}]}`.
+  `{results: [{source_id, receiver_id, acoustic_parameters:{t30, edt, c50, c80, d50, sti}}]}`.
 - `Task.Run` a one-time `EnsureLoaded()` for the material catalog (guarded by a `bool` + `lock`) so
   the panel's material menu is populated asynchronously without blocking component instantiation.
 

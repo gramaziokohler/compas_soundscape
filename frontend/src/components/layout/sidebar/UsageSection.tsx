@@ -3,6 +3,7 @@
 import React, { useMemo, useCallback, useEffect, useRef, useState } from 'react';
 import { RefreshCw, Eye } from 'lucide-react';
 import { useCanEdit } from '@/hooks/useCanEdit';
+import { useCanReorderScenes } from '@/hooks/useCanReorderScenes';
 import { buildSavedVisibilityRows } from '@/utils/savedObjectVisibility';
 import type {
   AnalysisConfig,
@@ -116,6 +117,7 @@ export function UsageSection({
   activeContextOriginalIndex,
 }: UsageSectionProps) {
   const canEdit = useCanEdit();
+  const canReorderScenes = useCanReorderScenes();
   // Controlled expansion state: filtered index within usageConfigs
   const [filteredExpandedIndex, setFilteredExpandedIndex] = useState<number | null>(null);
   const serviceVersions = useServiceVersions();
@@ -701,13 +703,14 @@ export function UsageSection({
       color="primary"
       expandedIndex={filteredExpandedIndex}
       onExpandedIndexChange={handleCardSectionExpandedChange}
-      onReorder={(from, to) => {
+      // Scene order is pinned while a scene runs or a card is analyzing (raw-index job records).
+      onReorder={canReorderScenes ? (from, to) => {
         const fromOriginal = indexMap[from];
         const toOriginal = indexMap[to];
         if (fromOriginal !== undefined && toOriginal !== undefined) {
           handleReorderConfigs(fromOriginal, toOriginal);
         }
-      }}
+      } : undefined}
       onDuplicate={(from, toInsertion) => {
         const fromOriginal = indexMap[from];
         const toOriginal = toInsertion < indexMap.length ? indexMap[toInsertion] : analysisConfigs.length;

@@ -8,7 +8,7 @@
 import type { HybridRunInfo } from '@/types/acoustics';
 import type { DrawnArea } from './area-drawing';
 import type { GridPlacementMode } from './receiver';
-import type { IRAcousticParameters } from './audio';
+import type { IRAcousticParameters, IRBandMetrics } from './audio';
 import type { FoleySoundDetail } from './analysis';
 import type { PffdtdVoxelProblem } from './pffdtd';
 import type { CustomMaterialRecord } from './materials';
@@ -136,6 +136,8 @@ export interface SoundscapeReceiver {
   pitch?: number;
   roll?: number;
   orientation_saved?: boolean;
+  /** Excluded from acoustic simulations ("Hide for simulation"). */
+  hidden_for_simulation?: boolean;
 }
 
 /** Serializable grid listener configuration */
@@ -170,6 +172,7 @@ export interface SoundscapeIRMetadata {
   channel_ordering?: string;
   peak_amplitude?: number;
   acoustic_parameters?: IRAcousticParameters;
+  acoustic_parameters_bands?: IRBandMetrics;
 }
 
 /**

@@ -97,6 +97,7 @@ export class GridReceiverManager {
       depthTest: true,
       side: THREE.FrontSide,
     });
+    this.applyFaint(mat);
 
     const origOnBeforeRender = mat.onBeforeRender.bind(mat);
     mat.onBeforeRender = (renderer: any, _scene: any, camera: any, geometry: any, object: any) => {
@@ -122,6 +123,23 @@ export class GridReceiverManager {
 
   /** Remembered so a mesh (re)created while hidden stays hidden. */
   private pointsVisible = true;
+  /** The shown grid is hidden for simulation: its points are drawn faint. */
+  private faint = false;
+
+  private applyFaint(mat: THREE.Material): void {
+    const opacity = this.faint ? RECEIVER_CONFIG.HIDDEN_FOR_SIMULATION_OPACITY : 1;
+    if (mat.opacity === opacity && mat.transparent === this.faint) return;
+    mat.transparent = this.faint;
+    mat.opacity = opacity;
+    mat.depthWrite = !this.faint;
+    mat.needsUpdate = true;
+  }
+
+  /** Draw the grid points faint (the shown grid listener is hidden for simulation). */
+  public setFaint(faint: boolean): void {
+    this.faint = faint;
+    if (this.instancedMesh) this.applyFaint(this.instancedMesh.material as THREE.Material);
+  }
   public setGridListenerId(id: string | null): void { this.gridListenerId = id; }
   public getGridListenerId(): string | null { return this.gridListenerId; }
   public setVisible(visible: boolean): void {

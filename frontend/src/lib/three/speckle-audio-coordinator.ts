@@ -736,10 +736,12 @@ export class SpeckleAudioCoordinator {
   public updateGridListeners(
     points: [number, number, number][],
     gridListenerId?: string | null,
-    pointIds?: string[]
+    pointIds?: string[],
+    faint = false,
   ): void {
     this.gridReceiverManager?.updatePoints(points, pointIds);
     this.gridReceiverManager?.setGridListenerId(gridListenerId ?? null);
+    this.gridReceiverManager?.setFaint(faint);
     // Wake the Speckle viewer — it only renders on explicit request
     this.viewer.requestRender();
   }

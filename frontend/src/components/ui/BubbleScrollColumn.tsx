@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from 'react';
+import { isValidElement, useEffect, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from 'react';
 import { BubbleScrollButton, type BubbleTone } from '@/components/ui/Bubble';
 import { clampScroll, scrollToInclude, windowLayout } from '@/utils/bubbleOverflow';
+import { useBubbleReorder, type ReorderBounds } from '@/hooks/useBubbleReorder';
 import { SIMPLE_MODE } from '@/utils/constants';
 
 const SLOT = SIMPLE_MODE.BUBBLE_SIZE + SIMPLE_MODE.BUBBLE_GAP;
@@ -28,6 +29,14 @@ export interface BubbleScrollColumnProps {
   className?: string;
   /** DOM id on the column (e.g. a SectionHighlight target). */
   id?: string;
+  /**
+   * Drag a bubble to a new position. Receives positions in `items` order.
+   * When set, a vertical drag on a bubble reorders instead of scrolling (wheel and
+   * arrows still scroll).
+   */
+  onReorder?: (from: number, to: number) => void;
+  /** Where the item at `from` may be dropped (default: anywhere). */
+  getReorderBounds?: (from: number) => ReorderBounds;
 }
 
 /**
@@ -39,7 +48,7 @@ export interface BubbleScrollColumnProps {
  * wheel, vertical drag and the arrows scroll one bubble (arrows: one page);
  * the focused bubble is scrolled into view whenever it changes. Only the
  * visible bubbles are rendered, so hover labels and backdrop blur are never
- * clipped.
+ * clipped. With `onReorder`, dragging a bubble moves it (see useBubbleReorder).
  *
  * Usage:
  * ```tsx
@@ -64,6 +73,8 @@ export function BubbleScrollColumn({
   style,
   className = '',
   id,
+  onReorder,
+  getReorderBounds,
 }: BubbleScrollColumnProps) {
   const count = items.length;
   const { overflow, visibleSlots } = windowLayout(count, availablePx);
@@ -127,7 +138,8 @@ export function BubbleScrollColumn({
   // Vertical drag on the window; becomes a drag only past a threshold so plain clicks still land.
   const handlePointerDown = (e: PointerEvent<HTMLDivElement>) => {
     suppressClickRef.current = false;
-    if (!overflow || e.button !== 0) return;
+    // Reorderable columns drag bubbles instead (wheel / arrows still scroll).
+    if (!overflow || e.button !== 0 || onReorder) return;
     dragRef.current = { y: e.clientY, start: first, dragging: false };
   };
   const handlePointerMove = (e: PointerEvent<HTMLDivElement>) => {
@@ -151,7 +163,24 @@ export function BubbleScrollColumn({
     if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
   };
 
-  const visibleItems = overflow ? items.slice(first, first + visibleSlots) : items;
+  const windowStart = overflow ? first : 0;
+  const windowItems = overflow ? items.slice(first, first + visibleSlots) : items;
+  const reorder = useBubbleReorder({
+    onReorder,
+    getBounds: getReorderBounds,
+    direction,
+    first: windowStart,
+    visibleCount: windowItems.length,
+    onDragEnd: () => { suppressClickRef.current = true; },
+  });
+  // Reorderable: each bubble sits in a slot that carries the drag handlers and offset.
+  const visibleItems = onReorder
+    ? windowItems.map((item, i) => (
+      <div key={isValidElement(item) && item.key !== null ? item.key : windowStart + i} {...reorder.slotProps(windowStart + i)}>
+        {item}
+      </div>
+    ))
+    : windowItems;
   const beforeArrow = overflow && (
     <BubbleScrollButton
       direction={direction === 'down' ? 'up' : 'down'}

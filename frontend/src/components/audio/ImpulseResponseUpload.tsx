@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback, useId } from "react";
 import { ChevronRight, Trash2 } from "lucide-react";
 import { IRPreviewContent, IRPreviewPanel } from "@/components/audio/IRPreviewPanel";
+import { bandMetricsOfIR, withBandHeadline } from "@/lib/acoustics/band-metrics";
 import { MiniIRWaveform } from "@/components/audio/MiniIRWaveform";
 import { useUIStore } from "@/store";
 import { isShareViewActive } from "@/store/shareViewStore";
@@ -15,7 +16,8 @@ import { Notice } from '@/components/ui/Notice';
 import { Badge } from '@/components/ui/Badge';
 import { Spinner } from '@/components/ui/Spinner';
 import { EmptyState } from '@/components/ui/EmptyState';
-import type { ImpulseResponseMetadata, SourceReceiverIRMapping } from "@/types/audio";
+import type { ImpulseResponseMetadata, IRMetricBlocks, SourceReceiverIRMapping } from "@/types/audio";
+import { acousticParametersOfIR, pairMetricsKey } from "@/utils/acousticMetrics";
 import { API_BASE_URL, AUDIO_SAMPLE_RATE, IR_HOVER_LINE, IR_PREVIEW_PANEL, AUDIO_VISUALIZATION, IMPULSE_RESPONSE, SIMULATION_POSITION_MATCH_THRESHOLD } from "@/utils/constants";
 import { isLowEnergyPeak } from "@/utils/irEnergy";
 import { clampToViewport } from "@/utils/scale";
@@ -32,6 +34,9 @@ interface ImpulseResponseUploadProps {
   refreshTrigger?: number;
   simulationIRIds?: string[];
   sourceReceiverIRMapping?: SourceReceiverIRMapping;
+  /** The run's metrics per pair (`pairMetricsKey`): the preview panel's fallback for an IR whose
+   *  metadata carries none (imported before IRs kept their own). */
+  runPairMetrics?: Record<string, IRMetricBlocks>;
   onIRHover?: (sourceId: string | null, receiverId: string | null) => void;
   onLowEnergyIdsChange?: (ids: Set<string>) => void;
   sourceDisplayNames?: Record<string, string>;
@@ -81,6 +86,7 @@ export function ImpulseResponseUpload({
   refreshTrigger = 0,
   simulationIRIds = undefined,
   sourceReceiverIRMapping,
+  runPairMetrics,
   onIRHover,
   onLowEnergyIdsChange,
   sourceDisplayNames,
@@ -571,6 +577,33 @@ export function ImpulseResponseUpload({
       ?? undefined;
   }, [impulseResponses, groupedByReceiver]);
 
+  /**
+   * Metrics of an IR (single numbers read off its bands, and the bands). Read from the card's own
+   * mapping entry, never from the library listing (which `groupedByReceiver` prefers, and which
+   * carries no metrics); an IR imported before the metadata kept its metrics falls back to the
+   * run's result for its pair.
+   */
+  const findIRMetrics = useCallback((id: string | null) => {
+    if (!id) return null;
+    let blocks: IRMetricBlocks | undefined;
+    for (const [sourceId, receivers] of Object.entries(sourceReceiverIRMapping ?? {})) {
+      for (const [receiverId, meta] of Object.entries(receivers)) {
+        if (blocks || meta.id !== id) continue;
+        const run = runPairMetrics?.[pairMetricsKey(sourceId, receiverId)];
+        blocks = {
+          acoustic_parameters: meta.acoustic_parameters ?? meta.acousticParameters ?? run?.acoustic_parameters,
+          acoustic_parameters_bands: meta.acoustic_parameters_bands ?? run?.acoustic_parameters_bands,
+        };
+      }
+    }
+    if (!blocks) {
+      const ir = findIR(id);
+      blocks = { acoustic_parameters: ir?.acoustic_parameters ?? ir?.acousticParameters, acoustic_parameters_bands: ir?.acoustic_parameters_bands };
+    }
+    const bands = bandMetricsOfIR(blocks.acoustic_parameters_bands);
+    return { params: withBandHeadline(acousticParametersOfIR(blocks.acoustic_parameters), bands), bands };
+  }, [sourceReceiverIRMapping, runPairMetrics, findIR]);
+
   const closePinnedPanel = useCallback(() => {
     setPinnedIRId(null);
     if (useUIStore.getState().irPreviewOwnerId === panelOwnerId) {
@@ -867,6 +900,8 @@ export function ImpulseResponseUpload({
   const hoveredIR = findIR(hoveredIRId);
   const pinnedIR = isPanelOwner ? findIR(pinnedIRId) : undefined;
   const pinnedBuffer = pinnedIR ? bufferCache.get(pinnedIR.id) ?? null : null;
+  const hoveredMetrics = hoveredIR ? findIRMetrics(hoveredIR.id) : null;
+  const pinnedMetrics = pinnedIR ? findIRMetrics(pinnedIR.id) : null;
   const irCount = groupedByReceiver && !allowPairUploads
     ? groupedByReceiver.groups.reduce((n, g) => n + g.sources.filter(s => s.ir).length, 0) + groupedByReceiver.unmapped.length
     : impulseResponses.length;
@@ -1172,6 +1207,8 @@ export function ImpulseResponseUpload({
             onDownload={() => handleDownloadIR(hoveredIR)}
             amplitudeScale={gainPreview ? computePreviewScale(getIRPeak(hoveredIR)) : undefined}
             fullScale={gainPreview}
+            acousticParams={hoveredMetrics?.params}
+            bandMetrics={hoveredMetrics?.bands}
           />
         </div>
       )}
@@ -1192,6 +1229,8 @@ export function ImpulseResponseUpload({
           onLayoutCommit={(l) => useUIStore.getState().setIrPreviewPanel(l)}
           amplitudeScale={gainPreview ? computePreviewScale(getIRPeak(pinnedIR)) : undefined}
           fullScale={gainPreview}
+          acousticParams={pinnedMetrics?.params}
+          bandMetrics={pinnedMetrics?.bands}
         />
       )}
 

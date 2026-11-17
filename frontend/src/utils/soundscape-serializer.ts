@@ -411,6 +411,7 @@ export function buildSoundscapeSavePayload(
     pitch: r.pitch,
     roll: r.roll,
     orientation_saved: r.orientationSaved,
+    hidden_for_simulation: r.hiddenForSimulation ?? false,
   }));
 
   // Serialize grid listeners (convert tuple points to plain arrays)
@@ -497,6 +498,7 @@ export function buildSoundscapeSavePayload(
             channel_ordering: m.channelOrdering ?? m.channel_ordering,
             peak_amplitude: m.peakAmplitude ?? m.peak_amplitude,
             acoustic_parameters: m.acousticParameters ?? m.acoustic_parameters,
+            acoustic_parameters_bands: m.acoustic_parameters_bands,
           };
         }
       }
@@ -957,6 +959,7 @@ export function restoreSoundscapeState(
     pitch: (saved as any).pitch ?? 0,
     roll: (saved as any).roll ?? 0,
     orientationSaved: (saved as any).orientation_saved ?? false,
+    hiddenForSimulation: saved.hidden_for_simulation ?? false,
   }));
 
   const selectedReceiverId = loadedData.selected_receiver_id ?? null;
@@ -1043,6 +1046,7 @@ export function restoreSoundscapeState(
             channel_ordering: irData.channel_ordering,
             peak_amplitude: irData.peak_amplitude,
             acoustic_parameters: irData.acoustic_parameters,
+            acoustic_parameters_bands: irData.acoustic_parameters_bands,
             // camelCase aliases (for any code that uses TS interface keys)
             originalChannels: irData.original_channels,
             sampleRate: irData.sample_rate,

@@ -2,7 +2,7 @@
  * Cross-store card index links
  *
  * Keeps every store that points at an analysis (context/usage) card by index in
- * step with analysisStore when cards are inserted or removed. analysisStore
+ * step with analysisStore when cards are inserted, removed or reordered. analysisStore
  * remaps its own state (configs, results, tabs); this module covers the rest.
  */
 
@@ -19,6 +19,8 @@ import { useCardFlowStore } from './cardFlowStore';
 import { useAreaDrawingStore } from './areaDrawingStore';
 import { useAnalysisPreviewStore } from './analysisPreviewStore';
 import { useSceneWorkflowStore } from './sceneWorkflowStore';
+import { useSceneHighlightStore } from './sceneHighlightStore';
+import { useHomeComposerStore } from './homeComposerStore';
 
 /**
  * Remap all analysis-card index links held outside analysisStore. Links to
@@ -88,4 +90,20 @@ export function remapLinkedCardIndices(mapIndex: IndexMapper): void {
 
   // Simple-mode scene runs (keyed by usage card index).
   useSceneWorkflowStore.getState().remapUsageIndices(mapIndex);
+
+  // Simple-mode model highlights (context / scenario card shown in the viewer).
+  const highlight = useSceneHighlightStore.getState();
+  const focusedContext = highlight.focusedGroup ? mapIndex(highlight.focusedGroup.contextIndex) : null;
+  useSceneHighlightStore.setState({
+    analysisContextIndex: remapNullableIndex(highlight.analysisContextIndex, mapIndex),
+    scenarioUsageIndex: remapNullableIndex(highlight.scenarioUsageIndex, mapIndex),
+    focusedGroup: highlight.focusedGroup && focusedContext !== null
+      ? { ...highlight.focusedGroup, contextIndex: focusedContext }
+      : null,
+  }, false);
+
+  // Scene just sent from the Home panel (Simple mode opens its workflow view).
+  const composer = useHomeComposerStore.getState();
+  const nextSubmitted = remapNullableIndex(composer.submittedUsageIndex, mapIndex);
+  if (nextSubmitted !== composer.submittedUsageIndex) useHomeComposerStore.setState({ submittedUsageIndex: nextSubmitted });
 }
