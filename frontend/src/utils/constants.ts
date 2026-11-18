@@ -465,6 +465,9 @@ export const SHARE_VIEW = {
   PUBLIC_API_PREFIX: '/api/public',
   LOAD_FAILED: 'This shared soundscape could not be loaded.',
   BLOCKED_REQUEST: 'Not available in the shared view',
+  /** Bottom-bar hint between the wordmark and the playback controls. */
+  HEADPHONES_HINT: 'Use headphones!!',
+  HEADPHONES_HINT_TITLE: 'The sound is spatial: headphones put you inside the scene',
   /** iframe snippet defaults for the embed code. */
   EMBED_WIDTH: '100%',
   EMBED_HEIGHT: '600',
@@ -2962,6 +2965,9 @@ export const SIMPLE_MODE = {
   SCENE_MENU_TITLE: 'Sound scene',
   SCENE_MENU_RENAME: 'Rename',
   SCENE_MENU_DUPLICATE: 'Duplicate',
+  /** Optional footnote at the bottom-left of a scene panel. */
+  SCENE_FOOTNOTE_PLACEHOLDER: 'Add a footnote…',
+  SCENE_FOOTNOTE_MAX_CHARS: 200,
   /** Appended to a duplicated scene's title. */
   DUPLICATE_SCENE_SUFFIX: ' (copy)',
   DUPLICATE_SCENE_ERROR: 'Could not duplicate the scene',

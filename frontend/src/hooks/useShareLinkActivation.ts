@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import {
   linkKey,
+  linkedListenerIds,
   useAcousticsSimulationStore,
   useAnalysisStore,
   useShareConfigStore,
@@ -11,7 +12,7 @@ import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import type { ShareItemKind, ShareLink } from '@/types/share';
 import { selectSceneByIndex } from '@/utils/sceneSelection';
 import { useActiveSceneId } from '@/hooks/useActiveSceneId';
-import { showOnlyListenerForSimulation } from '@/utils/listenerSimulationVisibility';
+import { showOnlyListenersForSimulation } from '@/utils/listenerSimulationVisibility';
 
 type ActiveItems = Record<ShareItemKind, string | null>;
 
@@ -32,8 +33,10 @@ interface UseShareLinkActivationArgs {
  * Share › "Also apply links while editing" is on (the designer's links). Nothing
  * is activated on load — the app opens idle.
  *
- * In the editor, activating a link that has a listener also makes that listener
- * the only one shown for simulation (the others get "Hide for simulation").
+ * In the editor, activating a link group with listeners also makes them the
+ * only ones shown for simulation (the others get "Hide for simulation"). A
+ * simulation's listeners can sit in other links ({scene, sim, L1} + {sim, L2}),
+ * see `linkedListenerIds`.
  *
  * Changes made by the hook itself are recorded as the new baseline, so they
  * never re-trigger it.
@@ -97,11 +100,16 @@ export function useShareLinkActivation({
           next.simulation = link.simulationId;
         }
       }
-      // Editor: the group's listener is the one simulated; the share view never edits.
-      if (link.listenerId && !isShareView) showOnlyListenerForSimulation(link.listenerId);
-      if (link.listenerId && link.listenerId !== current.listener) {
-        activateListenerRef.current(link.listenerId);
-        next.listener = link.listenerId;
+      const groupListeners = linkedListenerIds(links, link.sceneId, link.simulationId);
+      if (groupListeners.size === 0) return next;
+      // Editor: the group's listeners are the ones simulated; the share view never edits.
+      if (!isShareView) showOnlyListenersForSimulation(groupListeners);
+      // One listener is powered at a time: keep the current one when it is in the group.
+      if (current.listener && groupListeners.has(current.listener)) return next;
+      const listenerId = link.listenerId ?? groupListeners.values().next().value;
+      if (listenerId) {
+        activateListenerRef.current(listenerId);
+        next.listener = listenerId;
       }
       return next;
     };

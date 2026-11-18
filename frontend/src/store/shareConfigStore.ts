@@ -137,6 +137,31 @@ export function linkKey(kind: ShareItemKind): 'sceneId' | 'simulationId' | 'list
   return LINK_KEY[kind];
 }
 
+/**
+ * Listener ids grouped with a scene and / or a simulation. A link holds one
+ * listener, so a simulation with several listeners spreads them over several
+ * links: {scene, sim, L1} and {sim, L2}. Collects the scene's links (whose
+ * simulation is `simulationId` or none, when given) and the scene-less links of
+ * that simulation — or, with no `simulationId`, of every simulation linked to
+ * the scene.
+ */
+export function linkedListenerIds(links: ShareLink[], sceneId?: string | null, simulationId?: string | null): Set<string> {
+  const simulationIds = new Set<string>();
+  if (simulationId) simulationIds.add(simulationId);
+  else if (sceneId) {
+    for (const l of links) if (l.sceneId === sceneId && l.simulationId) simulationIds.add(l.simulationId);
+  }
+  const ids = new Set<string>();
+  for (const l of links) {
+    if (!l.listenerId) continue;
+    const viaScene =
+      !!sceneId && l.sceneId === sceneId && (!simulationId || !l.simulationId || l.simulationId === simulationId);
+    const viaSimulation = !l.sceneId && !!l.simulationId && simulationIds.has(l.simulationId);
+    if (viaScene || viaSimulation) ids.add(l.listenerId);
+  }
+  return ids;
+}
+
 export const useShareConfigStore = create<ShareConfigStoreState>()(
   devtools(
     (set, get) => ({

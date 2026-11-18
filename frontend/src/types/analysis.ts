@@ -30,6 +30,8 @@ export interface AnalysisBaseConfig extends CardBaseConfig {
   scene_id?: string;
   /** Object Explorer hide / isolate state saved on this scene; restored when it is powered on. */
   savedObjectVisibility?: SavedObjectVisibility;
+  /** Optional note shown at the bottom of the scene's Simple-mode panel. */
+  footnote?: string;
   /** Public share view: a non-shared scene redacted to a stub by the backend. Never shown. */
   share_hidden?: boolean;
 }

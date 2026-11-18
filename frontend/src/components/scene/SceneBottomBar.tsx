@@ -13,7 +13,8 @@ import { BugReportButton } from '@/components/scene/BugReportButton';
 import { ModelPill } from '@/components/scene/model-version/ModelPill';
 import { useSceneWorkflowStore, useUIStore, useWorkspaceStore, useTransportTimeStore, selectTransportWholeSeconds, selectHasSaveTarget, selectIsReadOnlyWorkspace, selectHasNewerSave } from '@/store';
 import { useHomeStageHasWork } from '@/hooks/useHomeStageHasWork';
-import { APP_BRAND, MODEL_VERSION_WATCH, SCENE_BOTTOM_BAR, WORKSPACE_MESSAGES } from '@/utils/constants';
+import { Headphones } from 'lucide-react';
+import { APP_BRAND, MODEL_VERSION_WATCH, SCENE_BOTTOM_BAR, SHARE_VIEW, WORKSPACE_MESSAGES } from '@/utils/constants';
 import { useCanEdit } from '@/hooks/useCanEdit';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
 
@@ -142,10 +143,20 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
       aria-label="Scene controls"
     >
       {/* ── Left: app, mode, history ── */}
-      <div className="scene-bottom-bar__group" style={{ justifySelf: 'start' }}>
+      <div className="scene-bottom-bar__group" style={{ justifySelf: canEdit ? 'start' : 'stretch' }}>
         {!canEdit ? (
           // Share view: the wordmark only — the app home is behind a login.
-          <span className="scene-bottom-bar__brand scene-bottom-bar__brand--static">{APP_BRAND}</span>
+          <>
+            <span className="scene-bottom-bar__brand scene-bottom-bar__brand--static">{APP_BRAND}</span>
+            <span className="bar-headphones-hint" role="note" title={SHARE_VIEW.HEADPHONES_HINT_TITLE}>
+              <span className="bar-headphones-hint__icon" aria-hidden="true">
+                <Headphones size={ICON} strokeWidth={2.25} />
+                <span className="bar-headphones-hint__note">♪</span>
+                <span className="bar-headphones-hint__note bar-headphones-hint__note--late">♫</span>
+              </span>
+              {SHARE_VIEW.HEADPHONES_HINT}
+            </span>
+          </>
         ) : (
         <>
         {isExpert ? (

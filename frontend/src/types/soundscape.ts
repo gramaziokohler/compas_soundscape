@@ -422,6 +422,8 @@ export interface SerializedAnalysisConfig {
   scene_id?: string;
   /** Saved Object Explorer view, restored when the scene is powered on. */
   saved_object_visibility?: SoundscapeObjectVisibility;
+  /** Optional note shown at the bottom of the scene's Simple-mode panel. */
+  footnote?: string;
   /** Set by the public share endpoint on redacted, non-shared scenes. */
   share_hidden?: boolean;
   parentContextOriginalIndex?: number;

@@ -9,6 +9,7 @@ import { ContextMenu } from '@/components/ui/ContextMenu';
 import { SoundGenerationSection } from '@/components/layout/sidebar/SoundGenerationSection';
 import { buildSoundGenerationSectionProps } from '@/components/layout/sidebar/soundSectionProps';
 import { ScenePromptComposer } from './ScenePromptComposer';
+import { SceneFootnote } from './SceneFootnote';
 import { SceneSettingsSummary } from './SceneSettingsSummary';
 import { SceneWorkflowActions, SceneWorkflowDetail } from './SceneWorkflowDetail';
 import { NEW_SCENE_ADD_BUTTON_ID } from './HomeSceneComposer';
@@ -339,6 +340,9 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
 
   const panelScene =
     panel && panel.kind !== 'composer' ? scenes.find((s) => s.usageIndex === panel.usageIndex) : undefined;
+  const panelFootnote = useAnalysisStore((s) =>
+    panelScene ? s.analysisConfigs[panelScene.usageIndex]?.footnote : undefined,
+  );
 
   // Scroll the open panel's scene into view, else the selected (playing) one.
   const focusUsageIndex =
@@ -439,6 +443,9 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
           onTogglePower={isPlayable(panelScene) ? () => toggleScenePower(panelScene) : undefined}
           powered={isPowered(panelScene.usageIndex)}
           powerTitle={powerTitle(isPowered(panelScene.usageIndex))}
+          footerNote={canEdit || panelFootnote
+            ? <SceneFootnote usageIndex={panelScene.usageIndex} footnote={panelFootnote} />
+            : undefined}
           style={{ position: 'fixed', left: PANEL_LEFT, top: COLUMN_TOP }}
         >
           <div className="mb-2">

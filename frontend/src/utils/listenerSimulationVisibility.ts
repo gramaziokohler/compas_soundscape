@@ -1,11 +1,11 @@
 import { useGridListenersStore, useReceiversStore } from '@/store';
 
 /**
- * Make one listener (single listener id or grid listener id) the only one shown
- * for simulation: it is shown, every other single / grid listener is hidden.
- * Used when a share link group with a listener is activated in the editor.
+ * Make the given listeners (single listener ids and grid listener ids) the only
+ * ones shown for simulation: they are shown, every other single / grid listener
+ * is hidden. Used when a share link group with listeners is activated in the editor.
  */
-export function showOnlyListenerForSimulation(listenerId: string): void {
-  useReceiversStore.getState().showOnlyReceiverForSimulation(listenerId);
-  useGridListenersStore.getState().showOnlyGridListenerForSimulation(listenerId);
+export function showOnlyListenersForSimulation(listenerIds: ReadonlySet<string>): void {
+  useReceiversStore.getState().showOnlyReceiversForSimulation(listenerIds);
+  useGridListenersStore.getState().showOnlyGridListenersForSimulation(listenerIds);
 }

@@ -1257,6 +1257,7 @@ export function buildAnalysisStateSave(
     };
     if (config.scene_id) base.scene_id = config.scene_id;
     if (config.savedObjectVisibility) base.saved_object_visibility = serializeObjectVisibility(config.savedObjectVisibility);
+    if (config.footnote) base.footnote = config.footnote;
 
     if ('numSounds' in config) base.numSounds = (config as any).numSounds;
     if ('textInput' in config) base.textInput = (config as any).textInput;
@@ -1446,6 +1447,7 @@ export function restoreAnalysisState(analysisState: AnalysisState): {
     };
     if (saved.scene_id) config.scene_id = saved.scene_id;
     if (saved.saved_object_visibility) config.savedObjectVisibility = deserializeObjectVisibility(saved.saved_object_visibility);
+    if (saved.footnote) config.footnote = saved.footnote;
     if (saved.share_hidden) config.share_hidden = true;
 
     if (saved.numSounds !== undefined) config.numSounds = saved.numSounds;

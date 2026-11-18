@@ -37,6 +37,8 @@ export interface BubblePanelProps {
   removeDisabledReason?: string;
   /** Extra footer buttons, rendered right of the trash button. */
   footerActions?: ReactNode;
+  /** Small muted line at the bottom-left of the footer (same spot as a card's `footerNote`). */
+  footerNote?: ReactNode;
   /** Panel positioning (fixed/absolute coordinates) supplied by the owning column. */
   style?: CSSProperties;
   width?: number | string;
@@ -50,7 +52,7 @@ export interface BubblePanelProps {
  * Floating frosted panel that a Simple-mode bubble expands into. Compact header
  * (power, title, optional actions, reduce) over a scrollable, clamped-fluid
  * body, and a bottom-right trash button that confirms before removing
- * (optional `footerActions` sit right of it). With `onRename`, a string title
+ * (optional `footerActions` sit right of it, an optional `footerNote` bottom-left). With `onRename`, a string title
  * is edited inline (double-click it, or set `renameRequested`).
  *
  * Usage:
@@ -81,6 +83,7 @@ export function BubblePanel({
   removeConfirmMessage,
   removeDisabledReason,
   footerActions,
+  footerNote,
   onTogglePower,
   powered = false,
   powerTitle,
@@ -164,8 +167,9 @@ export function BubblePanel({
         </header>
       )}
       <div className="bubble-panel__body">{children}</div>
-      {(onRemove || footerActions) && (
+      {(onRemove || footerActions || footerNote) && (
         <footer className="bubble-panel__footer">
+          {footerNote && <div className="bubble-panel__footer-note text-xxs text-text-3">{footerNote}</div>}
           {onRemove && (
             <DeleteConfirmButton
               title={removeTitle}
