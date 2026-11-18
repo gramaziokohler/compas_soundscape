@@ -691,18 +691,25 @@ canvas {
 .bubble-label--interactive.bubble-label--right { padding: 4px 11px 4px 4px; }
 .bubble-label--interactive.bubble-label--left  { padding: 4px 4px 4px 11px; }
 .bubble-wrap:hover .bubble-label--interactive,
-.bubble-wrap:has(:focus-visible) .bubble-label--interactive {
+.bubble-wrap:has(:focus-visible) .bubble-label--interactive,
+.bubble-wrap:hover .bubble-label--clickable {
   pointer-events: auto;
 }
-.bubble-label--interactive::before {
+.bubble-label--interactive::before,
+.bubble-label--clickable::before {
   content: "";
   position: absolute;
   top: -6px;
   bottom: -6px;
   width: 14px;
 }
-.bubble-label--interactive.bubble-label--right::before { right: 100%; }
-.bubble-label--interactive.bubble-label--left::before  { left: 100%; }
+.bubble-label--interactive.bubble-label--right::before,
+.bubble-label--clickable.bubble-label--right::before { right: 100%; }
+.bubble-label--interactive.bubble-label--left::before,
+.bubble-label--clickable.bubble-label--left::before  { left: 100%; }
+/* Clickable label (expands the bubble's card). */
+.bubble-label--clickable { cursor: pointer; }
+.bubble-label--clickable:hover .bubble-label__title { color: var(--color-blue-text); }
 
 .bubble-power {
   flex-shrink: 0;
@@ -2112,6 +2119,11 @@ button.mv-row:hover:not(:disabled) {
 .share-tutorial-tip--right { animation: share-tutorial-in-right 0.25s ease-out; }
 .share-tutorial-tip--left  { animation: share-tutorial-in-left 0.25s ease-out; }
 .share-tutorial-tip--above { animation: share-tutorial-in-above 0.25s ease-out; }
+.share-tutorial-tip--below { animation: share-tutorial-in-below 0.25s ease-out; }
+@keyframes share-tutorial-in-below {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
 @keyframes share-tutorial-in-right {
   from { opacity: 0; transform: translate(-6px, -50%); }
   to   { opacity: 1; transform: translate(0, -50%); }
@@ -2152,6 +2164,13 @@ button.mv-row:hover:not(:disabled) {
   left: calc(var(--share-tutorial-arrow-x, 50%) - 5px);
   border-top: none;
   border-left: none;
+  transform: rotate(45deg);
+}
+.share-tutorial-tip--below::before {
+  top: -6px;
+  left: calc(var(--share-tutorial-arrow-x, 50%) - 5px);
+  border-bottom: none;
+  border-right: none;
   transform: rotate(45deg);
 }
 .share-tutorial-tip__badge {
@@ -2205,7 +2224,8 @@ button.mv-row:hover:not(:disabled) {
 body:has(#simple-soundscapes-column .bubble-wrap:hover) .share-tutorial-tip[data-step='scene'],
 body:has(#simple-acoustics-column .bubble-wrap:hover) .share-tutorial-tip[data-step='acoustics'],
 body:has(#simple-listeners-column .bubble-wrap:hover) .share-tutorial-tip[data-step='listeners'],
-body:has(#scene-play-button:hover) .share-tutorial-tip[data-step='play'] {
+body:has(#scene-play-button:hover) .share-tutorial-tip[data-step='play'],
+body:has(#scene-view-mode-toolbar:hover) .share-tutorial-tip[data-step='viewModes'] {
   opacity: 0.12;
   pointer-events: none;
 }

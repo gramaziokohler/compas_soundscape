@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useSpeckleStore, useAcousticLayerStore, useUIStore } from '@/store';
 import { useCanEdit } from '@/hooks/useCanEdit';
+import { VIEW_MODE_TOOLBAR_ID } from '@/utils/constants';
 
 type ViewMode = 'dark' | 'default' | 'acoustic';
 
@@ -37,6 +38,7 @@ export function SceneViewModeToolbar() {
     >
       <div className="bubble-wrap" onMouseLeave={() => setHovered(null)}>
       <div
+        id={VIEW_MODE_TOOLBAR_ID}
         className="flex items-center rounded-md overflow-hidden frosted-surface backdrop-blur-lg backdrop-saturate-150"
         style={{
           border: '1px solid var(--color-secondary-light)',

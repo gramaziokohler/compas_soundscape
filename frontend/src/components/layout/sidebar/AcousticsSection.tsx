@@ -2496,7 +2496,8 @@ function simRuntime(config: SimulationConfig): { isRunning: boolean; progress: n
  * carry a power button in their hover flyout (auralization on / off); the card
  * floats beside the column (no wrapper) with the same power button and a "−"
  * in its header. Bubbles can be dragged up / down to reorder them (not while a
- * simulation runs).
+ * simulation runs). A click on the hover label opens the card. Share view: a
+ * click on a simulation that is off turns it on; on the active one, it opens.
  */
 function AcousticsBubbles({
   simulationConfigs,
@@ -2548,17 +2549,31 @@ function AcousticsBubbles({
   const isReady = (config: SimulationConfig) => config.state === 'completed' || config.type === 'resonance';
   const canEdit = useCanEdit();
 
+  const isActiveAt = (index: number) => {
+    const config = simulationConfigs[index];
+    return config?.type === 'resonance' ? activeResonanceIds.includes(config.id) : activeSimulationIndex === index;
+  };
+  /** Share view: a ready simulation that is off — a click turns it on instead of opening it. */
+  const activatesOnClick = (index: number) => {
+    const config = simulationConfigs[index];
+    return !canEdit && !!config && isReady(config) && !isActiveAt(index);
+  };
+
+  // Share view: the first click turns the simulation on (and reduces any open
+  // card); a click on the active one expands / reduces it.
   const handleClick = (index: number) => {
+    if (activatesOnClick(index)) {
+      if (openIndex !== null) onReduce();
+      const config = simulationConfigs[index];
+      if (config.type === 'resonance') useAcousticsSimulationStore.getState().toggleResonanceActive(config.id);
+      else onSetActiveSimulation?.(index);
+      return;
+    }
     if (openIndex === index) {
       onReduce();
       return;
     }
     onOpen(index);
-    // Share view: opening a ready card also activates it (resonance powers on in onOpen).
-    const config = simulationConfigs[index];
-    if (!canEdit && config && config.type !== 'resonance' && isReady(config) && activeSimulationIndex !== index) {
-      onSetActiveSimulation?.(index);
-    }
   };
 
   const openConfig = openIndex !== null ? simulationConfigs[openIndex] : undefined;
@@ -2593,10 +2608,10 @@ function AcousticsBubbles({
         items={shown.map(({ config, index }) => {
           const rt = simRuntime(config);
           const label = config.display_name || CARD_TYPE_LABELS[config.type] || 'Simulation';
-          const isActive = config.type === 'resonance'
-            ? activeResonanceIds.includes(config.id)
-            : activeSimulationIndex === index;
-          const action = openIndex === index ? 'click to reduce' : 'click to open';
+          const isActive = isActiveAt(index);
+          const action = activatesOnClick(index)
+            ? 'click to turn on'
+            : openIndex === index ? 'click to reduce' : 'click to open';
           const detail = rt.isRunning
             ? rt.status || 'Running…'
             : isReady(config)
@@ -2622,6 +2637,7 @@ function AcousticsBubbles({
                     : undefined
                 : undefined}
               powerTitle={isActive ? 'Disable simulation' : 'Enable simulation'}
+              onLabelClick={() => { if (openIndex !== index) onOpen(index); }}
               onContextMenu={buildMenu
                 ? (e) => setSimMenu({ x: e.clientX, y: e.clientY, index })
                 : undefined}

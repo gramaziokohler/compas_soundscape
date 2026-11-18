@@ -15,15 +15,16 @@ function clamp(value: number, min: number, max: number): number {
 function tipStyle(placement: ShareTutorialPlacement, rect: AnchorRect): CSSProperties {
   const { GAP, WIDTH, VIEWPORT_MARGIN, Z_INDEX } = SHARE_TUTORIAL;
   const maxLeft = window.innerWidth - WIDTH - VIEWPORT_MARGIN;
-  if (placement === 'above') {
+  if (placement === 'above' || placement === 'below') {
     const centerX = rect.left + rect.width / 2;
     const left = clamp(centerX - WIDTH / 2, VIEWPORT_MARGIN, maxLeft);
     return {
       left,
-      bottom: window.innerHeight - rect.top + GAP,
+      bottom: placement === 'above' ? window.innerHeight - rect.top + GAP : undefined,
+      top: placement === 'below' ? rect.bottom + GAP : undefined,
       width: WIDTH,
       zIndex: Z_INDEX,
-      // Arrow under the anchor even when the tip is clamped sideways.
+      // Arrow toward the anchor even when the tip is clamped sideways.
       '--share-tutorial-arrow-x': `${centerX - left}px`,
     } as CSSProperties;
   }
@@ -41,7 +42,8 @@ function tipStyle(placement: ShareTutorialPlacement, rect: AnchorRect): CSSPrope
  *
  * Share view: the first-load mini tutorial for visitors who never used the app.
  * One numbered tip at a time, pinned beside what it explains — a scene circle
- * (turn it on), the Play button, the Acoustics column, the Listeners column.
+ * (turn it on), the Play button, the Acoustics column, the Listeners column,
+ * the view-mode toolbar.
  * A click on the tip moves on, × skips the tour; tips also hide by themselves
  * (see useShareTutorial). While the visitor hovers the column a tip points at,
  * the tip fades out of the way of the bubbles' hover flyouts (globals.css).

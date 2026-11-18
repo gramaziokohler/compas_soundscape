@@ -35,6 +35,8 @@ export interface BubbleProps {
   onTogglePower?: () => void;
   /** Power button tooltip / accessible name. */
   powerTitle?: string;
+  /** When set, a click on the hover label (outside its power button) calls it — e.g. expand the card. */
+  onLabelClick?: () => void;
   /** Right-click (also macOS Ctrl+click / two-finger tap) — the native menu is suppressed. */
   onContextMenu?: (e: MouseEvent<HTMLButtonElement>) => void;
 }
@@ -49,6 +51,7 @@ export interface BubbleProps {
  * A click only expands / reduces the card. Ready items pass `onTogglePower`:
  * the hover label then turns into a flyout holding a power button (next to the
  * bubble, joined to it by an invisible hover bridge so it stays reachable).
+ * `onLabelClick` makes the hover label itself clickable (same hover bridge).
  *
  * Usage:
  * ```tsx
@@ -75,6 +78,7 @@ export function Bubble({
   onClick,
   onTogglePower,
   powerTitle,
+  onLabelClick,
   onContextMenu,
 }: BubbleProps) {
   const ringSize = size + SIMPLE_MODE.RING_STROKE * 4;
@@ -132,8 +136,10 @@ export function Bubble({
           `bubble-label--${labelSide}`,
           tone !== "primary" && `bubble-label--${tone}`,
           onTogglePower && "bubble-label--interactive",
+          onLabelClick && "bubble-label--clickable",
         ].filter(Boolean).join(" ")}
         aria-hidden={onTogglePower ? undefined : true}
+        onClick={onLabelClick}
       >
         {onTogglePower && (
           <button

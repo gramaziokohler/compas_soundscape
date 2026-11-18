@@ -3000,6 +3000,9 @@ export const SCENE_BOTTOM_BAR = {
   PLAY_BUTTON_ID: 'scene-play-button',
 } as const;
 
+/** Top-centre `Sounds | Default | Acoustics` radiogroup — anchor of the share-view tutorial's view-mode tip. */
+export const VIEW_MODE_TOOLBAR_ID = 'scene-view-mode-toolbar';
+
 // Viewport render styles (bottom-bar dropdown → useSpeckleRenderStyle →
 // lib/three/speckle-render-style.ts). Edge values start from Speckle's
 // DefaultEdgesPipelineOptions (thickness 1, opacity 0.75, color 0x323232).
@@ -3244,6 +3247,7 @@ export const SHARE_TUTORIAL = {
     play: { title: 'Then press play', message: 'Listen to the activated sound scene (or press Space).' },
     acoustics: { title: 'Switch acoustic simulations', message: 'Hear how the space changes the sound.' },
     listeners: { title: 'Switch listeners', message: 'Hear the scene from another spot in the model.' },
+    viewModes: { title: 'Change the view', message: 'Sounds glows where they play, Default shows the model, Acoustics the surfaces that shape the sound.' },
   },
 } as const;
 

@@ -6,11 +6,11 @@ import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { useSoundScenes } from '@/hooks/useSoundScenes';
 import { useOneTimeHint } from '@/hooks/useOneTimeHint';
 import { useAnchorRect, type AnchorRect } from '@/hooks/useAnchorRect';
-import { SCENE_BOTTOM_BAR, SHARE_TUTORIAL, SIMPLE_MODE } from '@/utils/constants';
+import { SCENE_BOTTOM_BAR, SHARE_TUTORIAL, SIMPLE_MODE, VIEW_MODE_TOOLBAR_ID } from '@/utils/constants';
 
 export type ShareTutorialStepId = keyof typeof SHARE_TUTORIAL.STEPS;
 /** Side of the anchor the tip sits on. */
-export type ShareTutorialPlacement = 'right' | 'left' | 'above';
+export type ShareTutorialPlacement = 'right' | 'left' | 'above' | 'below';
 
 export interface ShareTutorialStep {
   id: ShareTutorialStepId;
@@ -59,6 +59,11 @@ const STEP_DEFS: Record<ShareTutorialStepId, ShareTutorialStep> = {
     resolveAnchor: () =>
       columnBubble(SIMPLE_MODE.LISTENERS_COLUMN_ID, false) ? document.getElementById(SIMPLE_MODE.LISTENERS_COLUMN_ID) : null,
   },
+  viewModes: {
+    id: 'viewModes',
+    placement: 'below',
+    resolveAnchor: () => document.getElementById(VIEW_MODE_TOOLBAR_ID),
+  },
 };
 
 function isScenePowered(): boolean {
@@ -81,12 +86,13 @@ function buildSteps(): ShareTutorialStep[] {
   if (!isAnyPlaying()) steps.push(STEP_DEFS.play);
   if (STEP_DEFS.acoustics.resolveAnchor()) steps.push(STEP_DEFS.acoustics);
   if (STEP_DEFS.listeners.resolveAnchor()) steps.push(STEP_DEFS.listeners);
+  steps.push(STEP_DEFS.viewModes);
   return steps;
 }
 
 /**
  * Share view: first-load numbered coach-mark tour (turn a scene on → press
- * play → switch acoustic simulations → switch listeners).
+ * play → switch acoustic simulations → switch listeners → change the view mode).
  *
  * Starts once the model is loaded and a playable scene exists, shows one tip
  * at a time, and moves on when the visitor does the step (scene powered,

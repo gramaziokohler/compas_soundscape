@@ -252,6 +252,8 @@ export function ListenerBubbles({
               onClick={() => handleClick(index)}
               onTogglePower={isClickPowerable(item) ? () => onTogglePower(active ? null : index) : undefined}
               powerTitle={powerTitle}
+              // The share view has no listener card to open.
+              onLabelClick={canEdit ? () => { if (openIndex !== index) onOpenChange(index); } : undefined}
               onContextMenu={buildMenu
                 ? (e) => setItemMenu({ x: e.clientX, y: e.clientY, item })
                 : undefined}

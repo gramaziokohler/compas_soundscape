@@ -76,20 +76,24 @@ interface SceneBubbleProps {
   /** Its panel is open. */
   open: boolean;
   onClick: (scene: SoundScene, progress: SceneProgress) => void;
+  /** Hover-label click: open the panel. */
+  onOpen: (scene: SoundScene, progress: SceneProgress) => void;
   onTogglePower: (scene: SoundScene) => void;
   /** Right-click → Rename / Duplicate menu (absent in the share view). */
   onContextMenu?: (scene: SoundScene, progress: SceneProgress, e: MouseEvent<HTMLElement>) => void;
 }
 
-function SceneBubble({ scene, selected, open, onClick, onTogglePower, onContextMenu }: SceneBubbleProps) {
+function SceneBubble({ scene, selected, open, onClick, onOpen, onTogglePower, onContextMenu }: SceneBubbleProps) {
   const progress = useSceneProgress(scene);
   const envelope = useSceneWaveform(scene);
+  const canEdit = useCanEdit();
   const status =
     progress.status === 'running' ? 'running'
       : progress.status === 'error' ? 'error'
         : 'idle';
   const ready = progress.status === 'done';
-  const detail = `${progress.statusText} · click to ${open ? 'reduce' : 'open'}`;
+  const action = !canEdit && !selected && isPlayable(scene) ? 'turn on' : open ? 'reduce' : 'open';
+  const detail = `${progress.statusText} · click to ${action}`;
   return (
     <Bubble
       label={scene.fullTitle}
@@ -102,6 +106,7 @@ function SceneBubble({ scene, selected, open, onClick, onTogglePower, onContextM
       onClick={() => onClick(scene, progress)}
       onTogglePower={isPlayable(scene) ? () => onTogglePower(scene) : undefined}
       powerTitle={powerTitle(selected)}
+      onLabelClick={() => onOpen(scene, progress)}
       onContextMenu={onContextMenu ? (e) => onContextMenu(scene, progress, e) : undefined}
     />
   );
@@ -294,15 +299,27 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
   }, [scenes, panel]);
 
   // Expand / reduce only — powering a scene is the flyout / header button's job.
-  // Share view: a click on the circle selects (plays) the scene, and its panel
-  // only ever lists its (read-only) sounds.
+  // Share view: the first click turns the scene on (and reduces any open panel);
+  // a click on the scene already on expands / reduces it. Its panel only ever
+  // lists its (read-only) sounds.
   const handleSceneClick = useCallback((scene: SoundScene, progress: SceneProgress) => {
-    if (!canEdit && isPlayable(scene)) selectScene(scene);
+    const ui = useUIStore.getState();
+    const powered = ui.isInSoundsStep && ui.activeSoundParentIndex === scene.usageIndex;
+    if (!canEdit && isPlayable(scene) && !powered) {
+      selectScene(scene);
+      setPanel(null);
+      return;
+    }
     const kind = canEdit ? panelKind(scene, progress) : 'scene';
     setPanel((p) =>
       p && p.kind !== 'composer' && p.usageIndex === scene.usageIndex ? null : { kind, usageIndex: scene.usageIndex },
     );
   }, [canEdit, selectScene]);
+
+  // Hover-label click: open the scene's panel (never reduces).
+  const handleSceneOpen = useCallback((scene: SoundScene, progress: SceneProgress) => {
+    setPanel({ kind: canEdit ? panelKind(scene, progress) : 'scene', usageIndex: scene.usageIndex });
+  }, [canEdit]);
 
   const handleSubmit = useCallback((prompt: string, options: Parameters<typeof startScene>[1]) => {
     const usageIndex = startScene(prompt, options);
@@ -368,6 +385,7 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
             selected={isPowered(scene.usageIndex)}
             open={panel !== null && panel.kind !== 'composer' && panel.usageIndex === scene.usageIndex}
             onClick={handleSceneClick}
+            onOpen={handleSceneOpen}
             onTogglePower={toggleScenePower}
             onContextMenu={canEdit ? sceneMenu.openMenu : undefined}
           />

@@ -39,7 +39,9 @@ Rules:
    `buildSoundGenerationSectionProps` (`components/layout/sidebar/soundSectionProps.ts`), shared
    with `Sidebar`.
 7. **Circle clicks only expand / reduce** the circle's card — never a side effect. Unfinished
-   scenes open their workflow view. Powering is a separate control: ready circles pass
+   scenes open their workflow view. Exception, share view: a click on a scene / simulation circle
+   that is off turns it on and reduces the open panel; a click on the one already on expands /
+   reduces it (`Bubble.onLabelClick` also makes the hover label open the card, in both views). Powering is a separate control: ready circles pass
    `Bubble.onTogglePower`, which turns the hover label into a flyout with a power button (joined to
    the circle by a CSS `::before` hover bridge — no timers). The same power button sits in the
    expanded card header (`Card.onTogglePower` / `BubblePanel.onTogglePower`); "on" =
