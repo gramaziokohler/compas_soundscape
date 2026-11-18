@@ -12,6 +12,7 @@ import type { AuralizationConfig, SoundMetadata } from "@/types/audio";
 import type { AudioOrchestrator } from "@/lib/audio/AudioOrchestrator";
 import { useAudioControlsStore } from "@/store/audioControlsStore";
 import { resolveSoundAudioUrl } from "@/lib/audio/utils/resolve-sound-url";
+import { orderVariants } from "@/lib/audio/utils/variant-sound-id";
 import { syncDirectionIndicator } from "@/lib/three/sound-direction-indicator";
 // import type { BoundingBoxBounds } from "@/lib/three/BoundingBoxManager"; // Bounding-box placement removed
 
@@ -261,8 +262,9 @@ export class SoundSphereManager {
     });
 
     const visibleSounds: SoundEvent[] = [];
-    Object.entries(soundsByPromptIndex).forEach(([promptIdxStr, sounds]) => {
+    Object.entries(soundsByPromptIndex).forEach(([promptIdxStr, unordered]) => {
       const promptIdx = parseInt(promptIdxStr);
+      const sounds = orderVariants(unordered);
       const selectedIdx = selectedVariants[promptIdx] || 0;
       if (sounds[selectedIdx]) {
         visibleSounds.push(sounds[selectedIdx]);
@@ -738,8 +740,6 @@ export class SoundSphereManager {
       return;
     }
 
-    const isEntityLinked = soundEvent.entity_index !== undefined;
-
     // Determine full URL (blob for uploads, backend for generated)
     const isUploadedSound = audioUrl.startsWith('blob:') || audioUrl.startsWith('http');
     const fullUrl = isUploadedSound ? audioUrl : `${API_BASE_URL}${audioUrl}`;
@@ -753,20 +753,13 @@ export class SoundSphereManager {
       (buffer) => {
         this.pendingLoads.delete(soundEvent.id); // load complete
 
-        // For sphere-linked sounds, verify the sphere is still in the scene before
-        // registering the buffer.  Non-primary copies (copy_index >= 1) never have
-        // a visible mesh — they exist purely for audio playback — so we must NOT
-        // abort them here; otherwise variant B / C buffers are never loaded.
-        const copyIndex = (soundEvent as any).copy_index ?? 0;
-        const isPrimaryOrEntity = isEntityLinked || copyIndex === 0;
-        if (isPrimaryOrEntity && !isEntityLinked) {
-          const meshStillExists = this.soundMeshes.some(
-            m => m.userData.soundEvent?.id === soundEvent.id
-          );
-          if (!meshStillExists) {
-            console.warn(`[SoundSphereManager] Sphere removed before audio loaded: ${soundEvent.id}`);
-            return;
-          }
+        // Drop the buffer only when the sound itself was removed while loading.
+        // Only the card's SELECTED variant has a mesh, but every variant (copy 0
+        // included) must register: the timeline track is always variant A, and
+        // iterationLinks can point at any variant.
+        if (!this.latestSounds.some((s) => s.id === soundEvent.id)) {
+          console.warn(`[SoundSphereManager] Sound removed before audio loaded: ${soundEvent.id}`);
+          return;
         }
 
         // Create source via orchestrator

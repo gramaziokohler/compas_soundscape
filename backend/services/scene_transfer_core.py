@@ -114,14 +114,26 @@ def _select(data: dict, scene_numbers: Optional[list[int]]) -> tuple[list[int], 
     return sorted(selected), sounds
 
 
-def _event_card_index(event: dict, cid_to_index: dict[str, int]) -> Optional[int]:
+def _event_card_index(
+    event: dict, cid_to_index: dict[str, int], sound_configs: list[dict]
+) -> Optional[int]:
+    """Card that owns ``event``, or ``None`` for an orphan.
+
+    An event whose ``config_id`` names no card is an orphan of a deleted /
+    regenerated card. Its ``prompt_index`` then points at whichever card now
+    sits at that position, so it must not be adopted through it (that is how
+    stale takes ended up as extra "variants" of an unrelated card).
+    """
     cid = event.get("config_id")
     if cid and cid in cid_to_index:
         return cid_to_index[cid]
     pi = event.get("prompt_index")
     if not isinstance(pi, int):
         return None
-    return pi // PROMPT_INDEX_BASE if pi >= PROMPT_INDEX_BASE else pi
+    card = pi // PROMPT_INDEX_BASE if pi >= PROMPT_INDEX_BASE else pi
+    if cid and 0 <= card < len(sound_configs) and sound_configs[card].get("config_id"):
+        return None
+    return card
 
 
 # ── ids ──────────────────────────────────────────────────────────────────────
@@ -210,7 +222,7 @@ def extract_package(
     events: list[tuple[int, dict]] = []
     dropped_events = 0
     for ev in source.get("sound_events") or []:
-        card = _event_card_index(ev, cid_to_index)
+        card = _event_card_index(ev, cid_to_index, sound_configs)
         if card not in sound_set:
             dropped_events += 1 if scene_numbers is None else 0
             continue

@@ -10,6 +10,7 @@ import { SoundResultContent } from '@/components/layout/sidebar/sound/SoundResul
 import { SoundPreContent } from '@/components/layout/sidebar/sound/SoundPreContent';
 import { VariantsBar } from '@/components/ui/VariantsBar';
 import { createTtsSpeechLines } from '@/hooks/useTtsSpeechLines';
+import { orderVariants } from '@/lib/audio/utils/variant-sound-id';
 import type { SoundEvent } from '@/types';
 
 // ============================================================================
@@ -145,7 +146,7 @@ export function EntityInfoPanel({
   if (selectedEntity?.objectType === 'Sound' && selectedEntity.soundData) {
     const cardIndex = toCardIndex(selectedEntity.soundData.promptIndex);
     const config = soundConfigs[cardIndex];
-    const variants = generatedSounds.filter((s) => matchesCard(s, cardIndex));
+    const variants = orderVariants(generatedSounds.filter((s) => matchesCard(s, cardIndex)));
 
     // The Sounds-step card handles audio whenever it is mounted for this card.
     const sectionWillPlay = isInSoundsStep

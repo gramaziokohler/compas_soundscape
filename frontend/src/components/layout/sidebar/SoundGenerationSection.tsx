@@ -38,7 +38,7 @@ import {
 import { getGenerationSignature, getModifiedGenerationFields, isGenerationDirty } from '@/utils/generationSignature';
 import { soundMatchesCard } from '@/utils/sound-card-match';
 import { isConfigGlobal } from '@/lib/audio/utils/global-source';
-import { parseSoundCopyIndex } from '@/lib/audio/utils/variant-sound-id';
+import { orderVariants, parseSoundCopyIndex } from '@/lib/audio/utils/variant-sound-id';
 
 /**
  * SoundGenerationSection Component
@@ -262,7 +262,7 @@ export function SoundGenerationSection({
 
   // Helper to get generated sound for a config index (returns selected variant)
   const getGeneratedSound = useCallback((index: number): SoundEvent | undefined => {
-    const variants = generatedSounds.filter(s => _soundMatchesCard(s, index));
+    const variants = orderVariants(generatedSounds.filter(s => _soundMatchesCard(s, index)));
     if (variants.length === 0) return undefined;
     const selectedIdx = selectedVariants[index] ?? 0;
     return variants[selectedIdx] || variants[0];
@@ -270,7 +270,7 @@ export function SoundGenerationSection({
 
   // Helper to get all variants for a prompt index
   const getVariantsForPrompt = useCallback((index: number): SoundEvent[] => {
-    return generatedSounds.filter(s => _soundMatchesCard(s, index));
+    return orderVariants(generatedSounds.filter(s => _soundMatchesCard(s, index)));
   }, [generatedSounds]);
 
   // Helper to get selected variant index for a prompt

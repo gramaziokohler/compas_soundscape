@@ -8,7 +8,7 @@
 import { AUDIO_TIMELINE } from '@/utils/constants';
 import type { TimelineSound, SoundMetadata, IterationLink, TrimRange } from '@/types/audio';
 import type { SoundEvent } from '@/types';
-import { resolveVariantSoundIdByPrompt } from '@/lib/audio/utils/variant-sound-id';
+import { orderVariants, resolveVariantSoundIdByPrompt, trackVariants } from '@/lib/audio/utils/variant-sound-id';
 import { resolveSoundAudioUrl } from '@/lib/audio/utils/resolve-sound-url';
 import { resolveIterationTrim, trimmedDuration } from '@/lib/audio/utils/iteration-trim';
 
@@ -282,23 +282,31 @@ export function extractTimelineSoundsFromData(
   }
 
   // For multi-variant sounds (generated_X_0, generated_X_1, …) only render one track per
-  // prompt_index — the variant with the lowest copy-index (i.e. variant A / the default).
+  // prompt_index — variant A of `trackVariants`, the id the schedule bake writes
+  // `soundTimestamps` / `iterationLinks` under. It must not depend on which buffer
+  // finished loading first or on the card's selected variant: a track whose id changes
+  // between sessions shows another variant's schedule and the user's drags look lost.
   // All variants remain loaded in the AudioOrchestrator so per-iteration overrides still work.
   const primarySoundIds = new Set<string>();
-  const promptPrimary = new Map<number, { id: string; copyIdx: number }>();
+  const loadedByPrompt = new Map<number, SoundMetadata['soundEvent'][]>();
   soundMetadata.forEach((metadata, soundId) => {
     const pi = metadata.soundEvent.prompt_index;
     if (pi === undefined) { primarySoundIds.add(soundId); return; }
-    // Use the actual copy_index from the sound event metadata (not parsed from ID,
-    // which fails for TTS IDs like "tts_6_0_Kore" where the last segment is a voice name).
-    const copyIdx = (metadata.soundEvent as any).copy_index ?? 0;
-    const existing = promptPrimary.get(pi);
-    if (!existing || copyIdx < existing.copyIdx) promptPrimary.set(pi, { id: soundId, copyIdx });
+    loadedByPrompt.set(pi, [...(loadedByPrompt.get(pi) ?? []), metadata.soundEvent]);
   });
-  promptPrimary.forEach(({ id }) => primarySoundIds.add(id));
-  console.log('[timeline:extract] dedup: promptPrimary.size:', promptPrimary.size,
+  loadedByPrompt.forEach((loaded, pi) => {
+    const variantA = soundEvents?.length ? trackVariants(pi, soundEvents)[0] : undefined;
+    if (variantA && resolveSoundAudioUrl(variantA)) {
+      // Not loaded yet → the track appears once variant A's buffer is in.
+      if (soundMetadata.has(variantA.id)) primarySoundIds.add(variantA.id);
+      return;
+    }
+    // Variant A has no audio file: fall back to the lowest loaded variant.
+    primarySoundIds.add(orderVariants(loaded)[0].id);
+  });
+  console.log('[timeline:extract] dedup: prompts:', loadedByPrompt.size,
     'primarySoundIds.size:', primarySoundIds.size,
-    'keys:', [...promptPrimary.keys()]);
+    'keys:', [...loadedByPrompt.keys()]);
 
   soundMetadata.forEach((metadata, soundId) => {
     if (!primarySoundIds.has(soundId)) {

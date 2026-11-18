@@ -2967,7 +2967,15 @@ export const SIMPLE_MODE = {
   SCENE_MENU_DUPLICATE: 'Duplicate',
   /** Optional footnote at the bottom-left of a scene panel. */
   SCENE_FOOTNOTE_PLACEHOLDER: 'Add a footnote…',
+  /** Visible characters (link labels count, their URLs don't). */
   SCENE_FOOTNOTE_MAX_CHARS: 200,
+  /** Hard cap on the stored text, URLs included. */
+  SCENE_FOOTNOTE_MAX_STORED_CHARS: 2000,
+  SCENE_FOOTNOTE_LINK_SHORTCUT: 'Ctrl + K',
+  SCENE_FOOTNOTE_LINK_TITLE: 'Link the selected text',
+  SCENE_FOOTNOTE_LINK_PLACEHOLDER: 'Paste a link (https://…)',
+  SCENE_FOOTNOTE_LINK_APPLY: 'Link',
+  SCENE_FOOTNOTE_LINK_INVALID: 'Enter a web address',
   /** Appended to a duplicated scene's title. */
   DUPLICATE_SCENE_SUFFIX: ' (copy)',
   DUPLICATE_SCENE_ERROR: 'Could not duplicate the scene',

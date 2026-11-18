@@ -21,6 +21,31 @@ export function parseSoundCopyIndex(soundId: string, copyIndex?: number | null):
   return 0;
 }
 
+type VariantLike = { id: string; prompt_index?: number | null; copy_index?: number | null };
+
+/**
+ * The ONE variant order: prompt_index (line order on speech-line cards), then
+ * copy index, ties kept in array order. Position N of this list is "variant N"
+ * everywhere — card variant bar + `selectedVariants`, sound sphere, DAW clip
+ * menu, `iterationLinks[].variantIndex` playback / export, and the schedule
+ * bake. Indexing raw array order anywhere makes a picked variant play another
+ * sound as soon as a card's events are not stored in copy order.
+ */
+export function orderVariants<T extends VariantLike>(variants: ReadonlyArray<T>): T[] {
+  return [...variants].sort((a, b) =>
+    (a.prompt_index ?? 0) - (b.prompt_index ?? 0)
+    || parseSoundCopyIndex(a.id, a.copy_index) - parseSoundCopyIndex(b.id, b.copy_index));
+}
+
+/** Variants of the track with `promptIndex`, in canonical order (index = variantIndex). */
+export function trackVariants<T extends VariantLike>(
+  promptIndex: number | undefined | null,
+  allEvents: ReadonlyArray<T>,
+): T[] {
+  if (promptIndex === undefined || promptIndex === null) return [];
+  return orderVariants(allEvents.filter((e) => e.prompt_index === promptIndex));
+}
+
 /**
  * Build the sound ID for a specific variant copy from the primary timeline sound ID,
  * by PARSING the id's string shape (`generated_{card}_{copy}`, `tts_{card}_{copy}_{voice}`,
@@ -77,10 +102,5 @@ export function resolveVariantSoundIdByPrompt(
     return primarySoundId;
   }
 
-  const siblings = allEvents
-    .filter((e) => e.prompt_index === promptIndex)
-    .map((e) => ({ id: e.id, copyIdx: parseSoundCopyIndex(e.id, e.copy_index) }))
-    .sort((a, b) => a.copyIdx - b.copyIdx);
-
-  return siblings[variantIndex]?.id ?? primarySoundId;
+  return trackVariants(promptIndex, allEvents)[variantIndex]?.id ?? primarySoundId;
 }

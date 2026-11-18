@@ -26,7 +26,7 @@ import type { SoundState, SoundGenerationConfig } from '@/types';
 import type { AmbisonicOrder, AmbisonicSendStatus, AmbisonicSendTransport, IterationLink, TrimRange } from '@/types/audio';
 import { iterationKey, remapIterationKeys, clearIterationKeysForSound } from '@/lib/audio/utils/iteration-keys';
 import { trimmedDuration } from '@/lib/audio/utils/iteration-trim';
-import { parseSoundCopyIndex } from '@/lib/audio/utils/variant-sound-id';
+import { orderVariants, trackVariants } from '@/lib/audio/utils/variant-sound-id';
 import { isParamExpression } from '@/lib/audio/utils/trigger-ref';
 import { solveOrchestrateSchedule, scheduleEntryKey } from '@/lib/audio/orchestrate-schedule';
 import { serializeTrackOverlaps } from '@/lib/audio/utils/serialize-track-overlaps';
@@ -550,17 +550,14 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
 
           // If promptIdx is a card index (not found directly), it may be a
           // speech-line TTS card where sounds encode the card index as
-          // prompt_index = cardIndex * 10000 + lineIdx. Collect all matching
-          // sounds sorted by line index (lowest remains).
+          // prompt_index = cardIndex * 10000 + lineIdx.
           if (!sounds) {
             sounds = _generatedSounds.filter((s) => {
               const pi = s.prompt_index ?? 0;
               return pi >= 10000 && Math.floor(pi / 10000) === promptIdx;
             });
-            if (sounds.length > 0) {
-              sounds.sort((a, b) => (a.prompt_index ?? 0) - (b.prompt_index ?? 0));
-            }
           }
+          sounds = orderVariants(sounds);
 
           if (!sounds || sounds.length === 0) return;
 
@@ -1013,17 +1010,6 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
         setOrchestrateIterationLinks: (configs, opts) => {
           const { _generatedSounds, iterationLinks } = get();
 
-          // Build configIndex → primary generated sound ID
-          // (mirrors extractTimelineSoundsFromData: lowest copy_index per prompt_index)
-          const promptPrimary = new Map<number, { id: string; copyIdx: number }>();
-          _generatedSounds.forEach((s: any) => {
-            const pi = s.prompt_index;
-            if (pi === undefined || pi === null) return;
-            const ci = parseSoundCopyIndex(s.id, s.copy_index);
-            const existing = promptPrimary.get(pi);
-            if (!existing || ci < existing.copyIdx) promptPrimary.set(pi, { id: s.id, copyIdx: ci });
-          });
-
           // Build new links first so we know which soundIds are being re-linked
           const freshLinks: Record<string, IterationLink> = {};
 
@@ -1033,7 +1019,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             const normCat = (config.category ?? '').toLowerCase().replace(/[\s_-]+/g, '_');
             if (normCat === 'background' || normCat === 'background_sound') return;
 
-            const soundId = promptPrimary.get(configIndex)?.id;
+            const soundId = trackVariants(configIndex, _generatedSounds)[0]?.id;
             if (!soundId) return; // not yet generated
 
             const variants = meta.variants; // 1-based [1,2,1,2]
@@ -1146,22 +1132,11 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
           // that project restore triggers as each audio buffer loads.
           const notify = _pendingBakeNotify;
 
-          // Build configIndex → primary generated sound ID
-          // (mirrors extractTimelineSoundsFromData: lowest copy_index per prompt_index)
-          const promptPrimary = new Map<number, { id: string; copyIdx: number }>();
-          _generatedSounds.forEach((s: any) => {
-            const pi = s.prompt_index;
-            if (pi === undefined || pi === null) return;
-            const ci = parseSoundCopyIndex(s.id, s.copy_index);
-            const existing = promptPrimary.get(pi);
-            if (!existing || ci < existing.copyIdx) promptPrimary.set(pi, { id: s.id, copyIdx: ci });
-          });
-
           type EntryInfo = {
             configIndex: number;
             soundId: string | null; // primary generated sound ID (null = not yet generated)
             meta: NonNullable<SoundGenerationConfig['orchestrateMeta']>;
-            /** Duration per variant copy (0-based). null = not yet generated. */
+            /** Duration per variant (0-based `trackVariants` position). null = not yet generated. */
             variantDurations: (number | null)[];
             /** Per-iteration duration from a DAW clip trim (null = use the variant's). */
             iterationDurations: (number | null)[];
@@ -1202,33 +1177,31 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             const normCat = (config.category ?? '').toLowerCase().replace(/[\s_-]+/g, '_');
             const isBackground = normCat === 'background' || normCat === 'background_sound';
 
-            const soundId = promptPrimary.get(configIndex)?.id ?? null;
-            const generatedForConfig = _generatedSounds.filter((s: any) => s.prompt_index === configIndex);
-            const numCopies = Math.max(1, config.seed_copies ?? 1);
+            // Same list (and order) playback resolves `variantIndex` against, so
+            // variant N's duration is the duration of the sound variant N plays.
+            const generatedForConfig = trackVariants(configIndex, _generatedSounds);
+            const soundId = generatedForConfig[0]?.id ?? null;
+            const numCopies = Math.max(1, config.seed_copies ?? 1, generatedForConfig.length);
             const variantDurations: (number | null)[] = new Array(numCopies).fill(null);
-            // Untrimmed length per copy — DAW clip trims are fractions of this.
+            // Untrimmed length per variant — DAW clip trims are fractions of this.
             const rawVariantDurations: (number | null)[] = new Array(numCopies).fill(null);
 
-            generatedForConfig.forEach((s: any) => {
+            generatedForConfig.forEach((s: any, variantIdx) => {
               // Prefer the REAL decoded buffer duration over the requested/reported
               // `s.duration` — for ML (TangoFlux) the backend reports the requested
               // length, which differs from the actual WAV, so using it makes
               // after()/alignEnd() place dependent sounds at the wrong time.
               const rawDur = soundBufferDurations[s.id] ?? s.duration ?? 0;
               if (rawDur <= 0) return;
-              const copyIdx = parseSoundCopyIndex(s.id, s.copy_index);
               // Trim is keyed by the primary timeline sound id (sound card level).
               // Trim values are FRACTIONS (0-1) of the buffer, so the effective
               // duration is `rawDur * (end - start)` — matching timeline-utils.
               const trim = soundId ? soundTrims[soundId] : undefined;
-              const effectiveDur = trimmedDuration(rawDur, trim);
-              if (copyIdx >= 0 && copyIdx < variantDurations.length) {
-                variantDurations[copyIdx] = effectiveDur;
-                rawVariantDurations[copyIdx] = rawDur;
-              }
-              if (variantDurations[0] === null) variantDurations[0] = effectiveDur;
-              if (rawVariantDurations[0] === null) rawVariantDurations[0] = rawDur;
+              variantDurations[variantIdx] = trimmedDuration(rawDur, trim);
+              rawVariantDurations[variantIdx] = rawDur;
             });
+            if (variantDurations[0] === null) variantDurations[0] = variantDurations.find((d) => d !== null) ?? null;
+            if (rawVariantDurations[0] === null) rawVariantDurations[0] = rawVariantDurations.find((d) => d !== null) ?? null;
 
             // Durations are only "known" once EVERY generated copy has a decoded
             // buffer — otherwise the solver defers instead of guessing from the
@@ -1660,21 +1633,15 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             byPrompt[idx].push(s);
           });
 
-          // Always play copy-index 0 (variant A) per prompt so that timeline playback
-          // is completely independent of the sound card's variant selector.
-          // Explicit copy_index first, else parsed from the id shape (TTS ids end
-          // with the voice name, so the trailing segment is not the copy there).
-          const copyIndexOf = (s: { id: string; copy_index?: number | null }): number =>
-            parseSoundCopyIndex(s.id, s.copy_index);
-
+          // Always play variant A per prompt so that timeline playback is
+          // completely independent of the sound card's variant selector.
           set(
             (state) => {
               const newStates = { ...state.individualSoundStates };
               Object.entries(byPrompt).forEach(([, sounds]) => {
                 // Stop all variants for this prompt first.
                 sounds.forEach((s) => { newStates[s.id] = 'stopped'; });
-                // Play the variant with the lowest copy index (variant A / the default).
-                const sel = [...sounds].sort((a, b) => copyIndexOf(a) - copyIndexOf(b))[0];
+                const sel = orderVariants(sounds)[0];
                 if (sel) newStates[sel.id] = 'playing';
               });
               return { individualSoundStates: newStates, playAllNonce: state.playAllNonce + 1 };
@@ -1801,9 +1768,11 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             'audio/clearIterationExclusion',
           ),
 
+        // Every domain load / reset passes through here. `selectedVariants` is
+        // keyed by card position, so a previous project's picks must not carry over.
         restoreIterationLinks: (links) =>
           set(
-            { iterationLinks: links },
+            { iterationLinks: links, selectedVariants: {} },
             false,
             'audio/restoreIterationLinks',
           ),
@@ -1998,7 +1967,8 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
     storage: createJSONStorage(() => localStorage),
     skipHydration: true,
     partialize: (state: AudioControlsStoreState) => {
-      const { individualSoundStates, previewingSoundId, _generatedSounds, _soundConfigs,
+      // `selectedVariants` is model-bound (keyed by card position) — never persisted.
+      const { individualSoundStates, previewingSoundId, _generatedSounds, _soundConfigs, selectedVariants,
         soundBufferDurations, isBakingSchedule, isDeferredCycleBakePending,
         _pendingPlayAllStagger, _generationInProgress, loopAnalysisInProgress,
         ambisonicSendEnabled, ambisonicSendStatus, ambisonicSendTransport, ...persistable } = state;
@@ -2011,7 +1981,9 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
     merge: (persisted: any, current: AudioControlsStoreState) => {
       // Legacy single-solo key (pre multi-solo) — superseded by soloedSounds.
       // ambisonicSendTransport was persisted before it became OS-detected — drop stale values.
-      const { soloedSound: legacySolo, ambisonicSendTransport: _legacyTransport, ...rest } = persisted ?? {};
+      // selectedVariants was persisted before it was recognised as model-bound.
+      const { soloedSound: legacySolo, ambisonicSendTransport: _legacyTransport,
+        selectedVariants: _legacySelectedVariants, ...rest } = persisted ?? {};
       return {
         ...current,
         ...rest,

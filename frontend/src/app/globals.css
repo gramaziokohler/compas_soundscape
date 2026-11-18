@@ -793,6 +793,9 @@ canvas {
   outline: none;
   user-select: text;
 }
+.bubble-panel__title-input[aria-invalid="true"] {
+  border-color: var(--color-error);
+}
 .bubble-panel__subtitle {
   font-size: 10px;
   color: var(--color-secondary-hover);

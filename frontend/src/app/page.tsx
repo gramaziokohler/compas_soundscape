@@ -3536,17 +3536,29 @@ function HomeContent() {
 
     setActiveIRGroupId(receiverId);
 
+    // Only the import-irs card leaves source–listener pairs unassigned on purpose.
+    // Engine sims (pyroom / pffdtd / hybrid) already wrote their mapping when the
+    // card completed; missing entries there mean this listener was not simulated
+    // (or a partial import), and the orchestrator mutes those sources — do not
+    // toast the import-irs warning for them. Share-link activation can power a
+    // linked listener in the same tick as sim power-on, which made that toast
+    // look like a load race on heavy models.
     const activeSimulation = acousticsSimulation.activeSimulationIndex !== null
       ? acousticsSimulation.simulationConfigs[acousticsSimulation.activeSimulationIndex]
       : null;
-    const activeMapping = activeSimulation
-      ? (activeSimulation as any).sourceReceiverIRMapping as Record<string, Record<string, unknown>> | undefined
-      : undefined;
-
-    if (activeMapping) {
-      const hasMissingIR = Object.keys(activeMapping).some((sourceId) => !activeMapping[sourceId]?.[receiverId]);
-      if (hasMissingIR) {
-        addError('You have to import an ir, auralization is disabled', 'warning');
+    if (activeSimulation?.type === 'import-irs') {
+      const activeMapping = (activeSimulation as { sourceReceiverIRMapping?: Record<string, Record<string, unknown>> })
+        .sourceReceiverIRMapping;
+      if (activeMapping && Object.keys(activeMapping).length > 0) {
+        const hasMissingIR = Object.keys(activeMapping).some(
+          (sourceId) => !activeMapping[sourceId]?.[receiverId],
+        );
+        if (hasMissingIR) {
+          addError(
+            'Some source–listener pairs still need an IR. Auralization stays muted for those sources.',
+            'warning',
+          );
+        }
       }
     }
 

@@ -18,6 +18,7 @@ import { useClipTrimGesture } from './useClipTrimGesture';
 import { computeTimelineOverrun } from './daw-overrun';
 import type { ClipTrimCopy } from '@/store/audioControlsStore';
 import { parseTriggerExpression } from '@/lib/audio/utils/trigger-ref';
+import { trackVariants } from '@/lib/audio/utils/variant-sound-id';
 import { useAudioControlsStore } from '@/store/audioControlsStore';
 import { useSoundscapeStore } from '@/store/soundscapeStore';
 import { useSpeckleStore } from '@/store/speckleStore';
@@ -679,13 +680,9 @@ export function DAWDock({
     const timelineSound = sounds.find((s) => s.id === soundId);
     const cardIndex = timelineSound?.cardIndex ?? timelineSound?.promptIndex;
 
-    const variants = cardIndex !== undefined
-      ? generatedSounds.filter((s: any) => {
-          if (s.prompt_index === cardIndex) return true;
-          if (s.prompt_index != null && s.prompt_index >= 10000 && Math.floor(s.prompt_index / 10000) === cardIndex) return true;
-          return false;
-        }).map((v: any, vi: number) => ({ id: v.id, label: String.fromCharCode(65 + vi) }))
-      : [];
+    // Exactly the list playback resolves `variantIndex` against.
+    const variants = trackVariants(timelineSound?.promptIndex, generatedSounds)
+      .map((v, vi) => ({ id: v.id, label: String.fromCharCode(65 + vi) }));
 
     const configEntities = cardIndex !== undefined ? soundConfigs[cardIndex]?.entities ?? [] : [];
     const entityIdxMap = new Map<string, number>();

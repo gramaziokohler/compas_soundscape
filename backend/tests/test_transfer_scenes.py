@@ -208,6 +208,24 @@ def test_auth_token_never_copied_and_schema_valid():
     SoundscapeData(**merged)
 
 
+def test_orphan_events_are_not_adopted_by_prompt_index():
+    source = source_data()
+    # A take of a deleted card: its config_id names no card, but its prompt_index
+    # points at the card that now sits at position 0.
+    source["sound_events"].append(_event("tts_gone-card_0_Fenrir", "gone-card", 0, "old.wav"))
+    source["iteration_links"]["tts_gone-card_0_Fenrir-0"] = {"variantIndex": 0}
+
+    package = extract_package(source, scene_numbers=[0], new_id=_ids())
+    ids = [ev["id"] for _, ev in package["events"]]
+    assert len(ids) == 3  # card 0's two variants + card 1's speech line
+    assert not any("gone-card" in i for i in ids)
+    assert "old.wav" not in package_audio_files(package)
+    assert not any("gone-card" in k for k in package["maps"]["iteration_links"])
+
+    full = extract_package(source)
+    assert full["dropped_events"] == 1
+
+
 def test_rekey_event_id_shapes():
     assert rekey_event_id("generated_cid-x_2", "cid_x", "n_1", 0) == "generated_n-1_2"
     assert rekey_event_id("sed-cid-x-3", "cid-x", "n1", 0) == "sed-n1-3"
