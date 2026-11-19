@@ -66,3 +66,26 @@ export interface SpeckleGeometryNode {
  * Sounds / Default / Acoustics view mode. Applied by useSpeckleRenderStyle.
  */
 export type RenderStyle = 'rendered' | 'ghosted' | 'arctic' | 'wireframe';
+
+/** Phase of opening an existing Speckle model (shown on the scene loading overlay). */
+export type ModelLoadPhase =
+  | 'project'      // saved soundscape fetch (`?model_id=` bootstrap)
+  | 'preparing'    // viewer init + backend `ensure-ready`
+  | 'connecting'   // resolving the model's resource URLs (retried)
+  | 'downloading'  // SpeckleLoader object download — exact %
+  | 'converting'   // traversal + render-tree build
+  | 'building';    // GPU batch build inside `viewer.loadObject`
+
+/** Live progress of opening a model. `overall` is the weighted bar value (0–1). */
+export interface ModelLoadProgress {
+  phase: ModelLoadPhase;
+  overall: number;
+  /** Item counts for the current phase (objects downloaded / nodes converted). */
+  done?: number;
+  total?: number;
+  /** 0-based resource part when the model resolves to several URLs. */
+  partIndex?: number;
+  partCount?: number;
+  /** Resolve attempt (1-based), shown from the second attempt. */
+  attempt?: number;
+}

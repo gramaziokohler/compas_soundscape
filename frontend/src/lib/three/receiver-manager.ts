@@ -4,6 +4,7 @@ import { disposeMesh } from "@/lib/three/mesh-cleanup";
 import { updateDraggableMeshes, disposeMeshes } from "@/lib/three/draggable-mesh-manager";
 // import { calculateSpiralPositions } from "@/lib/three/spiral-placement"; // Replaced by camera-based placement
 import type { ReceiverData } from "@/types";
+import { isShareViewActive } from "@/store/shareViewStore";
 // import type { BoundingBoxBounds } from "@/lib/three/BoundingBoxManager"; // Unused after spiral placement removal
 import { RECEIVER_CONFIG, OBJECT_LABEL } from "@/utils/constants";
 import { getCssColorHex } from "@/utils/utils";
@@ -47,6 +48,10 @@ export class ReceiverManager {
   /** Applied to objects created after a hide, so they never pop back in. */
   private receiversVisible = true;
   private labelsVisible = true;
+  /** Only these receivers are drawn (share view: listeners linked to the active scene); null = all. */
+  private shownIds: ReadonlySet<string> | null = null;
+  /** Receivers hidden one by one (the listener being viewed through in FPS mode). */
+  private individuallyHidden = new Set<string>();
 
   // Headphones OBJ geometry — loaded asynchronously, shared across all meshes
   private headphonesGeomResult: HeadphonesGeometryResult | null = null;
@@ -153,10 +158,12 @@ export class ReceiverManager {
     // Sync label sprites with the current receiver set
     this.syncLabelSprites(result.meshes);
 
-    // Listeners hidden for simulation look faint (mesh + label).
+    // Listeners hidden for simulation look faint (mesh + label). The share view
+    // never edits simulations, so its listeners are always drawn at full opacity.
+    const shareView = isShareViewActive();
     result.meshes.forEach(mesh => {
       const receiver = updatedReceivers.find(r => r.id === mesh.userData.receiverId);
-      this.applySimulationHidden(mesh, !!receiver?.hiddenForSimulation);
+      this.applySimulationHidden(mesh, !shareView && !!receiver?.hiddenForSimulation);
     });
   }
 
@@ -256,7 +263,7 @@ export class ReceiverManager {
     cubeMesh.layers.disableAll();
     cubeMesh.layers.enable(0); // Default layer for basic rendering
     cubeMesh.layers.enable(4); // OVERLAY layer for custom objects
-    cubeMesh.visible = this.receiversVisible;
+    cubeMesh.visible = this.receiversVisible && this.isShown(receiver.id);
 
     // CRITICAL: Force update matrix to ensure proper rendering
     cubeMesh.updateMatrix();
@@ -430,7 +437,7 @@ export class ReceiverManager {
 
       const sprite = createLabelSprite(text);
       sprite.position.copy(mesh.position);
-      sprite.visible = this.labelsVisible;
+      sprite.visible = this.labelsVisible && this.isShown(id);
       target.add(sprite);
       this.labelSprites.set(id, sprite);
     }
@@ -470,10 +477,25 @@ export class ReceiverManager {
     });
   }
 
+  /** Passes the shown-ids filter and is not individually hidden. */
+  private isShown(receiverId: string): boolean {
+    return (!this.shownIds || this.shownIds.has(receiverId)) && !this.individuallyHidden.has(receiverId);
+  }
+
+  /** Re-derive every mesh / label visibility from the global flags, filter and individual hides. */
+  private refreshVisibility(): void {
+    this.receiverMeshes.forEach((m) => {
+      m.visible = this.receiversVisible && this.isShown(m.userData.receiverId as string);
+    });
+    this.labelSprites.forEach((sprite, id) => {
+      sprite.visible = this.labelsVisible && this.isShown(id);
+    });
+  }
+
   /** Show or hide all receiver meshes. */
   public setReceiversVisible(visible: boolean): void {
     this.receiversVisible = visible;
-    this.receiverMeshes.forEach(m => { m.visible = visible; });
+    this.refreshVisibility();
   }
 
   /**
@@ -481,16 +503,21 @@ export class ReceiverManager {
    * Used to hide the active listener's mesh while viewing through it in FPS mode.
    */
   public setReceiverVisible(receiverId: string, visible: boolean): void {
-    const mesh = this.receiverMeshes.find((m) => m.userData.receiverId === receiverId);
-    if (mesh) mesh.visible = visible;
-    const label = this.labelSprites.get(receiverId);
-    if (label) label.visible = visible;
+    if (visible) this.individuallyHidden.delete(receiverId);
+    else this.individuallyHidden.add(receiverId);
+    this.refreshVisibility();
+  }
+
+  /** Draw only these receivers (null = all), e.g. the listeners linked to the active scene. */
+  public setShownReceiverIds(ids: ReadonlySet<string> | null): void {
+    this.shownIds = ids;
+    this.refreshVisibility();
   }
 
   /** Show or hide all receiver label sprites. */
   public setLabelSpritesVisible(visible: boolean): void {
     this.labelsVisible = visible;
-    this.labelSprites.forEach(s => { s.visible = visible; });
+    this.refreshVisibility();
   }
 
   /**

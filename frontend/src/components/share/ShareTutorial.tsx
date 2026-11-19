@@ -1,7 +1,7 @@
 'use client';
 
 import type { CSSProperties, MouseEvent } from 'react';
-import { Power } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Power } from 'lucide-react';
 import { Icon } from '@/components/ui/Icon';
 import type { AnchorRect } from '@/hooks/useAnchorRect';
 import { useShareTutorial, type ShareTutorialPlacement } from '@/hooks/useShareTutorial';
@@ -44,8 +44,8 @@ function tipStyle(placement: ShareTutorialPlacement, rect: AnchorRect): CSSPrope
  * One numbered tip at a time, pinned beside what it explains — a scene circle
  * (turn it on), the Play button, the Acoustics column, the Listeners column,
  * the view-mode toolbar.
- * A click on the tip moves on, × skips the tour; tips also hide by themselves
- * (see useShareTutorial). While the visitor hovers the column a tip points at,
+ * A tip stays until the visitor acts: a click on it or the › arrow moves on,
+ * ‹ goes back, × skips the tour (see useShareTutorial). While the visitor hovers the column a tip points at,
  * the tip fades out of the way of the bubbles' hover flyouts (globals.css).
  *
  * Usage (page.tsx):
@@ -54,14 +54,16 @@ function tipStyle(placement: ShareTutorialPlacement, rect: AnchorRect): CSSPrope
  * ```
  */
 export function ShareTutorial() {
-  const { step, number, anchorRect, next, skip } = useShareTutorial();
+  const { step, number, anchorRect, hasPrev, isLast, next, prev, skip } = useShareTutorial();
   if (!step || !anchorRect) return null;
 
   const copy = SHARE_TUTORIAL.STEPS[step.id];
-  const handleSkip = (e: MouseEvent<HTMLButtonElement>) => {
+  /** Tip buttons act on their own — the tip's click (next) must not fire too. */
+  const own = (action: () => void) => (e: MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
-    skip();
+    action();
   };
+  const nextLabel = isLast ? SHARE_TUTORIAL.FINISH_LABEL : SHARE_TUTORIAL.NEXT_LABEL;
 
   return (
     <div
@@ -88,11 +90,32 @@ export function ShareTutorial() {
             </>
           )}
         </p>
+        <div className="share-tutorial-tip__nav">
+          <button
+            type="button"
+            className="share-tutorial-tip__arrow"
+            onClick={own(prev)}
+            disabled={!hasPrev}
+            title={SHARE_TUTORIAL.PREV_LABEL}
+            aria-label={SHARE_TUTORIAL.PREV_LABEL}
+          >
+            <ChevronLeft size={SHARE_TUTORIAL.ARROW_ICON_SIZE} strokeWidth={2.2} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="share-tutorial-tip__arrow"
+            onClick={own(next)}
+            title={nextLabel}
+            aria-label={nextLabel}
+          >
+            <ChevronRight size={SHARE_TUTORIAL.ARROW_ICON_SIZE} strokeWidth={2.2} aria-hidden="true" />
+          </button>
+        </div>
       </div>
       <button
         type="button"
         className="bar-hint__close"
-        onClick={handleSkip}
+        onClick={own(skip)}
         title={SHARE_TUTORIAL.SKIP_LABEL}
         aria-label={SHARE_TUTORIAL.SKIP_LABEL}
       >

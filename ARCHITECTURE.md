@@ -155,6 +155,7 @@ compas_soundscape/
 │       │   ├── scene/               # 3D scene components
 │       │   │   ├── SpeckleScene.tsx          # Main Speckle 3D scene component
 │       │   │   ├── ModelUploadProgress.tsx   # Live Speckle ingestion stage/% in the upload overlay (poll → apiService.uploadFile onProgress → uiStore.globalModelUploadProgress)
+│       │   │   ├── ModelLoadProgress.tsx     # Phased bar when opening an existing model (project → preparing → connecting → download % → convert → build; SpeckleLoader events via lib/speckle/model-load-progress.ts → useSpeckleViewerInit.loadProgress)
 │       │   │   └── VirtualTreeItem.tsx       # Virtual tree item for object explorer
 │       │   └── ui/                  # Reusable UI components
 │       │       ├── ButtonGroup.tsx           # Grouped button component
@@ -1118,8 +1119,10 @@ login and can only select and play. It also works inside an iframe.
 - `useShareLinkActivation` activates the rest of a link group when one item is activated:
   selecting a scene bubble, powering a simulation, or double-clicking a headphone. Nothing
   propagates until the model is loaded, so a linked listener really enters FPS. When the item
-  is in several groups, a group the active items already match wins, otherwise the first one
-  is used.
+  is in several groups, a group the active items already match wins, then one that does not
+  contradict them, otherwise the first one. Powering a listener from an idle state activates
+  its scene and simulation; switching listeners while a scene is on keeps the active scene
+  and simulation (only kinds that are off are filled in).
 - Share view player behavior:
   - The player opens idle at the reset camera view: no scene, simulation or listener is active,
     and no link group is applied on load.
@@ -1129,15 +1132,20 @@ login and can only select and play. It also works inside an iframe.
     listeners sharing a link group with it (`hooks/useShareLinkedIds.ts`; several groups →
     several items). A scene linked to no item of a kind shows all of that kind. On a scene
     switch, an active simulation or powered listener that is no longer listed is switched off
-    (`useShareLinkedSimulations`, `ListenerBubbles`).
+    (`useShareLinkedSimulations`, `ListenerBubbles`). The 3D listener meshes follow the same
+    filter (`ReceiverManager.setShownReceiverIds`, from `useSpeckleSceneObjects`): all of them
+    while no scene is on. Share-view listeners are always drawn at full opacity — the
+    designer's "Hide for simulation" fading is an editor cue.
   - While in FPS, `FpsControlsHint` lists the controls above the bottom bar (it replaces the
     editor's `FpsHelpPopup`). It shows on each FPS entry until closed. Closing it shrinks it into
     the "Leave FPS view" button and marks the `fps-controls` one-time hint seen (localStorage).
   - On the first model load, `ShareTutorial` (`components/share/`, state in
     `hooks/useShareTutorial.ts`, anchors tracked by `hooks/useAnchorRect.ts`) shows numbered tips
     one at a time: turn a scene on → press Play → switch acoustic simulations → switch listeners.
-    Steps already done or with nothing to point at are left out. A tip moves on when its action is
-    done, on click, or after `SHARE_TUTORIAL.STEP_DURATION_MS`; × skips the tour. Shown once per
+    Steps already done or with nothing to point at are left out. A tip stays open (no timers)
+    until it is clicked or its › arrow is pressed (next), ‹ (previous), × (skip the tour), or
+    its action is done (scene turned on, playback started). Arrows skip steps whose anchor is
+    not on screen. Shown once per
     browser (`share-tutorial` one-time hint, localStorage). It only starts after the visitor's
     first action on the page (`SHARE_TUTORIAL.INTERACTION_EVENTS`), so an idle tab never runs it.
     Once seen (finished, skipped, or in an earlier visit), a "Tour" button at the bottom bar's
@@ -1148,8 +1156,8 @@ login and can only select and play. It also works inside an iframe.
     colours (mean absorption α, 0 reflective → 1 absorbent; same ramp as
     `getMaterialColorByAbsorption`).
   - In a listener's FPS view, turning the view shows a "Back to listener view" button beside
-    "Leave FPS view" (`hooks/useListenerViewDrift.ts`); it restores the orientation the listener
-    was entered with. Listener orientation autosave is off, so visitors never overwrite it.
+    "Leave FPS view" (`hooks/useListenerViewDrift.ts`); it restores the orientation and zoom the
+    listener was entered with. Listener view autosave is off, so visitors never overwrite it.
   - "Reset camera view" leaves FPS (in the editor too), turns every bubble off (scene and
     playback, simulation / Resonance rooms, listener / grid) and frames the model.
   - The bottom bar has no Refresh scene button.

@@ -396,6 +396,8 @@ export function useSpeckleFPS({
     coordinator.enableFirstPersonMode(receiverPosition, initialTarget, goToReceiverId);
     // The look-at target only carries yaw/pitch — apply the saved roll on top.
     if (savedRoll !== 0) coordinator.rotateFirstPersonView(0, 0, savedRoll);
+    // Saved zoom of this listener's view (else the viewer's own FPS zoom preference).
+    if (receiverData?.focalLength !== undefined) coordinator.setFirstPersonFocalLength(receiverData.focalLength);
     setIsFirstPersonMode(true);
     coordinator.updateActiveReceiver(goToReceiverId);
 

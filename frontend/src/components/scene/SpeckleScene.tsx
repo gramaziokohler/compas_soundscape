@@ -60,6 +60,8 @@ import { SceneTimeline } from '@/components/scene/SceneTimeline';
 import { ObjectExplorerPanel } from '@/components/scene/ObjectExplorerPanel';
 import { Spinner } from '@/components/ui/Spinner';
 import { ModelUploadProgress } from './ModelUploadProgress';
+import { ModelLoadProgress } from './ModelLoadProgress';
+import { phaseProgress } from '@/lib/speckle/model-load-progress';
 import { DesignIntentPrompt } from './DesignIntentPrompt';
 import { ModelVersionBanner } from '@/components/scene/model-version/ModelVersionBanner';
 import { ModelVersionReviewPanel } from '@/components/scene/model-version/ModelVersionReviewPanel';
@@ -424,7 +426,7 @@ export function SpeckleScene({
   // ============================================================================
 
   // ── Viewer Init ──
-  const { isViewerReady, isLoading, error, worldTree } = useSpeckleViewerInit({
+  const { isViewerReady, isLoading, loadProgress, error, worldTree } = useSpeckleViewerInit({
     containerRef,
     modelUrl,
     speckleData,
@@ -1166,8 +1168,9 @@ export function SpeckleScene({
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none bg-background/90">
           <div className="flex flex-col items-center gap-3">
             <Spinner size={48} />
+            {/* Opening an existing model: phased bar (saved project fetch first, then the viewer load) */}
             {isLoading || isBootstrappingModel
-              ? <p className="text-xs text-primary">Loading model...</p>
+              ? <ModelLoadProgress progress={loadProgress ?? phaseProgress('project')} />
               : <ModelUploadProgress />}
             {/* Research study: design-intent question while the model loads */}
             <DesignIntentPrompt />

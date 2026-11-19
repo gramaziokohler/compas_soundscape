@@ -666,6 +666,7 @@ class SoundscapeReceiver(BaseModel):
     pitch: Optional[float] = None
     roll: Optional[float] = None
     orientation_saved: Optional[bool] = None
+    focal_length: Optional[float] = None  # saved first-person zoom (camera focal length, mm)
     hidden_for_simulation: bool = False
 
 

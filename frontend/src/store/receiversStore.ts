@@ -47,7 +47,8 @@ export interface ReceiversStoreState {
   /** Ctrl+drag duplicate — deep-clones the receiver at `from` and inserts at `toInsertion`. */
   duplicateReceiverAt: (from: number, toInsertion: number) => void;
   updateReceiverPosition: (id: string, position: [number, number, number]) => void;
-  updateReceiverOrientation: (id: string, yaw: number, pitch: number, roll: number) => void;
+  /** Save a listener's view; `focalLength` (FPS zoom, mm) is kept when omitted. */
+  updateReceiverOrientation: (id: string, yaw: number, pitch: number, roll: number, focalLength?: number) => void;
   updateReceiverName: (id: string, name: string) => void;
   toggleReceiverHiddenForSimulation: (id: string) => void;
   /** Show the `shownIds` receivers for simulation and hide every other one (ids of other kinds are ignored). */
@@ -141,11 +142,13 @@ export const useReceiversStore = create<ReceiversStoreState>()(
             'receivers/updateReceiverPosition',
           ),
 
-        updateReceiverOrientation: (id, yaw, pitch, roll) =>
+        updateReceiverOrientation: (id, yaw, pitch, roll, focalLength) =>
           set(
             (s) => ({
               receivers: s.receivers.map((r) =>
-                r.id === id ? { ...r, yaw, pitch, roll, orientationSaved: yaw !== 0 || pitch !== 0 || roll !== 0 } : r,
+                r.id === id
+                  ? { ...r, yaw, pitch, roll, focalLength: focalLength ?? r.focalLength, orientationSaved: yaw !== 0 || pitch !== 0 || roll !== 0 }
+                  : r,
               ),
             }),
             false,

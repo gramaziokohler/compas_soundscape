@@ -653,6 +653,11 @@ export class SpeckleAudioCoordinator {
     this.speckleCameraController?.setFirstPersonRotation(rotation);
   }
 
+  /** Set the first-person zoom (focal length, mm) — e.g. a listener's saved zoom. */
+  public setFirstPersonFocalLength(mm: number): void {
+    this.speckleCameraController?.setFirstPersonFocalLength(mm);
+  }
+
   /** Adjust the first-person focal length (mm) from a wheel event's deltaY. */
   public adjustFirstPersonFocal(deltaY: number): void {
     if (!this.speckleCameraController) return;

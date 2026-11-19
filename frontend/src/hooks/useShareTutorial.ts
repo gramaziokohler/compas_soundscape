@@ -24,7 +24,12 @@ export interface ShareTutorialState {
   /** 1-based number shown in the tip's badge. */
   number: number;
   anchorRect: AnchorRect | null;
+  /** An earlier step can be shown (the "previous" arrow). */
+  hasPrev: boolean;
+  /** No later step can be shown: "next" ends the tour. */
+  isLast: boolean;
   next: () => void;
+  prev: () => void;
   skip: () => void;
 }
 
@@ -96,15 +101,16 @@ function buildSteps(): ShareTutorialStep[] {
  *
  * Starts once the model is loaded, a playable scene exists and the visitor
  * first acted on the page (pointer, key, wheel, touch), shows one tip
- * at a time, and moves on when the visitor does the step (scene powered,
- * playback started), clicks the tip, or after `STEP_DURATION_MS`. A step whose
- * anchor never appears (Play is only shown once a scene is on) is skipped after
- * `ANCHOR_WAIT_MS`. Shown once per browser (useOneTimeHint); the bottom bar's
+ * at a time and keeps it open (no timers) until the visitor clicks it or the
+ * "next" arrow, goes back with the "previous" arrow, closes it, or does what it
+ * asks (turns a scene on, starts playback). Arrows skip steps whose anchor is
+ * not on screen (Play is only shown once a scene is on). Shown once per
+ * browser (useOneTimeHint); the bottom bar's
  * "Tour" button replays it (`shareViewStore.requestTutorialReplay`).
  *
  * Usage:
  * ```tsx
- * const { step, number, anchorRect, next, skip } = useShareTutorial();
+ * const { step, number, anchorRect, hasPrev, isLast, next, prev, skip } = useShareTutorial();
  * ```
  */
 export function useShareTutorial(): ShareTutorialState {
@@ -160,35 +166,54 @@ export function useShareTutorial(): ShareTutorialState {
   const anchorRect = useAnchorRect(current ? current.resolveAnchor : null, SHARE_TUTORIAL.ANCHOR_POLL_MS);
   const hasAnchor = anchorRect !== null;
 
-  const next = useCallback(() => setIndex((i) => i + 1), []);
+  /** Nearest step from `from` in `direction` whose anchor is on screen now, or -1. */
+  const findShown = useCallback((from: number, direction: 1 | -1): number => {
+    if (!steps) return -1;
+    for (let i = from + direction; i >= 0 && i < steps.length; i += direction) {
+      if (steps[i].resolveAnchor()) return i;
+    }
+    return -1;
+  }, [steps]);
+
   const skip = useCallback(() => {
     setSteps(null);
     markSeen();
   }, [markSeen]);
 
-  // Past the last step: the tour is done for good.
-  useEffect(() => {
-    if (steps && index >= steps.length) skip();
-  }, [steps, index, skip]);
+  // Arrows / tip click: past the last shown step the tour is done for good.
+  const next = useCallback(() => {
+    const target = findShown(index, 1);
+    if (target < 0) skip();
+    else setIndex(target);
+  }, [findShown, index, skip]);
 
-  // The visitor did what the tip asks.
-  useEffect(() => {
-    if ((current?.id === 'scene' && scenePowered) || (current?.id === 'play' && isPlaying)) next();
-  }, [current, scenePowered, isPlaying, next]);
+  const prev = useCallback(() => {
+    const target = findShown(index, -1);
+    if (target >= 0) setIndex(target);
+  }, [findShown, index]);
 
-  // Hide after a while — the clock restarts when a late anchor appears.
+  // The visitor did what the tip asks: move on to the very next step (its anchor,
+  // e.g. Play once a scene is on, may appear a moment later). Only the transition
+  // counts, so going back to a done step keeps it open.
+  const prevActionsRef = useRef({ scenePowered, isPlaying });
   useEffect(() => {
-    if (!current) return;
-    const delay = hasAnchor ? SHARE_TUTORIAL.STEP_DURATION_MS : SHARE_TUTORIAL.ANCHOR_WAIT_MS;
-    const timer = window.setTimeout(next, delay);
-    return () => window.clearTimeout(timer);
-  }, [current, hasAnchor, next]);
+    const before = prevActionsRef.current;
+    prevActionsRef.current = { scenePowered, isPlaying };
+    const done = (current?.id === 'scene' && scenePowered && !before.scenePowered)
+      || (current?.id === 'play' && isPlaying && !before.isPlaying);
+    if (!done || !steps) return;
+    if (index + 1 >= steps.length) skip();
+    else setIndex(index + 1);
+  }, [current, scenePowered, isPlaying, steps, index, skip]);
 
   return {
     step: current && hasAnchor ? current : null,
     number: index + 1,
     anchorRect,
+    hasPrev: findShown(index, -1) >= 0,
+    isLast: findShown(index, 1) < 0,
     next,
+    prev,
     skip,
   };
 }

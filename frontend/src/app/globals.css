@@ -2228,6 +2228,30 @@ button.mv-row:hover:not(:disabled) {
   color: var(--color-secondary-hover);
   margin: 0;
 }
+.share-tutorial-tip__nav {
+  display: flex;
+  justify-content: flex-end;
+  gap: 2px;
+  margin-top: 4px;
+}
+.share-tutorial-tip__arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  color: var(--color-secondary-hover);
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.share-tutorial-tip__arrow:hover:not(:disabled) {
+  background: var(--color-secondary-light);
+  color: var(--color-primary);
+}
+.share-tutorial-tip__arrow:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
 .share-tutorial-tip__power {
   display: inline-flex;
   align-items: center;

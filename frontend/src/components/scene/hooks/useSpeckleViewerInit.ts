@@ -26,6 +26,8 @@ import { apiService } from '@/services/api';
 import { CAMERA_CONFIG, SPECKLE_PINNED_VERSION_URL, SPECKLE_VIEWER_RETRY } from '@/utils/constants';
 import { getCssColorHex } from '@/utils/utils';
 import { isLoadableVersion, withModelVersion } from '@/utils/speckleLatestVersion';
+import { phaseProgress, trackSpeckleLoader } from '@/lib/speckle/model-load-progress';
+import type { ModelLoadProgress } from '@/types';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
 
 interface ViewerInitProps {
@@ -50,6 +52,8 @@ interface ViewerInitProps {
 interface ViewerInitResult {
   isViewerReady: boolean;
   isLoading: boolean;
+  /** Phased progress while a model is opening; null when idle. */
+  loadProgress: ModelLoadProgress | null;
   error: string | null;
   worldTree: any;
 }
@@ -87,6 +91,7 @@ export function useSpeckleViewerInit({
 
   const [isViewerReady, setIsViewerReady] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [loadProgress, setLoadProgress] = useState<ModelLoadProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [worldTree, setWorldTree] = useState<any>(null);
 
@@ -128,7 +133,10 @@ export function useSpeckleViewerInit({
     let cancelled = false;
 
     const initViewer = async () => {
-      if (modelUrl) setIsLoading(true);
+      if (modelUrl) {
+        setIsLoading(true);
+        setLoadProgress(phaseProgress('preparing'));
+      }
       setError(null);
       setIsViewerReady(false);
 
@@ -326,6 +334,7 @@ export function useSpeckleViewerInit({
           setPlaybackScheduler(playbackScheduler);
 
           setIsLoading(false);
+          setLoadProgress(null);
           setIsViewerReady(true);
           setViewMode('default');
           setStoreViewer(viewer);
@@ -403,6 +412,7 @@ export function useSpeckleViewerInit({
 
         for (let attempt = 0; attempt < SPECKLE_VIEWER_RETRY.MAX_ATTEMPTS; attempt++) {
           try {
+            setLoadProgress(phaseProgress('connecting', 0, { attempt: attempt + 1 }));
             const originalError = console.error;
             console.error = () => {};
 
@@ -417,9 +427,12 @@ export function useSpeckleViewerInit({
               throw new Error('Model still processing on server');
             }
 
-            for (const url of urls) {
+            for (const [partIndex, url] of urls.entries()) {
               if (cancelled) return;
               const loader = new SpeckleLoader(viewer.getWorldTree(), url, speckleData?.auth_token);
+              trackSpeckleLoader(loader, partIndex, urls.length, (progress) => {
+                if (!cancelled) setLoadProgress(progress);
+              });
               await viewer.loadObject(loader, true);
             }
 
@@ -437,11 +450,13 @@ export function useSpeckleViewerInit({
 
         // All retries failed
         setIsLoading(false);
+        setLoadProgress(null);
         setError(`Failed to load model after ${SPECKLE_VIEWER_RETRY.MAX_ATTEMPTS} attempts: ${lastError?.message ?? 'unknown error'}`);
       } catch (err) {
         if (cancelled) return;
         console.error('[useSpeckleViewerInit] Initialization error:', err);
         setIsLoading(false);
+        setLoadProgress(null);
         setError(`Failed to initialize viewer: ${(err as Error).message}`);
       }
     };
@@ -503,5 +518,5 @@ export function useSpeckleViewerInit({
     };
   }, [isViewerReady, setAreaDrawingManager]);
 
-  return { isViewerReady, isLoading, error, worldTree };
+  return { isViewerReady, isLoading, loadProgress, error, worldTree };
 }

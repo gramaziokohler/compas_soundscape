@@ -22,7 +22,8 @@ function isFirstPersonActive(): boolean {
 }
 
 /**
- * Autosaves the FPS camera orientation (debounced) to the powered single listener.
+ * Autosaves the FPS camera orientation and zoom (focal length) — debounced — to
+ * the powered single listener.
  *
  * Mounted at page level so saving keeps working while the listener card is
  * reduced or the sidebar is hidden (the orientation widget is unmounted then).
@@ -37,7 +38,7 @@ export function useListenerOrientationAutosave(poweredListenerId: string | null)
   useEffect(() => {
     if (!poweredListenerId || isShareViewActive()) return;
     const receiverId = poweredListenerId;
-    let pending: ListenerOrientation | null = null;
+    let pending: (ListenerOrientation & { focalLength: number | null }) | null = null;
     let timer: ReturnType<typeof setTimeout> | null = null;
 
     const flush = () => {
@@ -51,21 +52,28 @@ export function useListenerOrientationAutosave(poweredListenerId: string | null)
       const current = useReceiversStore.getState().receivers.find((r) => r.id === receiverId);
       if (!current) return;
       const currentOri = { yaw: current.yaw ?? 0, pitch: current.pitch ?? 0, roll: current.roll ?? 0 };
-      if (sameOrientation(currentOri, next)) return;
-      useReceiversStore.getState().updateReceiverOrientation(receiverId, next.yaw, next.pitch, next.roll);
+      const sameZoom = next.focalLength === null || next.focalLength === current.focalLength;
+      if (sameOrientation(currentOri, next) && sameZoom) return;
+      useReceiversStore.getState().updateReceiverOrientation(
+        receiverId, next.yaw, next.pitch, next.roll, next.focalLength ?? undefined,
+      );
     };
 
-    const schedule = (ori: ListenerOrientation) => {
+    const schedule = () => {
       if (!isFirstPersonActive()) return;
-      pending = { yaw: ori.yaw, pitch: ori.pitch, roll: ori.roll };
+      const { currentCameraOrientation: ori, currentFpsFocalLength } = useSpeckleEngineStore.getState();
+      pending = { yaw: ori.yaw, pitch: ori.pitch, roll: ori.roll, focalLength: currentFpsFocalLength };
       if (timer) clearTimeout(timer);
       timer = setTimeout(flush, LISTENER_ORIENTATION.SAVE_DEBOUNCE_MS);
     };
 
-    schedule(useSpeckleEngineStore.getState().currentCameraOrientation);
+    schedule();
     const unsubscribe = useSpeckleEngineStore.subscribe((state, prev) => {
-      if (state.currentCameraOrientation !== prev.currentCameraOrientation) {
-        schedule(state.currentCameraOrientation);
+      if (
+        state.currentCameraOrientation !== prev.currentCameraOrientation ||
+        state.currentFpsFocalLength !== prev.currentFpsFocalLength
+      ) {
+        schedule();
       }
     });
 

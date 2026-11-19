@@ -29,6 +29,8 @@ interface SpeckleEngineState {
 
   // Live camera orientation (updated every frame from animation loop)
   currentCameraOrientation: { yaw: number; pitch: number; roll: number };
+  /** Live first-person zoom (focal length, mm); null outside FPS mode. */
+  currentFpsFocalLength: number | null;
 
   /** Version id currently loaded in the viewer (latest loadable version). */
   loadedModelVersionId: string | null;
@@ -53,6 +55,7 @@ interface SpeckleEngineState {
   setIsAcousticMode: (isAcousticMode: boolean) => void;
   setShowHoveringHighlight: (showHoveringHighlight: boolean) => void;
   setCurrentCameraOrientation: (orientation: { yaw: number; pitch: number; roll: number }) => void;
+  setCurrentFpsFocalLength: (focalLength: number | null) => void;
   setLoadedModelVersionId: (versionId: string | null) => void;
   setLoadedModelVersionCreatedAt: (createdAt: string | null) => void;
 }
@@ -74,6 +77,7 @@ export const useSpeckleEngineStore = create<SpeckleEngineState>((set) => ({
   isAcousticMode: false,
   showHoveringHighlight: true,
   currentCameraOrientation: { yaw: 0, pitch: 0, roll: 0 },
+  currentFpsFocalLength: null,
   loadedModelVersionId: null,
   loadedModelVersionCreatedAt: null,
 
@@ -93,6 +97,7 @@ export const useSpeckleEngineStore = create<SpeckleEngineState>((set) => ({
   setIsAcousticMode: (isAcousticMode) => set({ isAcousticMode }),
   setShowHoveringHighlight: (showHoveringHighlight) => set({ showHoveringHighlight }),
   setCurrentCameraOrientation: (currentCameraOrientation) => set({ currentCameraOrientation }),
+  setCurrentFpsFocalLength: (currentFpsFocalLength) => set({ currentFpsFocalLength }),
   setLoadedModelVersionId: (loadedModelVersionId) => set({ loadedModelVersionId }),
   setLoadedModelVersionCreatedAt: (loadedModelVersionCreatedAt) => set({ loadedModelVersionCreatedAt }),
 }));

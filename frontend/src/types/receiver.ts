@@ -32,6 +32,8 @@ export interface ReceiverData {
   roll?: number;
   /** Whether the user has explicitly saved a per-listener orientation. */
   orientationSaved?: boolean;
+  /** Saved first-person zoom (camera focal length, mm); unset → the viewer's own FPS zoom preference. */
+  focalLength?: number;
 }
 
 /**

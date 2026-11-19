@@ -258,6 +258,12 @@ export class SpeckleSceneAdapter {
           ) {
             useSpeckleEngineStore.getState().setCurrentCameraOrientation({ yaw, pitch, roll });
           }
+
+          // Live FPS zoom (listener view autosave / "Back to listener view")
+          const focal = camController?.isFirstPersonMode() ? camController.getFirstPersonFocalLength() : null;
+          if (useSpeckleEngineStore.getState().currentFpsFocalLength !== focal) {
+            useSpeckleEngineStore.getState().setCurrentFpsFocalLength(focal);
+          }
         } catch (error) {
           console.warn('[SpeckleSceneAdapter] Failed to update audio listener:', error);
         }

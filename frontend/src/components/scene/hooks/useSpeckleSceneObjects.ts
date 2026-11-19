@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
-import { useGridListenersStore } from '@/store';
+import { useGridListenersStore, useShareViewStore } from '@/store';
+import { useShareLinkedIds } from '@/hooks/useShareLinkedIds';
 import type { ReceiverData, SoundEvent } from '@/types';
 
 interface SceneObjectsProps {
@@ -44,10 +45,21 @@ export function useSpeckleSceneObjects({
     }
   }, [isViewerReady, receivers, soundscapeData]);
 
-  // The shown (powered) grid is hidden for simulation → its points are drawn faint.
+  // Share view: while a scene is on, only its linked listeners are drawn (null = all).
+  const shownListenerIds = useShareLinkedIds('listener');
+  useEffect(() => {
+    const { coordinator, viewer } = useSpeckleEngineStore.getState();
+    if (!coordinator || !isViewerReady) return;
+    coordinator.getReceiverManager()?.setShownReceiverIds(shownListenerIds);
+    viewer?.requestRender();
+  }, [isViewerReady, shownListenerIds]);
+
+  // The shown (powered) grid is hidden for simulation → its points are drawn faint
+  // (never in the share view, which does not edit simulations).
+  const isShareView = useShareViewStore((s) => s.isShareView);
   const isShownGridHidden = useGridListenersStore((s) =>
     s.gridListeners.some((g) => g.id === expandedGridListenerId && g.hiddenForSimulation),
-  );
+  ) && !isShareView;
 
   // Update grid listener points
   useEffect(() => {

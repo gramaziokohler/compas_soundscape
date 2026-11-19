@@ -38,6 +38,10 @@ interface UseShareLinkActivationArgs {
  * simulation's listeners can sit in other links ({scene, sim, L1} + {sim, L2}),
  * see `linkedListenerIds`.
  *
+ * Powering a listener from an idle state activates its scene and simulation;
+ * switching listeners while a scene is on keeps the active scene and simulation
+ * (only the kinds that are off are filled in).
+ *
  * Changes made by the hook itself are recorded as the new baseline, so they
  * never re-trigger it.
  *
@@ -79,10 +83,14 @@ export function useShareLinkActivation({
       return;
     }
 
-    /** Activate every item of `link` that is not active yet; returns the resulting state. */
-    const applyLink = (link: ShareLink): ActiveItems => {
+    /**
+     * Activate every item of `link` that is not active yet; returns the resulting state.
+     * `keepActive`: only fill in kinds that are off — an active scene / simulation stays
+     * (switching listeners within a scene never switches its scene or simulation).
+     */
+    const applyLink = (link: ShareLink, keepActive: boolean): ActiveItems => {
       const next = { ...current };
-      if (link.sceneId && link.sceneId !== current.scene) {
+      if (link.sceneId && link.sceneId !== current.scene && !(keepActive && current.scene)) {
         const index = analysisConfigs.findIndex((c) => c.scene_id === link.sceneId);
         if (index >= 0) {
           const contextIndex = analysisConfigs[index].parentContextOriginalIndex ?? null;
@@ -93,7 +101,7 @@ export function useShareLinkActivation({
           next.scene = link.sceneId;
         }
       }
-      if (link.simulationId && link.simulationId !== current.simulation) {
+      if (link.simulationId && link.simulationId !== current.simulation && !(keepActive && current.simulation)) {
         const index = simulationConfigs.findIndex((c) => c.id === link.simulationId);
         if (index >= 0) {
           useAcousticsSimulationStore.getState().handleSetActiveSimulation(index);
@@ -119,10 +127,14 @@ export function useShareLinkActivation({
     // Only an activation propagates; turning something off never does.
     const changed = KINDS.find((kind) => current[kind] && current[kind] !== baseline[kind]);
     if (!changed) return;
-    // An item can be in several links: keep one the active items already match, else the first.
+    // An item can be in several links: keep one the active items already match, else
+    // one that does not contradict them (fills only what is off), else the first.
     const candidates = links.filter((l) => l[linkKey(changed)] === current[changed]);
-    const satisfied = candidates.find((l) => KINDS.every((kind) => !l[linkKey(kind)] || l[linkKey(kind)] === current[kind]));
-    const link = satisfied ?? candidates[0];
-    if (link) baselineRef.current = applyLink(link);
+    const matches = (l: ShareLink, kind: ShareItemKind) => !l[linkKey(kind)] || l[linkKey(kind)] === current[kind];
+    const satisfied = candidates.find((l) => KINDS.every((kind) => matches(l, kind)));
+    const compatible = candidates.find((l) => KINDS.every((kind) => !current[kind] || matches(l, kind)));
+    const link = satisfied ?? compatible ?? candidates[0];
+    // A listener switched while a scene is on keeps that scene and its simulation.
+    if (link) baselineRef.current = applyLink(link, changed === 'listener' && current.scene !== null);
   }, [links, isShareView, isExpertMode, activeSceneId, activeSimulationId, activeListenerId, analysisConfigs, simulationConfigs, isViewerReady]);
 }

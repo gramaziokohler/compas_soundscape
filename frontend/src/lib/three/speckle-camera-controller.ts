@@ -373,6 +373,22 @@ export class SpeckleCameraController {
     return this.firstPersonFocalLength;
   }
 
+  /**
+   * Set the first-person focal length (mm), e.g. a listener's saved zoom.
+   * Clamped like the wheel; not persisted as the viewer's own preference.
+   */
+  public setFirstPersonFocalLength(mm: number): void {
+    if (!this.firstPersonMode || !Number.isFinite(mm)) return;
+    const next = THREE.MathUtils.clamp(mm, FPS_FOCAL.MIN_MM, FPS_FOCAL.MAX_MM);
+    if (next === this.firstPersonFocalLength) return;
+    this.firstPersonFocalLength = next;
+    const camera = this.viewer.getRenderer().renderingCamera as THREE.PerspectiveCamera;
+    camera.setFocalLength(next);
+    camera.updateProjectionMatrix();
+    // Same as adjustFirstPersonFocal: re-apply so the pipeline gets `stationary`.
+    this.updateFirstPersonCamera();
+  }
+
   /** Read the persisted focal-length preference, or null if unset/invalid. */
   private readStoredFocalLength(): number | null {
     if (typeof window === 'undefined') return null;

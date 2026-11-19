@@ -411,6 +411,7 @@ export function buildSoundscapeSavePayload(
     pitch: r.pitch,
     roll: r.roll,
     orientation_saved: r.orientationSaved,
+    focal_length: r.focalLength,
     hidden_for_simulation: r.hiddenForSimulation ?? false,
   }));
 
@@ -959,6 +960,7 @@ export function restoreSoundscapeState(
     pitch: (saved as any).pitch ?? 0,
     roll: (saved as any).roll ?? 0,
     orientationSaved: (saved as any).orientation_saved ?? false,
+    focalLength: saved.focal_length ?? undefined,
     hiddenForSimulation: saved.hidden_for_simulation ?? false,
   }));
 

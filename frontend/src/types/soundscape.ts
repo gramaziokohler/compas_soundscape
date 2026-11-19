@@ -136,6 +136,8 @@ export interface SoundscapeReceiver {
   pitch?: number;
   roll?: number;
   orientation_saved?: boolean;
+  /** Saved first-person zoom (camera focal length, mm). */
+  focal_length?: number;
   /** Excluded from acoustic simulations ("Hide for simulation"). */
   hidden_for_simulation?: boolean;
 }

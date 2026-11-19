@@ -1082,6 +1082,37 @@ export const SPECKLE_UPLOAD_STAGE_LABELS = {
   loading: 'Loading model…',
 } as const;
 
+// Opening an existing model (refresh / model switch): phased progress bar on the
+// scene loading overlay. Fixed phases own a fixed slice of the bar; the loader
+// span is shared equally by the model's resource URLs, and each part is split
+// by LOADER_PHASE_WEIGHTS (download is the only exact %, so it gets the most).
+export const MODEL_LOAD_PROGRESS = {
+  FIXED_PHASE_RANGES: {
+    project: [0, 0.03],
+    preparing: [0.03, 0.08],
+    connecting: [0.08, 0.1],
+  },
+  LOADER_SPAN: [0.1, 0.99],          // never reaches 100 % before the viewer is ready
+  LOADER_PHASE_WEIGHTS: {
+    downloading: 0.7,
+    converting: 0.25,
+    building: 0.05,
+  },
+  CONVERT_MAX_FRACTION: 0.99,        // `Converted` vs `Traversed` counts are not guaranteed to match
+  MIN_UPDATE_STEP: 0.005,            // re-render only when the bar moves ≥ 0.5 %
+  ELAPSED_SHOW_AFTER_MS: 3000,       // show the elapsed timer once a load feels slow
+  ELAPSED_TICK_MS: 1000,
+} as const;
+
+export const MODEL_LOAD_PHASE_LABELS = {
+  project: 'Loading project…',
+  preparing: 'Preparing model…',
+  connecting: 'Contacting Speckle…',
+  downloading: 'Downloading model',
+  converting: 'Converting geometry',
+  building: 'Building scene…',
+} as const;
+
 // Labels for Speckle's ModelIngestionProcessingPhase (shown while processing).
 export const SPECKLE_INGESTION_PHASE_LABELS: Record<string, string> = {
   converting: 'Converting',
@@ -3245,6 +3276,8 @@ export const FPS_CONTROLS_HINT = {
   BASELINE_SETTLE_MS: 400,
   /** Look direction differing from the baseline by more than this (any of yaw/pitch/roll) shows the button. */
   DRIFT_THRESHOLD_RAD: 0.05,
+  /** ...or a zoom (focal length) differing by more than this (mm). */
+  DRIFT_THRESHOLD_FOCAL_MM: 0.5,
 } as const;
 
 /** Share view: first-load numbered coach-mark tour (components/share/ShareTutorial.tsx). */
@@ -3254,8 +3287,6 @@ export const SHARE_TUTORIAL = {
   START_DELAY_MS: 1000,    // after the model is loaded, the scenes are known and the visitor first interacted
   /** Window events that count as the visitor's first action (an idle tab never starts the tour). */
   INTERACTION_EVENTS: ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart'],
-  STEP_DURATION_MS: 9000,  // a tip hides (and the tour moves on) after this long
-  ANCHOR_WAIT_MS: 9000,    // a step whose anchor is missing (e.g. Play not shown yet) is skipped after this
   ANCHOR_POLL_MS: 250,     // anchor re-measure interval while a tip is shown
   GAP: 14,                 // px — between the tip and its anchor
   WIDTH: 240,              // px
@@ -3263,6 +3294,10 @@ export const SHARE_TUTORIAL = {
   POWER_ICON_SIZE: 12,     // px — inline ⏻ glyph in the first tip
   Z_INDEX: 205,            // above the docked DAW (200), below bar popovers (210)
   SKIP_LABEL: 'Skip tutorial',
+  PREV_LABEL: 'Previous tip',
+  NEXT_LABEL: 'Next tip',
+  FINISH_LABEL: 'Finish tutorial',
+  ARROW_ICON_SIZE: 14,     // px — previous / next chevrons
   STEPS: {
     /** `afterIcon` follows an inline power glyph (the button in the circle's hover flyout). */
     scene: { title: 'Turn on a sound scene', message: 'Hover a circle and press', afterIcon: ', or just click the circle.' },
