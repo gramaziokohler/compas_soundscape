@@ -31,6 +31,10 @@ Open items:
 > **Checkout (2026-11-14):** one clone only, `C:\Users\soundisblue\repos\compas_acoustics` on
 > `engine-integration` (→ `origin/engine-integration`); no worktrees. Rules: AGENTS.md
 > § "compas_acoustics (CA) checkout — exactly one".
+>
+> **Since 2026-11-19** the work below is split into themed PR branches on upstream `main`, and
+> `engine-integration` is rebuilt from them (old history: tag `archive/engine-integration-5bf905c`).
+> The branch names and env setup in this document are historical; follow AGENTS.md.
 
 First step of the migration below: make compas_acoustics (CA) able to serve as the engine, with
 no change to compas_soundscape (CS) yet. Work happens in `bouiz/compas_acoustics`, on top of its

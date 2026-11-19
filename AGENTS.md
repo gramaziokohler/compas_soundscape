@@ -71,21 +71,41 @@ CA engine work happens in the fork `bouiz/compas_acoustics` (remote `origin`; `u
 gramaziokohler, never push or open PRs there without asking). There is **one** local clone:
 `C:\Users\soundisblue\repos\compas_acoustics`, normally on branch `engine-integration`.
 
-- **`engine-integration` is generated, never edited by hand.** It is upstream `main` + a merge of
-  every open PR branch (`feat/*`, `chore/*`, one theme each, rebased on upstream `main`) + a few
-  fork-only commits (`environment.yml`, cross-PR glue). Work goes on a PR branch; then
-  `python scripts/rebuild_ca_integration.py` rebuilds `integration/rebuild` (merges, CHANGELOG
-  union, rerere-replayed resolutions, fork commits), you run the checks below on it, and
-  `--publish` force-pushes it as `engine-integration` (old tip tagged `archive/...`). Branches
-  upstream has merged are skipped; add new PR branches to `PR_BRANCHES` in the script.
-- **The app pins a commit.** `requirements.txt` names one `engine-integration` commit; bump it on
-  `master` to deploy (production reinstalls on the hash change, no manual `compas deps`). Dev
-  machines install the clone editable into `compas-toy` with `--no-deps` (deploy/README.md), so the
-  app runs whatever the clone has checked out.
-- Env `compas-acoustics-bouiz` (`environment.yml` in the clone: editable, dev + docs extras) runs
-  the CA checks.
+- **`engine-integration` is generated, never developed on.** It is upstream `main` + a merge of
+  every open PR branch (`feat/*`, `fix/*`, `chore/*`: one theme each, based on upstream `main`) +
+  the fork-only commits on top of the last merge (`environment.yml`, glue that needs two PRs at
+  once). `scripts/rebuild_ca_integration.py` rebuilds it; branches upstream has merged are skipped.
+- **Environments:**
+
+  | Env | Holds CA as | Used for |
+  | --- | --- | --- |
+  | `compas-acoustics-bouiz` | the clone, editable, dev + docs extras (`environment.yml`, Python 3.12) | every CA check below |
+  | `compas-toy` (dev app) | the clone, editable, `--no-deps` (deploy/README.md) | the app and CS tests: they run what the clone has checked out |
+  | `compas-soundscape` (production) | the commit pinned in `requirements.txt` | never install CA there by hand |
+
+  No other CA env. To check older Pythons as CI does (3.9/3.10 lack pyFDN, spharpy and
+  multislope), make a throwaway env and delete it afterwards.
+- **Workflow for a CA change:**
+  1. `git fetch upstream`, then `git switch -c feat/<topic> upstream/main`. To fix an open PR, switch
+     to its branch instead. Stack on another PR branch only when the change needs it.
+  2. Commit in upstream's style: title `Area: statement`, body Problem / Solution / Validation,
+     one `CHANGELOG.md` line under Unreleased. Tests that need pyFDN/spharpy/multislope skip without
+     them (`pytest.importorskip`), or Python 3.9/3.10 CI fails.
+  3. Run the checks below in `compas-acoustics-bouiz`, then push the branch to `origin` (the fork).
+     Opening or updating a PR to `upstream` needs the user's go-ahead; give them a compare link.
+  4. New branch: add it to `PR_BRANCHES` in `scripts/rebuild_ca_integration.py` (stacked branches
+     after their base). Run `python scripts/rebuild_ca_integration.py`, run the checks on
+     `integration/rebuild`, then `--publish` (force-pushes `engine-integration`, tags the old tip
+     `archive/engine-integration-<sha>`). On a conflict it stops: resolve, `git commit --no-edit`,
+     rerun with `--resume`.
+  5. In CS, pin the new `engine-integration` commit in `requirements.txt`, run the CS tests that
+     import `compas_acoustics` (`backend/tests/`, `compas-toy`), commit. Pushing `master` deploys it:
+     production reinstalls CA on the requirements hash change, no manual `compas deps`.
+  - A fork-only change (never meant for upstream) is the one thing committed directly on top of
+    `engine-integration`; each rebuild replays it. Push it with step 4's `--publish`.
 - **No `git worktree add`, no second clone** (`compas_acoustics_dev`/`_orient` were folded back on
-  2026-11-14). Switch branches in this clone and come back to `engine-integration`.
+  2026-11-14). Switch branches in this clone and come back to `engine-integration`, so the app
+  (editable) runs the integrated code.
 - Results and test reports live under `examples/results/` (gitignored, never delete):
   `reference/<commit>/` regression recordings + `record_*.log`, `geometry/*.pkl` prepared-geometry
   comparisons. Before discarding any CA checkout or branch, copy its `examples/results/` here.
