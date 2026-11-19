@@ -653,6 +653,16 @@ canvas {
   background: var(--color-error);
   color: var(--color-on-blue);
 }
+/* Listener-colored side action beside an active bubble (e.g. "Back to listener view") */
+.bubble--side-action {
+  background: var(--sidebar-bg);
+  border: 1.5px solid var(--color-warning);
+  color: var(--color-warning-hover);
+}
+.bubble--side-action:hover {
+  background: var(--color-warning);
+  color: var(--color-on-blue);
+}
 
 /* Hover label — reuses .sidebar-toggle-label's pill surface */
 .bubble-label {
@@ -1348,6 +1358,15 @@ canvas {
   font-size: 10px;
   white-space: nowrap;
   color: var(--color-warning);
+}
+/* Busy hint right of "Timeline" (e.g. a newly activated simulation's IRs loading). */
+.bar-busy {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  white-space: nowrap;
+  color: var(--color-secondary-hover);
 }
 /* Share view: playful "use headphones" pill, centred between the wordmark and playback. */
 .bar-headphones-hint {

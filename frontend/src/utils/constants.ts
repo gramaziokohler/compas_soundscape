@@ -468,6 +468,9 @@ export const SHARE_VIEW = {
   /** Bottom-bar hint between the wordmark and the playback controls. */
   HEADPHONES_HINT: 'Use headphones!!',
   HEADPHONES_HINT_TITLE: 'The sound is spatial: headphones put you inside the scene',
+  /** Bottom-bar button (right end) that replays the coach-mark tour. */
+  REPLAY_TUTORIAL_LABEL: 'Tour',
+  REPLAY_TUTORIAL_TITLE: 'Replay the tutorial',
   /** iframe snippet defaults for the embed code. */
   EMBED_WIDTH: '100%',
   EMBED_HEIGHT: '600',
@@ -3006,6 +3009,9 @@ export const SCENE_BOTTOM_BAR = {
   OBJECT_EXPLORER_BUTTON_ID: 'scene-bottom-bar-object-explorer',
   /** Play / pause button — anchor of the share-view tutorial's "press play" tip. */
   PLAY_BUTTON_ID: 'scene-play-button',
+  /** Shown right of "Timeline" while a newly activated simulation's IRs load during playback. */
+  APPLYING_IRS_LABEL: 'Applying acoustics…',
+  APPLYING_IRS_TITLE: "Loading the simulation's impulse responses into the convolvers",
 } as const;
 
 /** Top-centre `Sounds | Default | Acoustics` radiogroup — anchor of the share-view tutorial's view-mode tip. */
@@ -3233,13 +3239,21 @@ export const FPS_CONTROLS_HINT = {
   CLOSE_LABEL: 'Hide these controls',
   CLOSE_ANIMATION_MS: 420,
   CLOSE_END_SCALE: 0.04,
+  /** "Back to listener view" button beside the exit button (useListenerViewDrift). */
+  RESTORE_VIEW_LABEL: 'Back to listener view',
+  /** Wait after entering a listener before its saved look direction is taken as the baseline. */
+  BASELINE_SETTLE_MS: 400,
+  /** Look direction differing from the baseline by more than this (any of yaw/pitch/roll) shows the button. */
+  DRIFT_THRESHOLD_RAD: 0.05,
 } as const;
 
 /** Share view: first-load numbered coach-mark tour (components/share/ShareTutorial.tsx). */
 export const SHARE_TUTORIAL = {
   /** One-time hint id (useOneTimeHint) — the tour shows once per browser. */
   HINT_ID: 'share-tutorial',
-  START_DELAY_MS: 1000,    // after the model is loaded and the scenes are known
+  START_DELAY_MS: 1000,    // after the model is loaded, the scenes are known and the visitor first interacted
+  /** Window events that count as the visitor's first action (an idle tab never starts the tour). */
+  INTERACTION_EVENTS: ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart'],
   STEP_DURATION_MS: 9000,  // a tip hides (and the tour moves on) after this long
   ANCHOR_WAIT_MS: 9000,    // a step whose anchor is missing (e.g. Play not shown yet) is skipped after this
   ANCHOR_POLL_MS: 250,     // anchor re-measure interval while a tip is shown
@@ -3257,6 +3271,19 @@ export const SHARE_TUTORIAL = {
     listeners: { title: 'Switch listeners', message: 'Hear the scene from another spot in the model.' },
     viewModes: { title: 'Change the view', message: 'Sounds glows where they play, Default shows the model, Acoustics the surfaces that shape the sound.' },
   },
+} as const;
+
+/** Share view: absorption colour key under the view-mode pill in Acoustics mode (components/scene/AbsorptionLegend.tsx). */
+export const ABSORPTION_LEGEND = {
+  TITLE: 'Sound absorption',
+  LOW_LABEL: 'Reflective',
+  HIGH_LABEL: 'Absorbent',
+  TICKS: ['0', '0.5', '1'],
+  TOOLTIP: 'Surface colour = its material’s absorption coefficient α (share of sound energy absorbed, averaged over the octave bands). 0 reflects everything, 1 absorbs everything.',
+  /** The ramp of getMaterialColorByAbsorption (utils/utils.ts): start → mid at 0.5 → end, linear RGB. */
+  GRADIENT: 'linear-gradient(to right, var(--color-material-start), var(--color-material-mid), var(--color-material-end))',
+  WIDTH: 200,      // px
+  BAR_HEIGHT: 8,   // px
 } as const;
 
 export const SHORTCUT_TOOLTIP = {

@@ -94,11 +94,13 @@ function buildSteps(): ShareTutorialStep[] {
  * Share view: first-load numbered coach-mark tour (turn a scene on → press
  * play → switch acoustic simulations → switch listeners → change the view mode).
  *
- * Starts once the model is loaded and a playable scene exists, shows one tip
+ * Starts once the model is loaded, a playable scene exists and the visitor
+ * first acted on the page (pointer, key, wheel, touch), shows one tip
  * at a time, and moves on when the visitor does the step (scene powered,
  * playback started), clicks the tip, or after `STEP_DURATION_MS`. A step whose
  * anchor never appears (Play is only shown once a scene is on) is skipped after
- * `ANCHOR_WAIT_MS`. Shown once per browser (useOneTimeHint).
+ * `ANCHOR_WAIT_MS`. Shown once per browser (useOneTimeHint); the bottom bar's
+ * "Tour" button replays it (`shareViewStore.requestTutorialReplay`).
  *
  * Usage:
  * ```tsx
@@ -114,20 +116,45 @@ export function useShareTutorial(): ShareTutorialState {
   const scenePowered = useUIStore((s) => s.isInSoundsStep && s.activeSoundParentIndex !== null);
   const isPlaying = useAudioControlsStore((s) => Object.values(s.individualSoundStates).some((v) => v === 'playing'));
 
+  const replayNonce = useShareViewStore((s) => s.tutorialReplayNonce);
+  const setTutorialActive = useShareViewStore((s) => s.setTutorialActive);
+
   const [steps, setSteps] = useState<ShareTutorialStep[] | null>(null);
   const [index, setIndex] = useState(0);
+  const [hasInteracted, setHasInteracted] = useState(false);
   const startedRef = useRef(false);
 
-  // Start on the first model load with something to play.
+  const start = useCallback(() => {
+    startedRef.current = true;
+    setSteps(buildSteps());
+    setIndex(0);
+  }, []);
+
+  // An idle tab never starts the tour: wait for the visitor's first action.
   useEffect(() => {
-    if (!isShareView || seen || startedRef.current || !isViewerReady || !hasPlayableScene) return;
-    const timer = window.setTimeout(() => {
-      startedRef.current = true;
-      setSteps(buildSteps());
-      setIndex(0);
-    }, SHARE_TUTORIAL.START_DELAY_MS);
+    if (!isShareView || seen || hasInteracted) return;
+    const onAction = () => setHasInteracted(true);
+    const options: AddEventListenerOptions = { capture: true, passive: true };
+    SHARE_TUTORIAL.INTERACTION_EVENTS.forEach((type) => window.addEventListener(type, onAction, options));
+    return () => SHARE_TUTORIAL.INTERACTION_EVENTS.forEach((type) => window.removeEventListener(type, onAction, options));
+  }, [isShareView, seen, hasInteracted]);
+
+  // Start on the first model load with something to play, once the visitor acted.
+  useEffect(() => {
+    if (!isShareView || seen || startedRef.current || !isViewerReady || !hasPlayableScene || !hasInteracted) return;
+    const timer = window.setTimeout(start, SHARE_TUTORIAL.START_DELAY_MS);
     return () => window.clearTimeout(timer);
-  }, [isShareView, seen, isViewerReady, hasPlayableScene]);
+  }, [isShareView, seen, isViewerReady, hasPlayableScene, hasInteracted, start]);
+
+  // Replay requested from the bottom bar.
+  useEffect(() => {
+    if (replayNonce > 0) start();
+  }, [replayNonce, start]);
+
+  // The bottom bar hides its replay button while the tour is on screen.
+  useEffect(() => {
+    setTutorialActive(steps !== null);
+  }, [steps, setTutorialActive]);
 
   const current = steps?.[index] ?? null;
   const anchorRect = useAnchorRect(current ? current.resolveAnchor : null, SHARE_TUTORIAL.ANCHOR_POLL_MS);

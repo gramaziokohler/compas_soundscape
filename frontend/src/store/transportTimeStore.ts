@@ -8,16 +8,25 @@ import { create } from 'zustand';
  * playhead (DAW cursor, time label, loop check) subscribe here, so playback no
  * longer re-renders the whole scene tree every frame. Play/pause/duration stay
  * in `useTransportClock`'s `playbackState`.
+ *
+ * `isApplyingIRs` is set by page.tsx while a newly activated simulation's IRs
+ * are downloaded and loaded into the convolvers (bottom-bar busy indicator).
  */
 interface TransportTimeState {
   currentTimeMs: number;
   setCurrentTimeMs: (ms: number) => void;
+  isApplyingIRs: boolean;
+  setApplyingIRs: (applying: boolean) => void;
 }
 
 export const useTransportTimeStore = create<TransportTimeState>((set, get) => ({
   currentTimeMs: 0,
   setCurrentTimeMs: (ms) => {
     if (get().currentTimeMs !== ms) set({ currentTimeMs: ms });
+  },
+  isApplyingIRs: false,
+  setApplyingIRs: (applying) => {
+    if (get().isApplyingIRs !== applying) set({ isApplyingIRs: applying });
   },
 }));
 

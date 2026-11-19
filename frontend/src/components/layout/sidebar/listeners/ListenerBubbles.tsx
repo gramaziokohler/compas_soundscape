@@ -19,6 +19,8 @@ import { FPS_CONTROLS_HINT, SIMPLE_MODE } from '@/utils/constants';
 import { useCanEdit } from '@/hooks/useCanEdit';
 import { useShareLinkedIds } from '@/hooks/useShareLinkedIds';
 import { useActiveSceneId } from '@/hooks/useActiveSceneId';
+import { useListenerViewDrift } from '@/hooks/useListenerViewDrift';
+import { LocateFixed } from 'lucide-react';
 
 /** Extra Card props used when a card floats beside its bubble (Simple mode). */
 export interface FloatingCardOptions {
@@ -142,6 +144,8 @@ export function ListenerBubbles({
   // Exit button + help popup beside the powered bubble while its card is closed
   // (the open card shows the FPS notice itself).
   const isFpsActive = isFpsMode && !!activeItem && openIndex !== activeIndex;
+  // Share view: once the visitor turns the view, offer to look the way the listener was saved.
+  const viewDrift = useListenerViewDrift(!canEdit && isFpsMode && activeItem ? activeItem.id : null);
   // The column scrolls by bubble position, which differs from the item index once filtered.
   const activePosition = shown.findIndex((s) => s.index === activeIndex);
   const openPosition = shown.findIndex((s) => s.index === openIndex);
@@ -239,6 +243,15 @@ export function ListenerBubbles({
               className="flex items-center"
               style={{ gap: SIMPLE_MODE.BUBBLE_GAP }}
             >
+            {showExit && !canEdit && viewDrift.hasDrifted && (
+              <BubbleExitButton
+                label={FPS_CONTROLS_HINT.RESTORE_VIEW_LABEL}
+                labelSide="left"
+                variant="listener"
+                icon={<LocateFixed size={SIMPLE_MODE.EXIT_BUTTON_SIZE / 2} strokeWidth={2.2} aria-hidden="true" />}
+                onClick={viewDrift.restore}
+              />
+            )}
             {showExit && <BubbleExitButton id={FPS_CONTROLS_HINT.EXIT_BUTTON_ID} label="Leave FPS view" labelSide="left" onClick={onExitFps} />}
             <Bubble
               label={item.name}

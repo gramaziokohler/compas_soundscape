@@ -1103,8 +1103,15 @@ login and can only select and play. It also works inside an iframe.
 - The viewer init (`useSpeckleViewerInit`) is cancellation-safe. A share load runs it once,
   with no sandbox viewer and no `ensure-ready`.
 - Simulation cards list their IRs from the restored mapping, not from the per-user IR library.
-- The right-click menu and Object Explorer are available but read-only: no material or
-  scattering edits, no Re-assign, no region-selection prompt, no auto-open.
+- The Object Explorer is available but read-only: no material or scattering edits, no
+  Re-assign, no region-selection prompt, no auto-open. The right-click menu exists only for
+  sound spheres and listeners.
+- Model objects have no hover outline and cannot be clicked, double-clicked (no zoom), box-
+  or right-click-selected. `lib/three/speckle-share-view-picking.ts` switches Speckle's
+  `SelectionExtension` off while the renderer emits `ObjectClicked` / `ObjectDoubleClicked`
+  (its handlers are bound at construction), so programmatic selection from the Object Explorer
+  still works; `speckle-event-bridge.ts` skips its model-geometry branches. Sound spheres and
+  listeners keep their click / double-click behavior.
 - `useCanEdit()` hides every editing control: bottom-bar app, history, model and settings
   buttons, card add / delete / rename / run, card editors, DAW snap / drag / trim / menus, the
   3D gizmo, card FX (an active FX shows as a read-only badge), and the undo and delete shortcuts.
@@ -1131,7 +1138,20 @@ login and can only select and play. It also works inside an iframe.
     one at a time: turn a scene on → press Play → switch acoustic simulations → switch listeners.
     Steps already done or with nothing to point at are left out. A tip moves on when its action is
     done, on click, or after `SHARE_TUTORIAL.STEP_DURATION_MS`; × skips the tour. Shown once per
-    browser (`share-tutorial` one-time hint, localStorage).
+    browser (`share-tutorial` one-time hint, localStorage). It only starts after the visitor's
+    first action on the page (`SHARE_TUTORIAL.INTERACTION_EVENTS`), so an idle tab never runs it.
+    Once seen (finished, skipped, or in an earlier visit), a "Tour" button at the bottom bar's
+    right end replays it (`shareViewStore.requestTutorialReplay`; hidden while the tour runs).
+  - The timeline loops: at its end the Transport's end callback restarts it from 0
+    (`SpeckleScene`) instead of stopping.
+  - In Acoustics view mode, `AbsorptionLegend` under the view-mode pill explains the surface
+    colours (mean absorption α, 0 reflective → 1 absorbent; same ramp as
+    `getMaterialColorByAbsorption`).
+  - In a listener's FPS view, turning the view shows a "Back to listener view" button beside
+    "Leave FPS view" (`hooks/useListenerViewDrift.ts`); it restores the orientation the listener
+    was entered with. Listener orientation autosave is off, so visitors never overwrite it.
+  - "Reset camera view" leaves FPS (in the editor too), turns every bubble off (scene and
+    playback, simulation / Resonance rooms, listener / grid) and frames the model.
   - The bottom bar has no Refresh scene button.
   - Opening a simulation card keeps the current view mode.
   - Waveforms only seek (no trim), and sounds or listeners never get the move gizmo.

@@ -198,6 +198,9 @@ interface SpeckleSceneProps {
   // Callback fired when FPS mode is exited (Escape or dblclick)
   onFPSExited?: () => void;
 
+  /** "Reset camera view" pressed (after leaving FPS, before framing) — the share view turns every bubble off. */
+  onResetView?: () => void;
+
   /** True while the parent is uploading/converting the model file (before the viewer URL exists). */
   isUploadingModel?: boolean;
 
@@ -276,6 +279,7 @@ export function SpeckleScene({
   onReceiverDoubleClicked,
   onListenerClicked,
   onFPSExited,
+  onResetView,
   isUploadingModel = false,
   isBootstrappingModel = false,
   hasNewModelVersion = false,
@@ -459,7 +463,7 @@ export function SpeckleScene({
   }, []);
 
   // ── FPS Navigation ──
-  const { isFirstPersonMode, setIsFirstPersonMode } = useSpeckleFPS({
+  const { isFirstPersonMode, setIsFirstPersonMode, exitFirstPerson } = useSpeckleFPS({
     isViewerReady,
     containerRef,
     exitFPSTrigger,
@@ -935,11 +939,18 @@ export function SpeckleScene({
   // IR channel count for the export menu's max ambisonic order.
   const irChannelCount = useIRChannelCount(audioOrchestrator, selectedIRId, auralizationConfig, audioRenderingMode);
 
-  // Natural end-of-timeline: Transport stops itself and invokes this callback.
+  // Natural end-of-timeline: Transport stops itself (back at 0) and invokes this callback.
+  // The share view is a player: it loops the timeline instead of stopping.
   useEffect(() => {
-    enginePlaybackScheduler?.setOnEnd(() => storeStopAll());
+    enginePlaybackScheduler?.setOnEnd(() => {
+      if (isShareViewActive() && (enginePlaybackScheduler?.getDurationMs() ?? 0) > 0) {
+        playTimeline(0);
+        return;
+      }
+      storeStopAll();
+    });
     return () => enginePlaybackScheduler?.setOnEnd(null);
-  }, [enginePlaybackScheduler, storeStopAll]);
+  }, [enginePlaybackScheduler, storeStopAll, playTimeline]);
 
   // ============================================================================
   // Effect - Push the current score (tracks/clips/durations) into the transport
@@ -1005,6 +1016,11 @@ export function SpeckleScene({
     }
 
     try {
+      // Leave first-person view first: its camera is driven directly and would
+      // otherwise keep the view locked at the listener. Exiting restores the
+      // pre-FPS orbit view; the framing below replaces it.
+      exitFirstPerson();
+      onResetView?.();
       if (isSandbox) {
         // Frame the whole Home grid, not just the placeholder room AABB.
         fitCameraToBounds(cameraControllerRef.current, getSandboxFramingBounds(), getSandboxStageBounds());
@@ -1016,7 +1032,7 @@ export function SpeckleScene({
     } catch (error) {
       console.error('[SpeckleScene] Error resetting camera:', error);
     }
-  }, [isSandbox]);
+  }, [isSandbox, exitFirstPerson, onResetView]);
 
   // ============================================================================
   // Playback Control Handlers (controlling both audio and timeline)

@@ -12,6 +12,7 @@ import type { SpeckleSceneAdapter } from './speckle-scene-adapter';
 import type { SpeckleDragHandler } from './speckle-drag-handler';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { useAreaDrawingStore } from '@/store';
+import { isShareViewActive } from '@/store/shareViewStore';
 import {
   collectSelectableCustomObjects,
   isProjectedRectSelected,
@@ -134,6 +135,9 @@ export class SpeckleEventBridge {
 
   private handleViewerObjectClicked = (event: SelectionEvent | null): void => {
     if (!event) return;
+    // Share view: model objects are never selected (installShareViewPickingGuard
+    // already kept Speckle from auto-selecting).
+    if (isShareViewActive()) return;
     const button = event.event?.button;
     if (button === undefined || button === 0) return;
 
@@ -393,7 +397,7 @@ export class SpeckleEventBridge {
       }
     }
 
-    if (e.button === 0 && !this.isFirstPersonModeActive && !this.isExclusiveDragTarget(e)) {
+    if (e.button === 0 && !this.isFirstPersonModeActive && !isShareViewActive() && !this.isExclusiveDragTarget(e)) {
       this.startBoxSelectTracking(e.clientX, e.clientY);
     }
   };
@@ -804,6 +808,10 @@ export class SpeckleEventBridge {
       this.setCustomSelection([target]);
 
       this.scheduleSingleClick({ object: customHit.object, type: customHit.type });
+    } else if (isShareViewActive()) {
+      // Share view: model objects are not selectable — a click on them only
+      // drops a sound / listener selection.
+      this.clearCustomSelection();
     } else {
       // UNIFIED SELECTION (mode-agnostic):
       // Pre-compute the correct visible hit while filtering state is still valid,
@@ -859,6 +867,9 @@ export class SpeckleEventBridge {
       } else {
         this.handleDoubleClick(customHit.object);
       }
+    } else if (isShareViewActive()) {
+      // Share view: no zoom-to-object on model geometry.
+      return;
     } else {
       // UNIFIED ZOOM (mode-agnostic): find the correct visible object and zoom to it.
       // Prevents zooming to a hidden object that Speckle might hit in dark mode.
@@ -1079,7 +1090,8 @@ export class SpeckleEventBridge {
       this.contextMenuSelection = [];
       return { kind: customHit.type, object: customHit.object };
     }
-    if (customHit) return null;
+    // Share view: model objects are not selectable, so they have no menu.
+    if (customHit || isShareViewActive()) return null;
 
     const hitId = this.findVisibleSpeckleHit();
     if (!hitId) return null;

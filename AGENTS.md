@@ -79,6 +79,19 @@ env `compas-soundscape` installs CA from GitHub `engine-integration`, so push be
 - Results and test reports live under `examples/results/` (gitignored, never delete):
   `reference/<commit>/` regression recordings + `record_*.log`, `geometry/*.pkl` prepared-geometry
   comparisons. Before discarding any CA checkout or branch, copy its `examples/results/` here.
+- **Before committing a CA change**, run all of these from the CA clone (env `compas-acoustics-bouiz`):
+
+  ```bash
+  invoke lint            # ruff check
+  invoke check           # docs consistency, coding style, ...
+  invoke format          # then git status must show no change (CI's format check)
+  invoke test            # full pytest suite
+  invoke testdocs        # docstring examples
+  invoke testcodeblocks  # doc code blocks (currently collects 0)
+  invoke docs            # MkDocs build into dist/docs; needs docs/_images/fingerprints.json from the Rhino capture
+  ```
+
+  If the Grasshopper plugin changed, also run `dotnet test src/compas_acoustics_ghcsharp/CompasAcoustics.sln`.
 - Push with gh's credential helper:
   `git -c credential.helper= -c "credential.helper=!'/c/Program Files/GitHub CLI/gh.exe' auth git-credential" push`.
 

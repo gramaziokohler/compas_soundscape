@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useSpeckleStore, useAcousticLayerStore, useUIStore } from '@/store';
 import { useCanEdit } from '@/hooks/useCanEdit';
 import { VIEW_MODE_TOOLBAR_ID } from '@/utils/constants';
+import { AbsorptionLegend } from '@/components/scene/AbsorptionLegend';
 
 type ViewMode = 'dark' | 'default' | 'acoustic';
 
@@ -19,6 +20,8 @@ const VIEW_MODES: { mode: ViewMode; label: string; description: string }[] = [
  * Top-center `Sounds | Default | Acoustics` segmented pill. Hovering it pops the
  * same frosted label the Simple-mode circles use: "View mode" plus a one-line
  * description of the hovered item (or of the active one between items).
+ * In Acoustics mode a status chip follows; the share view adds the absorption
+ * colour key (AbsorptionLegend) under it.
  */
 export function SceneViewModeToolbar() {
   const viewMode = useSpeckleStore((s) => s.viewMode);
@@ -99,6 +102,9 @@ export function SceneViewModeToolbar() {
             : canEdit ? 'No acoustic region yet — pick surfaces' : 'No acoustic region'}
         </button>
       )}
+
+      {/* Share view: what the Acoustics colours mean. */}
+      {viewMode === 'acoustic' && !canEdit && <AbsorptionLegend />}
     </div>
   );
 }

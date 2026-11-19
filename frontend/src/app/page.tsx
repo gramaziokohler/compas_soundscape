@@ -51,6 +51,7 @@ import {
   clearUndoHistory,
   useModelVersionStore,
   useStudyStore,
+  useTransportTimeStore,
 } from "@/store";
 import { entityIdentities, rebaseGeometryReconciliation, type EntityReconciliation } from "@/store/geometryReconciliationUndo";
 import type { LinkReconciliationItem } from "@/store";
@@ -85,6 +86,7 @@ import type { SoundscapeData } from "@/types/soundscape";
 import { useShareLinkActivation } from "@/hooks/useShareLinkActivation";
 import type { ListenerExpandRequest } from "@/types/receiver";
 import { parseGridPointId } from "@/utils/gridListenerPoints";
+import { deselectActiveScene } from "@/utils/sceneSelection";
 import { captureHomeElements, mergeHomeElements, type HomeElementsSnapshot } from "@/utils/home-elements-import";
 import type { AcousticSimulationMode, ResonanceRoomSpec } from "@/types/audio";
 import type { AudioAnalysisConfig, AnalysisConfig } from "@/types/analysis";
@@ -1265,6 +1267,8 @@ function HomeContent() {
   // Set source-receiver IR mapping when simulation completes (PyroomAcoustics)
   // Uses hot-swap (no stop) when already in IR mode and switching between completed simulations
   const prevIRMappingIndexRef = useRef<number | null>(acousticsSimulation.activeSimulationIndex);
+  // Only the latest IR apply may clear the bottom-bar "applying" indicator.
+  const irApplySeqRef = useRef(0);
 
   useEffect(() => {
     if (!audioOrchestrator.orchestrator) return;
@@ -1296,6 +1300,17 @@ function HomeContent() {
           const currentMode = audioOrchestrator.orchestrator.getCurrentMode();
           const canHotSwap = prevMapping !== null && currentMode === 'ambisonic_ir';
 
+          // Re-pushes of the same simulation (moved receiver, free positioning)
+          // are quick; only a newly activated simulation shows the indicator.
+          const { setApplyingIRs } = useTransportTimeStore.getState();
+          const applySeq = ++irApplySeqRef.current;
+          if (prevIRMappingIndexRef.current !== acousticsSimulation.activeSimulationIndex) {
+            setApplyingIRs(true);
+          }
+          const finishApply = () => {
+            if (irApplySeqRef.current === applySeq) setApplyingIRs(false);
+          };
+
           if (canHotSwap) {
             console.log('[Page] Hot-swapping IR mapping (no stop)', {
               simulationId: activeConfig.id,
@@ -1311,7 +1326,7 @@ function HomeContent() {
               console.log('[Page] ✅ IR mapping hot-swapped successfully');
             }).catch(error => {
               console.error('[Page] ❌ Failed to hot-swap IR mapping:', error);
-            });
+            }).finally(finishApply);
           } else {
             console.log('[Page] Setting source-receiver IR mapping from simulation', {
               simulationId: activeConfig.id,
@@ -1328,7 +1343,7 @@ function HomeContent() {
               console.log('[Page] ✅ Source-receiver IR mapping applied successfully');
             }).catch(error => {
               console.error('[Page] ❌ Failed to set source-receiver IR mapping:', error);
-            });
+            }).finally(finishApply);
           }
         }
       }
@@ -3617,6 +3632,18 @@ function HomeContent() {
     activateListener: activateShareListener,
   });
 
+  // Share view: "Reset camera view" also turns every bubble off — the sound
+  // scene (stops playback), the acoustic simulation / Resonance rooms and the
+  // listener (FPS is already left by SpeckleScene, a grid's points are hidden).
+  const handleShareResetView = useCallback(() => {
+    deselectActiveScene();
+    const sims = useAcousticsSimulationStore.getState();
+    if (sims.activeSimulationIndex !== null) sims.handleSetActiveSimulation(null);
+    [...sims.activeResonanceIds].forEach((id) => sims.toggleResonanceActive(id));
+    if (isFPSModeActive || activeIRGroupId) exitGoToListenerMode();
+    setActiveGridListenerId(null);
+  }, [isFPSModeActive, activeIRGroupId, exitGoToListenerMode]);
+
   // Keyboard navigation between IR groups while in FPS mode (Shift+ArrowRight / Shift+ArrowLeft)
   useEffect(() => {
     if (!isFPSModeActive) return;
@@ -4124,6 +4151,7 @@ function HomeContent() {
             onListenerClicked={requestListenerCardExpand}
             // FPS exit via Escape → power the listener off
             onFPSExited={exitGoToListenerMode}
+            onResetView={isShareView ? handleShareResetView : undefined}
             className="w-full h-full"
           />
         ) : (

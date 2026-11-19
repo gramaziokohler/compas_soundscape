@@ -648,6 +648,11 @@ export class SpeckleAudioCoordinator {
     this.speckleCameraController.rotateFirstPersonView(deltaYaw, deltaPitch, deltaRoll);
   }
 
+  /** Set the first-person look direction (radians) — e.g. back to a listener's saved orientation. */
+  public setFirstPersonRotation(rotation: { yaw: number; pitch: number; roll: number }): void {
+    this.speckleCameraController?.setFirstPersonRotation(rotation);
+  }
+
   /** Adjust the first-person focal length (mm) from a wheel event's deltaY. */
   public adjustFirstPersonFocal(deltaY: number): void {
     if (!this.speckleCameraController) return;

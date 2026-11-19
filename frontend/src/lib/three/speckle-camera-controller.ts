@@ -303,17 +303,27 @@ export class SpeckleCameraController {
       return;
     }
 
-    // Update rotation values
-    this.firstPersonRotation.yaw += deltaYaw;
-    this.firstPersonRotation.pitch += deltaPitch;
-    this.firstPersonRotation.roll += deltaRoll;
+    const { yaw, pitch, roll } = this.firstPersonRotation;
+    this.setFirstPersonRotation({ yaw: yaw + deltaYaw, pitch: pitch + deltaPitch, roll: roll + deltaRoll });
+  }
+
+  /**
+   * Set the first-person look direction (radians), e.g. back to a listener's
+   * saved orientation. Pitch is clamped like rotateFirstPersonView.
+   */
+  public setFirstPersonRotation(rotation: { yaw: number; pitch: number; roll: number }): void {
+    if (!this.firstPersonMode) {
+      console.warn('[SpeckleCameraController] ⚠️ Cannot rotate: first-person mode not active');
+      return;
+    }
 
     // Clamp pitch to prevent looking too far up/down
     // Leave small margin to avoid gimbal lock
-    this.firstPersonRotation.pitch = Math.max(
-      -Math.PI / 2 + 0.1,
-      Math.min(Math.PI / 2 - 0.1, this.firstPersonRotation.pitch)
-    );
+    this.firstPersonRotation = {
+      yaw: rotation.yaw,
+      pitch: Math.max(-Math.PI / 2 + 0.1, Math.min(Math.PI / 2 - 0.1, rotation.pitch)),
+      roll: rotation.roll,
+    };
 
     // Update camera immediately
     this.updateFirstPersonCamera();

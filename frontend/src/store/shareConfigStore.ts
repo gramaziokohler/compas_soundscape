@@ -140,10 +140,11 @@ export function linkKey(kind: ShareItemKind): 'sceneId' | 'simulationId' | 'list
 /**
  * Listener ids grouped with a scene and / or a simulation. A link holds one
  * listener, so a simulation with several listeners spreads them over several
- * links: {scene, sim, L1} and {sim, L2}. Collects the scene's links (whose
- * simulation is `simulationId` or none, when given) and the scene-less links of
- * that simulation — or, with no `simulationId`, of every simulation linked to
- * the scene.
+ * links: {scene, sim, L1} and {sim, L2} — or {sceneB, sim, L2} when two scenes
+ * share the simulation. Collects the scene's links (whose simulation is
+ * `simulationId` or none, when given) and every link of that simulation,
+ * whatever its scene — or, with no `simulationId`, of every simulation linked
+ * to the scene.
  */
 export function linkedListenerIds(links: ShareLink[], sceneId?: string | null, simulationId?: string | null): Set<string> {
   const simulationIds = new Set<string>();
@@ -156,7 +157,9 @@ export function linkedListenerIds(links: ShareLink[], sceneId?: string | null, s
     if (!l.listenerId) continue;
     const viaScene =
       !!sceneId && l.sceneId === sceneId && (!simulationId || !l.simulationId || l.simulationId === simulationId);
-    const viaSimulation = !l.sceneId && !!l.simulationId && simulationIds.has(l.simulationId);
+    // Any link of the simulation, even one holding another scene: the board draws
+    // {B, sim, L2} as B–sim and sim–L2, so L2 is the simulation's listener for A too.
+    const viaSimulation = !!l.simulationId && simulationIds.has(l.simulationId);
     if (viaScene || viaSimulation) ids.add(l.listenerId);
   }
   return ids;

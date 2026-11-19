@@ -17,6 +17,7 @@ import { SpeckleAudioCoordinator } from '@/lib/three/speckle-audio-coordinator';
 import { ResonanceRoomBoxes } from '@/lib/three/ResonanceRoomBoxes';
 import { AreaDrawingManager } from '@/lib/three/area-drawing-manager';
 import { HoverOutline } from '@/lib/three/speckle-hover-outline';
+import { installShareViewPickingGuard } from '@/lib/three/speckle-share-view-picking';
 import { PlaybackSchedulerService } from '@/lib/audio/playback-scheduler-service';
 import { useSpeckleStore, useModelVersionStore, findModelVersion } from '@/store';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
@@ -251,8 +252,8 @@ export function useSpeckleViewerInit({
         };
 
         (selectionExtension as any).applyHover = function (renderView: any) {
-          // Disable hover in dark mode, acoustic mode, or when toggled off
-          if (isDarkModeRef.current || isAcousticModeRef.current || !showHoveringHighlightRef.current) {
+          // Disable hover in dark mode, acoustic mode, the share view, or when toggled off
+          if (isDarkModeRef.current || isAcousticModeRef.current || !showHoveringHighlightRef.current || isShareViewActive()) {
             applyOutlineHover(null);
             return;
           }
@@ -273,6 +274,9 @@ export function useSpeckleViewerInit({
           }
           applyOutlineHover(renderView);
         };
+
+        // Share view: no auto-select / double-click zoom on model objects.
+        installShareViewPickingGuard(viewer, selectionExtension);
 
         // Store extensions
         setCameraController(cameraController);

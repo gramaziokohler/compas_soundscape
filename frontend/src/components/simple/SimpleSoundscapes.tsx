@@ -27,7 +27,6 @@ import { useCanReorderScenes } from '@/hooks/useCanReorderScenes';
 import { createMoveIndexMapper } from '@/utils/cardIndexRemap';
 import {
   useAnalysisStore,
-  useAudioControlsStore,
   useCardFlowStore,
   useSceneHighlightStore,
   useSceneWorkflowStore,
@@ -37,7 +36,7 @@ import type { SidebarProps } from '@/types/components';
 import type { SceneProgress, SoundScene } from '@/types/sceneWorkflow';
 import { useHomeComposerStore } from '@/store/homeComposerStore';
 import { SIMPLE_MODE } from '@/utils/constants';
-import { selectSceneByIndex } from '@/utils/sceneSelection';
+import { selectSceneByIndex, deselectActiveScene } from '@/utils/sceneSelection';
 import { useCanEdit } from '@/hooks/useCanEdit';
 
 type LeftPanel =
@@ -226,22 +225,11 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
     selectSceneByIndex(scene.usageIndex, scene.contextIndex);
   }, []);
 
-  const deselectScene = useCallback(() => {
-    const audio = useAudioControlsStore.getState();
-    audio.stopSoundcardPreview();
-    audio.stopAll();
-    const ui = useUIStore.getState();
-    ui.setActiveSoundParentIndex(null);
-    // Out of the Sounds step the 3D scene and the DAW show no sounds at all
-    // (a null parent *inside* the step would show every scene's sounds).
-    ui.setIsInSoundsStep(false);
-  }, []);
-
   const toggleScenePower = useCallback((scene: SoundScene) => {
     const ui = useUIStore.getState();
-    if (ui.isInSoundsStep && ui.activeSoundParentIndex === scene.usageIndex) deselectScene();
+    if (ui.isInSoundsStep && ui.activeSoundParentIndex === scene.usageIndex) deselectActiveScene();
     else selectScene(scene);
-  }, [selectScene, deselectScene]);
+  }, [selectScene]);
 
   // The expert Sidebar is unmounted here, so Simple mode owns the "which scene
   // is shown" state: repair a stale selection (after a mode switch, a restore,

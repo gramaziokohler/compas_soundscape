@@ -221,35 +221,43 @@ export interface BubbleExitButtonProps {
   onClick: () => void;
   size?: number;
   labelSide?: "left" | "right";
+  /** "exit" (default): red, leaves a mode. "listener": listener-colored side action. */
+  variant?: "exit" | "listener";
+  /** Replaces the default "leave" glyph (drawn at half the button size). */
+  icon?: ReactNode;
 }
 
 /**
  * BubbleExitButton Component
  *
- * Small red (error-colored) circle that sits beside an active bubble and leaves the
- * mode it put the viewer in (e.g. a listener's first-person view).
+ * Small circle that sits beside an active bubble. By default red (error-colored):
+ * leaves the mode it put the viewer in (e.g. a listener's first-person view).
+ * `variant="listener"` + `icon` make a side action in the listener color
+ * (e.g. "Back to listener view").
  *
  * Usage:
  * ```tsx
  * <BubbleExitButton label="Leave FPS view" labelSide="left" onClick={exitFps} />
  * ```
  */
-export function BubbleExitButton({ id, label, onClick, size = SIMPLE_MODE.EXIT_BUTTON_SIZE, labelSide = "left" }: BubbleExitButtonProps) {
+export function BubbleExitButton({ id, label, onClick, size = SIMPLE_MODE.EXIT_BUTTON_SIZE, labelSide = "left", variant = "exit", icon }: BubbleExitButtonProps) {
   return (
     <div className="bubble-wrap" style={{ width: size, height: size }}>
       <button
         id={id}
         type="button"
-        className="bubble bubble--exit backdrop-blur-lg backdrop-saturate-150"
+        className={`bubble bubble--${variant === "exit" ? "exit" : "side-action"} backdrop-blur-lg backdrop-saturate-150`}
         style={{ width: size, height: size }}
         onClick={(e) => { e.stopPropagation(); onClick(); }}
         aria-label={label}
       >
-        <svg width={size * 0.5} height={size * 0.5} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-          <path d="M16 17l5-5-5-5" />
-          <path d="M21 12H9" />
-        </svg>
+        {icon ?? (
+          <svg width={size * 0.5} height={size * 0.5} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+            <path d="M16 17l5-5-5-5" />
+            <path d="M21 12H9" />
+          </svg>
+        )}
       </button>
       <span
         className={`bubble-label sidebar-toggle-label backdrop-blur-lg backdrop-saturate-150 bubble-label--${labelSide}`}

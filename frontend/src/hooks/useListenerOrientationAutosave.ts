@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 import { useReceiversStore } from '@/store/receiversStore';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
+import { isShareViewActive } from '@/store/shareViewStore';
 import { LISTENER_ORIENTATION } from '@/utils/constants';
 
 export interface ListenerOrientation {
@@ -28,10 +29,13 @@ function isFirstPersonActive(): boolean {
  * Values are captured only while the FPS view is active, so the orbit-camera
  * orientation restored after leaving FPS is never written. A pending save is
  * flushed on power-off / unmount.
+ *
+ * Off in the share view: a visitor looking around never overwrites the
+ * listener's saved orientation ("Back to listener view" returns to it).
  */
 export function useListenerOrientationAutosave(poweredListenerId: string | null): void {
   useEffect(() => {
-    if (!poweredListenerId) return;
+    if (!poweredListenerId || isShareViewActive()) return;
     const receiverId = poweredListenerId;
     let pending: ListenerOrientation | null = null;
     let timer: ReturnType<typeof setTimeout> | null = null;

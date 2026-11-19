@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import * as THREE from 'three';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import type { ReceiverData } from '@/types';
@@ -23,6 +23,8 @@ interface FPSProps {
 interface FPSResult {
   isFirstPersonMode: boolean;
   setIsFirstPersonMode: React.Dispatch<React.SetStateAction<boolean>>;
+  /** Leave first-person view (same as Escape): orbit camera restored, onFPSExited called. No-op outside FPS. */
+  exitFirstPerson: () => void;
 }
 
 export function useSpeckleFPS({
@@ -449,5 +451,13 @@ export function useSpeckleFPS({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isFirstPersonMode, selectedReceiverId, receivers[0]?.id]);
 
-  return { isFirstPersonMode, setIsFirstPersonMode };
+  const exitFirstPerson = useCallback(() => {
+    const { coordinator } = useSpeckleEngineStore.getState();
+    if (!coordinator?.isFirstPersonMode()) return;
+    coordinator.disableFirstPersonMode();
+    setIsFirstPersonMode(false);
+    onFPSExitedRef.current?.();
+  }, []);
+
+  return { isFirstPersonMode, setIsFirstPersonMode, exitFirstPerson };
 }

@@ -3,6 +3,7 @@
 import { BarButton } from '@/components/ui/BarButton';
 import { ShortcutTooltip } from '@/components/ui/ShortcutTooltip';
 import { Icon, RefreshIcon } from '@/components/ui/Icon';
+import { Spinner } from '@/components/ui/Spinner';
 import { NotificationCenter } from '@/components/ui/NotificationCenter';
 import { UndoRedoToolbar } from '@/components/ui/UndoRedoToolbar';
 import { SceneShortcutsButton } from '@/components/scene/SceneShortcutsButton';
@@ -11,11 +12,12 @@ import { SceneVolumeButton } from '@/components/scene/SceneVolumeButton';
 import { SceneRenderStyleButton } from '@/components/scene/SceneRenderStyleButton';
 import { BugReportButton } from '@/components/scene/BugReportButton';
 import { ModelPill } from '@/components/scene/model-version/ModelPill';
-import { useSceneWorkflowStore, useUIStore, useWorkspaceStore, useTransportTimeStore, selectTransportWholeSeconds, selectHasSaveTarget, selectIsReadOnlyWorkspace, selectHasNewerSave } from '@/store';
+import { useSceneWorkflowStore, useUIStore, useWorkspaceStore, useTransportTimeStore, useShareViewStore, selectTransportWholeSeconds, selectHasSaveTarget, selectIsReadOnlyWorkspace, selectHasNewerSave } from '@/store';
 import { useHomeStageHasWork } from '@/hooks/useHomeStageHasWork';
-import { Headphones } from 'lucide-react';
-import { APP_BRAND, MODEL_VERSION_WATCH, SCENE_BOTTOM_BAR, SHARE_VIEW, WORKSPACE_MESSAGES } from '@/utils/constants';
+import { CircleHelp, Headphones } from 'lucide-react';
+import { APP_BRAND, MODEL_VERSION_WATCH, SCENE_BOTTOM_BAR, SHARE_TUTORIAL, SHARE_VIEW, WORKSPACE_MESSAGES } from '@/utils/constants';
 import { useCanEdit } from '@/hooks/useCanEdit';
+import { useOneTimeHint } from '@/hooks/useOneTimeHint';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
 
 function formatTime(ms: number): string {
@@ -98,7 +100,8 @@ export interface SceneBottomBarProps {
  *            available in Settings → Display), volume, show/hide sounds & listeners,
  *            render style dropdown, reset view, refresh (not in the share view), Object Explorer, then the model
  *            pill (open model / no-model soundscape → versions, upload, switch) or load model;
- *            then help & system: shortcuts, notifications, settings
+ *            then help & system: shortcuts, notifications, settings (share view:
+ *            a "Tour" button that replays the tutorial once it was seen)
  * The docked DAW opens above it; sidebars stop at its top edge. In Simple mode
  * the bug report button floats above the bar's left end instead.
  *
@@ -134,6 +137,13 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
   const hasNewerSave = useWorkspaceStore(selectHasNewerSave);
   // Public share view: a player only — no app navigation, history, model or settings.
   const canEdit = useCanEdit();
+  const isApplyingIRs = useTransportTimeStore((s) => s.isApplyingIRs);
+  // Share view: "Tour" replays the coach-mark tour once it was seen (finished,
+  // skipped, or seen in an earlier session) and is not on screen.
+  const { seen: tutorialSeen } = useOneTimeHint(SHARE_TUTORIAL.HINT_ID);
+  const tutorialActive = useShareViewStore((s) => s.tutorialActive);
+  const requestTutorialReplay = useShareViewStore((s) => s.requestTutorialReplay);
+  const showTutorialReplay = !canEdit && tutorialSeen && !tutorialActive;
 
   return (
     <div
@@ -235,12 +245,15 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
                 style={{ position: 'absolute', right: '100%', top: 0, bottom: 0, justifyContent: 'flex-end', paddingRight: SCENE_BOTTOM_BAR.GROUP_GAP }}
               />
             )}
-            <LowOutputHintPopover
-              audioOrchestrator={audioOrchestrator}
-              isPlaying={isPlaying}
-              timelineOpen={showTimeline}
-              onOpenTimeline={onToggleTimeline}
-            />
+            {/* Share view: no "Hard to hear?" helper — its fixes are edits. */}
+            {canEdit && (
+              <LowOutputHintPopover
+                audioOrchestrator={audioOrchestrator}
+                isPlaying={isPlaying}
+                timelineOpen={showTimeline}
+                onOpenTimeline={onToggleTimeline}
+              />
+            )}
             <ShortcutTooltip shortcut="PLAY_PAUSE" label={isPlaying ? 'Pause' : 'Play the scene'}>
               <button
                 id={SCENE_BOTTOM_BAR.PLAY_BUTTON_ID}
@@ -284,6 +297,18 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
                 </svg>
               }
             />
+            {/* Absolutely placed after "Timeline" so the centred playback group never shifts. */}
+            {isPlaying && isApplyingIRs && (
+              <span
+                className="bar-busy"
+                role="status"
+                title={SCENE_BOTTOM_BAR.APPLYING_IRS_TITLE}
+                style={{ position: 'absolute', left: '100%', top: 0, bottom: 0, paddingLeft: SCENE_BOTTOM_BAR.GROUP_GAP }}
+              >
+                <Spinner size={12} />
+                {SCENE_BOTTOM_BAR.APPLYING_IRS_LABEL}
+              </span>
+            )}
           </>
         )}
       </div>
@@ -404,6 +429,14 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
             {/* Separates the system buttons, which the share view does not have. */}
             {canEdit && <div className="scene-bottom-bar__sep" />}
           </>
+        )}
+        {showTutorialReplay && (
+          <BarButton
+            onClick={requestTutorialReplay}
+            title={SHARE_VIEW.REPLAY_TUTORIAL_TITLE}
+            label={SHARE_VIEW.REPLAY_TUTORIAL_LABEL}
+            icon={<CircleHelp size={ICON} strokeWidth={2} aria-hidden="true" />}
+          />
         )}
         {canEdit && (
         <>
