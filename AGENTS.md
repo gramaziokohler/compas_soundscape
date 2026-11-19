@@ -69,13 +69,23 @@ pnpm build
 
 CA engine work happens in the fork `bouiz/compas_acoustics` (remote `origin`; `upstream` =
 gramaziokohler, never push or open PRs there without asking). There is **one** local clone:
-`C:\Users\soundisblue\repos\compas_acoustics`, on branch `engine-integration`, pushed to
-`origin/engine-integration`. Env `compas-acoustics-bouiz` has it installed editable; the production
-env `compas-soundscape` installs CA from GitHub `engine-integration`, so push before `compas deps`.
+`C:\Users\soundisblue\repos\compas_acoustics`, normally on branch `engine-integration`.
 
+- **`engine-integration` is generated, never edited by hand.** It is upstream `main` + a merge of
+  every open PR branch (`feat/*`, `chore/*`, one theme each, rebased on upstream `main`) + a few
+  fork-only commits (`environment.yml`, cross-PR glue). Work goes on a PR branch; then
+  `python scripts/rebuild_ca_integration.py` rebuilds `integration/rebuild` (merges, CHANGELOG
+  union, rerere-replayed resolutions, fork commits), you run the checks below on it, and
+  `--publish` force-pushes it as `engine-integration` (old tip tagged `archive/...`). Branches
+  upstream has merged are skipped; add new PR branches to `PR_BRANCHES` in the script.
+- **The app pins a commit.** `requirements.txt` names one `engine-integration` commit; bump it on
+  `master` to deploy (production reinstalls on the hash change, no manual `compas deps`). Dev
+  machines install the clone editable into `compas-toy` with `--no-deps` (deploy/README.md), so the
+  app runs whatever the clone has checked out.
+- Env `compas-acoustics-bouiz` (`environment.yml` in the clone: editable, dev + docs extras) runs
+  the CA checks.
 - **No `git worktree add`, no second clone** (`compas_acoustics_dev`/`_orient` were folded back on
-  2026-11-14). For a side fix, `git switch -c fix/<name>` in this clone, push it, merge it into
-  `engine-integration`, switch back.
+  2026-11-14). Switch branches in this clone and come back to `engine-integration`.
 - Results and test reports live under `examples/results/` (gitignored, never delete):
   `reference/<commit>/` regression recordings + `record_*.log`, `geometry/*.pkl` prepared-geometry
   comparisons. Before discarding any CA checkout or branch, copy its `examples/results/` here.

@@ -156,6 +156,7 @@ docs/api/generated/
 scripts/*
 !scripts/loadtest/
 !scripts/sync_claude_rules.py
+!scripts/rebuild_ca_integration.py
 scripts/loadtest/results/
 
 .ruff_cache

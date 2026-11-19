@@ -38,6 +38,7 @@ from config.constants import (
     CA_AIR_TEMPERATURE_RANGE_C,
     CA_AMBISONIC_NORMALIZATION,
     CA_DIFFRACTION_OFF,
+    CA_PER_PAIR_SEEDS,
     CA_RENDER_MARGIN_DB,
     CA_RENDER_MIN_S,
     CA_RENDER_PAD_S,
@@ -242,7 +243,12 @@ def _mono(settings: EngineSettings, air, diffraction: bool):
         diffraction=diffraction,
     )
     if settings.ray_tracing:
-        kwargs.update(n_rays=int(settings.n_rays), seed=int(settings.seed), receiver_radius=PYROOMACOUSTICS_RAY_TRACING_RECEIVER_RADIUS)
+        kwargs.update(
+            n_rays=int(settings.n_rays),
+            seed=int(settings.seed),
+            receiver_radius=PYROOMACOUSTICS_RAY_TRACING_RECEIVER_RADIUS,
+            per_pair_seeds=CA_PER_PAIR_SEEDS,
+        )
     return Mono(**kwargs)
 
 
@@ -301,6 +307,7 @@ def build_method(settings: EngineSettings, reference=None):
         air=air,
         scattering=bool(settings.scattering_split),
         n_jobs=settings.n_jobs,
+        per_pair_seeds=CA_PER_PAIR_SEEDS,
     )
     if settings.duration:
         kwargs["duration"] = float(settings.duration)

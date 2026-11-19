@@ -483,6 +483,10 @@ CA_TAIL_DEFAULT = "auto"
 CA_TAIL_ALIASES = {"ray_tracing": "auto", "legacy": "auto"}
 CA_N_SLOPES_MAX = 3
 CA_SEED_DEFAULT = 42
+# Mono/Ambisonics(per_pair_seeds=True): each source's rays and each pair's ray-traced tail restart from
+# the seed, so a pair's response does not depend on the other pairs of the run (the app splits pairs
+# over jobs and re-runs single pairs). compas_acoustics' default (False) follows pyroomacoustics.
+CA_PER_PAIR_SEEDS = True
 
 # Hybrid wave-based + geometric simulation (services/hybrid_job.py, utils/hybrid_crossover.py)
 HYBRID_CROSSOVER_MODES = ("schroeder", "manual")

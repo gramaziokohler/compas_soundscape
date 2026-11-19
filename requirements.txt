@@ -60,7 +60,9 @@ setuptools==78.1.1
 importlib
 
 # --- Room Acoustics ---
-compas_acoustics @ git+https://github.com/bouiz/compas_acoustics.git@engine-integration
+# A commit of the fork's engine-integration branch (upstream main + our open PR branches, rebuilt by
+# scripts/rebuild_ca_integration.py). Bump it to deploy a new engine: the hash change reinstalls it.
+compas_acoustics @ git+https://github.com/bouiz/compas_acoustics.git@37496efef33a35cd29476c019eaad2292b413665
 # Keep this compatible with compas_acoustics' supported runtime.
 pyroomacoustics==0.10.1
 # Reads SOFA files: the fork's measured directivities and our directivity import
