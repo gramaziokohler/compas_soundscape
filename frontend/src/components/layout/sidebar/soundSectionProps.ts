@@ -55,9 +55,6 @@ export function buildSoundGenerationSectionProps(
     onDuplicateConfig: props.onDuplicateConfig,
     onRegenerateSingle: props.onRegenerateSingle,
     onDeleteVariant: props.onDeleteVariant,
-    onSelectSoundCard: props.onSelectSoundCard,
-    selectedCardIndex: props.selectedCardIndex,
-    onSoundCardCollapsed: props.onSoundCardCollapsed,
     onCatalogSoundSelect: props.onCatalogSoundSelect,
     visibleParentUsageIndex,
   };

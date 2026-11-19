@@ -535,12 +535,28 @@ canvas {
   opacity: 0.8;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  /* Footnote links stay clickable. */
+}
+/* Link layer: same layout, un-blended, so only the footnote links show — in hyperlink blue. */
+.share-scene-info--links {
+  mix-blend-mode: normal;
+  color: transparent;
+}
+.share-scene-info--links .share-scene-info__title,
+.share-scene-info--links .share-scene-info__nav {
+  visibility: hidden;
+}
+.share-scene-info--links .share-scene-info__note {
+  opacity: 1;
   pointer-events: auto;
   user-select: text;
 }
 .share-scene-info__note a {
-  color: inherit;
+  color: transparent;
+  pointer-events: none;
+}
+.share-scene-info--links .share-scene-info__note a {
+  color: var(--color-blue-text);
+  pointer-events: auto;
 }
 .share-scene-info__nav {
   display: flex;
@@ -2175,6 +2191,17 @@ button.mv-row:hover:not(:disabled) {
 
 /* Share view: first-load numbered tour tips (components/share/ShareTutorial.tsx).
    Fixed beside their anchor; position + width come from SHARE_TUTORIAL. */
+/* ShareTutorial: the hidden tip shrinking into the Tour button (animated in JS). */
+.share-tutorial-closing {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 205; /* SHARE_TUTORIAL.Z_INDEX */
+}
+.share-tutorial-closing .share-tutorial-tip,
+.share-tutorial-closing .share-tutorial-tip__badge {
+  animation: none;
+}
 .share-tutorial-tip {
   position: fixed;
   display: flex;
@@ -2186,7 +2213,6 @@ button.mv-row:hover:not(:disabled) {
   border-radius: 10px;
   box-shadow: var(--shadow-lg);
   color: var(--foreground);
-  cursor: pointer;
   transition: opacity 0.15s ease;
 }
 .share-tutorial-tip--right,

@@ -7,7 +7,7 @@ import { ABSORPTION_LEGEND } from '@/utils/constants';
  *
  * Colour key of the Acoustics view mode: surfaces are tinted by their material's
  * mean absorption coefficient α through `getMaterialColorByAbsorption`
- * (utils/utils.ts) — teal (reflective, 0) → amber (0.5) → red (absorbent, 1).
+ * (utils/utils.ts) — teal (reflective, 0%) → amber (50%) → red (absorbent, 100%).
  * The CSS gradient uses the same three tokens with linear interpolation, so it
  * matches the scene colours exactly.
  *
@@ -26,14 +26,11 @@ export function AbsorptionLegend() {
         color: 'var(--color-secondary-hover)',
       }}
       role="img"
-      aria-label={`${ABSORPTION_LEGEND.TITLE}: ${ABSORPTION_LEGEND.TOOLTIP}`}
+      aria-label={`${ABSORPTION_LEGEND.ARIA_LABEL}: ${ABSORPTION_LEGEND.TOOLTIP}`}
       title={ABSORPTION_LEGEND.TOOLTIP}
     >
-      <div className="flex items-baseline justify-between text-[9px]">
+      <div className="flex items-baseline justify-between text-[10px] font-medium">
         <span>{ABSORPTION_LEGEND.LOW_LABEL}</span>
-        <span className="text-[10px] font-medium">
-          {ABSORPTION_LEGEND.TITLE} <span className="italic">α</span>
-        </span>
         <span>{ABSORPTION_LEGEND.HIGH_LABEL}</span>
       </div>
       <div

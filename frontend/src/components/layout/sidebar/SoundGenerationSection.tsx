@@ -24,6 +24,8 @@ import { useSpeckleEngineStore } from "@/store/speckleEngineStore";
 import { useUIStore } from "@/store/uiStore";
 import { useServiceVersions } from "@/hooks/useServiceVersions";
 import { useSoundCardShortcutTargets, getPreGenPreviewKey } from "@/components/layout/sidebar/sound/useSoundCardShortcutTargets";
+import { useSoundCardFocus } from "@/components/layout/sidebar/sound/useSoundCardFocus";
+import { setPreferredPlaybackTarget } from "@/lib/shortcuts/shortcut-targets";
 import {
   AUDIO_MODEL_AUDIOLDM2,
   AUDIO_MODEL_ELEVENLABS,
@@ -128,10 +130,6 @@ export function SoundGenerationSection({
   isLinkingEntity = false,
   linkingConfigIndex = null,
   useSpeckleViewer = false,
-  onSelectSoundCard,
-  selectedCardIndex = null,
-  onSoundCardCollapsed,
-  revealCardRequest = null,
   onDuplicateConfig,
   onRegenerateSingle,
   onDeleteVariant,
@@ -413,45 +411,19 @@ export function SoundGenerationSection({
     if (initialExpandPublishedRef.current || filteredCardItems.length === 0) return;
     if (globalSpeckleData === null) return;
     initialExpandPublishedRef.current = true;
-    if (useUIStore.getState().expandedSoundCardIndex === null) {
+    // A shared sound focus (sphere / DAW track) wins over the default first card.
+    const ui = useUIStore.getState();
+    if (ui.expandedSoundCardIndex === null && ui.soundFocus === null) {
       setExpandedSoundCardIndex(filteredCardItems[0].originalIndex);
     }
   }, [filteredCardItems, globalSpeckleData]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Keep a ref to soundConfigs.length so the selection effect below can bounds-check
-  // without listing soundConfigs.length as a dependency (which would cause the effect
-  // to re-fire when a new card is added and override Effect A's auto-expand).
-  const soundConfigsLengthRef = useRef(soundConfigs.length);
-  soundConfigsLengthRef.current = soundConfigs.length;
-
-  // Stable ref to the latest filteredCardItems — avoids re-running the selection
-  // effect on every config update (e.g. slider moves that change the soundConfigs
-  // reference and therefore regenerate cardItems / filteredCardItems).
-  const filteredCardItemsRef = useRef(filteredCardItems);
-  filteredCardItemsRef.current = filteredCardItems;
-
-  // When a card is selected externally (from ThreeScene / sphere click), expand it.
-  // Map original index → filtered position first.
-  // Intentionally only depends on selectedCardIndex; filteredCardItems is accessed
-  // via ref so that slider-driven config updates don't re-trigger this effect and
-  // override the user's manually expanded card.
-  const expandCardFromScene = useCallback((originalIndex: number) => {
-    const filteredIdx = filteredCardItemsRef.current.findIndex(item => item.originalIndex === originalIndex);
-    if (filteredIdx >= 0) setExpandedIndex(filteredIdx);
-    // Keep the scene gizmo target in lockstep with the scene-driven selection:
-    // otherwise a stale expandedSoundCardIndex would win over selectedCardIndex.
-    setExpandedSoundCardIndex(originalIndex);
-  }, [setExpandedSoundCardIndex]);
-
-  useEffect(() => {
-    if (selectedCardIndex !== null && selectedCardIndex >= 0) expandCardFromScene(selectedCardIndex);
-  }, [selectedCardIndex]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Simple mode: a sound sphere click (re-)expands its card — keyed on the
-  // request version so clicking the same sphere again re-expands it.
-  useEffect(() => {
-    if (revealCardRequest) expandCardFromScene(revealCardRequest.index);
-  }, [revealCardRequest?.version]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Shared sound focus (3D sphere / DAW track ↔ card): a focus set elsewhere
+  // expands its card and scrolls to its header; a card the user expands becomes the focus.
+  const { scrollRequest: focusScrollRequest, publishCardExpansion } = useSoundCardFocus({
+    filteredCardItems,
+    setExpandedIndex,
+  });
 
   // Auto-name cards when sounds are generated. Tracked by card identity
   // (config_id) so reordering cards never re-triggers naming at a stale index.
@@ -487,23 +459,16 @@ export function SoundGenerationSection({
     updateSoundPosition(soundId, position);
   }, [updateSoundPosition]);
 
-  // Handle expansion change from CardSection (controlled mode callback)
-  // Note: does NOT call onSelectSoundCard — that callback is only for scene-to-sidebar
-  // communication (sound sphere / linked object click) and would trigger right sidebar expansion.
-  // Instead, we write directly to uiStore so SpeckleScene can highlight the sphere.
+  // Handle expansion change from CardSection (controlled mode callback): the
+  // expanded card becomes the shared sound focus (sphere + DAW track follow);
+  // collapsing it clears the focus so the sphere highlight reverts.
   const handleExpandedIndexChange = useCallback((newFilteredIndex: number | null) => {
     setExpandedIndex(newFilteredIndex);
-    // Map filtered position → original index for 3D scene sync
     const originalIdx = newFilteredIndex !== null
       ? (filteredCardItems[newFilteredIndex]?.originalIndex ?? null)
       : null;
-    setExpandedSoundCardIndex(originalIdx);
-    // Collapsing the last expanded card should also clear the scene-driven
-    // selection so the sphere highlight reverts to its original state.
-    if (newFilteredIndex === null) {
-      onSoundCardCollapsed?.();
-    }
-  }, [setExpandedSoundCardIndex, filteredCardItems, onSoundCardCollapsed]);
+    publishCardExpansion(originalIdx);
+  }, [filteredCardItems, publishCardExpansion]);
 
   // Keyboard shortcuts: Space previews the expanded card, Alt+↑/↓ / Esc / Delete / F
   useSoundCardShortcutTargets({
@@ -1507,6 +1472,9 @@ export function SoundGenerationSection({
   );
 
   return (
+    // Pointer-down anywhere in the sound cards makes Space drive the card preview
+    // (the DAW dock claims it back the same way). display: contents keeps layout.
+    <div style={{ display: 'contents' }} onPointerDownCapture={() => setPreferredPlaybackTarget('cardPreview')}>
     <CardSection
       items={filteredCardItems}
       availableTypes={availableTypes}
@@ -1521,6 +1489,7 @@ export function SoundGenerationSection({
       isRunning={isSoundGenerating}
       expandedIndex={expandedIndex}
       onExpandedIndexChange={handleExpandedIndexChange}
+      scrollRequest={focusScrollRequest}
       color="primary"
       onReorder={(from, to) => {
         // CardSection reports positions in the (possibly filtered) list; the
@@ -1542,5 +1511,6 @@ export function SoundGenerationSection({
       }}
 
     />
+    </div>
   );
 }

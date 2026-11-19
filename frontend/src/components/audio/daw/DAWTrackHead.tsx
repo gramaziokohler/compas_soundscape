@@ -3,7 +3,8 @@
 import { useCanEdit } from '@/hooks/useCanEdit';
 import { useState, useCallback, useEffect, useRef, memo } from 'react';
 import { RangeSlider } from '@/components/ui/RangeSlider';
-import { DAW, DEFAULT_DBFS, SOUND_CATEGORIES, soundCategoryTooltip } from '@/utils/constants';
+import { DAW, DEFAULT_DBFS, POPUP_MENU, SOUND_CATEGORIES, soundCategoryTooltip } from '@/utils/constants';
+import { useViewportClampedPosition } from '@/hooks/useViewportClampedPosition';
 import type { TimelineSound } from '@/types/audio';
 
 interface DAWTrackHeadProps {
@@ -21,6 +22,8 @@ interface DAWTrackHeadProps {
   onSolo: () => void;
   onVolumeChange: (dbfs: number) => void;
   onSelectSoundCard?: () => void;
+  /** This track's sound is the shared sound focus (sphere / card / track click). */
+  isFocused?: boolean;
   onDoubleClickSoundCard?: () => void;
   /** Open the transient "Interval settings" popover, anchored so its bottom-left
    * corner touches the kebab button's top-right corner (anchor = kebab top-right). */
@@ -48,6 +51,7 @@ function DAWTrackHeadImpl({
   onSolo,
   onVolumeChange,
   onSelectSoundCard,
+  isFocused = false,
   onDoubleClickSoundCard,
   onRequestDistribute,
   onSelectAllClips,
@@ -60,7 +64,8 @@ function DAWTrackHeadImpl({
 }: DAWTrackHeadProps) {
   // Share view: mute / solo only — no track menu (distribute, clear, reset) or volume.
   const canEdit = useCanEdit();
-  const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
+  // `flipBottomY`: the kebab's bottom — near the screen bottom the menu opens upward.
+  const [menuPos, setMenuPos] = useState<{ x: number; y: number; flipBottomY: number } | null>(null);
   const kebabRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const kebabAnchorRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -79,8 +84,11 @@ function DAWTrackHeadImpl({
     const rect = kebabRef.current?.getBoundingClientRect();
     if (!rect) return;
     kebabAnchorRef.current = { x: rect.right, y: rect.top };
-    setMenuPos({ x: rect.right + 4, y: rect.top });
+    setMenuPos({ x: rect.right + 4, y: rect.top, flipBottomY: rect.bottom });
   }, []);
+  const clampedMenuPos = useViewportClampedPosition(
+    menuRef, menuPos?.x ?? 0, menuPos?.y ?? 0, POPUP_MENU.VIEWPORT_MARGIN, menuPos?.flipBottomY,
+  );
 
   const menuItems: Array<[string, () => void]> = [
     ['Distribute evenly', () => onRequestDistribute(kebabAnchorRef.current)],
@@ -113,7 +121,11 @@ function DAWTrackHeadImpl({
         left: 0,
         zIndex: 60,
         overflow: 'hidden',
+        // Focused sound: primary tint + left accent bar.
+        backgroundColor: isFocused ? 'var(--color-primary-lighter)' : undefined,
+        boxShadow: isFocused ? 'inset 3px 0 0 var(--color-primary)' : undefined,
       }}
+      data-focused={isFocused || undefined}
       onPointerDown={(e) => e.stopPropagation()}
       onMouseEnter={onHoverTrack}
       onMouseLeave={onHoverTrackEnd}
@@ -181,7 +193,8 @@ function DAWTrackHeadImpl({
             ref={menuRef}
             onMouseLeave={() => setMenuPos(null)}
             style={{
-              position: 'fixed', left: `${menuPos.x}px`, top: `${menuPos.y}px`, zIndex: 999999,
+              position: 'fixed', left: `${clampedMenuPos?.x ?? menuPos.x}px`, top: `${clampedMenuPos?.y ?? menuPos.y}px`,
+              opacity: clampedMenuPos ? 1 : 0, zIndex: 999999,
               backgroundColor: 'var(--background)', border: '1px solid var(--color-border-strong)',
               borderRadius: '6px', boxShadow: '0 4px 16px rgba(0,0,0,0.5)', padding: '4px 0', width: '180px',
             }}

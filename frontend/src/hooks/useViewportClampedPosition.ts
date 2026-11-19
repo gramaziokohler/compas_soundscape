@@ -1,7 +1,7 @@
 'use client';
 
 import { useLayoutEffect, useState, type RefObject } from 'react';
-import { clampToViewport } from '@/utils/scale';
+import { clampToViewport, flipAboveIfOverflow } from '@/utils/scale';
 import { POPUP_MENU } from '@/utils/constants';
 
 export interface ViewportPosition {
@@ -25,12 +25,16 @@ export interface ViewportPosition {
  * const pos = useViewportClampedPosition(ref, menu.x, menu.y);
  * <div ref={ref} style={{ position: 'fixed', left: pos?.x ?? menu.x, top: pos?.y ?? menu.y, opacity: pos ? 1 : 0 }} />
  * ```
+ *
+ * `flipBottomY` (optional): a menu opened below an anchor flips above it instead of
+ * only shifting up — its bottom edge lands at `flipBottomY` (e.g. the anchor's bottom).
  */
 export function useViewportClampedPosition(
   ref: RefObject<HTMLElement | null>,
   x: number,
   y: number,
   margin: number = POPUP_MENU.VIEWPORT_MARGIN,
+  flipBottomY?: number,
 ): ViewportPosition | null {
   const [pos, setPos] = useState<ViewportPosition | null>(null);
 
@@ -40,7 +44,9 @@ export function useViewportClampedPosition(
       setPos((prev) => (prev === null ? prev : null));
       return;
     }
-    const next = clampToViewport(x, y, el.offsetWidth, el.offsetHeight, margin);
+    const height = el.offsetHeight;
+    const top = flipBottomY === undefined ? y : flipAboveIfOverflow(y, height, flipBottomY, margin);
+    const next = clampToViewport(x, top, el.offsetWidth, height, margin);
     setPos((prev) => (prev && prev.x === next.x && prev.y === next.y ? prev : next));
   });
 

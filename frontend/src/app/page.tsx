@@ -1385,7 +1385,6 @@ function HomeContent() {
   // Entity linking state
   const [isLinkingEntity, setIsLinkingEntity] = useState(false);
   const [linkingConfigIndex, setLinkingConfigIndex] = useState<number | null>(null);
-  const [selectedCardIndex, setSelectedCardIndex] = useState<number | null>(null);
 
   // Material assignment state (NEW)
   const [selectedGeometry, setSelectedGeometry] = useState<SelectedGeometry | null>(null);
@@ -2947,10 +2946,11 @@ function HomeContent() {
     soundGen.handleRemoveConfig(index);
   }, [soundGen.soundConfigs, soundGen.handleRemoveConfig, unlinkObjectFromSound, resolveEntityObjectId]);
 
-  // Handle sound card selection from ThreeScene (sound sphere click)
+  // Explicit "reveal sound" (scene right-click menu, review panel): focus the
+  // sound with `reveal` so the Simple-mode scene panel opens on it. Plain sphere /
+  // DAW / linked-object clicks only call uiStore.focusSound and never open panels.
   const handleSelectSoundCard = useCallback((promptIndex: number) => {
-    // Expand the card in the left sidebar
-    setSelectedCardIndex(promptIndex);
+    useUIStore.getState().focusSound(promptIndex, 'scene', true);
 
     // Expand the left sidebar and reveal the Sounds step so the clicked
     // sound's card is actually visible (the mounted Sidebar reacts to the
@@ -2981,9 +2981,8 @@ function HomeContent() {
       : null;
     useUIStore.getState().setIsLeftSidebarExpanded(true);
     syncExpertNavigation(2, contextIndex, usageIndex);
-    // Expand the card once the scene's sounds are shown (re-select so the
-    // card expands even when it was the last selected one).
-    setSelectedCardIndex(null);
+    // Focus the card once the scene's sounds are shown (a new focus version
+    // re-expands it even when it was the last focused one).
     requestAnimationFrame(() => handleSelectSoundCard(configIndex));
   }, [handleSelectSoundCard]);
 
@@ -3951,9 +3950,6 @@ function HomeContent() {
     onDuplicateConfig: soundGen.handleDuplicateConfig,
     onRegenerateSingle: soundGen.handleRegenerateSingle,
     onDeleteVariant: soundGen.handleDeleteVariant,
-    onSelectSoundCard: handleSelectSoundCard,
-    selectedCardIndex: selectedCardIndex,
-    onSoundCardCollapsed: () => setSelectedCardIndex(null),
     // Analysis props
     analysisConfigs: analysis.analysisConfigs,
     stepAdvanceTrigger: stepAdvanceTrigger,
@@ -4108,8 +4104,7 @@ function HomeContent() {
                 soundGen.updateSoundPosition(soundId, position);
               }
             }}
-            // Sound card selection (for expand/highlight logic)
-            selectedCardIndex={selectedCardIndex}
+            // Explicit "reveal sound" (scene right-click menu)
             onSelectSoundCard={handleSelectSoundCard}
             // Entity linking (sound-to-Speckle-object linking)
             isLinkingEntity={isLinkingEntity}
@@ -4172,7 +4167,7 @@ function HomeContent() {
         {/* Home new-scene panel — stays open across a Simple ↔ Expert switch */}
         {!isShareView && <HomeSceneComposer />}
         {/* Share view: first-load mini tutorial (turn a scene on → play → switch simulations / listeners) */}
-        {isShareView && <ShareTutorial />}
+        {isShareView && <ShareTutorial activeListenerId={shareActiveListenerId} />}
 
       {/* Advanced Settings floating panel */}
       <AdvancedSettingsPanel

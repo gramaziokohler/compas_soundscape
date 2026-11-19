@@ -107,6 +107,15 @@ export function clampToViewport(
   return { x: cx, y: cy };
 }
 
+/**
+ * Popup opened below an anchor (top at `y`): when its `height` would overflow the
+ * viewport bottom, open it upward instead, so its bottom edge sits at `flipBottomY`
+ * (e.g. the anchor's bottom). Returns the top y; combine with clampToViewport.
+ */
+export function flipAboveIfOverflow(y: number, height: number, flipBottomY: number, margin = 8): number {
+  return y + height > _viewport.height - margin ? flipBottomY - height : y;
+}
+
 /** Clamp a width so the element cannot exceed the viewport width. */
 export function clampToViewportWidth(width: number, minWidth = 0, margin = 8): number {
   return Math.max(minWidth, Math.min(width, Math.max(minWidth, _viewport.width - margin)));

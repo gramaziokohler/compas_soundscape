@@ -427,6 +427,14 @@ export const POPUP_MENU = {
   Z_INDEX: 9999,
 } as const;
 
+// Sound focus (3D sphere ↔ DAW track ↔ sound card) — see uiStore.soundFocus
+export const FOCUS_SCROLL = {
+  OFFSET_PX: 8,               // px — gap kept above a card / track scrolled into view
+  SETTLE_DELAY_MS: 120,       // ms — wait for a card's expand layout before scrolling to it
+} as const;
+/** ms — share-view FPS turn toward a focused sound source. */
+export const FPS_FACE_SOURCE_DURATION_MS = 400;
+
 // Card info ("i") popover — click-to-open explanation panel on every card
 // (bottom-right corner). Sizing/placement tokens for `components/ui/InfoPopover.tsx`.
 export const CARD_INFO_POPOVER = {
@@ -472,6 +480,10 @@ export const SHARE_VIEW = {
   REPLAY_TUTORIAL_LABEL: 'Tour',
   REPLAY_TUTORIAL_TITLE: 'Show the tutorial',
   HIDE_TUTORIAL_TITLE: 'Hide the tutorial',
+  /** Line under the Object Explorer title: a left click on the model selects it there. */
+  OBJECT_EXPLORER_HINT: 'Click an object in the 3D view to find it in this list',
+  /** DOM id of that button — the hidden tour shrinks into it (ShareTutorial). */
+  TOUR_BUTTON_ID: 'share-tour-button',
   /** iframe snippet defaults for the embed code. */
   EMBED_WIDTH: '100%',
   EMBED_HEIGHT: '600',
@@ -1985,6 +1997,20 @@ export const RECEIVER_CONFIG = {
   HIDDEN_FOR_SIMULATION_OPACITY: 0.3,
 } as const;
 
+/**
+ * Occlusion ghosts (lib/three/occlusion-ghost.ts): the faint copy of a sound
+ * sphere / listener drawn only where the model hides it. Its opacity is the
+ * parent's current opacity times the ratio, so faded objects fade further.
+ */
+export const OCCLUSION_GHOST = {
+  /** Sound spheres: 0.75 in view → ~0.22 behind a wall. */
+  SOUND_OPACITY_RATIO: 0.3,
+  /** Listeners and grid listeners: opaque in view → 0.3 behind a wall. */
+  LISTENER_OPACITY_RATIO: 0.3,
+  /** Drawn right after its parent, so the parent's depth is already written. */
+  RENDER_ORDER_OFFSET: 1,
+} as const;
+
 // Object Label Sprites (shown above sound spheres and receivers)
 export const OBJECT_LABEL = {
   FONT_SIZE: 14,
@@ -3205,7 +3231,7 @@ export interface ShortcutDef {
 }
 
 export const KEYBOARD_SHORTCUTS = {
-  PLAY_PAUSE:     { keys: 'Space', label: 'Play / pause', hint: 'Expanded sound card, otherwise the timeline', group: 'Playback' },
+  PLAY_PAUSE:     { keys: 'Space', label: 'Play / pause', hint: 'Whichever you clicked last: sound card or timeline', group: 'Playback' },
   STOP:           { keys: 'Shift + Space', label: 'Stop', hint: 'Stops playback and rewinds', group: 'Playback' },
   REWIND:         { keys: 'Home', label: 'Go to start', group: 'Playback' },
   MUTE:           { keys: 'M', label: 'Mute / unmute', group: 'Playback' },
@@ -3299,6 +3325,8 @@ export const SHARE_TUTORIAL = {
   NEXT_LABEL: 'Next tip',
   FINISH_LABEL: 'Finish tutorial',
   ARROW_ICON_SIZE: 14,     // px — previous / next chevrons
+  CLOSE_ANIMATION_MS: 380, // hide: the tip shrinks into the bottom bar's Tour button
+  CLOSE_SCALE: 0.08,       // tip scale at the end of that animation
   STEPS: {
     /** `afterIcon` follows an inline power glyph (the button in the circle's hover flyout). */
     scene: { title: 'Turn on a sound scene', message: 'Hover a circle and press', afterIcon: ', or just click the circle.' },
@@ -3330,11 +3358,11 @@ export const SHARE_SCENE_INFO = {
 
 /** Share view: absorption colour key under the view-mode pill in Acoustics mode (components/scene/AbsorptionLegend.tsx). */
 export const ABSORPTION_LEGEND = {
-  TITLE: 'Sound absorption',
+  ARIA_LABEL: 'Sound absorption',
   LOW_LABEL: 'Reflective',
   HIGH_LABEL: 'Absorbent',
-  TICKS: ['0', '0.5', '1'],
-  TOOLTIP: 'Surface colour = its material’s absorption coefficient α (share of sound energy absorbed, averaged over the octave bands). 0 reflects everything, 1 absorbs everything.',
+  TICKS: ['0%', '50%', '100%'],
+  TOOLTIP: 'Surface colour = its material’s absorption coefficient α (share of sound energy absorbed, averaged over the octave bands). 0% reflects everything, 100% absorbs everything.',
   /** The ramp of getMaterialColorByAbsorption (utils/utils.ts): start → mid at 0.5 → end, linear RGB. */
   GRADIENT: 'linear-gradient(to right, var(--color-material-start), var(--color-material-mid), var(--color-material-end))',
   WIDTH: 200,      // px

@@ -39,6 +39,21 @@ export interface SidebarNavCommand {
 }
 
 /** Settings the Advanced Settings panel can be opened directly on. */
+/** Which surface focused a sound: the 3D scene (sphere / linked object), the DAW, or a sound card. */
+export type SoundFocusSource = 'scene' | 'daw' | 'card';
+
+/** The focused sound — see `UIStoreState.soundFocus`. */
+export interface SoundFocus {
+  /** Original sound card index (`soundConfigs` index). */
+  index: number;
+  source: SoundFocusSource;
+  /** Explicit "reveal" (e.g. scene right-click → show sound): open the sound's scene panel /
+   *  sidebar even when closed. Plain clicks only update surfaces already open. */
+  reveal: boolean;
+  /** Bumped on every focus, so the same index re-applies. */
+  version: number;
+}
+
 export type AdvancedSettingsFocusTarget = 'tts-language' | 'text-to-audio' | 'workspaces';
 
 export interface UIStoreState {
@@ -196,9 +211,15 @@ export interface UIStoreState {
   /** Card whose sound sphere should highlight while hovered (e.g. a DAW track/clip). Not persisted. */
   hoveredSoundCardIndex: number | null;
   setHoveredSoundCardIndex: (index: number | null) => void;
-  /** Simple mode: a sound sphere was clicked — the open scene panel expands its card. Not persisted. */
-  soundSphereRevealRequest: { index: number; version: number } | null;
-  requestSoundSphereReveal: (index: number) => void;
+  /**
+   * The focused sound (original card index), shared by the 3D sphere, the DAW track and the
+   * sound card: each surface writes it on click and the others follow (highlight / expand /
+   * scroll) when they are open. `source` tells readers who wrote it (a reader never re-scrolls
+   * its own click); a new `version` re-applies the same index. Not persisted.
+   */
+  soundFocus: SoundFocus | null;
+  focusSound: (index: number, source: SoundFocusSource, reveal?: boolean) => void;
+  clearSoundFocus: () => void;
   /** Active parent (usage or context) index filtering the Sounds section. Null = no filter. */
   activeSoundParentIndex: number | null;
   setActiveSoundParentIndex: (index: number | null) => void;
@@ -514,13 +535,14 @@ export const useUIStore = create<UIStoreState>()(
         ),
       hoveredSoundCardIndex: null,
       setHoveredSoundCardIndex: (index) => set({ hoveredSoundCardIndex: index }, false, 'ui/setHoveredSoundCardIndex'),
-      soundSphereRevealRequest: null,
-      requestSoundSphereReveal: (index) =>
+      soundFocus: null,
+      focusSound: (index, source, reveal = false) =>
         set(
-          (s) => ({ soundSphereRevealRequest: { index, version: (s.soundSphereRevealRequest?.version ?? 0) + 1 } }),
+          (s) => ({ soundFocus: { index, source, reveal, version: (s.soundFocus?.version ?? 0) + 1 } }),
           false,
-          'ui/requestSoundSphereReveal',
+          'ui/focusSound',
         ),
+      clearSoundFocus: () => set({ soundFocus: null }, false, 'ui/clearSoundFocus'),
       activeSoundParentIndex: null,
       setActiveSoundParentIndex: (index) =>
         set(
@@ -658,7 +680,7 @@ export const useUIStore = create<UIStoreState>()(
         hoveredIRSourceReceiver, activeGradientMap, selectedIRId, selectedIRMetadata,
         irRefreshTrigger, refreshBoundingBoxTrigger, roomScale, isUploadingGlobalModel,
         globalModelUploadProgress,
-        isSavingSoundscape, zoomToSoundCardTrigger, hoveredSoundCardIndex, soundSphereRevealRequest,
+        isSavingSoundscape, zoomToSoundCardTrigger, hoveredSoundCardIndex, soundFocus,
         activeSoundParentIndex, isInSoundsStep, showBoundingBox,
         acousticLayerSelectionMode, soundsNavTrigger,
         leftSidebarExpandCommand, homeProject, sidebarNavCommand, dawDockBottomSpace, bubbleColumnCounts, showLoadModelPanel,
@@ -683,5 +705,8 @@ export const useUIStore = create<UIStoreState>()(
  * saved Homepage project. Only the bare Home page (neither) has no target —
  * autosave is off there and saving goes through "Save → Homepage project".
  */
+/** The focused sound's card index, or null. */
+export const selectFocusedSoundIndex = (s: UIStoreState): number | null => s.soundFocus?.index ?? null;
+
 export const selectHasSaveTarget = (s: UIStoreState): boolean =>
   !!s.globalSpeckleData || !!s.homeProject;

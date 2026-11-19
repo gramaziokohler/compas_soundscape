@@ -17,6 +17,7 @@ import { useHomeStageHasWork } from '@/hooks/useHomeStageHasWork';
 import { CircleHelp, Headphones } from 'lucide-react';
 import { APP_BRAND, MODEL_VERSION_WATCH, SCENE_BOTTOM_BAR, SHARE_VIEW, WORKSPACE_MESSAGES } from '@/utils/constants';
 import { useCanEdit } from '@/hooks/useCanEdit';
+import { setPreferredPlaybackTarget } from '@/lib/shortcuts/shortcut-targets';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
 
 function formatTime(ms: number): string {
@@ -256,7 +257,11 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
                 id={SCENE_BOTTOM_BAR.PLAY_BUTTON_ID}
                 type="button"
                 className="bar-play"
-                onClick={isPlaying ? onPause : onPlay}
+                onClick={() => {
+                  // The scene transport is the timeline: Space follows it from now on.
+                  setPreferredPlaybackTarget('timeline');
+                  if (isPlaying) onPause(); else onPlay();
+                }}
                 aria-label={isPlaying ? 'Pause' : 'Play'}
                 aria-keyshortcuts="Space"
               >
@@ -429,6 +434,7 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
         )}
         {!canEdit && (
           <BarButton
+            id={SHARE_VIEW.TOUR_BUTTON_ID}
             onClick={requestTutorialToggle}
             active={tutorialActive}
             title={tutorialActive ? SHARE_VIEW.HIDE_TUTORIAL_TITLE : SHARE_VIEW.REPLAY_TUTORIAL_TITLE}

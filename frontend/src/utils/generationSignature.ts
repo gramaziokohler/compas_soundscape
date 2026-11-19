@@ -202,6 +202,21 @@ export function getModifiedGenerationFields(config: object): Set<string> {
 }
 
 /**
+ * True when an input shared by every variant (variant count, TTS speech-line
+ * list) was edited since generation, or when there is no snapshot to compare.
+ * Edits limited to per-variant inputs only concern the selected variant.
+ */
+export function hasCardLevelGenerationChanges(config: object): boolean {
+  const c = config as SignableConfig;
+  const spec = getSpec(c);
+  const snapshot = getSnapshotInputs(c);
+  if (!spec || !snapshot) return true;
+  const current = getSignatureInputs(c, spec);
+  const cardKeys = [...(spec.cardLevel ?? []), ...(spec.speechLines ? [SPEECH_LINES_KEY] : [])];
+  return cardKeys.some((key) => !sameValue(current[key], snapshot[key]));
+}
+
+/**
  * Config patch restoring the generation-time inputs (only the fields that
  * differ), or `null` when there is nothing to revert. TTS speech lines are
  * written back into whichever container holds them.

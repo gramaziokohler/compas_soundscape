@@ -3,6 +3,8 @@ import {
   registerShortcutTarget,
   getShortcutTarget,
   resolvePlaybackTarget,
+  setPreferredPlaybackTarget,
+  clearPreferredPlaybackTarget,
   type PlaybackTarget,
 } from './shortcut-targets';
 
@@ -17,6 +19,8 @@ const register = (slot: 'cardPreview' | 'timeline', t: PlaybackTarget) => {
 
 afterEach(() => {
   cleanups.splice(0).forEach((fn) => fn());
+  clearPreferredPlaybackTarget('timeline');
+  clearPreferredPlaybackTarget('cardPreview');
 });
 
 describe('resolvePlaybackTarget', () => {
@@ -36,6 +40,40 @@ describe('resolvePlaybackTarget', () => {
     register('cardPreview', target(false));
     register('timeline', timeline);
     expect(resolvePlaybackTarget()).toBe(timeline);
+  });
+
+  it('prefers the timeline when it was clicked last', () => {
+    const timeline = target(true);
+    register('cardPreview', target(true));
+    register('timeline', timeline);
+    setPreferredPlaybackTarget('timeline');
+    expect(resolvePlaybackTarget()).toBe(timeline);
+  });
+
+  it('a later card click takes Space back from the timeline', () => {
+    const card = target(true);
+    register('cardPreview', card);
+    register('timeline', target(true));
+    setPreferredPlaybackTarget('timeline');
+    setPreferredPlaybackTarget('cardPreview');
+    expect(resolvePlaybackTarget()).toBe(card);
+  });
+
+  it('ignores a preferred target that cannot play', () => {
+    const card = target(true);
+    register('cardPreview', card);
+    register('timeline', target(false));
+    setPreferredPlaybackTarget('timeline');
+    expect(resolvePlaybackTarget()).toBe(card);
+  });
+
+  it('clearing the preference restores the default order', () => {
+    const card = target(true);
+    register('cardPreview', card);
+    register('timeline', target(true));
+    setPreferredPlaybackTarget('timeline');
+    clearPreferredPlaybackTarget('timeline');
+    expect(resolvePlaybackTarget()).toBe(card);
   });
 
   it('returns undefined when neither can play', () => {

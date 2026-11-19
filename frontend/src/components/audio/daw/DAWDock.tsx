@@ -15,6 +15,7 @@ import { useDawView } from './useDawView';
 import { useClipSelection } from './useClipSelection';
 import { useClipGesture, ensureTrackMaterialized, readClipTrimCopy, type ClipDescriptor, type TriggerDep } from './useClipGesture';
 import { useClipTrimGesture } from './useClipTrimGesture';
+import { useDawTrackFocus } from './useDawTrackFocus';
 import { computeTimelineOverrun } from './daw-overrun';
 import type { ClipTrimCopy } from '@/store/audioControlsStore';
 import { parseTriggerExpression } from '@/lib/audio/utils/trigger-ref';
@@ -24,6 +25,7 @@ import { useSoundscapeStore } from '@/store/soundscapeStore';
 import { useSpeckleStore } from '@/store/speckleStore';
 import { useUIStore } from '@/store/uiStore';
 import { useSceneWorkflowStore } from '@/store/sceneWorkflowStore';
+import { clearPreferredPlaybackTarget, setPreferredPlaybackTarget } from '@/lib/shortcuts/shortcut-targets';
 import { DAW, DEFAULT_DBFS, SCENE_BOTTOM_BAR, UI_SIDEBAR_RESIZE, UI_SIDEBAR_TOGGLE } from '@/utils/constants';
 import type { TimelineSound, IterationLink } from '@/types/audio';
 import type { PlaybackSchedulerService } from '@/lib/audio/playback-scheduler-service';
@@ -64,7 +66,6 @@ export interface DAWDockProps {
   onSeek: (timeMs: number) => void;
   onDownload?: (format: import('@/lib/audio/SoundscapeExporter').ExportFormat) => Promise<void>;
   onClose: () => void;
-  onSelectSoundCard?: (promptIndex: number) => void;
   originalIRChannelCount?: number;
   leftOffset: number;
   rightOffset: number;
@@ -79,7 +80,6 @@ export function DAWDock({
   onSeek,
   onDownload,
   onClose,
-  onSelectSoundCard,
   originalIRChannelCount,
   leftOffset,
   rightOffset,
@@ -136,6 +136,8 @@ export function DAWDock({
 
   const dockRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  // Shared sound focus: highlight + scroll to the focused track; a track click focuses its sound.
+  const { focusedIndex, registerRow, focusTrack } = useDawTrackFocus();
 
   /* ---- Sorted, flat track list (no groups) ---- */
   const sortedSounds = useMemo(() => {
@@ -261,6 +263,8 @@ export function DAWDock({
   // (not a prop: playback no longer re-renders the dock every frame).
   const playheadMsRef = useRef(useTransportTimeStore.getState().currentTimeMs);
   useEffect(() => useTransportTimeStore.subscribe((s) => { playheadMsRef.current = s.currentTimeMs; }), []);
+  // A closed dock no longer claims Space.
+  useEffect(() => () => clearPreferredPlaybackTarget('timeline'), []);
   const timelineDurationMsRef = useRef(timelineDurationMs); timelineDurationMsRef.current = timelineDurationMs;
   const triggerReverseRef = useRef(triggerGraph.reverse); triggerReverseRef.current = triggerGraph.reverse;
   const selectedClipKeysRef = useRef(selection.selectedClipKeys); selectedClipKeysRef.current = selection.selectedClipKeys;
@@ -278,13 +282,13 @@ export function DAWDock({
     clipRegistryRef: registryRef,
     onClickResolved: (clipKey, e) => {
       selection.onClipClicked(clipKey, e);
-      // A plain click (no modifier) also expands the corresponding sound card,
-      // matching the track-head name click.
+      // A plain click (no modifier) also focuses the track's sound, matching
+      // the track-head name click.
       if (e.ctrlKey || e.metaKey || e.shiftKey) return;
       const d = registryRef.current.get(clipKey);
       const sound = d && soundsRef.current.find((s) => s.id === d.soundId);
       const configIdx = sound?.cardIndex ?? sound?.promptIndex;
-      if (configIdx !== undefined) onSelectSoundCard?.(configIdx);
+      if (configIdx !== undefined) focusTrack(configIdx);
     },
   });
 
@@ -724,7 +728,11 @@ export function DAWDock({
       onPointerDown={(e) => { if (dockRef.current) dockRef.current.focus(); void e; }}
       // Capture: track heads stop pointerdown propagation. Brings the DAW back
       // in front of an overlapping Simple-mode scene panel.
-      onPointerDownCapture={() => useSceneWorkflowStore.getState().setSimpleFrontLayer('daw')}
+      // Also makes Space drive the timeline instead of an expanded sound card.
+      onPointerDownCapture={() => {
+        useSceneWorkflowStore.getState().setSimpleFrontLayer('daw');
+        setPreferredPlaybackTarget('timeline');
+      }}
       onKeyDown={handleKeyDown}
       className="transition-all duration-300 ease-in-out"
       style={{
@@ -779,7 +787,7 @@ export function DAWDock({
 
             {rows.map(({ sound, displayName, configIdx, clips }) => (
               <Fragment key={sound.id}>
-              <div style={{ display: 'flex' }}>
+              <div ref={registerRow(configIdx)} style={{ display: 'flex' }}>
                 <DAWTrackHead
                   sound={sound}
                   displayName={displayName}
@@ -793,7 +801,8 @@ export function DAWDock({
                   onMute={() => handleMute(sound.id)}
                   onSolo={() => handleSolo(sound.id)}
                   onVolumeChange={(db) => handleVolumeChange(sound.id, db)}
-                  onSelectSoundCard={onSelectSoundCard && configIdx !== undefined ? () => onSelectSoundCard(configIdx) : undefined}
+                  onSelectSoundCard={configIdx !== undefined ? () => focusTrack(configIdx) : undefined}
+                  isFocused={configIdx !== undefined && configIdx === focusedIndex}
                   onDoubleClickSoundCard={configIdx !== undefined ? () => { triggerZoomToSoundCard(configIdx); handleZoomToLinkedEntity(configIdx); } : undefined}
                   onRequestDistribute={(anchor) => openDistributeFor(sound, anchor)}
                   onSelectAllClips={() => selection.replace(clips.map((c) => c.clipKey))}

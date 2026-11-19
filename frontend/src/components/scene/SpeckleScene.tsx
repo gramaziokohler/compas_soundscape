@@ -22,6 +22,7 @@ import type * as THREE from 'three';
 // Custom hooks (Phase 1-4 refactor)
 import { useSpeckleViewerInit } from '@/components/scene/hooks/useSpeckleViewerInit';
 import { useSpeckleFPS } from '@/components/scene/hooks/useSpeckleFPS';
+import { useFaceFocusedSound } from '@/components/scene/hooks/useFaceFocusedSound';
 import { useSpeckleAreaDrawing } from '@/components/scene/hooks/useSpeckleAreaDrawing';
 import { useSpeckleAnalysisPreview } from '@/components/scene/hooks/useSpeckleAnalysisPreview';
 import { useSpeckleSimulationPreflight } from '@/components/scene/hooks/useSpeckleSimulationPreflight';
@@ -133,8 +134,8 @@ interface SpeckleSceneProps {
   onUpdateSoundPosition?: (soundId: string, position: [number, number, number]) => void;
 
   // Sound card selection (for expand/highlight logic)
-  selectedCardIndex?: number | null; // Currently selected sound card index
-  onSelectSoundCard?: (promptIndex: number) => void; // Callback to select sound card
+  /** Explicit "reveal sound" (scene right-click menu): opens the sidebar on that card. */
+  onSelectSoundCard?: (promptIndex: number) => void;
 
   // Entity linking (sound-to-Speckle-object linking)
   isLinkingEntity?: boolean; // Whether we're in entity linking mode
@@ -259,7 +260,6 @@ export function SpeckleScene({
   expandedGridListenerId,
   listenerOrientation = { x: 0, y: 1, z: 0 },
   onUpdateSoundPosition,
-  selectedCardIndex = null,
   onSelectSoundCard,
   isLinkingEntity = false,
   linkingConfigIndex = null,
@@ -581,7 +581,6 @@ export function SpeckleScene({
   useSpeckleCoordinatorCallbacks({
     isViewerReady,
     soundscapeData,
-    onSelectSoundCard,
     isLinkingEntity,
     getObjectLinkState,
     onUpdateReceiverPosition,
@@ -628,10 +627,12 @@ export function SpeckleScene({
     soundscapeData,
   });
 
+  // ── Share view FPS: turn toward a sound focused from a card / DAW track ──
+  useFaceFocusedSound(soundscapeData);
+
   // ── Sound Sphere Highlight + Zoom ──
   useSpeckleSoundHighlight({
     isViewerReady,
-    selectedCardIndex: selectedCardIndex ?? null,
     soundscapeData,
     selectedVariants,
     activeSimulationPositions,
@@ -1228,7 +1229,6 @@ export function SpeckleScene({
           onDownload={handleDownloadTimeline}
           onClose={handleCloseTimeline}
           isAnyPlaying={playbackState.isPlaying}
-          onSelectSoundCard={onSelectSoundCard}
           originalIRChannelCount={irChannelCount}
           playbackSchedulerRef={playbackSchedulerRef}
         />

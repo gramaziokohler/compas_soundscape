@@ -1418,6 +1418,15 @@ export class AudioOrchestrator implements IAudioOrchestrator {
       this.currentModeInstance.setSourceVolume(sourceId, pendingVolume);
     }
 
+    // Apply mute/solo state set before the buffer finished loading. The mute
+    // sync effect runs as soon as the scene's sound list changes (e.g. switching
+    // back to a sound scene), while the sources are only created once their
+    // buffers load — without this they would start unmuted while the UI shows
+    // them muted/soloed-out.
+    if (this.muteRegistry.get(sourceId)) {
+      this.currentModeInstance.setSourceMute(sourceId, true);
+    }
+
     // If in simulation mode with active receiver, apply source-specific IR immediately
     // (sequenced via resolveSourceIR so creation can never be clobbered by a stale load)
     if (this.sourceReceiverIRMapping && this.activeReceiverId && this.simulationMode !== 'none') {

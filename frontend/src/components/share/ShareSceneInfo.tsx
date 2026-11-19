@@ -51,16 +51,20 @@ export function ShareSceneInfo({ isFirstPersonMode }: ShareSceneInfoProps) {
 
   const controls = isFirstPersonMode ? SHARE_SCENE_INFO.FPS_CONTROLS : SHARE_SCENE_INFO.NAV_CONTROLS;
 
-  return (
+  const style = {
+    left: SIMPLE_MODE.EDGE_MARGIN,
+    bottom: SCENE_BOTTOM_BAR.HEIGHT + SIMPLE_MODE.LISTENERS_BOTTOM_GAP + dockLift,
+    maxWidth: SHARE_SCENE_INFO.MAX_WIDTH,
+    zIndex: SIMPLE_MODE.Z_INDEX,
+  };
+
+  // The base layer is difference-blended against the scene (which would invert a blue link),
+  // so the links are drawn by an identical, un-blended overlay layer on top of it.
+  const renderLayer = (isLinkLayer: boolean) => (
     <div
-      ref={rootRef}
-      className="share-scene-info"
-      style={{
-        left: SIMPLE_MODE.EDGE_MARGIN,
-        bottom: SCENE_BOTTOM_BAR.HEIGHT + SIMPLE_MODE.LISTENERS_BOTTOM_GAP + dockLift,
-        maxWidth: SHARE_SCENE_INFO.MAX_WIDTH,
-        zIndex: SIMPLE_MODE.Z_INDEX,
-      }}
+      ref={isLinkLayer ? undefined : rootRef}
+      className={`share-scene-info${isLinkLayer ? ' share-scene-info--links' : ''}`}
+      style={style}
     >
       {scene && (
         <>
@@ -72,7 +76,7 @@ export function ShareSceneInfo({ isFirstPersonMode }: ShareSceneInfoProps) {
           )}
         </>
       )}
-      <p className="share-scene-info__nav" aria-label="Navigation">
+      <p className="share-scene-info__nav" aria-label={isLinkLayer ? undefined : 'Navigation'}>
         {controls.map(({ label, mouse, action }) => (
           <span key={label} className="share-scene-info__control">
             {label} <MouseIcon control={mouse} size={SHARE_SCENE_INFO.MOUSE_ICON_SIZE} /> {action}
@@ -85,5 +89,12 @@ export function ShareSceneInfo({ isFirstPersonMode }: ShareSceneInfoProps) {
         )}
       </p>
     </div>
+  );
+
+  return (
+    <>
+      {renderLayer(false)}
+      {footnote && renderLayer(true)}
+    </>
   );
 }

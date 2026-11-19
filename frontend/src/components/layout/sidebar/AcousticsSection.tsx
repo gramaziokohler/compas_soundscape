@@ -58,6 +58,7 @@ import { useModelVersionStore } from '@/store';
 import { SimulationOutdatedNotice } from '@/components/layout/sidebar/acoustics/SimulationOutdatedNotice';
 import { SimulationVersionBadge } from '@/components/layout/sidebar/acoustics/SimulationVersionBadge';
 import { SimulationSolveTime } from '@/components/layout/sidebar/acoustics/SimulationSolveTime';
+import { SimulationSettingsRecap } from '@/components/layout/sidebar/acoustics/SimulationSettingsRecap';
 import { buildSimulationGeometryRequest, simulationRequestSignature, simulationSourceSnapshot, speckleCardFields, type BuildResult } from '@/utils/simulationRequest';
 import type { SimulationEngine } from '@/types/simulationPreflight';
 
@@ -2332,7 +2333,11 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             actionButtonColor='primary'
             color="primary"
             version={cardVersion}
-            footerNote={isEngineSimulation(config) && isCompleted ? <SimulationSolveTime config={config} /> : undefined}
+            // Share view: "Simulation settings ⌄" (solve time + settings) instead of the bare solve time.
+            footerNote={isEngineSimulation(config) && isCompleted && canEdit ? <SimulationSolveTime config={config} /> : undefined}
+            beforeSettingsSummary={isEngineSimulation(config) && isCompleted && !canEdit
+              ? <SimulationSettingsRecap config={config} />
+              : undefined}
             headerBadge={isEngineSimulation(config) && isCompleted
               ? <SimulationVersionBadge config={config} />
               : undefined}

@@ -513,10 +513,30 @@ Bubble cards vs docked DAW (stacking):
     = 'panel' → z SIMPLE_MODE.PANEL_RAISED_Z_INDEX (205, above DAW 200, below bottom bar 210);
     DAWDock pointerdown (capture) → 'daw' → cards drop back to SIMPLE_MODE.Z_INDEX.
 
-Simple-mode sound sphere click vs the scene panel:
-  useSpeckleCoordinatorCallbacks (simple mode) → uiStore.requestSoundSphereReveal(promptIndex)
-  └── hooks/useSoundSphereReveal — only while a scene panel is open: switch it to the sphere's
-      scene cards → SoundGenerationSection `revealCardRequest` ({index, version}) expands the card
+Sound focus — 3D sphere ↔ DAW track ↔ sound card (edit + share, Simple + Expert):
+  uiStore.soundFocus {index, source: 'scene'|'daw'|'card', reveal, version} — one focused
+  sound (card index), not persisted. A click on any surface focuses; the others follow, but
+  only when already open (no click opens a panel). `version` re-applies a same-index focus.
+  Writers:
+    sphere / sound-linked object click → useSpeckleCoordinatorCallbacks → focusSound(i,'scene')
+      share view, Explorer closed (picking blocked): SpeckleEventBridge reports the hit via
+      coordinator.setOnBlockedModelClicked → a linked object still focuses its sound
+    DAW track name / plain clip click → DAWDock useDawTrackFocus.focusTrack → 'daw'
+    card expand (header / Alt+↑↓) → useSoundCardFocus.publishCardExpansion → 'card'
+      (collapsing the focused card clears the focus)
+    explicit reveal (scene right-click "show sound", review panel) → page.handleSelectSoundCard
+      → focusSound(i,'scene', reveal=true) + opens the expert sidebar
+  Readers:
+    useSpeckleSoundHighlight — sphere highlight / gizmo: soundFocus ?? expandedSoundCardIndex
+    sidebar/sound/useSoundCardFocus — expands the card once per version (also when the card
+      appears later or the section mounts after the focus) → CardSection `scrollRequest`
+      → utils/scrollIntoContainer (header to the top of its scroll parent only)
+    hooks/useSoundFocusReveal (Simple mode) — moves an open scene panel to the sound's scene;
+      `reveal` powers + opens it
+    daw/useDawTrackFocus — highlights the track head, scrolls the row below the sticky ruler
+      (also once when the dock mounts with a focus)
+    scene/hooks/useFaceFocusedSound — share view + FPS: a 'card'/'daw' focus eases the
+      listener view toward lib/three/sound-live-position (camera faceFirstPersonToward)
   hooks/useDismissOnSceneClick(…, keepOnTypes=['sound']) — a press on a visible sound sphere
     (coordinator.getVisibleCustomObjectTypeAt) never reduces the panel; other 3D clicks do.
   Global background cards (isConfigGlobal) never select their (hidden) sphere / gizmo
@@ -1105,14 +1125,17 @@ login and can only select and play. It also works inside an iframe.
   with no sandbox viewer and no `ensure-ready`.
 - Simulation cards list their IRs from the restored mapping, not from the per-user IR library.
 - The Object Explorer is available but read-only: no material or scattering edits, no
-  Re-assign, no region-selection prompt, no auto-open. The right-click menu exists only for
-  sound spheres and listeners.
-- Model objects have no hover outline and cannot be clicked, double-clicked (no zoom), box-
-  or right-click-selected. `lib/three/speckle-share-view-picking.ts` switches Speckle's
-  `SelectionExtension` off while the renderer emits `ObjectClicked` / `ObjectDoubleClicked`
-  (its handlers are bound at construction), so programmatic selection from the Object Explorer
-  still works; `speckle-event-bridge.ts` skips its model-geometry branches. Sound spheres and
-  listeners keep their click / double-click behavior.
+  Re-assign, no region-selection prompt, no auto-open, no "auto-detected" badge. A line under
+  its title says a click in the 3D view finds an object in the list. The right-click menu
+  exists only for sound spheres and listeners.
+- Model objects have no hover outline and cannot be double-clicked (no zoom), box- or
+  right-click-selected. A left click selects one only while the Object Explorer is open
+  (`isModelPickingBlocked()`); closing the explorer clears that selection.
+  `lib/three/speckle-share-view-picking.ts` switches Speckle's `SelectionExtension` off while
+  the renderer emits a blocked `ObjectClicked` / `ObjectDoubleClicked` (its handlers are bound
+  at construction), so programmatic selection from the Object Explorer still works;
+  `speckle-event-bridge.ts` skips its model-geometry branches under the same test. Sound
+  spheres and listeners keep their click / double-click behavior.
 - `useCanEdit()` hides every editing control: bottom-bar app, history, model and settings
   buttons, card add / delete / rename / run, card editors, DAW snap / drag / trim / menus, the
   3D gizmo, card FX (an active FX shows as a read-only badge), and the undo and delete shortcuts.
@@ -1144,12 +1167,15 @@ login and can only select and play. It also works inside an iframe.
     the "Leave FPS view" button and marks the `fps-controls` one-time hint seen (localStorage).
   - On the first model load, `ShareTutorial` (`components/share/`, state in
     `hooks/useShareTutorial.ts`, anchors tracked by `hooks/useAnchorRect.ts`) shows numbered tips
-    one at a time: turn a scene on → press Play → switch acoustic simulations → switch listeners.
+    one at a time: turn a scene on → press Play → switch acoustic simulations → switch listeners
+    → change the view mode.
     The steps are fixed once built, so the numbers never change: every phase stays, even one
     already done (Play points at the bottom bar's centre until the button exists); only a column
-    with nothing shared is left out. A tip stays open (no timers) until it is clicked or its ›
-    arrow is pressed (next), ‹ (previous), × (hide), or its action is done (scene turned on,
-    playback started). It opens by itself once per browser (`share-tutorial` one-time hint,
+    with nothing shared is left out. A tip stays open (no timers) until its › arrow is pressed
+    (next), ‹ (previous), × (hide), or its action is done (scene turned on or switched, playback
+    started, simulation or listener switched on, view mode changed); a click elsewhere on the
+    tip does nothing. Hiding the tour (×, Tour button, or past the last step) shrinks the tip
+    into the Tour button (Web Animations, skipped with reduced motion). It opens by itself once per browser (`share-tutorial` one-time hint,
     localStorage), and only after the visitor's first action on the page
     (`SHARE_TUTORIAL.INTERACTION_EVENTS`), so an idle tab never runs it. The "Tour" button at the
     bottom bar's right end is always there (blue while the tour is shown): it hides the tour and
@@ -1163,8 +1189,13 @@ login and can only select and play. It also works inside an iframe.
   - The timeline loops: at its end the Transport's end callback restarts it from 0
     (`SpeckleScene`) instead of stopping.
   - In Acoustics view mode, `AbsorptionLegend` under the view-mode pill explains the surface
-    colours (mean absorption α, 0 reflective → 1 absorbent; same ramp as
-    `getMaterialColorByAbsorption`).
+    colours (Reflective 0% → Absorbent 100% mean absorption; same ramp as
+    `getMaterialColorByAbsorption`). The editor's acoustic-region chip is not shown.
+  - A generated simulation card shows a collapsible "Simulation settings" line instead of
+    "Solved in …" (`SimulationSettingsRecap`, rows from `utils/simulationSettingsRows.ts`): the
+    solve time, the main settings (image-source order, air absorption, ray count or No, edge
+    diffraction; wave-based: max frequency, points per wavelength, IR duration, air absorption),
+    and the geometric "Additional settings" only when they differ from the default.
   - In a listener's FPS view, turning the view shows a "Back to listener view" button beside
     "Leave FPS view" (`hooks/useListenerViewDrift.ts`); it restores the orientation and zoom the
     listener was entered with. Listener view autosave is off, so visitors never overwrite it.

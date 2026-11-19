@@ -31,6 +31,8 @@ export class SpeckleCameraController {
   private firstPersonMode: boolean = false;
   private firstPersonRotation: { yaw: number; pitch: number; roll: number } = { yaw: 0, pitch: 0, roll: 0 };
   private lockedPosition: THREE.Vector3 | null = null;
+  /** rAF id of a running faceFirstPersonToward turn (null = none). */
+  private faceTurnFrame: number | null = null;
 
   // Camera state before entering first-person mode (for restoration)
   private savedCameraPosition: THREE.Vector3 | null = null;
@@ -303,8 +305,50 @@ export class SpeckleCameraController {
       return;
     }
 
+    // The user takes over: stop an automatic turn toward a sound.
+    this.cancelFaceTurn();
     const { yaw, pitch, roll } = this.firstPersonRotation;
     this.setFirstPersonRotation({ yaw: yaw + deltaYaw, pitch: pitch + deltaPitch, roll: roll + deltaRoll });
+  }
+
+  /** First-person eye position (null outside first-person mode). */
+  public getFirstPersonPosition(): THREE.Vector3 | null {
+    return this.firstPersonMode && this.lockedPosition ? this.lockedPosition.clone() : null;
+  }
+
+  /**
+   * Turn the first-person view toward a world point over `durationMs` (ease-in-out,
+   * shortest way round in yaw). The eye position and roll never change. A manual
+   * rotation (rotateFirstPersonView) or leaving first-person mode cancels the turn.
+   */
+  public faceFirstPersonToward(target: THREE.Vector3, durationMs: number): void {
+    if (!this.firstPersonMode || !this.lockedPosition) return;
+    const direction = new THREE.Vector3().subVectors(target, this.lockedPosition);
+    if (direction.lengthSq() < 1e-8) return;
+    direction.normalize();
+    // Same Z-up convention as enableFirstPersonMode.
+    const toYaw = Math.atan2(-direction.x, -direction.y);
+    const toPitch = Math.asin(direction.z);
+
+    this.cancelFaceTurn();
+    const from = { ...this.firstPersonRotation };
+    const dYaw = Math.atan2(Math.sin(toYaw - from.yaw), Math.cos(toYaw - from.yaw));
+    const dPitch = toPitch - from.pitch;
+    const start = performance.now();
+    const step = (now: number) => {
+      if (!this.firstPersonMode) { this.faceTurnFrame = null; return; }
+      const t = durationMs > 0 ? Math.min(1, (now - start) / durationMs) : 1;
+      const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+      this.setFirstPersonRotation({ yaw: from.yaw + dYaw * e, pitch: from.pitch + dPitch * e, roll: from.roll });
+      this.viewer.requestRender();
+      this.faceTurnFrame = t < 1 ? requestAnimationFrame(step) : null;
+    };
+    this.faceTurnFrame = requestAnimationFrame(step);
+  }
+
+  private cancelFaceTurn(): void {
+    if (this.faceTurnFrame !== null) cancelAnimationFrame(this.faceTurnFrame);
+    this.faceTurnFrame = null;
   }
 
   /**

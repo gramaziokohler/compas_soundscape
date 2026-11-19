@@ -56,11 +56,29 @@ export function getShortcutTarget<K extends TargetSlot>(slot: K): TargetMap[K] |
   return targets[slot];
 }
 
+export type PlaybackSlot = 'cardPreview' | 'timeline';
+
+/** The playback surface the user interacted with last (null = no preference). */
+let preferredPlayback: PlaybackSlot | null = null;
+
+/** Called on pointer-down inside the sound cards / the DAW timeline. */
+export function setPreferredPlaybackTarget(slot: PlaybackSlot): void {
+  preferredPlayback = slot;
+}
+
+/** Drop the preference only if it still points at `slot` (e.g. the DAW dock closed). */
+export function clearPreferredPlaybackTarget(slot: PlaybackSlot): void {
+  if (preferredPlayback === slot) preferredPlayback = null;
+}
+
 /**
- * Space resolution: the expanded card's preview wins when it has audio,
- * otherwise the DAW timeline. Returns undefined when nothing can play.
+ * Space resolution: the surface clicked last (sound cards or timeline) wins
+ * when it can play. Otherwise the expanded card's preview when it has audio,
+ * then the DAW timeline. Returns undefined when nothing can play.
  */
 export function resolvePlaybackTarget(): PlaybackTarget | undefined {
+  const preferred = preferredPlayback ? targets[preferredPlayback] : undefined;
+  if (preferred?.canToggle()) return preferred;
   const card = targets.cardPreview;
   if (card?.canToggle()) return card;
   const timeline = targets.timeline;

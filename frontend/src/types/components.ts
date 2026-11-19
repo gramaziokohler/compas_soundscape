@@ -123,11 +123,6 @@ export interface SidebarProps {
   onDuplicateConfig?: (index: number) => void;
   onRegenerateSingle?: (index: number) => Promise<void>;
   onDeleteVariant?: (promptIndex: number, variantIdx: number) => void;
-  onSelectSoundCard?: (promptIndex: number) => void;
-  selectedCardIndex?: number | null;
-  /** Called when the user collapses the currently expanded sound card in the sidebar.
-   *  Lets the caller clear scene-driven selection so the sphere highlight reverts. */
-  onSoundCardCollapsed?: () => void;
   // SED props
   isSEDAnalyzing?: boolean;
   sedAudioInfo?: SEDAudioInfo | null;
@@ -250,13 +245,6 @@ export interface SoundGenerationSectionProps {
   onDuplicateConfig?: (index: number) => void;
   onRegenerateSingle?: (index: number) => Promise<void>;
   onDeleteVariant?: (promptIndex: number, variantIdx: number) => void;
-  onSelectSoundCard?: (promptIndex: number) => void;
-  selectedCardIndex?: number | null;
-  /** Called when the user collapses the currently expanded sound card in the sidebar.
-   *  Lets the caller clear scene-driven selection so the sphere highlight reverts. */
-  onSoundCardCollapsed?: () => void;
-  /** Expand this card (Simple mode: its sound sphere was clicked). A new `version` re-expands the same card. */
-  revealCardRequest?: { index: number; version: number } | null;
   // Receiver props
   receivers?: ReceiverData[];
   onAddReceiver?: () => void;

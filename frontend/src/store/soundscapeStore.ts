@@ -69,6 +69,7 @@ import {
   captureVariantSignature,
   getGenerationRevertPatch,
   getVariantSettingsPatch,
+  hasCardLevelGenerationChanges,
 } from '@/utils/generationSignature';
 import { generateSoundEffect } from '@/services/elevenlabs';
 import { apiService } from '@/services/api';
@@ -1412,6 +1413,20 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
         },
 
         handleRegenerateConfig: async (targetIndex) => {
+          const config = get().soundConfigs[targetIndex];
+          // Selecting a variant loads ITS settings into the card, so an edit that
+          // only touches per-variant inputs (prompt, duration, …) regenerates just
+          // the selected variant in place. A full regenerate would rebuild the
+          // card from `seed_copies`, which "+"-added variants do not raise, so
+          // A + B would collapse into one new A.
+          const isTextToAudio = !config?.type || config.type === 'text-to-audio';
+          const hasVariants = (get().soundscapeData || [])
+            .some((s: any) => promptMatchesCard(s.prompt_index, targetIndex));
+          if (config && isTextToAudio && hasVariants && !hasCardLevelGenerationChanges(config)) {
+            const variantIdx = useAudioControlsStore.getState().selectedVariants[targetIndex] ?? 0;
+            await get().regenerateVariantInPlace(targetIndex, variantIdx);
+            return;
+          }
           await get().handleGenerateInternal([targetIndex], { force: true });
         },
 
@@ -2934,7 +2949,14 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 ...(noise_trim ? { noise_trim } : {}),
               };
             } else {
-              const configForGeneration = { ...config, prompt, seed_copies: 1, _regeneration_ts: Date.now() };
+              // Global negative prompt, as in handleGenerateInternal / handleRegenerateSingle.
+              const configForGeneration = {
+                ...config,
+                prompt,
+                seed_copies: 1,
+                negative_prompt: state.globalNegativePrompt,
+                _regeneration_ts: Date.now(),
+              };
               const result = await apiService.generateSounds({
                 sounds: [configForGeneration],
                 bounding_box: config.entities?.length ? null : useFileUploadStore.getState().geometryBounds,

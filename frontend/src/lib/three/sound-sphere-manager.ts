@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { triangulate } from "@/utils/utils";
-import { API_BASE_URL, SOUND_SPHERE, DARK_MODE, OBJECT_LABEL } from "@/utils/constants";
+import { API_BASE_URL, SOUND_SPHERE, DARK_MODE, OBJECT_LABEL, OCCLUSION_GHOST } from "@/utils/constants";
+import { attachOcclusionGhost } from "@/lib/three/occlusion-ghost";
 import { getCssColorHex, trimDisplayName } from '@/utils/utils';
 import { createLabelSprite, disposeLabelSprite, updateLabelSprite, computeLabelWorldHeight } from "@/lib/three/label-sprite-factory";
 import { updateDraggableMeshes, disposeMeshes } from "@/lib/three/draggable-mesh-manager";
@@ -916,6 +917,9 @@ export class SoundSphereManager {
     sphereMesh.userData.positionKey = soundEvent.id;
     sphereMesh.userData.customObjectType = 'sound'; // CRITICAL: Required for drag handler and event bridge
     sphereMesh.userData.baseRadius = sphereGeom.boundingSphere?.radius ?? 0.3 * this.scaleForSounds;
+
+    // Fainter silhouette where the model hides the sphere (two transparency levels).
+    attachOcclusionGhost(sphereMesh, OCCLUSION_GHOST.SOUND_OPACITY_RATIO);
 
     // Directional sources carry a cone pointing along their forward vector.
     this.syncSphereDirectionIndicator(sphereMesh, soundEvent);

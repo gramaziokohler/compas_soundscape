@@ -71,6 +71,11 @@ interface SettingsSummaryProps {
   title?: string;
   /** Text palette (default `on-blue`). */
   tone?: SettingsSummaryTone;
+  /**
+   * Toggle chevron: `leading` (› / ⌄ before the title, default) or `trailing`
+   * (⌄ after the title, flipped when open, as on Acoustic Metrics).
+   */
+  chevron?: 'leading' | 'trailing';
   /** Read-only label/value rows (ignored when `children` is given). */
   rows: SettingsRow[];
   /** Editable settings UI — replaces the read-only rows when provided. */
@@ -102,6 +107,7 @@ export function SettingsSummary({
   expanded,
   onExpandedChange,
   tone = 'on-blue',
+  chevron = 'leading',
 }: SettingsSummaryProps) {
   const colors = TONE_COLORS[tone];
   const [localExpanded, setLocalExpanded] = useState(defaultExpanded);
@@ -135,8 +141,13 @@ export function SettingsSummary({
           onMouseEnter={(e) => { e.currentTarget.style.color = colors.value; }}
           onMouseLeave={(e) => { e.currentTarget.style.color = colors.muted; }}
         >
-          {isExpanded ? <ChevronDown size={11} className="shrink-0" /> : <ChevronRight size={11} className="shrink-0" />}
+          {chevron === 'leading' && (isExpanded
+            ? <ChevronDown size={11} className="shrink-0" />
+            : <ChevronRight size={11} className="shrink-0" />)}
           <span>{title}</span>
+          {chevron === 'trailing' && (
+            <ChevronDown size={12} className={`shrink-0 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+          )}
         </button>
         {onRevert && (
           <button

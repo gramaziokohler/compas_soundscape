@@ -46,7 +46,7 @@ The store exposes three generation entry points, all routing into `handleGenerat
 | `handleGenerateSingle(targetIndex)` | Generate a single config → `handleGenerateInternal([targetIndex])` |
 | `handleGenerateFiltered(targetIndices)` | Generate a subset → `handleGenerateInternal(targetIndices)` |
 | `handleRegenerateSingle(targetIndex)` | Generate one new variant for an already-generated card (see § Regeneration below) |
-| `handleRegenerateConfig(targetIndex)` | Regenerate ALL variants of a generated card from its edited settings → `handleGenerateInternal([i], { force: true })`. Same deterministic event ids (links survive); variants not reproduced are dropped + pruned. Card "Regenerate" button. |
+| `handleRegenerateConfig(targetIndex)` | Card "Regenerate" button. Text-to-audio card whose edits touch only per-variant inputs (prompt, duration…; `hasCardLevelGenerationChanges` false) → `regenerateVariantInPlace(i, selectedVariant)`: only the selected variant is replaced. Otherwise (variant count / speech lines edited, TTS) → regenerate ALL variants via `handleGenerateInternal([i], { force: true })`: same deterministic event ids (links survive); variants beyond `seed_copies` are dropped + pruned. "+" does not raise `seed_copies`, so routing per-variant edits to a full regenerate would collapse A + B into one new A. |
 
 `handleGenerateInternal` (at soundscapeStore.ts:392) is the core orchestrator. It:
 1. Skips already-generated config indices (tracks `alreadyGenerated` set from `soundscapeData`) — unless `force` targets them

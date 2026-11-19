@@ -21,7 +21,7 @@ import { useOnFloatingPanelsCollapse } from '@/hooks/useOnFloatingPanelsCollapse
 import { useBubbleColumnSpace } from '@/hooks/useBubbleColumnSpace';
 import { useSimpleSceneHighlights } from '@/hooks/useSimpleSceneHighlights';
 import { useBubbleFrontLayer } from '@/hooks/useBubbleFrontLayer';
-import { useSoundSphereReveal } from '@/hooks/useSoundSphereReveal';
+import { useSoundFocusReveal } from '@/hooks/useSoundFocusReveal';
 import { useSceneBubbleMenu, type SceneRenameProps } from '@/hooks/useSceneBubbleMenu';
 import { useCanReorderScenes } from '@/hooks/useCanReorderScenes';
 import { createMoveIndexMapper } from '@/utils/cardIndexRemap';
@@ -261,23 +261,9 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
     setPanel(scene.isScenario && !done ? { kind: 'workflow', usageIndex: scene.usageIndex } : { kind: 'scene', usageIndex: scene.usageIndex });
   }, [scenes, selectScene]);
 
-  // A sound sphere clicked in 3D opens its scene's cards (the card itself
-  // expands through SoundGenerationSection's `selectedCardIndex`).
-  const lastSelectedCardRef = useRef(sidebarProps.selectedCardIndex ?? null);
-  useEffect(() => {
-    const index = sidebarProps.selectedCardIndex ?? null;
-    if (index === lastSelectedCardRef.current) return;
-    lastSelectedCardRef.current = index;
-    if (index === null) return;
-    const parent = sidebarProps.soundConfigs[index]?.parentUsageOriginalIndex;
-    const scene = scenes.find((s) => s.usageIndex === parent);
-    if (!scene) return;
-    selectScene(scene);
-    setPanel({ kind: 'scene', usageIndex: scene.usageIndex });
-  }, [sidebarProps.selectedCardIndex, sidebarProps.soundConfigs, scenes, selectScene]);
-
-  // A sound sphere clicked in 3D while a scene panel is open expands its card.
-  const revealCardRequest = useSoundSphereReveal(panel, scenes, openSceneCards);
+  // A focused sound (sphere / linked object / DAW track) moves an open scene
+  // panel to its scene; an explicit reveal opens it (see useSoundFocusReveal).
+  useSoundFocusReveal(panel, scenes, openSceneCards, selectScene);
 
   // Drop a panel whose scene disappeared (removed / undone).
   useEffect(() => {
@@ -459,7 +445,6 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
           </div>
           <SoundGenerationSection
             {...buildSoundGenerationSectionProps(sidebarProps, panelScene.usageIndex)}
-            revealCardRequest={revealCardRequest}
           />
         </BubblePanel>
       )}

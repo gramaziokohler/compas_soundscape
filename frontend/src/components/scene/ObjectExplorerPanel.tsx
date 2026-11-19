@@ -17,7 +17,7 @@ import {
 import { useViewportScale } from '@/hooks/useViewportScale';
 import { useCanEdit } from '@/hooks/useCanEdit';
 import { clampToViewport, clampToViewportWidth, clampToViewportHeight, getScale } from '@/utils/scale';
-import { UI_SCALE } from '@/utils/constants';
+import { SHARE_VIEW, UI_SCALE } from '@/utils/constants';
 
 const MIN_WIDTH = 380;
 const MIN_HEIGHT = 200;
@@ -199,6 +199,12 @@ export function ObjectExplorerPanel({ onClose, isVisible, isRightSidebarExpanded
     : null;
 
   const panelRef = useRef<HTMLDivElement>(null);
+
+  // Share view: a left click on the model selects only while the panel is open
+  // (isModelPickingBlocked); closing it drops that selection.
+  useEffect(() => {
+    if (!canEdit && !isVisible) useSpeckleStore.getState().clearViewerSelection();
+  }, [canEdit, isVisible]);
 
   // NOTE: initial size is a stable constant (matching SSR) to avoid a hydration
   // mismatch — the fluid viewport-proportional height is applied in the mount
@@ -396,7 +402,7 @@ export function ObjectExplorerPanel({ onClose, isVisible, isRightSidebarExpanded
         >
           <div className="flex items-center gap-1.5 min-w-0">
             <span className="text-sm font-semibold text-foreground truncate min-w-0">Object Explorer</span>
-            {autoDetected && (
+            {autoDetected && canEdit && (
               <Badge variant="primary" title="Auto-selected from a layer named 'Acoustics'">
                 <Info size={10} strokeWidth={3} />
               </Badge>
@@ -455,7 +461,7 @@ export function ObjectExplorerPanel({ onClose, isVisible, isRightSidebarExpanded
       >
         <div className="flex items-center gap-1.5 min-w-0">
           <span className="text-sm font-semibold text-foreground shrink-0">Object Explorer</span>
-          {autoDetected && (
+          {autoDetected && canEdit && (
             <Badge variant="primary" title="Auto-selected from a layer named 'Acoustics'">
               <Info size={10} strokeWidth={3} />
             </Badge>
@@ -492,6 +498,19 @@ export function ObjectExplorerPanel({ onClose, isVisible, isRightSidebarExpanded
           </div>
         </div>
       </div>
+      )}
+
+      {/* Share view: how to locate an object from the 3D view */}
+      {!canEdit && (
+        <p
+          className="flex-shrink-0 text-[10px] leading-snug"
+          style={{
+            padding: `4px ${OBJECT_EXPLORER_ROW_PADDING_PX}px 0`,
+            color: 'var(--color-secondary-hover)',
+          }}
+        >
+          {SHARE_VIEW.OBJECT_EXPLORER_HINT}
+        </p>
       )}
 
       {/* Content */}

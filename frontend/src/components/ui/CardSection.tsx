@@ -4,6 +4,8 @@ import { useState, useRef, useEffect, useCallback, type ReactNode, Fragment } fr
 import { useCanEdit } from '@/hooks/useCanEdit';
 import type { CardType, CardBaseConfig, CardColor } from '@/types/card';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { getScrollParent, scrollIntoContainer } from '@/utils/scrollIntoContainer';
+import { FOCUS_SCROLL } from '@/utils/constants';
 
 /**
  * CardSection Component
@@ -60,6 +62,11 @@ export interface CardSectionProps<TItem extends CardBaseConfig> {
   emptyAction?: ReactNode;
   /** Label shown on the add-card button. Defaults to `Add a ${statusLabel} card`. */
   addButtonLabel?: string;
+  /**
+   * Scroll a card's header to the top of the scroll container (e.g. a card expanded
+   * from the 3D scene or the DAW). A new `version` scrolls again.
+   */
+  scrollRequest?: { index: number; version: number } | null;
 }
 
 // ============================================================================
@@ -110,6 +117,7 @@ export function CardSection<TItem extends CardBaseConfig>({
   onDuplicate,
   emptyAction,
   addButtonLabel,
+  scrollRequest = null,
   readOnly: readOnlyProp,
 }: CardSectionProps<TItem>) {
   const canEdit = useCanEdit();
@@ -126,17 +134,6 @@ export function CardSection<TItem extends CardBaseConfig>({
   const [showTypeSelector, setShowTypeSelector] = useState(false);
   const typeSelectorRef = useRef<HTMLDivElement>(null);
   const typeDropdownRef = useRef<HTMLDivElement>(null);
-
-  /** Nearest scrollable ancestor of a node (walks up the DOM tree). */
-  const getScrollParent = (el: HTMLElement | null): HTMLElement | null => {
-    let node = el?.parentElement ?? null;
-    while (node) {
-      const style = window.getComputedStyle(node);
-      if (/(auto|scroll|overlay)/.test(style.overflowY)) return node;
-      node = node.parentElement;
-    }
-    return null;
-  };
 
   /** Scrolls the section up so a dropdown opening below the button is fully visible. */
   const scrollDropdownIntoView = useCallback(() => {
@@ -329,10 +326,19 @@ export function CardSection<TItem extends CardBaseConfig>({
 
     if (newIndex !== null) {
       setTimeout(() => {
-        cardRefs.current.get(index)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      }, 100);
+        scrollIntoContainer(cardRefs.current.get(index) ?? null, { align: 'nearest' });
+      }, FOCUS_SCROLL.SETTLE_DELAY_MS);
     }
   }, [expandedIndex, isControlled, onExpandedIndexChange]);
+
+  // External focus (3D sphere / DAW track): header to the top once the card has expanded.
+  useEffect(() => {
+    if (!scrollRequest) return;
+    const timer = setTimeout(() => {
+      scrollIntoContainer(cardRefs.current.get(scrollRequest.index) ?? null, { align: 'start' });
+    }, FOCUS_SCROLL.SETTLE_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [scrollRequest?.version]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const prevItemCount = useRef(items.length);
 

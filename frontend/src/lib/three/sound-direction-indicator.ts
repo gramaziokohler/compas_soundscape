@@ -12,7 +12,8 @@
  */
 
 import * as THREE from 'three';
-import { DIRECTIVITY } from '@/utils/constants';
+import { DIRECTIVITY, OCCLUSION_GHOST } from '@/utils/constants';
+import { attachOcclusionGhost } from '@/lib/three/occlusion-ghost';
 import { isOmniDirectivity } from '@/utils/positionKey';
 import { orientationQuaternion } from '@/lib/three/orientation';
 import type { SoundEvent } from '@/types';
@@ -71,6 +72,7 @@ export function syncDirectionIndicator(
     cone.layers.mask = sphere.layers.mask;
     cone.renderOrder = sphere.renderOrder;
     cone.userData.customObjectType = 'soundDirection';
+    attachOcclusionGhost(cone, OCCLUSION_GHOST.SOUND_OPACITY_RATIO);
     sphere.add(cone);
   } else {
     (cone.material as THREE.MeshBasicMaterial).color.setHex(colorHex);

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { registerShortcutTarget } from '@/lib/shortcuts/shortcut-targets';
+import { registerShortcutTarget, setPreferredPlaybackTarget } from '@/lib/shortcuts/shortcut-targets';
 import { useAudioControlsStore } from '@/store';
 import type { SoundEvent, SoundGenerationConfig } from '@/types';
 
@@ -85,6 +85,8 @@ export function useSoundCardShortcutTargets(params: UseSoundCardShortcutTargetsP
           ? (direction === 1 ? 0 : count - 1)
           : Math.min(Math.max(expandedIndex + direction, 0), count - 1);
         if (next !== expandedIndex) onExpandedIndexChange(next);
+        // Stepping to a card from the keyboard hands Space back to the cards.
+        setPreferredPlaybackTarget('cardPreview');
       },
       collapse: () => {
         if (latest.current.expandedIndex === null) return false;

@@ -21,7 +21,6 @@ interface SceneTimelineProps {
   onDownload?: (format: import('@/lib/audio/SoundscapeExporter').ExportFormat) => Promise<void>;
   onClose: () => void;
   isAnyPlaying?: boolean;
-  onSelectSoundCard?: (promptIndex: number) => void;
   originalIRChannelCount?: number;
   playbackSchedulerRef?: React.RefObject<PlaybackSchedulerService | null>;
 }
@@ -38,7 +37,6 @@ export function SceneTimeline({
   onDownload,
   onClose,
   isAnyPlaying,
-  onSelectSoundCard,
   originalIRChannelCount,
   playbackSchedulerRef,
 }: SceneTimelineProps) {
@@ -99,7 +97,6 @@ export function SceneTimeline({
       onSeek={onSeek}
       onDownload={onDownload}
       onClose={onClose}
-      onSelectSoundCard={onSelectSoundCard}
       originalIRChannelCount={originalIRChannelCount}
       leftOffset={insets.left}
       rightOffset={insets.right}

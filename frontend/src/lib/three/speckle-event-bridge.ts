@@ -13,6 +13,7 @@ import type { SpeckleDragHandler } from './speckle-drag-handler';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { useAreaDrawingStore } from '@/store';
 import { isShareViewActive } from '@/store/shareViewStore';
+import { isModelPickingBlocked } from '@/lib/three/speckle-share-view-picking';
 import {
   collectSelectableCustomObjects,
   isProjectedRectSelected,
@@ -69,6 +70,8 @@ export class SpeckleEventBridge {
   private onSpeckleObjectSelected: ((objectIds: string[], intersectionPoint?: THREE.Vector3) => void) | null = null;
   private lastIntersectionPoint: THREE.Vector3 | null = null;
   private onSoundSphereClicked: ((promptKey: string) => void) | null = null;
+  /** Share view, model picking blocked: a model object was clicked (not selected). */
+  private onBlockedModelClicked: ((objectId: string) => void) | null = null;
   private onReceiverSingleClicked: ((receiverId: string) => void) | null = null;
   private onGridListenerDoubleClicked: ((instanceId: number) => void) | null = null;
   private onGridListenerSingleClicked: ((instanceId: number) => void) | null = null;
@@ -135,9 +138,9 @@ export class SpeckleEventBridge {
 
   private handleViewerObjectClicked = (event: SelectionEvent | null): void => {
     if (!event) return;
-    // Share view: model objects are never selected (installShareViewPickingGuard
-    // already kept Speckle from auto-selecting).
-    if (isShareViewActive()) return;
+    // Share view with the Object Explorer closed: model objects are not selected
+    // (installShareViewPickingGuard already kept Speckle from auto-selecting).
+    if (isModelPickingBlocked()) return;
     const button = event.event?.button;
     if (button === undefined || button === 0) return;
 
@@ -808,10 +811,13 @@ export class SpeckleEventBridge {
       this.setCustomSelection([target]);
 
       this.scheduleSingleClick({ object: customHit.object, type: customHit.type });
-    } else if (isShareViewActive()) {
-      // Share view: model objects are not selectable — a click on them only
-      // drops a sound / listener selection.
+    } else if (isModelPickingBlocked()) {
+      // Share view with the Object Explorer closed: model objects are not
+      // selectable, a click on them only drops a sound / listener selection.
+      // The hit is still reported so a sound-linked object can focus its sound.
       this.clearCustomSelection();
+      const hitId = this.findVisibleSpeckleHit();
+      if (hitId) this.onBlockedModelClicked?.(hitId);
     } else {
       // UNIFIED SELECTION (mode-agnostic):
       // Pre-compute the correct visible hit while filtering state is still valid,
@@ -1112,6 +1118,11 @@ export class SpeckleEventBridge {
 
   public setOnSoundSphereClicked(callback: (promptKey: string) => void): void {
     this.onSoundSphereClicked = callback;
+  }
+
+  /** Share view with model picking blocked: a click on a model object (id of the visible hit). */
+  public setOnBlockedModelClicked(callback: ((objectId: string) => void) | null): void {
+    this.onBlockedModelClicked = callback;
   }
 
   // checkSpeckleSelection() removed — replaced by handleSpeckleSelection()

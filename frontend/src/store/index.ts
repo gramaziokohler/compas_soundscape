@@ -86,8 +86,8 @@ export {
 } from './acousticLayerStore';
 
 export { useUIStore };
-export { selectHasSaveTarget } from './uiStore';
-export type { UIStoreState, SidebarNavCommand } from './uiStore';
+export { selectHasSaveTarget, selectFocusedSoundIndex } from './uiStore';
+export type { UIStoreState, SidebarNavCommand, SoundFocus, SoundFocusSource } from './uiStore';
 
 export {
   useSceneWorkflowStore,

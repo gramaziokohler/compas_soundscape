@@ -653,6 +653,11 @@ export class SpeckleAudioCoordinator {
     this.speckleCameraController?.setFirstPersonRotation(rotation);
   }
 
+  /** First-person mode: ease the view toward a world point (e.g. a focused sound source). */
+  public faceFirstPersonToward(target: THREE.Vector3, durationMs: number): void {
+    this.speckleCameraController?.faceFirstPersonToward(target, durationMs);
+  }
+
   /** Set the first-person zoom (focal length, mm) — e.g. a listener's saved zoom. */
   public setFirstPersonFocalLength(mm: number): void {
     this.speckleCameraController?.setFirstPersonFocalLength(mm);
@@ -672,6 +677,12 @@ export class SpeckleAudioCoordinator {
   public setOnSoundSphereClicked(callback: (promptKey: string) => void): void {
     if (!this.eventBridge) return;
     this.eventBridge.setOnSoundSphereClicked(callback);
+  }
+
+  /** Share view with model picking blocked: a model object was clicked without selecting it. */
+  public setOnBlockedModelClicked(callback: ((objectId: string) => void) | null): void {
+    if (!this.eventBridge) return;
+    this.eventBridge.setOnBlockedModelClicked(callback);
   }
 
   public setOnReceiverSingleClicked(callback: (receiverId: string) => void): void {

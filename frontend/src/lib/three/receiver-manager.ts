@@ -6,7 +6,8 @@ import { updateDraggableMeshes, disposeMeshes } from "@/lib/three/draggable-mesh
 import type { ReceiverData } from "@/types";
 import { isShareViewActive } from "@/store/shareViewStore";
 // import type { BoundingBoxBounds } from "@/lib/three/BoundingBoxManager"; // Unused after spiral placement removal
-import { RECEIVER_CONFIG, OBJECT_LABEL } from "@/utils/constants";
+import { RECEIVER_CONFIG, OBJECT_LABEL, OCCLUSION_GHOST } from "@/utils/constants";
+import { attachOcclusionGhost, syncOcclusionGhostGeometry } from "@/lib/three/occlusion-ghost";
 import { getCssColorHex } from "@/utils/utils";
 import { createLabelSprite, disposeLabelSprite, updateLabelSprite, computeLabelWorldHeight } from "@/lib/three/label-sprite-factory";
 import {
@@ -199,6 +200,7 @@ export class ReceiverManager {
           this.receiverMeshes.forEach((m) => {
             m.geometry.dispose();
             m.geometry = result.geometry.clone();
+            syncOcclusionGhostGeometry(m);
           });
         }
       })
@@ -264,6 +266,9 @@ export class ReceiverManager {
     cubeMesh.layers.enable(0); // Default layer for basic rendering
     cubeMesh.layers.enable(4); // OVERLAY layer for custom objects
     cubeMesh.visible = this.receiversVisible && this.isShown(receiver.id);
+
+    // Fainter silhouette where the model hides the listener (two transparency levels).
+    attachOcclusionGhost(cubeMesh, OCCLUSION_GHOST.LISTENER_OPACITY_RATIO);
 
     // CRITICAL: Force update matrix to ensure proper rendering
     cubeMesh.updateMatrix();

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useAudioControlsStore, useShareViewStore, useUIStore } from '@/store';
+import { useAcousticsSimulationStore, useAudioControlsStore, useShareViewStore, useSpeckleStore, useUIStore } from '@/store';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { useSoundScenes } from '@/hooks/useSoundScenes';
 import { useOneTimeHint } from '@/hooks/useOneTimeHint';
@@ -31,6 +31,13 @@ export interface ShareTutorialState {
   next: () => void;
   prev: () => void;
   skip: () => void;
+  /** Incremented each time the tour is hidden (× / Tour button / finished) — drives the close animation. */
+  closeNonce: number;
+}
+
+export interface UseShareTutorialArgs {
+  /** Powered listener (single or grid listener id), or null. */
+  activeListenerId: string | null;
 }
 
 /** Real bubbles of a column (not its scroll pills); `ready` keeps only generated / simulated ones. */
@@ -96,23 +103,32 @@ function buildSteps(): ShareTutorialStep[] {
  * arrow moves on, ‹ goes back, × or the bottom bar's "Tour" button hides the
  * tour at its current step, and "Tour" shows it again there
  * (`shareViewStore.requestTutorialToggle`). Doing what a tip asks (turning a
- * scene on, starting playback) also moves on. Past the last step the tour is
+ * scene on, starting playback, switching a simulation or a listener, changing
+ * the view mode) also moves on. Past the last step the tour is
  * finished and the next "Tour" starts over. Opening by itself happens once per
  * browser (useOneTimeHint).
  *
  * Usage:
  * ```tsx
- * const { step, number, anchorRect, hasPrev, isLast, next, prev, skip } = useShareTutorial();
+ * const { step, number, anchorRect, hasPrev, isLast, next, prev, skip, closeNonce } =
+ *   useShareTutorial({ activeListenerId });
  * ```
  */
-export function useShareTutorial(): ShareTutorialState {
+export function useShareTutorial({ activeListenerId }: UseShareTutorialArgs): ShareTutorialState {
   const isShareView = useShareViewStore((s) => s.isShareView);
   const { seen, markSeen } = useOneTimeHint(SHARE_TUTORIAL.HINT_ID);
   const isViewerReady = useSpeckleEngineStore((s) => s.coordinator !== null);
   const scenes = useSoundScenes();
   const hasPlayableScene = scenes.some((s) => s.generatedCount > 0);
-  const scenePowered = useUIStore((s) => s.isInSoundsStep && s.activeSoundParentIndex !== null);
+  // What each step asks the visitor to do, as a value: the step moves on when its
+  // value changes to a non-null one (turning on / switching to another item).
+  const activeScene = useUIStore((s) => (s.isInSoundsStep && s.activeSoundParentIndex !== null ? `scene-${s.activeSoundParentIndex}` : null));
   const isPlaying = useAudioControlsStore((s) => Object.values(s.individualSoundStates).some((v) => v === 'playing'));
+  const activeSimulation = useAcousticsSimulationStore((s) =>
+    s.activeSimulationIndex !== null
+      ? s.simulationConfigs[s.activeSimulationIndex]?.id ?? null
+      : s.activeResonanceIds[s.activeResonanceIds.length - 1] ?? null);
+  const viewMode = useSpeckleStore((s) => s.viewMode);
 
   const toggleNonce = useShareViewStore((s) => s.tutorialToggleNonce);
   const setTutorialActive = useShareViewStore((s) => s.setTutorialActive);
@@ -120,6 +136,7 @@ export function useShareTutorial(): ShareTutorialState {
   const [steps, setSteps] = useState<ShareTutorialStep[] | null>(null);
   const [index, setIndex] = useState(0);
   const [isOpen, setIsOpen] = useState(false);
+  const [closeNonce, setCloseNonce] = useState(0);
   const [hasInteracted, setHasInteracted] = useState(false);
   const startedRef = useRef(false);
 
@@ -132,12 +149,14 @@ export function useShareTutorial(): ShareTutorialState {
   /** Hide at the current step (shown again there by "Tour"). */
   const skip = useCallback(() => {
     setIsOpen(false);
+    setCloseNonce((n) => n + 1);
     markSeen();
   }, [markSeen]);
 
   /** Past the last step: hide, and the next "Tour" starts over. */
   const finish = useCallback(() => {
     setIsOpen(false);
+    setCloseNonce((n) => n + 1);
     setIndex(0);
     markSeen();
   }, [markSeen]);
@@ -185,16 +204,24 @@ export function useShareTutorial(): ShareTutorialState {
 
   const prev = useCallback(() => setIndex((i) => Math.max(0, i - 1)), []);
 
-  // The visitor did what the tip asks: move on. Only the transition counts, so
-  // going back to a done step keeps it open.
-  const prevActionsRef = useRef({ scenePowered, isPlaying });
+  // The visitor did what the tip asks: move on. Only a change counts, so going
+  // back to a done step keeps it open until the visitor acts again.
+  const actions: Record<ShareTutorialStepId, string | null> = {
+    scene: activeScene,
+    play: isPlaying ? 'playing' : null,
+    acoustics: activeSimulation,
+    listeners: activeListenerId,
+    viewModes: viewMode,
+  };
+  const prevActionsRef = useRef(actions);
   useEffect(() => {
     const before = prevActionsRef.current;
-    prevActionsRef.current = { scenePowered, isPlaying };
-    const done = (current?.id === 'scene' && scenePowered && !before.scenePowered)
-      || (current?.id === 'play' && isPlaying && !before.isPlaying);
-    if (done) next();
-  }, [current, scenePowered, isPlaying, next]);
+    prevActionsRef.current = actions;
+    const id = current?.id;
+    if (id && actions[id] !== null && actions[id] !== before[id]) next();
+    // `actions` is rebuilt every render from the values listed below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current, activeScene, isPlaying, activeSimulation, activeListenerId, viewMode, next]);
 
   return {
     step: current && anchorRect ? current : null,
@@ -205,5 +232,6 @@ export function useShareTutorial(): ShareTutorialState {
     next,
     prev,
     skip,
+    closeNonce,
   };
 }

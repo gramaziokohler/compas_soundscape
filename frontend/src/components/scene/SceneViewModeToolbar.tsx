@@ -20,8 +20,8 @@ const VIEW_MODES: { mode: ViewMode; label: string; description: string }[] = [
  * Top-center `Sounds | Default | Acoustics` segmented pill. Hovering it pops the
  * same frosted label the Simple-mode circles use: "View mode" plus a one-line
  * description of the hovered item (or of the active one between items).
- * In Acoustics mode a status chip follows; the share view adds the absorption
- * colour key (AbsorptionLegend) under it.
+ * In Acoustics mode the editor shows the acoustic-region status chip under it,
+ * the share view the absorption colour key (AbsorptionLegend) instead.
  */
 export function SceneViewModeToolbar() {
   const viewMode = useSpeckleStore((s) => s.viewMode);
@@ -83,8 +83,8 @@ export function SceneViewModeToolbar() {
         </div>
       </div>
 
-      {/* Acoustic region status chip — always tells the user what Acoustics mode is showing. */}
-      {viewMode === 'acoustic' && (
+      {/* Acoustic region status chip (editor) — tells the designer what Acoustics mode is showing. */}
+      {viewMode === 'acoustic' && canEdit && (
         <button
           type="button"
           onClick={() => useUIStore.getState().setShowObjectExplorer(true)}
@@ -93,13 +93,13 @@ export function SceneViewModeToolbar() {
             border: '1px solid var(--color-overlay-border)',
             color: 'var(--color-secondary-hover)',
           }}
-          title={canEdit ? 'Open the Object Explorer to change the acoustic region' : 'Open the Object Explorer'}
+          title="Open the Object Explorer to change the acoustic region"
         >
           {hasAcousticRegion
             ? (isWholeModel
               ? `Acoustic region · whole model · ${acousticFaceCount.toLocaleString()} faces`
               : `Acoustic region · ${acousticGeometryIds.length} surface${acousticGeometryIds.length === 1 ? '' : 's'} · ${acousticFaceCount.toLocaleString()} faces`)
-            : canEdit ? 'No acoustic region yet — pick surfaces' : 'No acoustic region'}
+            : 'No acoustic region yet — pick surfaces'}
         </button>
       )}
 

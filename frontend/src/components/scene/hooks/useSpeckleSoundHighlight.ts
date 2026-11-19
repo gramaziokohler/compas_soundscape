@@ -1,15 +1,15 @@
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
-import { useUIStore } from '@/store/uiStore';
+import { useUIStore, selectFocusedSoundIndex } from '@/store/uiStore';
 import { useSoundscapeStore, useSpeckleStore } from '@/store';
 import { getCssColorHex } from '@/utils/utils';
 import { isConfigGlobal } from '@/lib/audio/utils/global-source';
 import type { SoundEvent } from '@/types';
+import { getLiveSoundPosition } from '@/lib/three/sound-live-position';
 
 interface SoundHighlightProps {
   isViewerReady: boolean;
-  selectedCardIndex: number | null;
   soundscapeData: SoundEvent[] | null;
   selectedVariants: Record<number, number>;
   /** Card whose sphere should tint while hovered (e.g. a DAW track/clip) — additive, doesn't move the drag gizmo. */
@@ -26,13 +26,14 @@ interface SoundHighlightProps {
 
 export function useSpeckleSoundHighlight({
   isViewerReady,
-  selectedCardIndex,
   soundscapeData,
   selectedVariants,
   activeSimulationPositions,
   hoveredSoundCardIndex = null,
 }: SoundHighlightProps) {
   const expandedSoundCardIndex = useUIStore(s => s.expandedSoundCardIndex);
+  // Shared sound focus (sphere / DAW track / card click) — see uiStore.soundFocus.
+  const focusedSoundIndex = useUIStore(selectFocusedSoundIndex);
   const zoomToSoundCardTrigger = useUIStore(s => s.zoomToSoundCardTrigger);
   // Entity-sound links drive which prompts get a surface marker (large objects).
   // Markers are (re)built by useSpeckleSoundSpheres in response to this map, but
@@ -44,7 +45,7 @@ export function useSpeckleSoundHighlight({
   // A background card playing as a global bed has no place in the scene (its
   // sphere is hidden): opening that card never selects its sphere / gizmo.
   const effectiveCardIsGlobal = useSoundscapeStore(s => {
-    const index = expandedSoundCardIndex ?? selectedCardIndex;
+    const index = focusedSoundIndex ?? expandedSoundCardIndex;
     const config = index !== null ? s.soundConfigs[index] : undefined;
     return !!config && isConfigGlobal(config);
   });
@@ -62,7 +63,7 @@ export function useSpeckleSoundHighlight({
 
   // Note: Speckle object coloring (linked/diverse) is handled by the context's FilteringExtension.
   // This effect only handles sound sphere highlighting.
-  // Priority: sidebar-expanded card (expandedSoundCardIndex) > scene-selected card (selectedCardIndex)
+  // Priority: shared sound focus (latest sphere / DAW / card click) > sidebar-expanded card
   useEffect(() => {
     const { coordinator, viewer } = useSpeckleEngineStore.getState();
     if (!isViewerReady || !soundscapeData || !coordinator) return;
@@ -92,8 +93,8 @@ export function useSpeckleSoundHighlight({
       }
     });
 
-    // Sidebar expansion takes priority; fall back to scene-driven selection
-    const effectiveIndex = expandedSoundCardIndex ?? selectedCardIndex;
+    // The shared focus is the latest click on any surface; fall back to the expanded card.
+    const effectiveIndex = focusedSoundIndex ?? expandedSoundCardIndex;
 
     let highlightedSphere: THREE.Mesh | undefined;
     let highlightedMarker: THREE.Object3D | undefined;
@@ -175,7 +176,7 @@ export function useSpeckleSoundHighlight({
     }
 
     viewer?.requestRender();
-  }, [isViewerReady, selectedCardIndex, expandedSoundCardIndex, soundscapeData, selectedVariants, activeSimulationPositions, hoveredSoundCardIndex, objectSoundLinks, showSoundSpheres, effectiveCardIsGlobal]);
+  }, [isViewerReady, focusedSoundIndex, expandedSoundCardIndex, soundscapeData, selectedVariants, activeSimulationPositions, hoveredSoundCardIndex, objectSoundLinks, showSoundSpheres, effectiveCardIsGlobal]);
 
   // Zoom to sound sphere when card is double-clicked in sidebar
   useEffect(() => {
@@ -183,33 +184,7 @@ export function useSpeckleSoundHighlight({
     if (!zoomToSoundCardTrigger || !isViewerReady || !coordinator) return;
 
     const { index } = zoomToSoundCardTrigger;
-    const sound = soundscapeDataRef.current?.find((s: any) => ((s as any).prompt_index ?? 0) === index);
-    if (!sound) return;
-
-    const soundSphereManager = coordinator.getSoundSphereManager();
-    if (!soundSphereManager) return;
-
-    const isNonZeroPos = (pos: [number, number, number]) =>
-      pos[0] !== 0 || pos[1] !== 0 || pos[2] !== 0;
-
-    // The sphere is keyed by the sound CARD (promptKey) — all variants collapse to a
-    // single sphere. Read its live position (resolved + drag-updated) as the zoom target
-    // instead of getSpherePosition(firstVariant.id), which goes stale after dragging
-    // when a non-first variant is selected.
-    const sphere = soundSphereManager.findSphereByPromptKey(`prompt_${index}`);
-    const spherePos: [number, number, number] | undefined = sphere
-      ? [sphere.position.x, sphere.position.y, sphere.position.z]
-      : undefined;
-
-    const position =
-      (spherePos && isNonZeroPos(spherePos))
-        ? new THREE.Vector3(...spherePos)
-        : (sound.position && isNonZeroPos(sound.position as [number, number, number]))
-          ? new THREE.Vector3(...(sound.position as [number, number, number]))
-          : null;
-
-    if (position) {
-      coordinator.zoomToPosition(position);
-    }
+    const position = getLiveSoundPosition(coordinator.getSoundSphereManager(), index, soundscapeDataRef.current);
+    if (position) coordinator.zoomToPosition(position);
   }, [zoomToSoundCardTrigger, isViewerReady]);
 }

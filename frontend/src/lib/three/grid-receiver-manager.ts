@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { SpeckleStandardMaterial } from '@speckle/viewer';
-import { RECEIVER_CONFIG } from '@/utils/constants';
+import { RECEIVER_CONFIG, OCCLUSION_GHOST } from '@/utils/constants';
+import { attachOcclusionGhost } from '@/lib/three/occlusion-ghost';
 import { getCssColorHex } from '@/utils/utils';
 import {
   loadHeadphonesGeometry,
@@ -114,6 +115,8 @@ export class GridReceiverManager {
     mesh.layers.enable(0);
     mesh.layers.enable(4);
     mesh.visible = this.pointsVisible;
+    // Fainter silhouette where the model hides a grid point (two transparency levels).
+    attachOcclusionGhost(mesh, OCCLUSION_GHOST.LISTENER_OPACITY_RATIO);
 
     const target = this.parentGroup || this.scene;
     target.add(mesh);
@@ -280,6 +283,8 @@ export class GridReceiverManager {
     overlay.layers.disableAll();
     overlay.layers.enable(0);
     overlay.layers.enable(4);
+    // Mismatched points stay red (faint) behind obstacles too.
+    attachOcclusionGhost(overlay, OCCLUSION_GHOST.LISTENER_OPACITY_RATIO);
 
     const target = this.parentGroup || this.scene;
     target.add(overlay);
