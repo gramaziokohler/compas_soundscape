@@ -509,6 +509,61 @@ canvas {
   user-select: none;
 }
 
+/* Share view: bottom-left scene name, footnote and navigation help
+   (components/share/ShareSceneInfo.tsx) — the column-heading look, lighter. */
+.share-scene-info {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: #ffffff;
+  mix-blend-mode: difference;
+  pointer-events: none;
+  user-select: none;
+}
+.share-scene-info p {
+  margin: 0;
+}
+.share-scene-info__title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.share-scene-info__note {
+  font-size: 10px;
+  line-height: 1.4;
+  opacity: 0.8;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  /* Footnote links stay clickable. */
+  pointer-events: auto;
+  user-select: text;
+}
+.share-scene-info__note a {
+  color: inherit;
+}
+.share-scene-info__nav {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 10px;
+  margin-top: 2px;
+  font-size: 9px;
+  letter-spacing: 0.02em;
+  opacity: 0.6;
+}
+.share-scene-info__control {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+.share-scene-info__kbd {
+  font: inherit;
+  padding: 0 3px;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+}
+
 .bubble-wrap {
   position: relative;
   flex-shrink: 0;

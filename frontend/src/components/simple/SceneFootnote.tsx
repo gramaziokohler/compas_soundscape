@@ -75,7 +75,8 @@ export function SceneFootnote({ usageIndex, footnote }: SceneFootnoteProps) {
   );
 }
 
-function FootnoteText({ text }: { text: string }) {
+/** Read-only footnote text with its inline links (open in a new tab). */
+export function FootnoteText({ text }: { text: string }) {
   const stop = (e: MouseEvent) => e.stopPropagation();
   return (
     <>

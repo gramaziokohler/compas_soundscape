@@ -19,14 +19,14 @@ export interface ShareTutorialStep {
 }
 
 export interface ShareTutorialState {
-  /** The tip to show, or null (not started, finished, or its anchor is missing). */
+  /** The tip to show, or null (hidden, finished, or its anchor is missing). */
   step: ShareTutorialStep | null;
   /** 1-based number shown in the tip's badge. */
   number: number;
   anchorRect: AnchorRect | null;
-  /** An earlier step can be shown (the "previous" arrow). */
+  /** Not the first step (the "previous" arrow is enabled). */
   hasPrev: boolean;
-  /** No later step can be shown: "next" ends the tour. */
+  /** The last step: "next" finishes the tour. */
   isLast: boolean;
   next: () => void;
   prev: () => void;
@@ -40,29 +40,31 @@ function columnBubble(columnId: string, ready: boolean): Element | null {
   return column.querySelector(ready ? 'button.bubble.bubble--ready' : 'button.bubble:not(.bubble--scroll)');
 }
 
-// Module-level resolvers: stable identities for useAnchorRect.
+// Module-level resolvers: stable identities for useAnchorRect. Each falls back
+// to a broader anchor so a step never vanishes (Play only exists once a scene
+// is on: until then the tip points at the bottom bar's centre).
 const STEP_DEFS: Record<ShareTutorialStepId, ShareTutorialStep> = {
   scene: {
     id: 'scene',
     placement: 'right',
-    resolveAnchor: () => columnBubble(SIMPLE_MODE.SOUNDSCAPES_COLUMN_ID, true),
+    resolveAnchor: () =>
+      columnBubble(SIMPLE_MODE.SOUNDSCAPES_COLUMN_ID, true) ?? document.getElementById(SIMPLE_MODE.SOUNDSCAPES_COLUMN_ID),
   },
   play: {
     id: 'play',
     placement: 'above',
-    resolveAnchor: () => document.getElementById(SCENE_BOTTOM_BAR.PLAY_BUTTON_ID),
+    resolveAnchor: () =>
+      document.getElementById(SCENE_BOTTOM_BAR.PLAY_BUTTON_ID) ?? document.querySelector('.scene-bottom-bar'),
   },
   acoustics: {
     id: 'acoustics',
     placement: 'left',
-    resolveAnchor: () =>
-      columnBubble(SIMPLE_MODE.ACOUSTICS_COLUMN_ID, true) ? document.getElementById(SIMPLE_MODE.ACOUSTICS_COLUMN_ID) : null,
+    resolveAnchor: () => document.getElementById(SIMPLE_MODE.ACOUSTICS_COLUMN_ID),
   },
   listeners: {
     id: 'listeners',
     placement: 'left',
-    resolveAnchor: () =>
-      columnBubble(SIMPLE_MODE.LISTENERS_COLUMN_ID, false) ? document.getElementById(SIMPLE_MODE.LISTENERS_COLUMN_ID) : null,
+    resolveAnchor: () => document.getElementById(SIMPLE_MODE.LISTENERS_COLUMN_ID),
   },
   viewModes: {
     id: 'viewModes',
@@ -71,42 +73,32 @@ const STEP_DEFS: Record<ShareTutorialStepId, ShareTutorialStep> = {
   },
 };
 
-function isScenePowered(): boolean {
-  const ui = useUIStore.getState();
-  return ui.isInSoundsStep && ui.activeSoundParentIndex !== null;
-}
-
-function isAnyPlaying(): boolean {
-  return useAudioControlsStore.getState().isAnyPlaying();
-}
-
 /**
- * Steps of the tour, decided once when it starts: steps already done are left
- * out (a scene already on, already playing) and so are columns with nothing to
- * switch, so the badge numbers stay consecutive.
+ * Steps of the tour, decided once (the first time it opens) and then kept, so
+ * the badge numbers never change. Every phase is kept — even one already done
+ * (a scene on, playback running); only a column with nothing shared is left out.
  */
 function buildSteps(): ShareTutorialStep[] {
-  const steps: ShareTutorialStep[] = [];
-  if (!isScenePowered()) steps.push(STEP_DEFS.scene);
-  if (!isAnyPlaying()) steps.push(STEP_DEFS.play);
-  if (STEP_DEFS.acoustics.resolveAnchor()) steps.push(STEP_DEFS.acoustics);
-  if (STEP_DEFS.listeners.resolveAnchor()) steps.push(STEP_DEFS.listeners);
+  const steps: ShareTutorialStep[] = [STEP_DEFS.scene, STEP_DEFS.play];
+  if (columnBubble(SIMPLE_MODE.ACOUSTICS_COLUMN_ID, false)) steps.push(STEP_DEFS.acoustics);
+  if (columnBubble(SIMPLE_MODE.LISTENERS_COLUMN_ID, false)) steps.push(STEP_DEFS.listeners);
   steps.push(STEP_DEFS.viewModes);
   return steps;
 }
 
 /**
- * Share view: first-load numbered coach-mark tour (turn a scene on → press
- * play → switch acoustic simulations → switch listeners → change the view mode).
+ * Share view: numbered coach-mark tour (turn a scene on → press play → switch
+ * acoustic simulations → switch listeners → change the view mode).
  *
- * Starts once the model is loaded, a playable scene exists and the visitor
- * first acted on the page (pointer, key, wheel, touch), shows one tip
- * at a time and keeps it open (no timers) until the visitor clicks it or the
- * "next" arrow, goes back with the "previous" arrow, closes it, or does what it
- * asks (turns a scene on, starts playback). Arrows skip steps whose anchor is
- * not on screen (Play is only shown once a scene is on). Shown once per
- * browser (useOneTimeHint); the bottom bar's
- * "Tour" button replays it (`shareViewStore.requestTutorialReplay`).
+ * Opens by itself once — when the model is loaded, a playable scene exists and
+ * the visitor first acted on the page (pointer, key, wheel, touch). One tip at
+ * a time, open until the visitor acts (no timers): a click on the tip or the ›
+ * arrow moves on, ‹ goes back, × or the bottom bar's "Tour" button hides the
+ * tour at its current step, and "Tour" shows it again there
+ * (`shareViewStore.requestTutorialToggle`). Doing what a tip asks (turning a
+ * scene on, starting playback) also moves on. Past the last step the tour is
+ * finished and the next "Tour" starts over. Opening by itself happens once per
+ * browser (useOneTimeHint).
  *
  * Usage:
  * ```tsx
@@ -122,21 +114,35 @@ export function useShareTutorial(): ShareTutorialState {
   const scenePowered = useUIStore((s) => s.isInSoundsStep && s.activeSoundParentIndex !== null);
   const isPlaying = useAudioControlsStore((s) => Object.values(s.individualSoundStates).some((v) => v === 'playing'));
 
-  const replayNonce = useShareViewStore((s) => s.tutorialReplayNonce);
+  const toggleNonce = useShareViewStore((s) => s.tutorialToggleNonce);
   const setTutorialActive = useShareViewStore((s) => s.setTutorialActive);
 
   const [steps, setSteps] = useState<ShareTutorialStep[] | null>(null);
   const [index, setIndex] = useState(0);
+  const [isOpen, setIsOpen] = useState(false);
   const [hasInteracted, setHasInteracted] = useState(false);
   const startedRef = useRef(false);
 
-  const start = useCallback(() => {
+  const open = useCallback(() => {
     startedRef.current = true;
-    setSteps(buildSteps());
-    setIndex(0);
+    setSteps((prev) => prev ?? buildSteps());
+    setIsOpen(true);
   }, []);
 
-  // An idle tab never starts the tour: wait for the visitor's first action.
+  /** Hide at the current step (shown again there by "Tour"). */
+  const skip = useCallback(() => {
+    setIsOpen(false);
+    markSeen();
+  }, [markSeen]);
+
+  /** Past the last step: hide, and the next "Tour" starts over. */
+  const finish = useCallback(() => {
+    setIsOpen(false);
+    setIndex(0);
+    markSeen();
+  }, [markSeen]);
+
+  // An idle tab never opens the tour: wait for the visitor's first action.
   useEffect(() => {
     if (!isShareView || seen || hasInteracted) return;
     const onAction = () => setHasInteracted(true);
@@ -145,73 +151,57 @@ export function useShareTutorial(): ShareTutorialState {
     return () => SHARE_TUTORIAL.INTERACTION_EVENTS.forEach((type) => window.removeEventListener(type, onAction, options));
   }, [isShareView, seen, hasInteracted]);
 
-  // Start on the first model load with something to play, once the visitor acted.
+  // Open by itself on the first model load with something to play, once the visitor acted.
   useEffect(() => {
     if (!isShareView || seen || startedRef.current || !isViewerReady || !hasPlayableScene || !hasInteracted) return;
-    const timer = window.setTimeout(start, SHARE_TUTORIAL.START_DELAY_MS);
+    const timer = window.setTimeout(open, SHARE_TUTORIAL.START_DELAY_MS);
     return () => window.clearTimeout(timer);
-  }, [isShareView, seen, isViewerReady, hasPlayableScene, hasInteracted, start]);
+  }, [isShareView, seen, isViewerReady, hasPlayableScene, hasInteracted, open]);
 
-  // Replay requested from the bottom bar.
+  // "Tour" button: hide / show again at the saved step. The open state is read
+  // at click time — this effect must not re-run when the tour closes itself.
+  const isOpenRef = useRef(isOpen);
+  isOpenRef.current = isOpen;
   useEffect(() => {
-    if (replayNonce > 0) start();
-  }, [replayNonce, start]);
+    if (toggleNonce === 0) return;
+    if (isOpenRef.current) skip();
+    else open();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [toggleNonce]);
 
-  // The bottom bar hides its replay button while the tour is on screen.
+  // The bottom bar's "Tour" button is active while the tour is on screen.
   useEffect(() => {
-    setTutorialActive(steps !== null);
-  }, [steps, setTutorialActive]);
+    setTutorialActive(isOpen);
+  }, [isOpen, setTutorialActive]);
 
-  const current = steps?.[index] ?? null;
+  const current = isOpen ? steps?.[index] ?? null : null;
   const anchorRect = useAnchorRect(current ? current.resolveAnchor : null, SHARE_TUTORIAL.ANCHOR_POLL_MS);
-  const hasAnchor = anchorRect !== null;
+  const isLast = !!steps && index >= steps.length - 1;
 
-  /** Nearest step from `from` in `direction` whose anchor is on screen now, or -1. */
-  const findShown = useCallback((from: number, direction: 1 | -1): number => {
-    if (!steps) return -1;
-    for (let i = from + direction; i >= 0 && i < steps.length; i += direction) {
-      if (steps[i].resolveAnchor()) return i;
-    }
-    return -1;
-  }, [steps]);
-
-  const skip = useCallback(() => {
-    setSteps(null);
-    markSeen();
-  }, [markSeen]);
-
-  // Arrows / tip click: past the last shown step the tour is done for good.
   const next = useCallback(() => {
-    const target = findShown(index, 1);
-    if (target < 0) skip();
-    else setIndex(target);
-  }, [findShown, index, skip]);
+    if (isLast) finish();
+    else setIndex((i) => i + 1);
+  }, [isLast, finish]);
 
-  const prev = useCallback(() => {
-    const target = findShown(index, -1);
-    if (target >= 0) setIndex(target);
-  }, [findShown, index]);
+  const prev = useCallback(() => setIndex((i) => Math.max(0, i - 1)), []);
 
-  // The visitor did what the tip asks: move on to the very next step (its anchor,
-  // e.g. Play once a scene is on, may appear a moment later). Only the transition
-  // counts, so going back to a done step keeps it open.
+  // The visitor did what the tip asks: move on. Only the transition counts, so
+  // going back to a done step keeps it open.
   const prevActionsRef = useRef({ scenePowered, isPlaying });
   useEffect(() => {
     const before = prevActionsRef.current;
     prevActionsRef.current = { scenePowered, isPlaying };
     const done = (current?.id === 'scene' && scenePowered && !before.scenePowered)
       || (current?.id === 'play' && isPlaying && !before.isPlaying);
-    if (!done || !steps) return;
-    if (index + 1 >= steps.length) skip();
-    else setIndex(index + 1);
-  }, [current, scenePowered, isPlaying, steps, index, skip]);
+    if (done) next();
+  }, [current, scenePowered, isPlaying, next]);
 
   return {
-    step: current && hasAnchor ? current : null,
+    step: current && anchorRect ? current : null,
     number: index + 1,
     anchorRect,
-    hasPrev: findShown(index, -1) >= 0,
-    isLast: findShown(index, 1) < 0,
+    hasPrev: index > 0,
+    isLast,
     next,
     prev,
     skip,

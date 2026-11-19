@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useUIStore } from '@/store';
+import { useShareViewStore, useUIStore } from '@/store';
 import { BUG_REPORT, SCENE_BOTTOM_BAR, SIMPLE_MODE } from '@/utils/constants';
 import { splitRightBudget } from '@/utils/bubbleOverflow';
 
@@ -47,9 +47,14 @@ export function useBubbleColumnSpace(): BubbleColumnSpace {
 
   const top = SIMPLE_MODE.TOP_OFFSET + SIMPLE_MODE.HEADING_HEIGHT;
   const listenersBottom = SCENE_BOTTOM_BAR.HEIGHT + SIMPLE_MODE.LISTENERS_BOTTOM_GAP + dockLift;
-  // The left column also stops above the floating bug report button (BugReportButton).
-  const bugButtonSpace = BUG_REPORT.FLOATING_SIZE + SIMPLE_MODE.LISTENERS_BOTTOM_GAP;
-  const soundscapes = Math.max(0, viewport - top - listenersBottom - bugButtonSpace);
+  // The left column also stops above the floating bug report button (BugReportButton),
+  // or in the share view above the bottom-left scene info (ShareSceneInfo).
+  const isShareView = useShareViewStore((s) => s.isShareView);
+  const shareInfoHeight = useShareViewStore((s) => s.bottomInfoHeight);
+  const bottomLeftSpace = isShareView
+    ? (shareInfoHeight > 0 ? shareInfoHeight + SIMPLE_MODE.LISTENERS_BOTTOM_GAP : 0)
+    : BUG_REPORT.FLOATING_SIZE + SIMPLE_MODE.LISTENERS_BOTTOM_GAP;
+  const soundscapes = Math.max(0, viewport - top - listenersBottom - bottomLeftSpace);
 
   const rightTop = SIMPLE_MODE.RIGHT_TOP_OFFSET + SIMPLE_MODE.HEADING_HEIGHT;
   const rightAvailable = Math.max(

@@ -1120,8 +1120,10 @@ login and can only select and play. It also works inside an iframe.
   selecting a scene bubble, powering a simulation, or double-clicking a headphone. Nothing
   propagates until the model is loaded, so a linked listener really enters FPS. When the item
   is in several groups, a group the active items already match wins, then one that does not
-  contradict them, otherwise the first one. Powering a listener from an idle state activates
-  its scene and simulation; switching listeners while a scene is on keeps the active scene
+  contradict them, otherwise the first one. A group with several listeners is stored as
+  {scene, sim, L1} + {sim, L2}: a scene-less link takes the scene of another link of its
+  simulation, so every listener of a group activates the same scene (no order between them).
+  Powering a listener from an idle state activates its scene and simulation; switching listeners while a scene is on keeps the active scene
   and simulation (only kinds that are off are filled in).
 - Share view player behavior:
   - The player opens idle at the reset camera view: no scene, simulation or listener is active,
@@ -1135,21 +1137,29 @@ login and can only select and play. It also works inside an iframe.
     (`useShareLinkedSimulations`, `ListenerBubbles`). The 3D listener meshes follow the same
     filter (`ReceiverManager.setShownReceiverIds`, from `useSpeckleSceneObjects`): all of them
     while no scene is on. Share-view listeners are always drawn at full opacity — the
-    designer's "Hide for simulation" fading is an editor cue.
+    designer's "Hide for simulation" fading is an editor cue. For the same reason every listener
+    bubble shows as ready (the editor marks only simulated listeners ready).
   - While in FPS, `FpsControlsHint` lists the controls above the bottom bar (it replaces the
     editor's `FpsHelpPopup`). It shows on each FPS entry until closed. Closing it shrinks it into
     the "Leave FPS view" button and marks the `fps-controls` one-time hint seen (localStorage).
   - On the first model load, `ShareTutorial` (`components/share/`, state in
     `hooks/useShareTutorial.ts`, anchors tracked by `hooks/useAnchorRect.ts`) shows numbered tips
     one at a time: turn a scene on → press Play → switch acoustic simulations → switch listeners.
-    Steps already done or with nothing to point at are left out. A tip stays open (no timers)
-    until it is clicked or its › arrow is pressed (next), ‹ (previous), × (skip the tour), or
-    its action is done (scene turned on, playback started). Arrows skip steps whose anchor is
-    not on screen. Shown once per
-    browser (`share-tutorial` one-time hint, localStorage). It only starts after the visitor's
-    first action on the page (`SHARE_TUTORIAL.INTERACTION_EVENTS`), so an idle tab never runs it.
-    Once seen (finished, skipped, or in an earlier visit), a "Tour" button at the bottom bar's
-    right end replays it (`shareViewStore.requestTutorialReplay`; hidden while the tour runs).
+    The steps are fixed once built, so the numbers never change: every phase stays, even one
+    already done (Play points at the bottom bar's centre until the button exists); only a column
+    with nothing shared is left out. A tip stays open (no timers) until it is clicked or its ›
+    arrow is pressed (next), ‹ (previous), × (hide), or its action is done (scene turned on,
+    playback started). It opens by itself once per browser (`share-tutorial` one-time hint,
+    localStorage), and only after the visitor's first action on the page
+    (`SHARE_TUTORIAL.INTERACTION_EVENTS`), so an idle tab never runs it. The "Tour" button at the
+    bottom bar's right end is always there (blue while the tour is shown): it hides the tour and
+    shows it again at the same step (`shareViewStore.requestTutorialToggle`); after the last step
+    it starts over.
+  - `components/share/ShareSceneInfo.tsx` shows small fixed text at the bottom-left, in the
+    column-heading style: the active scene's name and footnote (links clickable), then a one-line
+    navigation help (orbit / pan / zoom, or the first-person controls while in a listener). Its
+    height (`shareViewStore.bottomInfoHeight`) is taken out of the scenes column's budget
+    (`useBubbleColumnSpace`).
   - The timeline loops: at its end the Transport's end callback restarts it from 0
     (`SpeckleScene`) instead of stopping.
   - In Acoustics view mode, `AbsorptionLegend` under the view-mode pill explains the surface

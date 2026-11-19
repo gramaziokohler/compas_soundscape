@@ -470,7 +470,8 @@ export const SHARE_VIEW = {
   HEADPHONES_HINT_TITLE: 'The sound is spatial: headphones put you inside the scene',
   /** Bottom-bar button (right end) that replays the coach-mark tour. */
   REPLAY_TUTORIAL_LABEL: 'Tour',
-  REPLAY_TUTORIAL_TITLE: 'Replay the tutorial',
+  REPLAY_TUTORIAL_TITLE: 'Show the tutorial',
+  HIDE_TUTORIAL_TITLE: 'Hide the tutorial',
   /** iframe snippet defaults for the embed code. */
   EMBED_WIDTH: '100%',
   EMBED_HEIGHT: '600',
@@ -3293,7 +3294,7 @@ export const SHARE_TUTORIAL = {
   VIEWPORT_MARGIN: 16,     // px — keep the tip this far inside the window
   POWER_ICON_SIZE: 12,     // px — inline ⏻ glyph in the first tip
   Z_INDEX: 205,            // above the docked DAW (200), below bar popovers (210)
-  SKIP_LABEL: 'Skip tutorial',
+  SKIP_LABEL: 'Hide tutorial (Tour shows it again)',
   PREV_LABEL: 'Previous tip',
   NEXT_LABEL: 'Next tip',
   FINISH_LABEL: 'Finish tutorial',
@@ -3306,6 +3307,25 @@ export const SHARE_TUTORIAL = {
     listeners: { title: 'Switch listeners', message: 'Hear the scene from another spot in the model.' },
     viewModes: { title: 'Change the view', message: 'Sounds glows where they play, Default shows the model, Acoustics the surfaces that shape the sound.' },
   },
+} as const;
+
+/** Share view: bottom-left scene name, footnote and navigation help (components/share/ShareSceneInfo.tsx). */
+export const SHARE_SCENE_INFO = {
+  MAX_WIDTH: 320,          // px
+  MOUSE_ICON_SIZE: '11px',
+  /** Orbit-view navigation (speckle-event-bridge camera remap). */
+  NAV_CONTROLS: [
+    { label: 'Orbit', mouse: 'right', action: 'drag' },
+    { label: 'Pan', mouse: 'wheel', action: 'drag' },
+    { label: 'Zoom', mouse: 'wheel', action: 'scroll' },
+  ],
+  /** First-person view (useSpeckleFPS). */
+  FPS_CONTROLS: [
+    { label: 'Look', mouse: 'left', action: 'drag' },
+    { label: 'Roll', mouse: 'right', action: 'drag' },
+    { label: 'Zoom', mouse: 'wheel', action: 'scroll' },
+  ],
+  FPS_LEAVE_KEY: 'Esc',
 } as const;
 
 /** Share view: absorption colour key under the view-mode pill in Acoustics mode (components/scene/AbsorptionLegend.tsx). */

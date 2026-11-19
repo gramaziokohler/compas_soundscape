@@ -122,6 +122,19 @@ export function useShareLinkActivation({
       return next;
     };
 
+    /**
+     * A group with several listeners is stored as {scene, sim, L1} + {sim, L2}: L2's
+     * link has no scene. Complete a scene-less link with the scene of another link
+     * of its simulation (the active scene when it is one of them), so every
+     * listener of a group activates the same scene — no order between them.
+     */
+    const withScene = (link: ShareLink): ShareLink => {
+      if (link.sceneId || !link.simulationId) return link;
+      const viaSimulation = links.filter((l) => l.simulationId === link.simulationId && l.sceneId);
+      const scene = viaSimulation.find((l) => l.sceneId === current.scene) ?? viaSimulation[0];
+      return scene ? { ...link, sceneId: scene.sceneId } : link;
+    };
+
     const baseline = baselineRef.current;
     baselineRef.current = current;
     // Only an activation propagates; turning something off never does.
@@ -133,7 +146,8 @@ export function useShareLinkActivation({
     const matches = (l: ShareLink, kind: ShareItemKind) => !l[linkKey(kind)] || l[linkKey(kind)] === current[kind];
     const satisfied = candidates.find((l) => KINDS.every((kind) => matches(l, kind)));
     const compatible = candidates.find((l) => KINDS.every((kind) => !current[kind] || matches(l, kind)));
-    const link = satisfied ?? compatible ?? candidates[0];
+    const chosen = satisfied ?? compatible ?? candidates[0];
+    const link = chosen ? withScene(chosen) : undefined;
     // A listener switched while a scene is on keeps that scene and its simulation.
     if (link) baselineRef.current = applyLink(link, changed === 'listener' && current.scene !== null);
   }, [links, isShareView, isExpertMode, activeSceneId, activeSimulationId, activeListenerId, analysisConfigs, simulationConfigs, isViewerReady]);

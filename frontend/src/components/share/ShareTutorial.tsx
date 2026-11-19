@@ -45,7 +45,8 @@ function tipStyle(placement: ShareTutorialPlacement, rect: AnchorRect): CSSPrope
  * (turn it on), the Play button, the Acoustics column, the Listeners column,
  * the view-mode toolbar.
  * A tip stays until the visitor acts: a click on it or the › arrow moves on,
- * ‹ goes back, × skips the tour (see useShareTutorial). While the visitor hovers the column a tip points at,
+ * ‹ goes back, × hides the tour at its step (the bottom bar's Tour button shows it
+ * again; see useShareTutorial). While the visitor hovers the column a tip points at,
  * the tip fades out of the way of the bubbles' hover flyouts (globals.css).
  *
  * Usage (page.tsx):

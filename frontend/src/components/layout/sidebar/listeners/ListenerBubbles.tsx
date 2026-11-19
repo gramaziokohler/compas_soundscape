@@ -259,7 +259,9 @@ export function ListenerBubbles({
               icon={item.type === 'grid-listener' ? <ListenerGridIcon size={size / 2} /> : <ListenerIcon size={size / 2} />}
               size={size}
               labelSide="left"
-              ready={isListenerReady(item)}
+              // Share view: every listener is equally available — the designer's
+              // "Hide for simulation" flags (which made only some look ready) are an editor cue.
+              ready={canEdit ? isListenerReady(item) : isClickPowerable(item)}
               selected={active}
               tone="listener"
               onClick={() => handleClick(index)}

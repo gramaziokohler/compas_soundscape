@@ -16,6 +16,7 @@ import { useAudioControlsStore } from '@/store';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { isShareViewActive } from '@/store/shareViewStore';
 import { FpsControlsHint } from '@/components/scene/FpsControlsHint';
+import { ShareSceneInfo } from '@/components/share/ShareSceneInfo';
 import { Viewer, CameraController, SelectionExtension, FilteringExtension } from '@speckle/viewer';
 import type * as THREE from 'three';
 // Custom hooks (Phase 1-4 refactor)
@@ -1236,6 +1237,8 @@ export function SpeckleScene({
 
       {/* Share view: FPS controls (the listener card that explains them is not shown there) */}
       {isFirstPersonMode && !canEdit && <FpsControlsHint />}
+      {/* Share view: active scene name + footnote and navigation help, bottom-left. */}
+      {isViewerReady && !canEdit && <ShareSceneInfo isFirstPersonMode={isFirstPersonMode} />}
 
       {/* Full-width bottom control bar — app / playback / view + system */}
       <SceneBottomBar

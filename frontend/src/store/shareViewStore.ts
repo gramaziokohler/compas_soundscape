@@ -15,14 +15,17 @@ export interface ShareViewStoreState {
   shareId: string | null;
   /** Link groups served by the public endpoint (already filtered). */
   links: ShareLink[];
-  /** The coach-mark tour is on screen (hides the bottom bar's replay button). */
+  /** The coach-mark tour is on screen (the bottom bar's Tour button shows active). */
   tutorialActive: boolean;
-  /** Bumped by the replay button; useShareTutorial restarts the tour on each change. */
-  tutorialReplayNonce: number;
+  /** Bumped by the Tour button; useShareTutorial hides / shows the tour on each change. */
+  tutorialToggleNonce: number;
+  /** px taken by the bottom-left scene info (ShareSceneInfo); the left bubble column stops above it. */
+  bottomInfoHeight: number;
   enterShareView: (shareId: string) => void;
   setLinks: (links: ShareLink[]) => void;
   setTutorialActive: (active: boolean) => void;
-  requestTutorialReplay: () => void;
+  requestTutorialToggle: () => void;
+  setBottomInfoHeight: (px: number) => void;
 }
 
 export const selectIsShareView = (state: ShareViewStoreState): boolean => state.isShareView;
@@ -34,12 +37,14 @@ export const useShareViewStore = create<ShareViewStoreState>()(
       shareId: null,
       links: [],
       tutorialActive: false,
-      tutorialReplayNonce: 0,
+      tutorialToggleNonce: 0,
+      bottomInfoHeight: 0,
       enterShareView: (shareId) => set({ isShareView: true, shareId }, false, 'shareView/enter'),
       setLinks: (links) => set({ links }, false, 'shareView/setLinks'),
       setTutorialActive: (tutorialActive) => set({ tutorialActive }, false, 'shareView/setTutorialActive'),
-      requestTutorialReplay: () =>
-        set((s) => ({ tutorialReplayNonce: s.tutorialReplayNonce + 1 }), false, 'shareView/requestTutorialReplay'),
+      requestTutorialToggle: () =>
+        set((s) => ({ tutorialToggleNonce: s.tutorialToggleNonce + 1 }), false, 'shareView/requestTutorialToggle'),
+      setBottomInfoHeight: (bottomInfoHeight) => set({ bottomInfoHeight }, false, 'shareView/setBottomInfoHeight'),
     }),
     { name: 'shareViewStore' },
   ),

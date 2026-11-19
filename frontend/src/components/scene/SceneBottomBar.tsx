@@ -15,9 +15,8 @@ import { ModelPill } from '@/components/scene/model-version/ModelPill';
 import { useSceneWorkflowStore, useUIStore, useWorkspaceStore, useTransportTimeStore, useShareViewStore, selectTransportWholeSeconds, selectHasSaveTarget, selectIsReadOnlyWorkspace, selectHasNewerSave } from '@/store';
 import { useHomeStageHasWork } from '@/hooks/useHomeStageHasWork';
 import { CircleHelp, Headphones } from 'lucide-react';
-import { APP_BRAND, MODEL_VERSION_WATCH, SCENE_BOTTOM_BAR, SHARE_TUTORIAL, SHARE_VIEW, WORKSPACE_MESSAGES } from '@/utils/constants';
+import { APP_BRAND, MODEL_VERSION_WATCH, SCENE_BOTTOM_BAR, SHARE_VIEW, WORKSPACE_MESSAGES } from '@/utils/constants';
 import { useCanEdit } from '@/hooks/useCanEdit';
-import { useOneTimeHint } from '@/hooks/useOneTimeHint';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
 
 function formatTime(ms: number): string {
@@ -101,7 +100,7 @@ export interface SceneBottomBarProps {
  *            render style dropdown, reset view, refresh (not in the share view), Object Explorer, then the model
  *            pill (open model / no-model soundscape → versions, upload, switch) or load model;
  *            then help & system: shortcuts, notifications, settings (share view:
- *            a "Tour" button that replays the tutorial once it was seen)
+ *            a "Tour" button that shows / hides the tutorial, blue while shown)
  * The docked DAW opens above it; sidebars stop at its top edge. In Simple mode
  * the bug report button floats above the bar's left end instead.
  *
@@ -138,12 +137,10 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
   // Public share view: a player only — no app navigation, history, model or settings.
   const canEdit = useCanEdit();
   const isApplyingIRs = useTransportTimeStore((s) => s.isApplyingIRs);
-  // Share view: "Tour" replays the coach-mark tour once it was seen (finished,
-  // skipped, or seen in an earlier session) and is not on screen.
-  const { seen: tutorialSeen } = useOneTimeHint(SHARE_TUTORIAL.HINT_ID);
+  // Share view: "Tour" shows / hides the coach-mark tour (resuming at its step);
+  // active (blue) while the tour is on screen.
   const tutorialActive = useShareViewStore((s) => s.tutorialActive);
-  const requestTutorialReplay = useShareViewStore((s) => s.requestTutorialReplay);
-  const showTutorialReplay = !canEdit && tutorialSeen && !tutorialActive;
+  const requestTutorialToggle = useShareViewStore((s) => s.requestTutorialToggle);
 
   return (
     <div
@@ -430,10 +427,11 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
             {canEdit && <div className="scene-bottom-bar__sep" />}
           </>
         )}
-        {showTutorialReplay && (
+        {!canEdit && (
           <BarButton
-            onClick={requestTutorialReplay}
-            title={SHARE_VIEW.REPLAY_TUTORIAL_TITLE}
+            onClick={requestTutorialToggle}
+            active={tutorialActive}
+            title={tutorialActive ? SHARE_VIEW.HIDE_TUTORIAL_TITLE : SHARE_VIEW.REPLAY_TUTORIAL_TITLE}
             label={SHARE_VIEW.REPLAY_TUTORIAL_LABEL}
             icon={<CircleHelp size={ICON} strokeWidth={2} aria-hidden="true" />}
           />
