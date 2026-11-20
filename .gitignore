@@ -35,6 +35,8 @@ pyroomacoustics_rir/
 
 # Persistent data (audio files, soundscapes)
 backend/data/
+# Data backup snapshots (scripts/backup_data.py default target)
+backend/backups/
 
 
 # PyInstaller

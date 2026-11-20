@@ -125,3 +125,51 @@ Study interaction logging is off by default. While it is off, every `/api/study/
 5. After the study, run `python scripts/export_study_logs.py --out <dir> --groups groups.csv` (columns `workspace_id,group_label` or `owner_email,group_label`). Keep `participants_key.csv` (pseudonym → email) apart from the pseudonymised group folders.
 
 The data lives in `backend/data/study/`: `study_log.db`, `audio/` and `moments/`.
+
+## Data backups
+
+`backend/scripts/backup_data.py` snapshots everything needed to rebuild every model from its
+Speckle version: `data/soundscapes/` (soundscape.json, audio, IRs, analysis, results per model),
+`data/directivities/`, `data/bug_reports/`, `data/study/` and `app.db`. Not included: `temp/`
+(loading a soundscape restores its IRs from `ir_files/`), the ML weights in `data/models` and
+`data/tfhub_modules` (downloadable), and the load-test folders `loadtest-*`. The Speckle geometry
+itself stays on Speckle; each snapshot's `models.json` lists the server, project and version
+every soundscape was built on.
+
+**Schedule.** The `CompasBackup` task (SYSTEM) runs `compas backup run` every night at
+`BackupTime` (02:00). It snapshots only when one is due:
+
+| Change since the last snapshot | Snapshot? |
+| --- | --- |
+| none | no |
+| any `soundscape.json`, `*_results.json`, directivity `.npz` or `app.db` row (login sessions excepted) | yes, whatever the size |
+| `BackupMinChangeMB` (50 MB) or more of audio / IRs / study data | yes |
+| smaller bulk changes | not yet: they add up until one of the rules above fires, or until the last snapshot is `BackupMaxAgeDays` (7) old |
+
+Each snapshot is a full tree in `BackupDir\snapshots\<yyyymmdd-hhmmss>\`, but unchanged files are
+NTFS hardlinks to the previous snapshot, so a snapshot costs only the changed bytes. SQLite files
+are copied with the online backup API, so they are consistent while the API runs. Retention keeps
+the newest snapshot of each of the last 14 days, 8 weeks and 12 months. Snapshot files are
+read-only: never edit them in place, since every hardlinked snapshot would change.
+
+**Offsite.** `BackupDir` is on `C:`, like the data, so it does not survive a disk failure. Set
+`BackupOffsiteDir` (for example a Google Drive folder on `G:`) and rerun `compas backup-setup`: the
+`CompasBackupOffsite` task then mirrors the latest snapshot there at `BackupOffsiteTime` as the
+logged-on user (SYSTEM cannot see the Drive mount), plus a zip of the small state files per
+snapshot in `history/`. `study/` (participant data) is left out unless
+`BackupOffsiteIncludeStudy = $true`. Snapshots contain `app.db` (user emails) and the Speckle
+tokens stored in `soundscape.json`, so keep the offsite folder private.
+
+```
+compas backup-setup                    # once, elevated: registers the task(s)
+compas backup                          # last run, snapshot count, schedule (also in `compas status`)
+compas backup now                      # snapshot now, whatever the rules say
+compas backup list
+compas backup restore latest --workspace <ws> --model <model>              # copy to BackupDir\restores\
+compas backup restore latest --workspace <ws> --model <model> --in-place   # live folder moved aside first
+compas backup restore <snapshot>       # whole snapshot to a folder; to put it back: compas stop,
+                                       # copy over backend\data\, compas start
+```
+
+Logs: `BackupDir\backup.log` and `last-run.json`. A failed run is written to `supervisor.log` and the
+Windows event log (source `CompasSupervisor`).

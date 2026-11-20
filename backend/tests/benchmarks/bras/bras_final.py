@@ -247,7 +247,9 @@ def run_scene(name: str, spec: FinalSpec, pairs: str, root: Path, force: bool = 
     payload = {"info": info, "engines": [{"key": e.key, "label": e.label, "band": e.band, "gain_db": e.gain_db,
                                           "notes": e.notes, "wall_s": e.wall_s, "config": e.config, "split": e.split(),
                                           "average": {k: v for k, v in (e.average or {}).items() if k not in strip},
-                                          "pairs": [r.as_dict() for r in e.results]} for e in engines]}
+                                          "average_response": response_curve(e.average),
+                                          "pairs": [{**r.as_dict(), "response": response_curve(r.curves)} for r in e.results]}
+                                         for e in engines]}
     write_results(out / "results.json", payload)
     (out / "report.md").write_text(report(info, engines, rp, [Path(f).relative_to(out).as_posix() for f in files]),
                                    encoding="utf-8")
@@ -301,6 +303,19 @@ def report(info: dict, engines: list, rp, files: list) -> str:
                     [[f"{b:g}"] + [f"{c[b]:+.2f}" if b in c else "" for c in cols] for b in bands])
     lines += ["", "## Figures", ""] + [f"- [{f}]({f})" for f in files] + [""]
     return "\n".join(lines)
+
+
+RESPONSE_POINTS = 120   # smoothed frequency responses kept in results.json (log-spaced), for plotting elsewhere
+
+
+def response_curve(c) -> dict | None:
+    """The measured and simulated smoothed responses (dB) at RESPONSE_POINTS log-spaced frequencies."""
+    if not c or "f" not in c:
+        return None
+    f = np.asarray(c["f"], float)
+    fr = np.geomspace(f[0], f[-1], RESPONSE_POINTS)
+    pick = lambda y: np.round(np.interp(np.log(fr), np.log(f), np.asarray(y, float)), 2).tolist()  # noqa: E731
+    return {"f": np.round(fr, 1).tolist(), "meas_db": pick(c["meas_db"]), "sim_db": pick(c["sim_db"])}
 
 
 def ca_source() -> str:

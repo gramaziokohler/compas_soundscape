@@ -1438,3 +1438,44 @@ STUDY_ARCHIVE_URL_ROOTS = {
 STUDY_ARCHIVE_EXTENSIONS = (".wav", ".mp3", ".flac", ".ogg", ".opus", ".m4a", ".aac", ".webm")
 STUDY_ARCHIVE_MIN_FREE_GB = 5
 STUDY_EXPORT_SUMMARY_WINDOW_S = 3600
+
+# ============================================================================
+# Data backups (scripts/backup_data.py, scheduled by `compas backup-setup`)
+# ============================================================================
+# Everything needed to rebuild a model's soundscape from its Speckle version:
+# soundscape.json + audio/ + ir_files/ + analysis/ + results per model, the
+# directivity library, app.db (owners, workspaces, members) and the study data.
+# Not backed up: temp/ (rebuilt on load from these copies) and data/models,
+# data/tfhub_modules (downloadable ML weights). Snapshots hardlink unchanged
+# files to the previous snapshot, so each one only costs the changed bytes.
+BACKUP_DIR = Path(os.environ.get("COMPAS_BACKUP_DIR") or (BACKEND_DIR / "backups"))
+# (name inside a snapshot, source). SQLite files are copied with the online
+# backup API (consistent even while the API writes); the rest file by file.
+BACKUP_SQLITE_SOURCES = (
+    ("app.db", Path(APP_DB_PATH)),
+    ("study/study_log.db", Path(STUDY_DB_PATH)),
+)
+# Left out of the DB change check (still copied): rewritten on every visit.
+BACKUP_SQLITE_VOLATILE_TABLES = ("sessions",)
+BACKUP_TREE_SOURCES = (
+    ("soundscapes", Path(SOUNDSCAPE_DATA_DIR)),
+    ("directivities", Path(DIRECTIVITY_DATA_DIR)),
+    ("bug_reports", BUG_REPORTS_DIR),
+    ("study/audio", STUDY_AUDIO_DIR),
+    ("study/moments", STUDY_MOMENTS_DIR),
+)
+# Model folders the load tests create (scripts/loadtest): never worth keeping.
+BACKUP_EXCLUDE_DIR_PREFIXES = ("loadtest-",)
+BACKUP_EXCLUDE_SUFFIXES = (".tmp", ".partial", "-wal", "-shm", "-journal")
+# Small files that ARE the soundscape state: any change to one triggers a backup,
+# whatever the size threshold (an edited soundscape.json is a few KB).
+BACKUP_CRITICAL_NAMES = ("soundscape.json", "app.db")
+BACKUP_CRITICAL_SUFFIXES = ("_results.json", ".npz")
+BACKUP_MIN_CHANGE_MB = 50      # bulk (audio, IRs) change that triggers a backup
+BACKUP_MAX_AGE_DAYS = 7        # any change at all is backed up after this long
+BACKUP_KEEP_DAILY = 14         # retention: newest snapshot of each of the last N days
+BACKUP_KEEP_WEEKLY = 8         # ... of each of the last N ISO weeks
+BACKUP_KEEP_MONTHLY = 12       # ... of each of the last N months
+BACKUP_OFFSITE_HISTORY = 90    # metadata-only zips kept in the offsite history/
+BACKUP_JSON_RETRIES = 5        # soundscape.json is rewritten in place on autosave
+BACKUP_JSON_RETRY_DELAY_S = 1.0
