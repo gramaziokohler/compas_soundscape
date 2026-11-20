@@ -11,7 +11,6 @@ shows under the progress bar's expand toggle (``SimulationProgress``).
 from __future__ import annotations
 
 import json
-import os
 import time
 from dataclasses import dataclass
 from typing import Optional
@@ -21,6 +20,7 @@ from config.constants import CA_PROGRESS_SPANS_MONO
 from config.constants import CA_PROGRESS_STAGE_LABELS
 from config.constants import CA_PROGRESS_STAGE_UNITS
 from config.constants import CA_PROGRESS_WRITE_S
+from utils.atomic_json import write_progress_json
 
 LANE_QUEUED, LANE_RUNNING, LANE_DONE = "queued", "running", "done"
 PARTIAL_KEY = "ca_progress"
@@ -124,13 +124,8 @@ class LaneWriter:
         if stage == self._stage and now - self._at < CA_PROGRESS_WRITE_S:
             return
         self._stage, self._at = stage, now
-        tmp = f"{self.path}.tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump({"stage": stage, "done": done, "of": of}, f)
-        try:
-            os.replace(tmp, self.path)
-        except PermissionError:  # the job is reading it (Windows); the next report writes again
-            self._at = 0.0
+        if not write_progress_json(self.path, {"stage": stage, "done": done, "of": of}):
+            self._at = 0.0  # the job was reading it (Windows); the next report writes again
 
 
 def read_lane(path: str) -> Optional[tuple]:

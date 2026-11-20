@@ -811,6 +811,13 @@ PREFLIGHT_PAYLOAD_DIR = str(BACKEND_DIR / "temp" / "simulations" / "preflight") 
 TEMP_STATIC_DIR = str(BACKEND_DIR / "temp" / "static")
 TEMP_ANALYSIS_DIR = str(BACKEND_DIR / "temp" / "analysis")
 
+# Job progress/result JSON files (utils/atomic_json.py). On Windows the replace fails while the polling
+# worker has the file open; attempt k waits k * delay. A progress report gives up after ~0.2 s (the next
+# report supersedes it); a result keeps trying for ~4 s.
+ATOMIC_JSON_RETRY_DELAY_S = 0.02
+ATOMIC_JSON_PROGRESS_RETRIES = 5
+ATOMIC_JSON_RESULT_RETRIES = 20
+
 # ============================================================================
 # Directory Configuration - Audio
 # ============================================================================

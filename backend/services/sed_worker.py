@@ -10,36 +10,22 @@ Result file:   {"type": "done",  "result": {"audio_info": {...}, "detected_sound
 """
 from __future__ import annotations
 
-import json
 import os
 import sys
-import time
 import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from services.sed_service import SEDService
+from utils.atomic_json import write_json, write_progress_json
 
 
 def _write_progress(progress_file: str, value: int, status: str) -> None:
-    tmp = progress_file + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump({"value": value, "status": status}, f)
-    for attempt in range(10):
-        try:
-            os.replace(tmp, progress_file)
-            break
-        except PermissionError:
-            if attempt == 9:
-                raise
-            time.sleep(0.02)
+    write_progress_json(progress_file, {"value": value, "status": status})
 
 
 def _write_result(result_file: str, payload: dict) -> None:
-    tmp = result_file + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(payload, f)
-    os.replace(tmp, result_file)
+    write_json(result_file, payload)
 
 
 def run_sed_analysis(

@@ -17,7 +17,6 @@ from __future__ import annotations
 import json
 import os
 import sys
-import time
 import traceback
 import urllib.request
 import uuid
@@ -29,27 +28,15 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.constants import DIRECTIVITY_FRONT_CHECK_MAX_DEG, DIRECTIVITY_ID_PREFIX  # noqa: E402
 from services.directivity_formats import read_balloon, read_sofa_source_balloon  # noqa: E402
 from services.directivity_processing import process_balloon, save_npz  # noqa: E402
+from utils.atomic_json import write_json, write_progress_json  # noqa: E402
 
 
 def _write_progress(progress_file: str, value: int, status: str) -> None:
-    tmp = progress_file + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump({"value": value, "status": status}, f)
-    for attempt in range(10):
-        try:
-            os.replace(tmp, progress_file)
-            break
-        except PermissionError:
-            if attempt == 9:
-                raise
-            time.sleep(0.02)
+    write_progress_json(progress_file, {"value": value, "status": status})
 
 
 def _write_result(result_file: str, payload: dict) -> None:
-    tmp = result_file + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(payload, f)
-    os.replace(tmp, result_file)
+    write_json(result_file, payload)
 
 
 def run_directivity_import(

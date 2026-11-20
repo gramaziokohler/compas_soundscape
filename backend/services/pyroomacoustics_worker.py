@@ -19,8 +19,6 @@ from __future__ import annotations
 import dataclasses
 import inspect
 import json
-import os
-import time
 import traceback
 from concurrent.futures import FIRST_COMPLETED, wait
 from pathlib import Path
@@ -57,40 +55,23 @@ from services.simulation_preflight_service import (
 from utils.acoustic_measurement import try_measure_ir
 from utils.audio_processing import trim_ir
 from utils.child_pool import child_pool
+from utils.atomic_json import write_json, write_progress_json
 from utils.geometry import seeds_from_pairs
 from utils.reciprocity import decide_reciprocity, group_pairs_by_emitter
 from utils.run_timing import solve_started, solve_time_s
 
 
-def _atomic_replace(src: str, dst: str) -> None:
-    """os.replace with retry for Windows file-lock races."""
-    for attempt in range(5):
-        try:
-            os.replace(src, dst)
-            return
-        except PermissionError:
-            if attempt == 4:
-                raise
-            time.sleep(0.05 * (attempt + 1))
-
-
 def _write_progress(progress_file: str, value: int, status: str, partial: Optional[dict] = None) -> None:
-    """Atomically write progress JSON via temp-file + os.replace(); ``partial`` becomes the job's ``partial``."""
+    """Atomically write progress JSON (dropped if the file stays locked); ``partial`` becomes the job's ``partial``."""
     payload: dict = {"value": value, "status": status}
     if partial:
         payload["partial"] = partial
-    tmp = progress_file + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(payload, f)
-    _atomic_replace(tmp, progress_file)
+    write_progress_json(progress_file, payload)
 
 
 def _write_result(result_file: str, payload: dict) -> None:
     """Atomically write the final result/error JSON."""
-    tmp = result_file + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(payload, f)
-    _atomic_replace(tmp, result_file)
+    write_json(result_file, payload)
 
 
 def split_processes(max_processes: int, n_emitters: int) -> tuple[int, int]:

@@ -16,7 +16,6 @@ import json
 import os
 import shutil
 import subprocess
-import time
 import traceback
 from collections import OrderedDict
 from pathlib import Path
@@ -66,6 +65,7 @@ from services.simulation_preflight_service import (
     summarize,
 )
 from utils.acoustic_measurement import try_measure_ir
+from utils.atomic_json import write_json, write_progress_json
 from utils.geometry import seeds_from_pairs
 from utils.pffdtd_grid import oblique_area_fraction, pffdtd_precision, plan_grid
 from utils.run_timing import solve_started, solve_time_s
@@ -78,17 +78,7 @@ CHANNELS_FOA = ["W", "Y", "Z", "X"]
 
 
 def _atomic_write(path: str, payload: dict) -> None:
-    tmp = path + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(payload, f)
-    for attempt in range(10):
-        try:
-            os.replace(tmp, path)
-            return
-        except PermissionError:
-            if attempt == 9:
-                raise
-            time.sleep(0.02 * (attempt + 1))
+    write_json(path, payload)
 
 
 def _write_progress(progress_file: str, value: float, status: str, partial: Optional[dict] = None) -> None:
@@ -96,7 +86,7 @@ def _write_progress(progress_file: str, value: float, status: str, partial: Opti
     payload: dict = {"value": int(value), "status": status}
     if partial:
         payload["partial"] = partial
-    _atomic_write(progress_file, payload)
+    write_progress_json(progress_file, payload)
 
 
 def pffdtd_available() -> Optional[str]:
