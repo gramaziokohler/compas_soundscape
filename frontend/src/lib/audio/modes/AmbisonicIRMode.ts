@@ -48,7 +48,7 @@ import { OmnitoneDecoder } from '../decoders/OmnitoneDecoder';
 import { SourceLevelMeter } from '../utils/source-level';
 import { AmbisonicConvolver } from '../utils/ambisonic-convolver';
 import { omniLevelGain, toOmniFilter } from '../utils/global-source';
-import { AMBISONIC, AUDIO_CONTROL, CRASH_PROBE, IMPULSE_RESPONSE, IR_SWAP } from '@/utils/constants';
+import { AMBISONIC, AUDIO_CONTROL, MEMORY_UNITS, IMPULSE_RESPONSE, IR_SWAP } from '@/utils/constants';
 import { linearToDbfs } from '@/utils/utils';
 
 /**
@@ -1338,14 +1338,14 @@ export class AmbisonicIRMode implements IAudioMode {
     return { state: 'convolved', gainDb: linearToDbfs(linear) };
   }
 
-  /** Live convolver banks, their ConvolverNodes and filter bytes (crash probe). */
+  /** Live convolver banks, their ConvolverNodes and filter bytes (performance monitor). */
   getConvolverStats(): { banks: number; nodes: number; filterBytes: number } {
     let nodes = 0;
     let filterBytes = 0;
     for (const banks of [this.spatialBanks, this.omniBanks]) {
       for (const bank of banks.values()) {
         nodes += bank.convolver.activeChannels;
-        filterBytes += bank.filter.length * bank.filter.numberOfChannels * CRASH_PROBE.BYTES_PER_SAMPLE;
+        filterBytes += bank.filter.length * bank.filter.numberOfChannels * MEMORY_UNITS.BYTES_PER_SAMPLE;
       }
     }
     return { banks: this.spatialBanks.size + this.omniBanks.size, nodes, filterBytes };

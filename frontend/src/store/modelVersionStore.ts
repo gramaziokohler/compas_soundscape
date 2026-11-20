@@ -95,6 +95,8 @@ export interface ModelVersionStoreState {
   setSessionBaseVersion: (modelId: string, versionId: string | null) => void;
   /** Load a version in place (latest → follow latest). */
   switchToVersion: (versionId: string, currentVersionId: string | null) => void;
+  /** Re-create the 3D viewer in place (crash recovery: WebGL context lost / render error). */
+  reloadViewer: () => void;
   /** Called once the viewer reports the version it loaded. */
   onVersionLoaded: (versionId: string | null) => void;
   showPublished: (versionId: string) => void;
@@ -219,6 +221,9 @@ export const useModelVersionStore = create<ModelVersionStoreState>()(
         get().resetForModel(modelId);
         set({ sessionBaseVersionId: versionId || null }, false, 'modelVersion/setSessionBase');
       },
+
+      reloadViewer: () =>
+        set((s) => ({ viewerReloadNonce: s.viewerReloadNonce + 1 }), false, 'modelVersion/reloadViewer'),
 
       switchToVersion: (versionId, currentVersionId) => {
         const latest = get().versions[0];

@@ -186,6 +186,12 @@ A/B comparison of simulations and listeners while playing must never cut the sou
   switch (it recreates every chain and stops their voices).
 - **Indicator:** `onIRSwapState` → `useIRSwapIndicator` → `transportTimeStore.isApplyingIRs`
   + progress; shown only after `IR_SWAP.SPINNER_DELAY_MS`.
+- **Scene reloads (new sound set) resume early.** `useSceneReloadPause` pauses only until
+  `SCENE_RELOAD.RESUME_FRACTION` of the sounds loaded (or `RESUME_AFTER_MS`). A clip whose
+  source is still loading is never voiced on a missing source: `Transport.dispatchClip` keeps
+  it in `silentClips`, and `handleSourceAdded` (subscribed via `orchestrator.onSourceAdded`
+  in `playback-scheduler-service.ts`) starts it mid-clip when the source arrives. Any
+  kill-and-restart (`play` / `seek` / graph change) clears `silentClips` and re-dispatches.
 
 - `decoders/OmnitoneDecoder.ts` is the only binaural decoder: `createFOARenderer` for order 1,
   `createHOARenderer` for orders 2/3. HRIRs are Omnitone's built-in set (no custom HRTF loading).

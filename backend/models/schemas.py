@@ -10,6 +10,7 @@ from config.constants import CA_AIR_HUMIDITY_DEFAULT
 from config.constants import CA_DIFFRACTION_DEFAULT
 from config.constants import AUDIO_SAMPLE_RATE
 from config.constants import BUG_REPORT_MAX_DESCRIPTION_CHARS
+from config.constants import CLIENT_DIAGNOSTICS_MAX_TEXT_CHARS
 from config.constants import CUSTOM_MATERIAL_CATEGORY
 from config.constants import CUSTOM_MATERIAL_CENTER_FREQS
 from config.constants import CUSTOM_MATERIAL_COEFF_MAX
@@ -1546,3 +1547,20 @@ class StudyMomentNote(BaseModel):
 
 class StudyOk(BaseModel):
     ok: bool = True
+
+
+class ClientDiagnosticEvent(BaseModel):
+    """A browser-side crash / emergency event (frontend lib/diagnostics/crash-reporter.ts).
+
+    ``kind``: ``crash`` (the previous tab session died without a clean exit — an
+    "Aw, Snap" or a killed frozen tab — reported on the next load), ``emergency``
+    (the emergency guard released memory / paused playback) or ``webgl-context-lost``.
+    ``details`` holds the last performance sample (memory, stalls, IR cache…).
+    """
+    kind: Literal["crash", "emergency", "webgl-context-lost", "render-error"]
+    page: str = Field(..., max_length=CLIENT_DIAGNOSTICS_MAX_TEXT_CHARS)
+    share_id: Optional[str] = Field(default=None, max_length=CLIENT_DIAGNOSTICS_MAX_TEXT_CHARS)
+    client_session_id: str = Field(..., max_length=CLIENT_DIAGNOSTICS_MAX_TEXT_CHARS)
+    occurred_at: str = Field(..., max_length=CLIENT_DIAGNOSTICS_MAX_TEXT_CHARS)
+    details: dict[str, Any] = Field(default_factory=dict)
+

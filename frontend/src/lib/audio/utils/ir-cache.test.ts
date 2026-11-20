@@ -1,15 +1,15 @@
 import { describe, it, expect, vi } from 'vitest';
-import { CRASH_PROBE } from '@/utils/constants';
+import { MEMORY_UNITS } from '@/utils/constants';
 import { IRCache } from './ir-cache';
 
 /** Minimal AudioBuffer stand-in: the cache only reads length and numberOfChannels. */
 function fakeBuffer(megabytes: number): AudioBuffer {
-  const length = (megabytes * CRASH_PROBE.BYTES_PER_MB) / CRASH_PROBE.BYTES_PER_SAMPLE;
+  const length = (megabytes * MEMORY_UNITS.BYTES_PER_MB) / MEMORY_UNITS.BYTES_PER_SAMPLE;
   return { length, numberOfChannels: 1 } as AudioBuffer;
 }
 
 const loader = (mb: number) => vi.fn(() => Promise.resolve(fakeBuffer(mb)));
-const MB = CRASH_PROBE.BYTES_PER_MB;
+const MB = MEMORY_UNITS.BYTES_PER_MB;
 
 describe('IRCache', () => {
   it('decodes each id once and shares concurrent requests', async () => {

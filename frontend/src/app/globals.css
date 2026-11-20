@@ -3270,3 +3270,40 @@ body:has(#scene-view-mode-toolbar:hover) .share-tutorial-tip[data-step='viewMode
 
 .font-sans { font-family: var(--font-sans); }
 .font-mono { font-family: var(--font-mono); }
+
+/* ── Viewer crash recovery (components/scene/ViewerRecoveryPanel.tsx) ── */
+.viewer-recovery {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-overlay-bg);
+}
+.viewer-recovery--page { position: fixed; }
+.viewer-recovery__card {
+  max-width: 360px;
+  padding: 16px 20px;
+  border-radius: 12px;
+  border: 1px solid var(--color-overlay-border);
+  background: var(--color-surface-2);
+  box-shadow: var(--shadow-lg);
+  color: var(--foreground);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.viewer-recovery__title { font-size: 13px; font-weight: 600; }
+.viewer-recovery__message { font-size: 11px; color: var(--color-secondary-hover); line-height: 1.4; }
+.viewer-recovery__button {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  background: var(--color-primary);
+  color: var(--color-on-blue);
+}

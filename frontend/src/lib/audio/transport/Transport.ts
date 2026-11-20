@@ -51,6 +51,12 @@ export class Transport {
 
   /** Clips already dispatched in the current play/seek run — never dispatched twice. */
   private dispatchedClipIds: Set<string> = new Set();
+  /**
+   * Clips whose sound had not loaded when they were due (no voice started). When the
+   * source arrives (handleSourceAdded) they start mid-clip, so playback can resume
+   * before a scene has fully loaded and late sounds join at the right offset.
+   */
+  private silentClips: Map<string, { track: ScoreTrack; clip: ScoreClip }> = new Map();
   private lookaheadTimer: ReturnType<typeof setInterval> | null = null;
 
   private onEndCallback: (() => void) | null = null;
@@ -174,6 +180,29 @@ export class Transport {
     this.seek(this.getPositionMs());
   }
 
+  /**
+   * A source finished loading while playing: start the clips that were skipped because
+   * it was missing — mid-clip when one is under way, at its scheduled time when it is
+   * still ahead in the lookahead window.
+   */
+  handleSourceAdded(sourceId: string): void {
+    if (!this.playing || !this.audioContext || !this.orchestrator) return;
+    const posMs = this.getPositionMs();
+    for (const [clipId, { track, clip }] of this.silentClips) {
+      const resolved = this.orchestrator.hasSource(clip.sourceId) ? clip.sourceId : track.trackId;
+      if (resolved !== sourceId && clip.sourceId !== sourceId) continue;
+      this.silentClips.delete(clipId);
+      const clipEndMs = clip.startMs + clip.durationMs;
+      if (clipEndMs <= posMs) continue;
+      if (clip.startMs > posMs) {
+        const whenCtx = this.startedAtCtxTime + (clip.startMs - this.startOffsetMs) / 1000;
+        this.dispatchClip(track, clip, whenCtx, 0);
+      } else {
+        this.dispatchClip(track, clip, this.audioContext.currentTime, posMs - clip.startMs);
+      }
+    }
+  }
+
   dispose(): void {
     this.stopLookahead();
     this.killAllVoices();
@@ -186,6 +215,8 @@ export class Transport {
 
   private killAllVoices(): void {
     this.orchestrator?.stopAllVoices();
+    // Every caller restarts dispatch from scratch (or stops), so skipped clips are moot.
+    this.silentClips.clear();
   }
 
   private startLookahead(): void {
@@ -264,6 +295,11 @@ export class Transport {
     // Fall back to the primary source if the resolved variant hasn't finished
     // loading yet, so playback isn't silently skipped.
     const sourceId = this.orchestrator.hasSource(clip.sourceId) ? clip.sourceId : primaryId;
+    if (!this.orchestrator.hasSource(sourceId)) {
+      // Still loading (scene reload): remember it; handleSourceAdded starts it late.
+      this.silentClips.set(clip.clipId, { track, clip });
+      return;
+    }
 
     if (clip.position) {
       const [x, y, z] = clip.position;

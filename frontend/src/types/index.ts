@@ -446,10 +446,10 @@ export * from './share';
 
 // Import and re-export diagnostics types
 import type {
-  AudioMemoryStats, SoundLightStats, CrashProbeRecord, RendererStats, AudioContextHealth,
-  PerformanceSupport, PerformanceSample, PerformanceMetricId, MeterLevel,
+  AudioMemoryStats, SoundLightStats, RendererStats, AudioContextHealth,
+  PerformanceSupport, PerformanceSample, PerformanceMetricId, MeterLevel, ClientDiagnosticEvent,
 } from './diagnostics';
 export type {
-  AudioMemoryStats, SoundLightStats, CrashProbeRecord, RendererStats, AudioContextHealth,
-  PerformanceSupport, PerformanceSample, PerformanceMetricId, MeterLevel,
+  AudioMemoryStats, SoundLightStats, RendererStats, AudioContextHealth,
+  PerformanceSupport, PerformanceSample, PerformanceMetricId, MeterLevel, ClientDiagnosticEvent,
 };

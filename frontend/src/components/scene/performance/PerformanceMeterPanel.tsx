@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { X } from 'lucide-react';
+import { Minus, X } from 'lucide-react';
 import { MeterBar } from '@/components/ui/MeterBar';
 import { Sparkline } from '@/components/ui/Sparkline';
 import { PERFORMANCE_METER, SCENE_BOTTOM_BAR } from '@/utils/constants';
@@ -11,9 +11,9 @@ import { detailRows, metricTitle, metricValueText } from './performance-format';
 
 export interface PerformanceMeterPanelProps {
   state: PerformanceMeterState;
-  /** Close the panel (the strip stays). */
+  /** Reduce the panel back to the strip (header "–" button). */
   onClose: () => void;
-  /** Turn the whole meter off (back to the Gauge button). */
+  /** Turn the whole meter off, back to the Gauge button (header "×" button). */
   onHideMeter: () => void;
   onResetPeaks: () => void;
 }
@@ -21,7 +21,7 @@ export interface PerformanceMeterPanelProps {
 /**
  * Expanded performance meter, opened above the bottom-bar strip: one row per
  * metric (bar + peak tick + 60 s sparkline + value) and a "Details" disclosure.
- * Stays open until its close button (or the strip) is clicked.
+ * Stays open until reduced ("–" or the strip) or the meter is hidden ("×").
  */
 export function PerformanceMeterPanel({ state, onClose, onHideMeter, onResetPeaks }: PerformanceMeterPanelProps) {
   const [showDetails, setShowDetails] = useState(false);
@@ -45,7 +45,10 @@ export function PerformanceMeterPanel({ state, onClose, onHideMeter, onResetPeak
           <span className={`perf-meter-dot perf-level--${headroom}`} />
           {PERFORMANCE_METER.HEADROOM_WORDS[headroom]}
         </span>
-        <button type="button" className="perf-meter-panel__close" title={PERFORMANCE_METER.CLOSE_PANEL_TITLE} onClick={onClose}>
+        <button type="button" className="perf-meter-panel__close" title={PERFORMANCE_METER.REDUCE_PANEL_TITLE} onClick={onClose}>
+          <Minus size={12} aria-hidden="true" />
+        </button>
+        <button type="button" className="perf-meter-panel__close" title={PERFORMANCE_METER.HIDE_TITLE} onClick={onHideMeter}>
           <X size={12} aria-hidden="true" />
         </button>
       </div>
@@ -75,9 +78,6 @@ export function PerformanceMeterPanel({ state, onClose, onHideMeter, onResetPeak
           onClick={() => setShowDetails((v) => !v)}
         >
           {showDetails ? '▾' : '▸'} Details
-        </button>
-        <button type="button" className="perf-meter-panel__details-toggle" onClick={onHideMeter}>
-          {PERFORMANCE_METER.HIDE_TITLE}
         </button>
       </div>
       {showDetails && (

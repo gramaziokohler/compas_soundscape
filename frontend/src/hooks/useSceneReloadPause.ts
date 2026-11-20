@@ -1,9 +1,11 @@
 /**
  * useSceneReloadPause — when a scene switch replaces the sound set (share-link scene or
- * simulation change), the timeline waits for the new scene instead of playing it
- * half-loaded: playback pauses, the bottom bar shows "Loading sounds n/N", and once every
- * buffer is in and the new sources have their simulation IRs, playback resumes where it
- * paused. A safety timeout resumes anyway if a load hangs.
+ * simulation change), playback pauses only briefly: it resumes as soon as the scene is
+ * "safe enough" — SCENE_RELOAD.RESUME_FRACTION of its sounds loaded, or after
+ * SCENE_RELOAD.RESUME_AFTER_MS at most — while the bottom bar keeps showing
+ * "Loading sounds n/N" until every sound is in. Sounds that arrive after the resume
+ * join mid-clip (Transport.handleSourceAdded), and the finished scene gets its
+ * simulation IRs in one swap (orchestrator.refreshSourceIRs).
  */
 import { useEffect, useRef } from 'react';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
@@ -24,45 +26,47 @@ export function useSceneReloadPause({ audioOrchestrator, isPlaying, onPause, onP
 
   useEffect(() => {
     const { setSceneLoadProgress } = useTransportTimeStore.getState();
+    let reloading = false;
     let pausedByReload = false;
-    let reloadSeq = 0;
-    let safetyTimer: ReturnType<typeof setTimeout> | null = null;
+    let resumeTimer: ReturnType<typeof setTimeout> | null = null;
     let unsubscribeManager: (() => void) | null = null;
 
-    const resume = (seq: number) => {
-      if (seq !== reloadSeq) return; // a newer reload started meanwhile
-      if (safetyTimer !== null) clearTimeout(safetyTimer);
-      safetyTimer = null;
-      setSceneLoadProgress(null);
-      if (pausedByReload) {
-        pausedByReload = false;
-        live.current.onPlay();
-      }
+    const clearTimer = () => {
+      if (resumeTimer !== null) clearTimeout(resumeTimer);
+      resumeTimer = null;
     };
 
-    let reloading = false;
+    /** Play again (if this reload paused it); the progress widget stays until the end. */
+    const resumePlayback = () => {
+      clearTimer();
+      if (!pausedByReload) return;
+      pausedByReload = false;
+      live.current.onPlay();
+    };
+
     const onProgress = (progress: { loaded: number; total: number } | null) => {
       if (progress) {
         setSceneLoadProgress(progress);
         if (!reloading) {
           reloading = true;
-          reloadSeq++;
-          if (live.current.isPlaying && !pausedByReload) {
+          if (live.current.isPlaying) {
             pausedByReload = true;
             live.current.onPause();
+            resumeTimer = setTimeout(resumePlayback, SCENE_RELOAD.RESUME_AFTER_MS);
           }
-          const seq = reloadSeq;
-          safetyTimer = setTimeout(() => resume(seq), SCENE_RELOAD.MAX_PAUSE_MS);
+        }
+        if (pausedByReload && progress.loaded >= Math.ceil(progress.total * SCENE_RELOAD.RESUME_FRACTION)) {
+          resumePlayback();
         }
         return;
       }
-      // Every buffer is in: give the new sources their IRs before playing again.
+      // Every sound is in: resume if still waiting, then give the whole scene its IRs.
       reloading = false;
-      const seq = reloadSeq;
-      const orchestrator = live.current.audioOrchestrator;
-      (orchestrator ? orchestrator.refreshSourceIRs() : Promise.resolve())
-        .catch((error) => console.error('[useSceneReloadPause] IR refresh failed:', error))
-        .finally(() => resume(seq));
+      resumePlayback();
+      setSceneLoadProgress(null);
+      live.current.audioOrchestrator
+        ?.refreshSourceIRs()
+        .catch((error) => console.error('[useSceneReloadPause] IR refresh failed:', error));
     };
 
     const attach = () => {
@@ -78,7 +82,7 @@ export function useSceneReloadPause({ audioOrchestrator, isPlaying, onPause, onP
     return () => {
       unsubscribeEngine();
       unsubscribeManager?.();
-      if (safetyTimer !== null) clearTimeout(safetyTimer);
+      clearTimer();
       setSceneLoadProgress(null);
     };
   }, []);

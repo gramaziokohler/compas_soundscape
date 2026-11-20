@@ -5,11 +5,11 @@
 import { useEffect } from 'react';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
 import { useUIStore } from '@/store';
-import { CRASH_PROBE } from '@/utils/constants';
+import { MEMORY_UNITS } from '@/utils/constants';
 
 export function useIRCacheBudgetSync(orchestrator: AudioOrchestrator | null): void {
   const budgetMB = useUIStore((s) => s.irCacheBudgetMB);
   useEffect(() => {
-    orchestrator?.setIRCacheBudget(budgetMB === null ? null : budgetMB * CRASH_PROBE.BYTES_PER_MB);
+    orchestrator?.setIRCacheBudget(budgetMB === null ? null : budgetMB * MEMORY_UNITS.BYTES_PER_MB);
   }, [orchestrator, budgetMB]);
 }

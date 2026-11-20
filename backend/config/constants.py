@@ -1336,6 +1336,18 @@ BUG_REPORT_MAX_CONTEXT_BYTES = 256 * 1024
 BUG_REPORT_SCREENSHOT_BASENAME = "screenshot"
 
 # ============================================================================
+# Client diagnostics (routers/client_diagnostics.py, services/client_diagnostics_service.py)
+# ============================================================================
+# Browser-side crash / emergency events from the editor AND the public share view
+# (POST /api/public/client-diagnostics, unauthenticated). One JSON object per line;
+# read on the server with `python scripts/list_client_diagnostics.py`.
+CLIENT_DIAGNOSTICS_LOG = BACKEND_DIR / "data" / "logs" / "client_diagnostics.jsonl"
+CLIENT_DIAGNOSTICS_MAX_LOG_BYTES = 5 * 1024 * 1024  # rotated to .1 beyond this
+CLIENT_DIAGNOSTICS_MAX_DETAILS_BYTES = 16 * 1024
+CLIENT_DIAGNOSTICS_MAX_TEXT_CHARS = 512
+CLIENT_DIAGNOSTICS_KINDS = ("crash", "emergency", "webgl-context-lost", "render-error")
+
+# ============================================================================
 # Model versions & update impact (services/speckle_version_service.py,
 # services/model_version_impact_service.py, routers/speckle.py)
 # ============================================================================

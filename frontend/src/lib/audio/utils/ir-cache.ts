@@ -7,7 +7,7 @@
  *   so switching back to a recently compared simulation stays instant.
  * - Pinned ids (the IRs playing now and the swap being prepared) are never evicted.
  */
-import { CRASH_PROBE, IR_CACHE } from '@/utils/constants';
+import { MEMORY_UNITS, IR_CACHE } from '@/utils/constants';
 
 export interface IRCacheStats {
   count: number;
@@ -22,7 +22,7 @@ export interface IRCacheStats {
 }
 
 function bufferBytes(buffer: AudioBuffer): number {
-  return buffer.length * buffer.numberOfChannels * CRASH_PROBE.BYTES_PER_SAMPLE;
+  return buffer.length * buffer.numberOfChannels * MEMORY_UNITS.BYTES_PER_SAMPLE;
 }
 
 /** Budget in bytes from the device RAM (GB, rounded by the browser), clamped. */
@@ -32,7 +32,7 @@ export function defaultIRCacheBudgetBytes(): number {
   const mb = deviceMemoryGB
     ? Math.min(IR_CACHE.MAX_MB, Math.max(IR_CACHE.MIN_MB, deviceMemoryGB * IR_CACHE.MB_PER_GB))
     : IR_CACHE.DEFAULT_MB;
-  return mb * CRASH_PROBE.BYTES_PER_MB;
+  return mb * MEMORY_UNITS.BYTES_PER_MB;
 }
 
 export class IRCache {

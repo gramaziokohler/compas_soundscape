@@ -3077,7 +3077,7 @@ export const SCENE_BOTTOM_BAR = {
   APPLYING_IRS_LABEL: 'Applying acoustics…',
   APPLYING_IRS_TITLE: "Loading the simulation's impulse responses into the convolvers",
   LOADING_SOUNDS_LABEL: 'Loading sounds…',
-  LOADING_SOUNDS_TITLE: 'The new scene starts once all of its sounds have loaded',
+  LOADING_SOUNDS_TITLE: 'The new scene plays as its sounds arrive; the rest join as they finish loading',
 } as const;
 
 /** Top-centre `Sounds | Default | Acoustics` radiogroup — anchor of the share-view tutorial's view-mode tip. */
@@ -3415,28 +3415,10 @@ export const ACOUSTIC_MATERIALS_SUMMARY = {
   TOOLTIP_SEPARATOR: '\n',
 } as const;
 
-// Crash probe (lib/diagnostics/crash-probe.ts) — opt-in with `?diag=1`, off with `?diag=0`.
-// Samples memory / audio / WebGL stats and keeps the tail in localStorage so a tab that
-// died ("Aw, Snap") or froze can be inspected after reload.
-export const CRASH_PROBE = {
-  QUERY_PARAM: 'diag',
-  ENABLED_STORAGE_KEY: 'compas-diag-enabled',
-  RECORDS_STORAGE_KEY: 'compas-diag-records',
-  SAMPLE_INTERVAL_MS: 2000,
-  MAX_RECORDS: 2000,
-  /** Main-thread tasks at least this long are recorded as freezes. */
-  LONG_TASK_MS: 200,
-  /** Records printed from the previous session when it did not end cleanly. */
-  PREVIOUS_SESSION_TAIL: 15,
+// Byte sizes shared by the IR cache, the performance monitor and the meter.
+export const MEMORY_UNITS = {
   BYTES_PER_MB: 1024 * 1024,
   BYTES_PER_SAMPLE: 4, // AudioBuffer channels are Float32
-  LOG_PREFIX: '[dbg:crash-probe]',
-  /** [dbg:heap] a single probed call this slow, or allocating this much, is logged on its own. */
-  HEAP_PROBE_SLOW_MS: 50,
-  HEAP_PROBE_ALLOC_MB: 20,
-  /** Wait for the viewer's extensions before wrapping them (~30 s at most). */
-  HEAP_PROBE_INSTALL_RETRY_MS: 500,
-  HEAP_PROBE_INSTALL_ATTEMPTS: 60,
 } as const;
 
 // Simulation / listener IR swap (AudioOrchestrator.swapSourceIRs + AmbisonicIRMode.commitSourceIRs).
@@ -3502,14 +3484,17 @@ export const PERFORMANCE_METER = {
   XRUN_WINDOW_MS: 30000,
   /**
    * Memory thresholds scale with the TAB's ceiling, not the machine: Chrome kills a
-   * renderer ("Aw, Snap") at a per-tab limit whatever the RAM (the crash came at ~1.6 GB
-   * heap of a 4.1 GB jsHeapSizeLimit on a 32 GB machine). Red = CRIT_FRACTION of the heap
-   * limit (DEFAULT_TAB_LIMIT_MB where the browser hides it), amber = WARN_FRACTION; on a
-   * small machine both are also capped to a share of its RAM (navigator.deviceMemory).
+   * renderer ("Aw, Snap") at a per-tab limit whatever the RAM (jsHeapSizeLimit ≈ 4.1 GB
+   * here, on a 32 GB machine). Measured: the first crash happened at ~1.6 GB heap, but a
+   * later stress test peaked at the same ~1.65 GB WITHOUT crashing once the shader
+   * recompiles and overlapping IR swaps were fixed — that crash was a main-thread / GPU
+   * stall, not heap exhaustion. So amber (40 %) is "heavy but measured safe" and red
+   * (60 % ≈ 2.5 GB) is genuinely past anything observed. DEFAULT_TAB_LIMIT_MB where the
+   * browser hides the heap; on a small machine red is also capped to a share of its RAM.
    */
   MEMORY: {
-    WARN_FRACTION: 0.3,
-    CRIT_FRACTION: 0.45,
+    WARN_FRACTION: 0.4,
+    CRIT_FRACTION: 0.6,
     DEFAULT_TAB_LIMIT_MB: 4096,
     DEVICE_CRIT_FRACTION: 0.25,
     MB_PER_GB: 1024,
@@ -3541,7 +3526,7 @@ export const PERFORMANCE_METER = {
   HEADROOM_WORDS: { ok: 'OK', warn: 'Tight', crit: 'Critical', na: '—' },
   BUTTON_TITLE: 'Performance meter',
   HIDE_TITLE: 'Hide meter',
-  CLOSE_PANEL_TITLE: 'Close panel',
+  REDUCE_PANEL_TITLE: 'Reduce to the bar',
   AUDIO_ONLY_NOTE: 'audio only — this browser does not report heap memory',
   NOT_SUPPORTED_NOTE: 'not available in this browser',
 } as const;
@@ -3553,7 +3538,7 @@ export const PERFORMANCE_METER = {
 export const EMERGENCY_GUARD = {
   SAMPLE_INTERVAL_MS: 1000,
   /** Estimated app memory above this multiple of the meter's red, for CONSECUTIVE_SAMPLES. */
-  CRITICAL_MEMORY_FACTOR: 1.33,
+  CRITICAL_MEMORY_FACTOR: 1.25, // ≈ 75 % of the tab heap limit
   CONSECUTIVE_SAMPLES: 2,
   /** Main-thread blocks this long, STALL_REPEAT_COUNT times within STALL_REPEAT_WINDOW_MS. */
   CRITICAL_STALL_MS: 1000,
@@ -3568,8 +3553,45 @@ export const EMERGENCY_GUARD = {
 } as const;
 
 // Scene reload (lib/three/scene-reload-tracker.ts + hooks/useSceneReloadPause.ts): a scene
-// switch that replaces the sound set pauses the timeline until the new sounds are loaded.
+// switch that replaces the sound set pauses playback briefly, resumes once the scene is
+// "safe enough" and keeps the progress widget until every sound is in (late sounds join
+// mid-clip through Transport.handleSourceAdded).
 export const SCENE_RELOAD = {
-  /** Resume playback anyway after this long if a load hangs (ms). */
-  MAX_PAUSE_MS: 20000,
+  /** Resume once this share of the new scene's sounds has loaded. */
+  RESUME_FRACTION: 0.5,
+  /** Resume at the latest after this long, however many sounds are in (ms). */
+  RESUME_AFTER_MS: 3000,
+} as const;
+
+// Crash reporter (lib/diagnostics/crash-reporter.ts): always-on, silent heartbeat per tab;
+// a heartbeat that stopped without a clean pagehide is reported on the next load as a
+// crash to the backend client-diagnostics log (backend/data/logs/client_diagnostics.jsonl).
+export const CLIENT_DIAGNOSTICS = {
+  SESSION_KEY_PREFIX: 'compas-alive:',
+  HEARTBEAT_MS: 5000,
+  /** A heartbeat older than this belongs to a dead session (live tabs refresh every HEARTBEAT_MS). */
+  STALE_MS: 20000,
+  /** Same for a tab that was hidden at its last beat (background tabs barely run timers). */
+  HIDDEN_STALE_MS: 6 * 60 * 60 * 1000,
+} as const;
+
+// Viewer crash recovery (components/scene/ViewerRecoveryPanel.tsx). A browser renderer
+// crash ("Aw, Snap") kills the whole tab and cannot be caught; these cover what can:
+// a lost WebGL context and a render error inside the 3D scene.
+export const VIEWER_RECOVERY = {
+  RELOAD_LABEL: 'Reload 3D view',
+  CONTEXT_LOST_TITLE: 'The 3D view stopped',
+  CONTEXT_LOST_MESSAGE: 'The graphics card reset the 3D view (often a lack of graphics memory on very large models). Sound keeps playing; reload the view to continue.',
+  RENDER_ERROR_TITLE: 'The 3D scene hit an error',
+  RENDER_ERROR_MESSAGE: 'Your work is saved. Reload the 3D view to continue.',
+  /** Characters of the error stack sent to the backend log. */
+  STACK_CHARS: 2000,
+} as const;
+
+// App-level error fallback (components/ui/AppErrorPanel.tsx, app/error.tsx, app/global-error.tsx).
+export const APP_ERROR = {
+  TITLE: 'Something went wrong',
+  MESSAGE: 'This part of the app hit an error. Your work is saved; try again or reload the page.',
+  RETRY_LABEL: 'Try again',
+  RELOAD_LABEL: 'Reload page',
 } as const;

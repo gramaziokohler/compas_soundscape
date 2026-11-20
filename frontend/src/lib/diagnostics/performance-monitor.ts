@@ -1,6 +1,6 @@
 /**
  * Performance monitor — ONE sampler shared by every consumer (performance meter,
- * `?diag=1` crash probe, emergency guard), so nothing is polled twice.
+ * crash reporter, emergency guard), so nothing is polled twice.
  *
  * - `setPerformanceSources()` wires the live app objects (page.tsx, usePerformanceSources).
  * - `subscribePerformance()` registers a consumer with its own interval. The monitor
@@ -10,7 +10,7 @@
  * - Owns the long-task observer, the WebGL context-loss watcher, the frame tracker
  *   (rAF only while a subscriber `needsFrames`) and the audio dropout tracker.
  */
-import { CRASH_PROBE, PERFORMANCE_METER } from '@/utils/constants';
+import { MEMORY_UNITS, PERFORMANCE_METER } from '@/utils/constants';
 import type {
   AudioContextHealth,
   AudioMemoryStats,
@@ -54,7 +54,7 @@ interface PerformanceMemory {
   jsHeapSizeLimit: number;
 }
 
-const toMB = (bytes: number) => bytes / CRASH_PROBE.BYTES_PER_MB;
+const toMB = (bytes: number) => bytes / MEMORY_UNITS.BYTES_PER_MB;
 
 let sources: PerformanceSources | null = null;
 const subscribers = new Set<SubscriberState>();

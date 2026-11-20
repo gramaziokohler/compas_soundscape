@@ -24,6 +24,8 @@ import { useSpeckleViewerInit } from '@/components/scene/hooks/useSpeckleViewerI
 import { useSpeckleFPS } from '@/components/scene/hooks/useSpeckleFPS';
 import { useEmergencyGuard } from '@/hooks/useEmergencyGuard';
 import { useSceneReloadPause } from '@/hooks/useSceneReloadPause';
+import { useWebGLContextRecovery } from '@/hooks/useWebGLContextRecovery';
+import { ViewerRecoveryPanel } from '@/components/scene/ViewerRecoveryPanel';
 import { useFaceFocusedSound } from '@/components/scene/hooks/useFaceFocusedSound';
 import { useSpeckleAreaDrawing } from '@/components/scene/hooks/useSpeckleAreaDrawing';
 import { useSpeckleAnalysisPreview } from '@/components/scene/hooks/useSpeckleAnalysisPreview';
@@ -70,7 +72,7 @@ import { DesignIntentPrompt } from './DesignIntentPrompt';
 import { ModelVersionBanner } from '@/components/scene/model-version/ModelVersionBanner';
 import { ModelVersionReviewPanel } from '@/components/scene/model-version/ModelVersionReviewPanel';
 import { useModelVersionStore } from '@/store';
-import { HOME_STAGE, SCENE_BOTTOM_BAR, UI_RIGHT_SIDEBAR } from '@/utils/constants';
+import { HOME_STAGE, SCENE_BOTTOM_BAR, UI_RIGHT_SIDEBAR, VIEWER_RECOVERY } from '@/utils/constants';
 import type { SoundEvent, ReceiverData } from '@/types';
 import type { AuralizationConfig } from '@/types/audio';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
@@ -1066,6 +1068,8 @@ export function SpeckleScene({
   });
   // A scene switch that replaces the sound set pauses the timeline until the new
   // sounds (and their IRs) are loaded, then resumes — never a half-loaded scene.
+  const { contextLost: webglContextLost, reloadViewer: reloadViewerAfterContextLoss } = useWebGLContextRecovery();
+
   useSceneReloadPause({
     audioOrchestrator,
     isPlaying: playbackState.isPlaying,
@@ -1180,6 +1184,15 @@ export function SpeckleScene({
         style={{ width: '100%', height: '100%' }}
         id="speckle-scene-container"
       />
+
+      {/* WebGL context lost (GPU reset / out of graphics memory): offer to re-create the viewer */}
+      {webglContextLost && (
+        <ViewerRecoveryPanel
+          title={VIEWER_RECOVERY.CONTEXT_LOST_TITLE}
+          message={VIEWER_RECOVERY.CONTEXT_LOST_MESSAGE}
+          onReload={reloadViewerAfterContextLoss}
+        />
+      )}
 
       {/* View Mode Toolbar — hidden on the Home sandbox stage */}
       {isViewerReady && !isSandbox && <SceneViewModeToolbar />}

@@ -69,9 +69,8 @@ import {
   formatAudioBufferInfo
 } from './utils/audio-file-decoder';
 import { decodeAudioAllChannels } from './utils/wav-multichannel';
-import { AUDIO_CONTROL, AUDIO_SAMPLE_RATE, CRASH_PROBE, DEFAULT_SPEED_OF_SOUND, API_BASE_URL, IR_SWAP } from '@/utils/constants';
+import { AUDIO_CONTROL, AUDIO_SAMPLE_RATE, MEMORY_UNITS, DEFAULT_SPEED_OF_SOUND, API_BASE_URL, IR_SWAP } from '@/utils/constants';
 import { registerOutputDeviceTarget } from './output-device';
-import { markCrashProbe } from '@/lib/diagnostics/crash-probe';
 import type { AudioContextHealth, AudioMemoryStats } from '@/types';
 import { OutputLevelMeter } from './utils/output-level-meter';
 import { AmbisonicSendController } from './output/AmbisonicSendController';
@@ -203,7 +202,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   // in-cell nudges — all sharing the wet posKey) self-heals back to convolved.
   private sourceIRAppliedKey: Map<string, string> = new Map();
 
-  // [dbg:crash-probe] IR swaps still preparing (>1 = a superseded one still winding down).
+  // IR swaps still preparing (>1 = a superseded one still winding down; performance meter).
   private irRunsInFlight = 0;
   /** Most swaps preparing at once since the last getMemoryStats() (a 1 Hz sample misses short ones). */
   private irRunsPeak = 0;
@@ -233,6 +232,8 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   // Transport, not here, so listeners re-dispatch their in-flight voices onto the
   // new mode instance. This is what lets timeline playback survive a mode switch.
   private graphChangeListeners = new Set<() => void>();
+  /** Notified when createSource registers a source (Transport starts clips it skipped). */
+  private sourceAddedListeners = new Set<(sourceId: string) => void>();
 
   // Monotonic counter bumped at the start of each mode switch. A switch only
   // notifies its listeners if it is still the latest one, so rapid toggling can
@@ -726,7 +727,6 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     simulationSourcePositions?: Record<string, [number, number, number]>,
     simulationSoundToPosKey?: Record<string, string>
   ): Promise<void> {
-    markCrashProbe('ir-mapping-set', { simulationMode, sources: Object.keys(mapping).length, receiver: initialReceiverId ?? null });
     this.setIRMapping(mapping);
     this.simulationMode = simulationMode;
     this.activeReceiverId = initialReceiverId || this.activeReceiverId;
@@ -790,7 +790,6 @@ export class AudioOrchestrator implements IAudioOrchestrator {
    */
   async updateActiveReceiver(receiverId: string): Promise<void> {
     console.log('[AudioOrchestrator] 🎯 updateActiveReceiver called:', receiverId);
-    markCrashProbe('listener-switch', { receiverId });
 
     // Record the choice even without a mapping: a listener picked before a
     // simulation is activated must be the one heard once it is.
@@ -846,7 +845,6 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     if (!opts.force) {
       if (this.pendingIRSwap?.key === key) return this.pendingIRSwap.promise;
       if (!this.pendingIRSwap && this.appliedIRSwapKey === key) {
-        markCrashProbe('ir-swap-skip', { receiverId });
         return;
       }
     }
@@ -891,9 +889,6 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     this.irRunsInFlight++;
     this.irRunsPeak = Math.max(this.irRunsPeak, this.irRunsInFlight);
     this.irSwapCount++;
-    const startedAt = performance.now();
-    const decodesBefore = this.irCache.stats().decodes;
-    markCrashProbe('ir-run-start', { receiverId, inFlight: this.irRunsInFlight, sources: plan.length, fade });
     this.irCache.pin(plan.flatMap((p) => (p.meta ? [p.meta.id] : [])), true);
     this.publishIRSwapState({ phase: 'preparing', loaded: 0, total: plan.length });
 
@@ -915,7 +910,6 @@ export class AudioOrchestrator implements IAudioOrchestrator {
       }
 
       if (epoch !== this.irSwapEpoch || this.currentModeInstance !== mode) {
-        markCrashProbe('ir-swap-superseded', { receiverId });
         return;
       }
 
@@ -951,16 +945,6 @@ export class AudioOrchestrator implements IAudioOrchestrator {
       this.appliedIRSwapKey = key;
     } finally {
       this.irRunsInFlight--;
-      const cache = this.irCache.stats();
-      markCrashProbe('ir-run-end', {
-        receiverId,
-        ms: Math.round(performance.now() - startedAt),
-        inFlight: this.irRunsInFlight,
-        superseded: epoch !== this.irSwapEpoch,
-        decodes: cache.decodes - decodesBefore,
-        irCacheCount: cache.count,
-        irCacheMB: Math.round(cache.bytes / CRASH_PROBE.BYTES_PER_MB),
-      });
       if (epoch === this.irSwapEpoch) this.publishIRSwapState({ phase: 'idle', loaded: 0, total: 0 });
     }
   }
@@ -974,7 +958,6 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     const ctx = this.audioContext;
     const oldMode = this.ambisonicIRMode;
     if (!ctx || !oldMode) return;
-    markCrashProbe('ir-order-swap', { from: oldMode.getAmbisonicOrder(), to: order });
 
     const next = new AmbisonicIRMode();
     await next.initialize(ctx);
@@ -1024,7 +1007,6 @@ export class AudioOrchestrator implements IAudioOrchestrator {
    * Clear IR cache (called when simulation changes)
    */
   private clearIRCache(): void {
-    markCrashProbe('ir-cache-clear', { count: this.irCache.stats().count });
     this.irCache.clear();
     this.appliedIRSwapKey = null;
     console.log('[AudioOrchestrator] IR cache cleared');
@@ -1045,7 +1027,6 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     simulationSourcePositions?: Record<string, [number, number, number]>,
     simulationSoundToPosKey?: Record<string, string>
   ): Promise<void> {
-    markCrashProbe('ir-mapping-hotswap', { simulationMode, sources: Object.keys(mapping).length, receiver: activeReceiverId ?? null });
     this.setIRMapping(mapping);
     this.simulationMode = simulationMode;
     this.activeReceiverId = activeReceiverId || this.activeReceiverId;
@@ -1579,6 +1560,23 @@ export class AudioOrchestrator implements IAudioOrchestrator {
       const posKey = this.resolveSimSourcePosKey([position.x, position.y, position.z], sourceId);
       this.resolveSourceIR(sourceId, posKey);
     }
+
+    // Let playback start clips it had to skip while this source was still loading.
+    for (const listener of this.sourceAddedListeners) {
+      try {
+        listener(sourceId);
+      } catch (error) {
+        console.error('[AudioOrchestrator] source-added listener failed:', error);
+      }
+    }
+  }
+
+  /** Subscribe to source creation (a sound finished loading). Returns an unsubscribe function. */
+  onSourceAdded(callback: (sourceId: string) => void): () => void {
+    this.sourceAddedListeners.add(callback);
+    return () => {
+      this.sourceAddedListeners.delete(callback);
+    };
   }
 
   /**
@@ -2121,7 +2119,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     return peak;
   }
 
-  /** IR cache, convolver and in-flight IR-run stats (crash probe). */
+  /** IR cache, convolver and in-flight IR-run stats (performance monitor). */
   getMemoryStats(): AudioMemoryStats {
     const cache = this.irCache.stats();
     const convolvers = this.ambisonicIRMode?.getConvolverStats() ?? { banks: 0, nodes: 0, filterBytes: 0 };

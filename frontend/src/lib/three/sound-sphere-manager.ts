@@ -15,7 +15,6 @@ import { useAudioControlsStore } from "@/store/audioControlsStore";
 import { resolveSoundAudioUrl } from "@/lib/audio/utils/resolve-sound-url";
 import { orderVariants } from "@/lib/audio/utils/variant-sound-id";
 import { syncDirectionIndicator } from "@/lib/three/sound-direction-indicator";
-import { markCrashProbe } from "@/lib/diagnostics/crash-probe";
 import { SceneReloadTracker, type SceneReloadProgress } from "@/lib/three/scene-reload-tracker";
 // import type { BoundingBoxBounds } from "@/lib/three/BoundingBoxManager"; // Bounding-box placement removed
 
@@ -717,9 +716,8 @@ export class SoundSphereManager {
       }
     }
 
-    // [dbg:ir-swap] which sources a scene / simulation switch removes (share view reloads)
+    // Sounds this sync removes (a scene / simulation switch replacing the sound set)
     const removedIds = [...this.soundMetadata.keys()].filter((id) => !visibleSoundIds.has(id));
-    if (removedIds.length > 0) markCrashProbe('sound-sources-removed', { count: removedIds.length, kept: this.soundMetadata.size - removedIds.length });
 
     // Remove audio sources and stale positions for sounds no longer visible
     for (const [soundId] of this.soundMetadata) {
@@ -1830,7 +1828,7 @@ export class SoundSphereManager {
   }
 
   /**
-   * Sounds-view lights (crash probe / performance meter): sound lights, how many of
+   * Sounds-view lights (performance meter): sound lights, how many of
    * them currently shine through the pool, and the fixed pool size the renderer sees.
    */
   public getLightStats(): { total: number; visible: number; pool: number } {

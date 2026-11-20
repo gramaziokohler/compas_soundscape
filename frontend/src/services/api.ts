@@ -5,7 +5,7 @@ import type { GeometricEngineSettings } from '@/types/acoustics';
 import type { AcousticPathKind, AcousticPathsJobResult, AcousticPathsPayload } from '@/types/acousticPaths';
 import { API_BASE_URL, SHARE_VIEW, SPECKLE_DIRECT_UPLOAD, SPECKLE_INGESTION } from '@/utils/constants';
 import { isShareViewActive, useShareViewStore } from '@/store/shareViewStore';
-import type { CompasGeometry, SoundEvent, SoundGenerationConfig, FileUploadResponse, JobType, JobRecord, UserPreferences, BugReportPayload, BugReportCreated } from '@/types';
+import type { CompasGeometry, SoundEvent, SoundGenerationConfig, FileUploadResponse, JobType, JobRecord, UserPreferences, BugReportPayload, BugReportCreated, ClientDiagnosticEvent } from '@/types';
 import { recordFailedRequest } from '@/lib/diagnostics/diagnosticsBuffer';
 import type { TtsCustomVoice, TtsCustomVoiceCreateRequest, TtsDialectsResponse, TtsLanguageMatch } from '@/types/ttsLanguage';
 import type { ImpulseResponseMetadata, IRMetricBlocks } from '@/types/audio';
@@ -591,6 +591,29 @@ export const apiService = {
     if (!response.ok) throw new Error('Failed to save preferences');
     const data = await response.json().catch(() => ({}));
     return prefsFromWire(data ?? {});
+  },
+
+  // ─── Client diagnostics (crash / emergency log) ─────────────────────────
+  /**
+   * Record a browser crash / emergency event in the backend client-diagnostics log.
+   * Public endpoint (works from the share view); keepalive so it survives an unload.
+   * Best effort: failures are swallowed.
+   */
+  async reportClientDiagnostic(event: ClientDiagnosticEvent): Promise<void> {
+    try {
+      await fetchWithErrorHandling(
+        `${API_BASE_URL}${SHARE_VIEW.PUBLIC_API_PREFIX}/client-diagnostics`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(event),
+          keepalive: true,
+        },
+        'Report client diagnostic'
+      );
+    } catch {
+      // Diagnostics must never surface errors to the user.
+    }
   },
 
   // ─── Bug reports ────────────────────────────────────────────────────────

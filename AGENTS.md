@@ -62,6 +62,10 @@ pnpm build
 - Routers only validate, dispatch to a service, and return; `backend/utils/` holds stateless helpers.
 - `compas_acoustics_engine.py` is the default geometric-acoustics engine; `hybrid_job.py` runs PFFDTD below
   the crossover and compas_acoustics above. `backend/pffdtd_backend/` is vendored and runs only in `compas-pffdtd`.
+- Browser crash / emergency log: `backend/data/logs/client_diagnostics.jsonl` (rotated to `.1`), written by
+  `POST /api/public/client-diagnostics` from every view incl. the share view (crashes detected on the next load
+  via a localStorage heartbeat; emergency-guard triggers; WebGL context loss; scene render errors). Read it with
+  `python scripts/list_client_diagnostics.py [--kind crash]`.
 - Transient output goes under `backend/temp/` (gitignored); durable data under `backend/data/`
   (`app.db`, `soundscapes/`, `directivities/<user_hash>/`).
 

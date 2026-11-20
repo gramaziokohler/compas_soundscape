@@ -7,6 +7,7 @@
 import { useEffect, useRef } from 'react';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
 import { notifyError } from '@/store';
+import { isShareViewActive } from '@/store/shareViewStore';
 import { startEmergencyGuard } from '@/lib/diagnostics/emergency-guard';
 import { EMERGENCY_GUARD } from '@/utils/constants';
 
@@ -33,7 +34,10 @@ export function useEmergencyGuard({ audioOrchestrator, isPlaying, onPause, onPla
         isPlaying: () => live.current.isPlaying,
         pause: () => live.current.onPause(),
         resume: () => live.current.onPlay(),
-        notify: (message, type) => notifyError(message, type),
+        // Share-view visitors get no warning: events go to the backend log only.
+        notify: (message, type) => {
+          if (!isShareViewActive()) notifyError(message, type);
+        },
       }),
     [],
   );

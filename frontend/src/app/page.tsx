@@ -64,8 +64,11 @@ import { reapplyUserPreferences } from "@/lib/user-preferences-sync";
 import { useAudioOrchestrator } from "@/hooks/useAudioOrchestrator";
 import { useAudioOutputDeviceSync } from "@/hooks/useAudioOutputDeviceSync";
 import { useAmbisonicSendSync } from "@/hooks/useAmbisonicSendSync";
-import { useCrashProbe } from "@/hooks/useCrashProbe";
 import { usePerformanceSources } from "@/hooks/usePerformanceSources";
+import { useCrashReporter } from "@/hooks/useCrashReporter";
+import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
+import { ViewerRecoveryPanel } from "@/components/scene/ViewerRecoveryPanel";
+import { reportSceneRenderError } from "@/lib/diagnostics/crash-reporter";
 import { useIRSwapIndicator } from "@/hooks/useIRSwapIndicator";
 import { useIRCacheBudgetSync } from "@/hooks/useIRCacheBudgetSync";
 import { usePffdtdFreeMovement } from "@/hooks/usePffdtdFreeMovement";
@@ -81,7 +84,7 @@ import { useListenerOrientationAutosave } from "@/hooks/useListenerOrientationAu
 import { useStudyLogging } from "@/hooks/useStudyLogging";
 import { logStudyEvent } from "@/lib/study/studyLogger";
 import { apiService } from "@/services/api";
-import { API_BASE_URL, DEFAULT_BACKGROUND_DURATION_SECONDS, DEFAULT_DBFS, DEFAULT_NUM_SOUNDS, RECEIVER_CONFIG, SPIRAL_PLACEMENT, DEFAULT_LISTENER_ORIENTATION, TTS_DEFAULT_LANGUAGE, SANDBOX_MODEL_ID, WORKSPACE_MESSAGES, STUDY_LOG, SCENE_TRANSFER, SHARE_VIEW } from "@/utils/constants";
+import { API_BASE_URL, DEFAULT_BACKGROUND_DURATION_SECONDS, DEFAULT_DBFS, DEFAULT_NUM_SOUNDS, RECEIVER_CONFIG, SPIRAL_PLACEMENT, DEFAULT_LISTENER_ORIENTATION, TTS_DEFAULT_LANGUAGE, SANDBOX_MODEL_ID, WORKSPACE_MESSAGES, STUDY_LOG, SCENE_TRANSFER, SHARE_VIEW, VIEWER_RECOVERY } from "@/utils/constants";
 import { notifyPrivateWorkspaceModel } from "@/utils/workspaceNotifications";
 import { parseAuthoredSeconds } from "@/lib/audio/utils/timeline-utils";
 import { isCardInActiveScene } from "@/lib/audio/utils/mute-solo";
@@ -1090,10 +1093,10 @@ function HomeContent() {
 
   // Multichannel ambisonic send (16-ch AmbiX → Dante / DAW) settings ↔ orchestrator.
   useAmbisonicSendSync(audioOrchestrator.orchestrator);
-  // Shared performance monitor sources (meter, ?diag=1 crash probe, emergency guard)
+  // Shared performance monitor sources (meter, crash reporter, emergency guard)
   usePerformanceSources(audioOrchestrator.orchestrator);
-  // [dbg:crash-probe] share-mode crash diagnostics, opt-in with ?diag=1
-  useCrashProbe();
+  // Silent crash / emergency log to the backend (every view, share view included)
+  useCrashReporter();
   // Bottom-bar "applying acoustics" indicator, driven by the orchestrator's IR swaps
   useIRSwapIndicator(audioOrchestrator.orchestrator);
   // Advanced settings → Rendering → IR memory
@@ -4033,6 +4036,21 @@ function HomeContent() {
 
         {/* Toggle between Speckle Scene and Three.js Scene */}
         {useSpeckleViewer ? (
+          // A render error in the scene shows a recovery panel instead of blanking the
+          // app; "Reload 3D view" re-mounts the scene and re-creates the viewer.
+          <ErrorBoundary
+            onError={reportSceneRenderError}
+            fallback={(error, reset) => (
+              <ViewerRecoveryPanel
+                title={VIEWER_RECOVERY.RENDER_ERROR_TITLE}
+                message={VIEWER_RECOVERY.RENDER_ERROR_MESSAGE}
+                onReload={() => {
+                  useModelVersionStore.getState().reloadViewer();
+                  reset();
+                }}
+              />
+            )}
+          >
           <SpeckleScene
             speckleData={globalSpeckleData}
             onViewerLoaded={handleSpeckleViewerLoaded}
@@ -4119,6 +4137,7 @@ function HomeContent() {
             onResetView={isShareView ? handleShareResetView : undefined}
             className="w-full h-full"
           />
+          </ErrorBoundary>
         ) : (
           /* ThreeScene is deprecated - SpeckleScene is the default viewer */
           <div className="w-full h-full flex items-center justify-center bg-neutral-900 text-neutral-400">

@@ -2,7 +2,7 @@
  * usePerformanceSources — wires the live audio engine, Sounds-view lights and the
  * Speckle WebGL renderer into the shared performance monitor. Called once from
  * page.tsx in every view; it only registers readers (through refs), so nothing is
- * sampled until a consumer (meter, crash probe, emergency guard) subscribes.
+ * sampled until a consumer (meter, crash reporter, emergency guard) subscribes.
  */
 import { useEffect, useRef } from 'react';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';

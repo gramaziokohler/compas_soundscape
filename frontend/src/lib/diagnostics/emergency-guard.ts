@@ -15,7 +15,7 @@ import { EMERGENCY_GUARD } from '@/utils/constants';
 import type { PerformanceSample } from '@/types';
 import { subscribePerformance } from './performance-monitor';
 import { memoryThresholds } from './performance-levels';
-import { markCrashProbe } from './crash-probe';
+import { reportClientDiagnostic } from './crash-reporter';
 
 export interface EmergencyGuardActions {
   releaseAudioMemory: () => void;
@@ -36,7 +36,7 @@ export function startEmergencyGuard(actions: EmergencyGuardActions): () => void 
     if (inEmergency) return;
     inEmergency = true;
     healthy = 0;
-    markCrashProbe('emergency', { reason, ...data });
+    reportClientDiagnostic('emergency', { reason, ...data });
     console.warn('[emergency-guard] triggered:', reason, data ?? '');
     actions.releaseAudioMemory();
     if (actions.isPlaying()) {
@@ -64,7 +64,6 @@ export function startEmergencyGuard(actions: EmergencyGuardActions): () => void 
       healthy = isHealthy(sample) ? healthy + 1 : 0;
       if (healthy < EMERGENCY_GUARD.RECOVERY_SAMPLES) return;
       inEmergency = false;
-      markCrashProbe('emergency-recovered');
       if (pausedByGuard) {
         pausedByGuard = false;
         actions.resume();

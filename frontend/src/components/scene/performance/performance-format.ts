@@ -1,7 +1,7 @@
 /**
  * Text for the performance meter: the headline value per metric and the detail rows.
  */
-import { CRASH_PROBE, PERFORMANCE_METER } from '@/utils/constants';
+import { MEMORY_UNITS, PERFORMANCE_METER } from '@/utils/constants';
 import { memoryThresholds, stallMs } from '@/lib/diagnostics/performance-levels';
 import type { PerformanceMetricId, PerformanceSample } from '@/types';
 
@@ -12,7 +12,7 @@ function formatMB(mb: number): string {
 }
 
 function bytesMB(bytes: number): string {
-  return formatMB(bytes / CRASH_PROBE.BYTES_PER_MB);
+  return formatMB(bytes / MEMORY_UNITS.BYTES_PER_MB);
 }
 
 /** Headline value per metric ('—' when there is no data). */

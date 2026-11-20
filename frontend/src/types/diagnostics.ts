@@ -1,4 +1,4 @@
-/** Audio-engine memory held for simulation IRs (crash probe). */
+/** Audio-engine memory held for simulation IRs (performance monitor). */
 export interface AudioMemoryStats {
   /** Decoded IRs kept in the orchestrator's irCache. */
   irCacheCount: number;
@@ -21,21 +21,13 @@ export interface AudioMemoryStats {
   irSwaps: number;
 }
 
-/** Sounds-view point lights (crash probe). */
+/** Sounds-view point lights (performance monitor). */
 export interface SoundLightStats {
   total: number;
   /** Pool slots lit this frame. */
   visible: number;
   /** Fixed render-light pool size (constant while Sounds view is on). */
   pool: number;
-}
-
-/** One crash-probe record: a periodic sample or a marked event. */
-export interface CrashProbeRecord {
-  t: string;
-  kind: 'sample' | 'event';
-  event?: string;
-  data?: Record<string, unknown>;
 }
 
 /** WebGL renderer stats (three.js renderer.info) for one sample. */
@@ -67,7 +59,7 @@ export interface PerformanceSupport {
   xrun: boolean;
 }
 
-/** One performance-monitor sample, shared by the meter, the crash probe and the emergency guard. */
+/** One performance-monitor sample, shared by the meter, the crash reporter and the emergency guard. */
 export interface PerformanceSample {
   /** performance.now() when sampled. */
   t: number;
@@ -98,3 +90,13 @@ export type PerformanceMetricId = 'mem' | 'cpu' | 'dsp' | 'gpu' | 'xrun';
 
 /** Meter colour band. 'na' = no data in this browser / no source yet. */
 export type MeterLevel = 'ok' | 'warn' | 'crit' | 'na';
+
+/** Browser crash / emergency event sent to POST /api/public/client-diagnostics (backend ClientDiagnosticEvent). */
+export interface ClientDiagnosticEvent {
+  kind: 'crash' | 'emergency' | 'webgl-context-lost' | 'render-error';
+  page: string;
+  share_id: string | null;
+  client_session_id: string;
+  occurred_at: string;
+  details: Record<string, unknown>;
+}

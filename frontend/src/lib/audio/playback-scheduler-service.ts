@@ -30,11 +30,7 @@ export class PlaybackSchedulerService {
     this.transport = new Transport(audioOrchestrator || null, audioContext || null);
     this.currentOrchestrator = audioOrchestrator || null;
     // Subscribe immediately if an orchestrator was supplied at construction.
-    if (audioOrchestrator) {
-      this.unsubGraphChanged = audioOrchestrator.onGraphChanged(() => {
-        this.transport.handleGraphChanged();
-      });
-    }
+    if (audioOrchestrator) this.subscribeOrchestrator(audioOrchestrator);
   }
 
   /**
@@ -59,15 +55,30 @@ export class PlaybackSchedulerService {
     this.transport.setAudioOrchestrator(orchestrator);
 
     if (orchestrator) {
-      this.unsubGraphChanged = orchestrator.onGraphChanged(() => {
-        this.transport.handleGraphChanged();
-      });
+      this.subscribeOrchestrator(orchestrator);
       // Catch up if a graph change happened before we were subscribed (or before
       // this scheduler existed): re-issue the current position onto the live mode.
       if (changed && this.transport.isPlaying()) {
         this.transport.handleGraphChanged();
       }
     }
+  }
+
+  /**
+   * Graph rebuilds re-dispatch the current position; a source that finishes loading
+   * starts the clips playback had to skip for it (scene reloads resume early).
+   */
+  private subscribeOrchestrator(orchestrator: AudioOrchestrator): void {
+    const unsubGraph = orchestrator.onGraphChanged(() => {
+      this.transport.handleGraphChanged();
+    });
+    const unsubSource = orchestrator.onSourceAdded((sourceId) => {
+      this.transport.handleSourceAdded(sourceId);
+    });
+    this.unsubGraphChanged = () => {
+      unsubGraph();
+      unsubSource();
+    };
   }
 
   public setAudioContext(audioContext: AudioContext | null): void {
