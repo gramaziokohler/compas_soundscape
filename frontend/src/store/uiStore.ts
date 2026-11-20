@@ -206,6 +206,12 @@ export interface UIStoreState {
   /** Bottom-bar performance meter (edit mode only). Persisted display preference, not undoable. */
   showPerformanceMeter: boolean;
   togglePerformanceMeter: () => void;
+  /** Expanded meter panel; stays open until closed with its own button (persisted). */
+  performancePanelOpen: boolean;
+  setPerformancePanelOpen: (open: boolean) => void;
+  /** Decoded-IR cache budget in MB; null = Auto (sized from device RAM). Persisted. */
+  irCacheBudgetMB: number | null;
+  setIRCacheBudgetMB: (mb: number | null) => void;
   /** Show / hide sound spheres and listeners together (bottom bar button or `S`) — drives the same flags as Settings → Display. */
   toggleSoundsAndListenersVisible: () => void;
   /** Incremented each time the user double-clicks a sound card to zoom to its sphere. */
@@ -522,6 +528,12 @@ export const useUIStore = create<UIStoreState>()(
       showPerformanceMeter: false,
       togglePerformanceMeter: () =>
         set((s) => ({ showPerformanceMeter: !s.showPerformanceMeter }), false, 'ui/togglePerformanceMeter'),
+      performancePanelOpen: false,
+      setPerformancePanelOpen: (open) =>
+        set({ performancePanelOpen: open }, false, 'ui/setPerformancePanelOpen'),
+      irCacheBudgetMB: null,
+      setIRCacheBudgetMB: (mb) =>
+        set({ irCacheBudgetMB: mb }, false, 'ui/setIRCacheBudgetMB'),
       // Any visible -> hide both; both hidden -> show both.
       toggleSoundsAndListenersVisible: () =>
         set(

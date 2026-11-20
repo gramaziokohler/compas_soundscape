@@ -86,6 +86,7 @@ function sampleRecord(sample: PerformanceSample, extra: Record<string, unknown> 
       convolverNodes: audio.convolverNodes,
       convolverFilterMB: round1(audio.convolverFilterBytes / CRASH_PROBE.BYTES_PER_MB),
       irRunsInFlight: audio.irRunsInFlight,
+      irRunsPeak: audio.irRunsPeak,
     }),
     lights: sample.lights,
     gl,

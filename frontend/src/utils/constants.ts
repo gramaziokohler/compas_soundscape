@@ -3076,6 +3076,8 @@ export const SCENE_BOTTOM_BAR = {
   /** Shown right of "Timeline" while a newly activated simulation's IRs load during playback. */
   APPLYING_IRS_LABEL: 'Applying acoustics…',
   APPLYING_IRS_TITLE: "Loading the simulation's impulse responses into the convolvers",
+  LOADING_SOUNDS_LABEL: 'Loading sounds…',
+  LOADING_SOUNDS_TITLE: 'The new scene starts once all of its sounds have loaded',
 } as const;
 
 /** Top-centre `Sounds | Default | Acoustics` radiogroup — anchor of the share-view tutorial's view-mode tip. */
@@ -3432,6 +3434,9 @@ export const CRASH_PROBE = {
   /** [dbg:heap] a single probed call this slow, or allocating this much, is logged on its own. */
   HEAP_PROBE_SLOW_MS: 50,
   HEAP_PROBE_ALLOC_MB: 20,
+  /** Wait for the viewer's extensions before wrapping them (~30 s at most). */
+  HEAP_PROBE_INSTALL_RETRY_MS: 500,
+  HEAP_PROBE_INSTALL_ATTEMPTS: 60,
 } as const;
 
 // Simulation / listener IR swap (AudioOrchestrator.swapSourceIRs + AmbisonicIRMode.commitSourceIRs).
@@ -3450,14 +3455,26 @@ export const IR_SWAP = {
   SPINNER_DELAY_MS: 150,
 } as const;
 
-// Decoded simulation-IR cache budget (lib/audio/utils/ir-cache.ts). Sized from the
-// browser's coarse device RAM (navigator.deviceMemory, Chromium only, capped at 8 GB).
+// Decoded simulation-IR cache budget (lib/audio/utils/ir-cache.ts). It keeps compared
+// simulations instant to switch back to; IRs were not what crashed the tab, so "Auto" is
+// generous and sized from the browser's coarse device RAM (navigator.deviceMemory,
+// Chromium only). Advanced settings → Rendering → "IR memory" overrides it.
 export const IR_CACHE = {
-  MB_PER_GB: 32,
-  MIN_MB: 128,
-  MAX_MB: 512,
+  MB_PER_GB: 64,
+  MIN_MB: 256,
+  MAX_MB: 1024,
   /** Budget when the browser does not report device memory (Firefox, Safari). */
-  DEFAULT_MB: 192,
+  DEFAULT_MB: 512,
+  /** Advanced-settings choices ('auto' = the RAM-sized default above). */
+  SETTING_OPTIONS: [
+    { value: 'auto', label: 'Auto' },
+    { value: '256', label: '256 MB' },
+    { value: '512', label: '512 MB' },
+    { value: '1024', label: '1 GB' },
+    { value: '2048', label: '2 GB' },
+  ],
+  SETTING_LABEL: 'IR memory',
+  SETTING_HINT: "Decoded impulse responses kept for instant switching back between simulations. Auto sizes it from this computer's memory; lower it on a weak machine.",
 } as const;
 
 // Performance meter + shared monitor (lib/diagnostics/performance-monitor.ts,
@@ -3483,13 +3500,26 @@ export const PERFORMANCE_METER = {
   /** A jump of more than this between wall-clock and audio-clock progress counts as a dropout (ms). */
   XRUN_DRIFT_MS: 20,
   XRUN_WINDOW_MS: 30000,
+  /**
+   * Memory thresholds scale with the TAB's ceiling, not the machine: Chrome kills a
+   * renderer ("Aw, Snap") at a per-tab limit whatever the RAM (the crash came at ~1.6 GB
+   * heap of a 4.1 GB jsHeapSizeLimit on a 32 GB machine). Red = CRIT_FRACTION of the heap
+   * limit (DEFAULT_TAB_LIMIT_MB where the browser hides it), amber = WARN_FRACTION; on a
+   * small machine both are also capped to a share of its RAM (navigator.deviceMemory).
+   */
+  MEMORY: {
+    WARN_FRACTION: 0.3,
+    CRIT_FRACTION: 0.45,
+    DEFAULT_TAB_LIMIT_MB: 4096,
+    DEVICE_CRIT_FRACTION: 0.25,
+    MB_PER_GB: 1024,
+  },
   /** Amber / red thresholds per metric (value units in the comments). */
   THRESHOLDS: {
-    MEMORY_MB: { WARN: 1200, CRIT: 1800 },        // heap + IR cache + convolver filters
     STALL_MS: { WARN: 100, CRIT: 500 },           // worst main-thread block in the window
     FPS: { WARN: 30, CRIT: 15 },                  // below = worse
     CONVOLVERS: { WARN: 40, CRIT: 60 },           // ConvolverNodes alive
-    IR_LOADS: { WARN: 2, CRIT: 3 },               // IR swaps preparing at once
+    IR_LOADS: { WARN: 2, CRIT: 3 },               // IR swaps preparing at once (peak per sample)
     NEW_PROGRAMS: { WARN: 1, CRIT: 5 },           // shaders compiled in the window
     XRUNS: { WARN: 1, CRIT: 5 },                  // dropouts in the xrun window
   },
@@ -3510,7 +3540,8 @@ export const PERFORMANCE_METER = {
   },
   HEADROOM_WORDS: { ok: 'OK', warn: 'Tight', crit: 'Critical', na: '—' },
   BUTTON_TITLE: 'Performance meter',
-  HIDE_TITLE: 'Hide performance meter',
+  HIDE_TITLE: 'Hide meter',
+  CLOSE_PANEL_TITLE: 'Close panel',
   AUDIO_ONLY_NOTE: 'audio only — this browser does not report heap memory',
   NOT_SUPPORTED_NOTE: 'not available in this browser',
 } as const;
@@ -3521,8 +3552,8 @@ export const PERFORMANCE_METER = {
 // never trigger it — sound keeps playing in every normal situation.
 export const EMERGENCY_GUARD = {
   SAMPLE_INTERVAL_MS: 1000,
-  /** Estimated app memory (heap + IRs + convolvers) above this for CONSECUTIVE_SAMPLES (MB). */
-  CRITICAL_MEMORY_MB: 2400,
+  /** Estimated app memory above this multiple of the meter's red, for CONSECUTIVE_SAMPLES. */
+  CRITICAL_MEMORY_FACTOR: 1.33,
   CONSECUTIVE_SAMPLES: 2,
   /** Main-thread blocks this long, STALL_REPEAT_COUNT times within STALL_REPEAT_WINDOW_MS. */
   CRITICAL_STALL_MS: 1000,
@@ -3534,4 +3565,11 @@ export const EMERGENCY_GUARD = {
   IR_BUDGET_SCALE_AFTER: 0.5,
   RECOVERING_MESSAGE: 'Running low on memory — playback paused while the app recovers.',
   RECOVERED_MESSAGE: 'Recovered — playback resumed.',
+} as const;
+
+// Scene reload (lib/three/scene-reload-tracker.ts + hooks/useSceneReloadPause.ts): a scene
+// switch that replaces the sound set pauses the timeline until the new sounds are loaded.
+export const SCENE_RELOAD = {
+  /** Resume playback anyway after this long if a load hangs (ms). */
+  MAX_PAUSE_MS: 20000,
 } as const;

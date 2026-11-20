@@ -1950,6 +1950,7 @@ button.mv-row:hover:not(:disabled) {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.perf-meter-panel__footer { display: flex; justify-content: space-between; }
 .perf-meter-panel__details-toggle {
   font-size: 10px;
   color: var(--color-secondary-hover);

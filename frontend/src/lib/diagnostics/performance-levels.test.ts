@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { PERFORMANCE_METER } from '@/utils/constants';
 import type { PerformanceSample } from '@/types';
-import { headroomLevel, levelFor, metricFills, metricLevels, worstLevel } from './performance-levels';
+import { headroomLevel, levelFor, memoryThresholds, metricFills, metricLevels, worstLevel } from './performance-levels';
 
 const T = PERFORMANCE_METER.THRESHOLDS;
 
@@ -19,10 +19,14 @@ function sample(partial: Partial<PerformanceSample> = {}): PerformanceSample {
       convolverNodes: 0,
       convolverFilterBytes: 0,
       irRunsInFlight: 0,
+      irRunsPeak: 0,
+      irSwaps: 0,
     },
     lights: null,
     gl: { programs: 190, geometries: 0, textures: 0, calls: 0, triangles: 0 },
     newPrograms: 0,
+    recentIRSwaps: 0,
+    deviceMemoryGB: 32,
     frames: { fps: 60, worstGapMs: 0 },
     longTasks: { count: 0, worstMs: 0 },
     xruns: 0,
@@ -69,7 +73,7 @@ describe('metricLevels / metricFills', () => {
       sample({
         newPrograms: 9,
         longTasks: { count: 3, worstMs: 1236 },
-        audio: { ...sample().audio!, irRunsInFlight: 4, convolverNodes: 68 },
+        audio: { ...sample().audio!, irRunsPeak: 4, convolverNodes: 68 },
       }),
     );
     expect(levels.gpu).toBe('crit');
@@ -94,8 +98,9 @@ describe('metricLevels / metricFills', () => {
   });
 
   it('fills relative to the red threshold, clamped to 1', () => {
-    expect(metricFills(sample({ memoryMB: T.MEMORY_MB.CRIT / 2 })).mem).toBeCloseTo(0.5);
-    expect(metricFills(sample({ memoryMB: T.MEMORY_MB.CRIT * 3 })).mem).toBe(1);
+    const { crit } = memoryThresholds(sample());
+    expect(metricFills(sample({ memoryMB: crit / 2 })).mem).toBeCloseTo(0.5);
+    expect(metricFills(sample({ memoryMB: crit * 3 })).mem).toBe(1);
   });
 });
 
@@ -104,5 +109,25 @@ describe('worstLevel', () => {
     expect(worstLevel('na', 'ok')).toBe('ok');
     expect(worstLevel('warn', 'ok')).toBe('warn');
     expect(worstLevel('warn', 'crit')).toBe('crit');
+  });
+});
+
+describe('memoryThresholds', () => {
+  const M = PERFORMANCE_METER.MEMORY;
+
+  it('scales with the tab heap limit, not the machine RAM', () => {
+    const big = memoryThresholds({ heap: { usedMB: 0, totalMB: 0, limitMB: 4096 }, deviceMemoryGB: 32 });
+    expect(big.crit).toBeCloseTo(4096 * M.CRIT_FRACTION);
+    expect(big.warn).toBeCloseTo(4096 * M.WARN_FRACTION);
+  });
+
+  it('caps red on a small machine', () => {
+    const small = memoryThresholds({ heap: { usedMB: 0, totalMB: 0, limitMB: 4096 }, deviceMemoryGB: 4 });
+    expect(small.crit).toBeCloseTo(4 * M.MB_PER_GB * M.DEVICE_CRIT_FRACTION);
+    expect(small.warn).toBeLessThan(small.crit);
+  });
+
+  it('falls back to a default tab limit when the browser hides the heap', () => {
+    expect(memoryThresholds({ heap: null, deviceMemoryGB: null }).crit).toBeCloseTo(M.DEFAULT_TAB_LIMIT_MB * M.CRIT_FRACTION);
   });
 });

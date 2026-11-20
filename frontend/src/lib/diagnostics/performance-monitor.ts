@@ -63,6 +63,7 @@ let tickMs = 0;
 let longTaskObserver: PerformanceObserver | null = null;
 let longTasks: Array<{ t: number; ms: number }> = [];
 let programHistory: Array<{ t: number; programs: number }> = [];
+let irSwapHistory: Array<{ t: number; swaps: number }> = [];
 let watchedCanvas: HTMLCanvasElement | null = null;
 let contextLost = false;
 const frames = new FrameTracker();
@@ -127,6 +128,10 @@ function takeSample(now: number): PerformanceSample {
   if (gl) programHistory.push({ t: now, programs: gl.programs });
   programHistory = programHistory.filter((p) => now - p.t <= PERFORMANCE_METER.STALL_WINDOW_MS);
   const newPrograms = gl && programHistory.length > 0 ? Math.max(0, gl.programs - programHistory[0].programs) : 0;
+  if (audio) irSwapHistory.push({ t: now, swaps: audio.irSwaps });
+  irSwapHistory = irSwapHistory.filter((p) => now - p.t <= PERFORMANCE_METER.STALL_WINDOW_MS);
+  // The first entry in the window is the baseline, so a swap started before it is not counted.
+  const recentIRSwaps = audio && irSwapHistory.length > 1 ? audio.irSwaps - irSwapHistory[0].swaps : 0;
 
   longTasks = longTasks.filter((l) => now - l.t <= PERFORMANCE_METER.STALL_WINDOW_MS);
   const audioMB = audio ? toMB(audio.irCacheBytes + audio.convolverFilterBytes) : 0;
@@ -138,6 +143,8 @@ function takeSample(now: number): PerformanceSample {
     lights: safe(sources?.getLightStats, null),
     gl,
     newPrograms,
+    recentIRSwaps,
+    deviceMemoryGB: typeof navigator !== 'undefined' ? (navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? null : null,
     frames: frames.running ? frames.snapshot(now) : null,
     longTasks: { count: longTasks.length, worstMs: longTasks.reduce((w, l) => Math.max(w, l.ms), 0) },
     xruns: glitches.update(context, now),
@@ -189,6 +196,7 @@ function stopAll(): void {
   longTaskObserver = null;
   longTasks = [];
   programHistory = [];
+  irSwapHistory = [];
   frames.stop();
   watchedCanvas?.removeEventListener('webglcontextlost', onContextLost);
   watchedCanvas?.removeEventListener('webglcontextrestored', onContextRestored);

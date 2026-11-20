@@ -1,12 +1,10 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
 import { Gauge } from 'lucide-react';
 import { BarButton } from '@/components/ui/BarButton';
 import { MeterBar } from '@/components/ui/MeterBar';
 import { useUIStore } from '@/store';
 import { useCanEdit } from '@/hooks/useCanEdit';
-import { useDismissOnOutside } from '@/hooks/useDismissOnOutside';
 import { usePerformanceMeter } from '@/hooks/usePerformanceMeter';
 import { useViewportScale } from '@/hooks/useViewportScale';
 import { PERFORMANCE_METER, SCENE_BOTTOM_BAR } from '@/utils/constants';
@@ -26,10 +24,10 @@ export function PerformanceMeterButton() {
   const canEdit = useCanEdit();
   const show = useUIStore((s) => s.showPerformanceMeter);
   const toggle = useUIStore((s) => s.togglePerformanceMeter);
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const close = useCallback(() => setOpen(false), []);
-  useDismissOnOutside(rootRef, open, close);
+  // Stays open while the user works elsewhere (no outside-click dismiss) — closed only
+  // by the strip or the panel's own close button.
+  const open = useUIStore((s) => s.performancePanelOpen);
+  const setOpen = useUIStore((s) => s.setPerformancePanelOpen);
   const { viewport } = useViewportScale();
   const { state, methods } = usePerformanceMeter(canEdit && show);
 
@@ -47,7 +45,7 @@ export function PerformanceMeterButton() {
 
   const compact = viewport.width < PERFORMANCE_METER.COMPACT_BELOW_PX;
   return (
-    <div ref={rootRef} className="relative flex items-center">
+    <div className="relative flex items-center">
       <button
         type="button"
         className={`perf-meter-strip${open ? ' perf-meter-strip--open' : ''}`}
@@ -77,6 +75,7 @@ export function PerformanceMeterButton() {
         <PerformanceMeterPanel
           state={state}
           onResetPeaks={methods.resetPeaks}
+          onClose={() => setOpen(false)}
           onHideMeter={() => {
             setOpen(false);
             toggle();

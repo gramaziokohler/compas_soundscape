@@ -11,6 +11,9 @@ import { detailRows, metricTitle, metricValueText } from './performance-format';
 
 export interface PerformanceMeterPanelProps {
   state: PerformanceMeterState;
+  /** Close the panel (the strip stays). */
+  onClose: () => void;
+  /** Turn the whole meter off (back to the Gauge button). */
   onHideMeter: () => void;
   onResetPeaks: () => void;
 }
@@ -18,8 +21,9 @@ export interface PerformanceMeterPanelProps {
 /**
  * Expanded performance meter, opened above the bottom-bar strip: one row per
  * metric (bar + peak tick + 60 s sparkline + value) and a "Details" disclosure.
+ * Stays open until its close button (or the strip) is clicked.
  */
-export function PerformanceMeterPanel({ state, onHideMeter, onResetPeaks }: PerformanceMeterPanelProps) {
+export function PerformanceMeterPanel({ state, onClose, onHideMeter, onResetPeaks }: PerformanceMeterPanelProps) {
   const [showDetails, setShowDetails] = useState(false);
   const { sample, display, peaks, history, levels, headroom } = state;
 
@@ -41,7 +45,7 @@ export function PerformanceMeterPanel({ state, onHideMeter, onResetPeaks }: Perf
           <span className={`perf-meter-dot perf-level--${headroom}`} />
           {PERFORMANCE_METER.HEADROOM_WORDS[headroom]}
         </span>
-        <button type="button" className="perf-meter-panel__close" title={PERFORMANCE_METER.HIDE_TITLE} onClick={onHideMeter}>
+        <button type="button" className="perf-meter-panel__close" title={PERFORMANCE_METER.CLOSE_PANEL_TITLE} onClick={onClose}>
           <X size={12} aria-hidden="true" />
         </button>
       </div>
@@ -63,14 +67,19 @@ export function PerformanceMeterPanel({ state, onHideMeter, onResetPeaks }: Perf
         ))}
       </button>
 
-      <button
-        type="button"
-        className="perf-meter-panel__details-toggle"
-        aria-expanded={showDetails}
-        onClick={() => setShowDetails((v) => !v)}
-      >
-        {showDetails ? '▾' : '▸'} Details
-      </button>
+      <div className="perf-meter-panel__footer">
+        <button
+          type="button"
+          className="perf-meter-panel__details-toggle"
+          aria-expanded={showDetails}
+          onClick={() => setShowDetails((v) => !v)}
+        >
+          {showDetails ? '▾' : '▸'} Details
+        </button>
+        <button type="button" className="perf-meter-panel__details-toggle" onClick={onHideMeter}>
+          {PERFORMANCE_METER.HIDE_TITLE}
+        </button>
+      </div>
       {showDetails && (
         <dl className="perf-meter-panel__details">
           {detailRows(sample).map(([label, value]) => (

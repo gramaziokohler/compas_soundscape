@@ -16,6 +16,7 @@ import { resolveSoundAudioUrl } from "@/lib/audio/utils/resolve-sound-url";
 import { orderVariants } from "@/lib/audio/utils/variant-sound-id";
 import { syncDirectionIndicator } from "@/lib/three/sound-direction-indicator";
 import { markCrashProbe } from "@/lib/diagnostics/crash-probe";
+import { SceneReloadTracker, type SceneReloadProgress } from "@/lib/three/scene-reload-tracker";
 // import type { BoundingBoxBounds } from "@/lib/three/BoundingBoxManager"; // Bounding-box placement removed
 
 /**
@@ -81,6 +82,8 @@ export class SoundSphereManager {
   // calling loadAudioForSound again for the same ID while a load is already in flight,
   // which would cause duplicate AudioOrchestrator sources and the "already exists" loop.
   private pendingLoads: Set<string> = new Set();
+  /** Sound set being replaced (removals + new loads in one sync) — drives the timeline pause. */
+  private sceneReload = new SceneReloadTracker();
   /** Resolved URL that was last loaded into the orchestrator, per soundId. */
   private loadedUrls: Map<string, string> = new Map();
   // Latest non-pending sounds passed to syncAudioSources — used by buffer load callbacks
@@ -730,8 +733,13 @@ export class SoundSphereManager {
         this.loadedUrls.delete(soundId);
       }
     }
+    // A sound removed mid-reload no longer holds the reload open.
+    for (const id of this.pendingLoads) {
+      if (!visibleSoundIds.has(id)) this.sceneReload.settle(id);
+    }
 
     // Create audio sources for new sounds (not already in metadata or currently loading)
+    const pendingBefore = new Set(this.pendingLoads);
     visibleSounds.forEach(soundEvent => {
       if (soundEvent.isPending) return;
       const resolved = resolveSoundAudioUrl(soundEvent);
@@ -750,6 +758,16 @@ export class SoundSphereManager {
       if (this.pendingLoads.has(soundEvent.id)) return;
       this.loadAudioForSound(soundEvent);
     });
+
+    // Removing sounds and loading others in one sync = a scene being replaced
+    // (share-link scene / simulation switch): track it until every buffer is in.
+    const started = [...this.pendingLoads].filter((id) => !pendingBefore.has(id));
+    if (removedIds.length > 0 || this.sceneReload.active) this.sceneReload.begin(started);
+  }
+
+  /** Scene-reload progress (null when done); see SceneReloadTracker. */
+  public onSceneReload(listener: (progress: SceneReloadProgress | null) => void): () => void {
+    return this.sceneReload.subscribe(listener);
   }
 
   /**
@@ -789,6 +807,7 @@ export class SoundSphereManager {
         // iterationLinks can point at any variant.
         if (!this.latestSounds.some((s) => s.id === soundEvent.id)) {
           console.warn(`[SoundSphereManager] Sound removed before audio loaded: ${soundEvent.id}`);
+          this.sceneReload.settle(soundEvent.id);
           return;
         }
 
@@ -840,10 +859,12 @@ export class SoundSphereManager {
         // repeatedly (compounding the pending-load race that pendingLoads now guards).
         const audioStore = useAudioControlsStore.getState();
         audioStore.setSoundBufferDuration(soundEvent.id, buffer.duration);
+        this.sceneReload.settle(soundEvent.id);
       },
       undefined,
       (error) => {
         this.pendingLoads.delete(soundEvent.id); // allow retry on next sync
+        this.sceneReload.settle(soundEvent.id);
         console.error('[SoundSphereManager] Error loading audio:', error);
       }
     );

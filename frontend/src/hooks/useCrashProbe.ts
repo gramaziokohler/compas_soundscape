@@ -8,6 +8,7 @@ import { useEffect } from 'react';
 import { useSpeckleStore } from '@/store';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { isCrashProbeEnabled, markCrashProbe, startCrashProbe } from '@/lib/diagnostics/crash-probe';
+import { CRASH_PROBE } from '@/utils/constants';
 import { installHeapProbes, readFilterStateStats, takeHeapProbeStats } from '@/lib/diagnostics/heap-probe';
 
 export function useCrashProbe(): void {
@@ -18,11 +19,29 @@ export function useCrashProbe(): void {
       filter: readFilterStateStats(useSpeckleEngineStore.getState().viewer),
     }));
 
-    // [dbg:heap] probes follow the current viewer instance.
+    // [dbg:heap] probes follow the current viewer instance. The engine store publishes the
+    // viewer before its extensions exist and calls subscribers synchronously inside viewer
+    // init, so installing waits for the extensions (polled) and can never throw into init.
+    type ViewerOrNull = ReturnType<typeof useSpeckleEngineStore.getState>['viewer'];
     let uninstall: (() => void) | null = null;
-    const attach = (viewer: ReturnType<typeof useSpeckleEngineStore.getState>['viewer']) => {
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    const attach = (viewer: ViewerOrNull, attemptsLeft: number = CRASH_PROBE.HEAP_PROBE_INSTALL_ATTEMPTS) => {
+      if (retryTimer !== null) clearTimeout(retryTimer);
+      retryTimer = null;
       uninstall?.();
-      uninstall = viewer ? installHeapProbes(viewer) : null;
+      uninstall = null;
+      if (!viewer) return;
+      if (useSpeckleEngineStore.getState().filteringExtension) {
+        try {
+          uninstall = installHeapProbes(viewer);
+        } catch (error) {
+          console.warn('[dbg:heap] probes not installed:', error);
+        }
+        return;
+      }
+      if (attemptsLeft > 0) {
+        retryTimer = setTimeout(() => attach(viewer, attemptsLeft - 1), CRASH_PROBE.HEAP_PROBE_INSTALL_RETRY_MS);
+      }
     };
     attach(useSpeckleEngineStore.getState().viewer);
     const unsubViewer = useSpeckleEngineStore.subscribe((state, prev) => {
@@ -33,6 +52,7 @@ export function useCrashProbe(): void {
     });
 
     return () => {
+      if (retryTimer !== null) clearTimeout(retryTimer);
       unsubViewer();
       unsubViewMode();
       uninstall?.();

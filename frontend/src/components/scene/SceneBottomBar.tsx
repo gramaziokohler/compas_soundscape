@@ -140,6 +140,7 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
   const canEdit = useCanEdit();
   const isApplyingIRs = useTransportTimeStore((s) => s.isApplyingIRs);
   const irSwapProgress = useTransportTimeStore((s) => s.irSwapProgress);
+  const sceneLoadProgress = useTransportTimeStore((s) => s.sceneLoadProgress);
   // Share view: "Tour" shows / hides the coach-mark tour (resuming at its step);
   // active (blue) while the tour is on screen.
   const tutorialActive = useShareViewStore((s) => s.tutorialActive);
@@ -302,22 +303,26 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
               }
             />
             {/* Absolutely placed after "Timeline" so the centred playback group never shifts.
-                Shown while a simulation / listener switch prepares its IRs (the previous
-                ones keep playing), only when that takes longer than IR_SWAP.SPINNER_DELAY_MS. */}
-            {isApplyingIRs && (
-              <span
-                className="bar-busy"
-                role="status"
-                title={SCENE_BOTTOM_BAR.APPLYING_IRS_TITLE}
-                style={{ position: 'absolute', left: '100%', top: 0, bottom: 0, paddingLeft: SCENE_BOTTOM_BAR.GROUP_GAP }}
-              >
-                <Spinner size={12} />
-                {SCENE_BOTTOM_BAR.APPLYING_IRS_LABEL}
-                {irSwapProgress && irSwapProgress.total > 0 && (
-                  <span className="tabular-nums">{` ${irSwapProgress.loaded}/${irSwapProgress.total}`}</span>
-                )}
-              </span>
-            )}
+                "Loading sounds" while a scene switch loads its new sounds (the timeline waits);
+                otherwise "Applying acoustics" while a simulation / listener switch prepares its
+                IRs (the previous ones keep playing), only when that takes > IR_SWAP.SPINNER_DELAY_MS. */}
+            {(sceneLoadProgress || isApplyingIRs) && (() => {
+              const progress = sceneLoadProgress ?? irSwapProgress;
+              return (
+                <span
+                  className="bar-busy"
+                  role="status"
+                  title={sceneLoadProgress ? SCENE_BOTTOM_BAR.LOADING_SOUNDS_TITLE : SCENE_BOTTOM_BAR.APPLYING_IRS_TITLE}
+                  style={{ position: 'absolute', left: '100%', top: 0, bottom: 0, paddingLeft: SCENE_BOTTOM_BAR.GROUP_GAP }}
+                >
+                  <Spinner size={12} />
+                  {sceneLoadProgress ? SCENE_BOTTOM_BAR.LOADING_SOUNDS_LABEL : SCENE_BOTTOM_BAR.APPLYING_IRS_LABEL}
+                  {progress && progress.total > 0 && (
+                    <span className="tabular-nums">{` ${progress.loaded}/${progress.total}`}</span>
+                  )}
+                </span>
+              );
+            })()}
           </>
         )}
       </div>

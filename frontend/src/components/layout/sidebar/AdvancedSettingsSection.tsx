@@ -34,6 +34,7 @@ import { OutputDeviceSelector } from "@/components/audio/OutputDeviceSelector";
 import { AmbisonicSendControls } from "@/components/audio/AmbisonicSendControls";
 import type { ColorThemePreference } from "@/utils/color-theme";
 import {
+  IR_CACHE,
   TTS_LANGUAGE,
   UI_BORDER_RADIUS,
   AUDIO_MODEL_TANGOFLUX,
@@ -138,7 +139,7 @@ type SettingKey =
   | 'llm-model' | 'tts-model' | 'tts-language' | 'audio-model'
   | 'diffusion-steps' | 'negative-prompt' | 'noise-reduction' | 'trim-silence'
   | 'listener-orientation' | 'spectrograms'
-  | 'base-spl' | 'output-device' | 'ambisonic-send'
+  | 'base-spl' | 'output-device' | 'ambisonic-send' | 'ir-cache'
   | 'collaboration'
   | 'share-link'
   | 'auto-save' | 'delete-history';
@@ -180,6 +181,7 @@ const SETTINGS: SettingEntry[] = [
   { section: 'rendering', key: 'output-device', terms: ['output device', 'audio device', 'sound device', 'audio card', 'sound card', 'speaker', 'output', 'sink', 'device'] },
   { section: 'rendering', key: 'ambisonic-send', terms: ['ambisonic send', 'ambisonics', 'ambix', 'multichannel', 'dante', 'holophonix', 'reaper', 'daw', 'b-format', 'stream', 'loudspeaker', 'dome'] },
   { section: 'rendering', key: 'spectrograms', terms: ['spectrograms', 'spectrogram'] },
+  { section: 'rendering', key: 'ir-cache', terms: ['ir memory', 'impulse response', 'cache', 'memory', 'ram', 'performance'] },
   { section: 'rendering', key: 'base-spl', terms: ['base level', 'base spl', 'spl', 'volume', 'db', 'decibel'] },
 
   { section: 'workspaces', key: 'collaboration', terms: ['workspaces', 'workspace', 'members', 'collaboration', 'collaborators', 'invite', 'sharing', 'share', 'link', 'owner', 'transfer', 'viewer', 'view only', 'leave'] },
@@ -642,6 +644,8 @@ export function AdvancedSettingsSection({
   // Someone else's workspace: only the owner saves (autosave + delete are off).
   const isReadOnlyWorkspace = useWorkspaceStore(selectIsReadOnlyWorkspace);
   const colorTheme = useUIStore((s) => s.colorTheme);
+  const irCacheBudgetMB = useUIStore((s) => s.irCacheBudgetMB);
+  const setIRCacheBudgetMB = useUIStore((s) => s.setIRCacheBudgetMB);
   const setColorTheme = useUIStore((s) => s.setColorTheme);
   const uiMode = useUIStore((s) => s.uiMode);
   const switchUIMode = useSceneWorkflowStore((s) => s.switchUIMode);
@@ -978,6 +982,17 @@ export function AdvancedSettingsSection({
                 <CollapsibleGroup title="Ambisonic send (AmbiX)" forceExpanded={isSearchActive}>
                   <AmbisonicSendControls />
                 </CollapsibleGroup>
+              )}
+              {isVisible('ir-cache') && (
+                <div className="flex flex-col gap-2 py-0.5" title={IR_CACHE.SETTING_HINT}>
+                  <span className="text-[10px] whitespace-nowrap tracking-wider text-secondary-hover">{IR_CACHE.SETTING_LABEL}</span>
+                  <CardSelect
+                    compact
+                    value={irCacheBudgetMB === null ? 'auto' : String(irCacheBudgetMB)}
+                    onChange={(v) => setIRCacheBudgetMB(v === 'auto' ? null : Number(v))}
+                    options={IR_CACHE.SETTING_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+                  />
+                </div>
               )}
               {isVisible('base-spl') && (
                 <RangeSlider

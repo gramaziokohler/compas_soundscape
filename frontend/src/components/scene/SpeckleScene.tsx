@@ -23,6 +23,7 @@ import type * as THREE from 'three';
 import { useSpeckleViewerInit } from '@/components/scene/hooks/useSpeckleViewerInit';
 import { useSpeckleFPS } from '@/components/scene/hooks/useSpeckleFPS';
 import { useEmergencyGuard } from '@/hooks/useEmergencyGuard';
+import { useSceneReloadPause } from '@/hooks/useSceneReloadPause';
 import { useFaceFocusedSound } from '@/components/scene/hooks/useFaceFocusedSound';
 import { useSpeckleAreaDrawing } from '@/components/scene/hooks/useSpeckleAreaDrawing';
 import { useSpeckleAnalysisPreview } from '@/components/scene/hooks/useSpeckleAnalysisPreview';
@@ -1058,6 +1059,14 @@ export function SpeckleScene({
   // Last resort before a crash on very large models: free IR memory and pause until
   // the tab recovers (never fires on ordinary switches — see EMERGENCY_GUARD).
   useEmergencyGuard({
+    audioOrchestrator,
+    isPlaying: playbackState.isPlaying,
+    onPause: handlePauseAll,
+    onPlay: handlePlayAll,
+  });
+  // A scene switch that replaces the sound set pauses the timeline until the new
+  // sounds (and their IRs) are loaded, then resumes — never a half-loaded scene.
+  useSceneReloadPause({
     audioOrchestrator,
     isPlaying: playbackState.isPlaying,
     onPause: handlePauseAll,

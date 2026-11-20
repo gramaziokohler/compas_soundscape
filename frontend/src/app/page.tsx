@@ -67,6 +67,7 @@ import { useAmbisonicSendSync } from "@/hooks/useAmbisonicSendSync";
 import { useCrashProbe } from "@/hooks/useCrashProbe";
 import { usePerformanceSources } from "@/hooks/usePerformanceSources";
 import { useIRSwapIndicator } from "@/hooks/useIRSwapIndicator";
+import { useIRCacheBudgetSync } from "@/hooks/useIRCacheBudgetSync";
 import { usePffdtdFreeMovement } from "@/hooks/usePffdtdFreeMovement";
 import { applyOutputDevice } from "@/lib/audio/output-device";
 import { useViewportScale } from "@/hooks/useViewportScale";
@@ -1095,6 +1096,8 @@ function HomeContent() {
   useCrashProbe();
   // Bottom-bar "applying acoustics" indicator, driven by the orchestrator's IR swaps
   useIRSwapIndicator(audioOrchestrator.orchestrator);
+  // Advanced settings → Rendering → IR memory
+  useIRCacheBudgetSync(audioOrchestrator.orchestrator);
   // Wave-based free positioning: moved listeners / sources get their IR without re-running
   usePffdtdFreeMovement();
 

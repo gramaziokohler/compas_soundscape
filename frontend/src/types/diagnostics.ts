@@ -15,6 +15,10 @@ export interface AudioMemoryStats {
   convolverFilterBytes: number;
   /** updateSourceIRsForReceiver runs currently in flight (more than 1 = overlapping switches). */
   irRunsInFlight: number;
+  /** Most IR swaps preparing at once since the previous sample. */
+  irRunsPeak: number;
+  /** IR swaps (simulation / listener switches) started since load. */
+  irSwaps: number;
 }
 
 /** Sounds-view point lights (crash probe). */
@@ -73,6 +77,10 @@ export interface PerformanceSample {
   gl: RendererStats | null;
   /** Shader programs compiled within PERFORMANCE_METER.STALL_WINDOW_MS (recompile storms). */
   newPrograms: number;
+  /** IR switches (simulation / listener) started within PERFORMANCE_METER.STALL_WINDOW_MS. */
+  recentIRSwaps: number;
+  /** navigator.deviceMemory (GB, coarse, Chromium only). */
+  deviceMemoryGB: number | null;
   /** Frame rate and worst frame gap within the stall window (only while a subscriber needs frames). */
   frames: { fps: number; worstGapMs: number } | null;
   longTasks: { count: number; worstMs: number };

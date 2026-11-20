@@ -812,6 +812,14 @@ request ─ coalesce (same mapping object + listener + sources → no-op; newer 
                    (only when preparing takes > IR_SWAP.SPINNER_DELAY_MS)
 ```
 
+A switch that replaces the SOUND SET (share-link scene / simulation with other linked
+sounds) is different: `SoundSphereManager` removes the old sources and loads the new ones.
+`SceneReloadTracker` reports that reload; `useSceneReloadPause` (SpeckleScene) pauses the
+timeline, shows "Loading sounds n/N", waits for every buffer, gives the new sources their
+IRs (`orchestrator.refreshSourceIRs()`), then resumes where it paused
+(`SCENE_RELOAD.MAX_PAUSE_MS` safety). The IR cache budget is Auto (RAM-sized) or the
+Advanced settings → Rendering → "IR memory" choice (`uiStore.irCacheBudgetMB`).
+
 ### Performance Monitoring & Emergency Guard
 
 One sampler, `lib/diagnostics/performance-monitor.ts`, serves every consumer so nothing
@@ -820,7 +828,7 @@ convolvers, AudioContext health), the Sounds-view light pool and the WebGL rende
 
 | Consumer | When | What |
 | --- | --- | --- |
-| Performance meter (`components/scene/performance/`) | Edit mode, bottom-bar Gauge toggle (`uiStore.showPerformanceMeter`) | 1 Hz with frame tracking: MEM / CPU / DSP / GPU / XRUN bars, peaks, sparklines, headroom |
+| Performance meter (`components/scene/performance/`) | Edit mode, bottom-bar Gauge toggle (`uiStore.showPerformanceMeter`; panel stays open until closed) | 1 Hz with frame tracking: MEM / CPU / DSP / GPU / XRUN bars, peaks, sparklines, headroom. Memory red = a fraction of the tab's heap limit (the per-tab ceiling), capped by device RAM on small machines (`memoryThresholds`) |
 | Emergency guard (`lib/diagnostics/emergency-guard.ts`, `useEmergencyGuard` in SpeckleScene) | Always, editor and share view | 1 Hz: critical memory, WebGL context loss or repeated >1 s stalls → release IRs, cancel the IR swap, pause; resume once healthy |
 | Crash probe (`lib/diagnostics/crash-probe.ts`) | `?diag=1` (sticky; `?diag=0` off) | 2 s records + events in localStorage, survives "Aw, Snap"; `window.__compasCrashProbe.previous` after reload; `[dbg:heap]` call probes on Speckle filter passes |
 

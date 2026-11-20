@@ -20,6 +20,9 @@ interface TransportTimeState {
   /** IRs fetched + decoded so far for the swap in progress (null when idle). */
   irSwapProgress: { loaded: number; total: number } | null;
   setApplyingIRs: (applying: boolean, progress?: { loaded: number; total: number } | null) => void;
+  /** Sounds loading after a scene switch (the timeline waits for them); null when idle. */
+  sceneLoadProgress: { loaded: number; total: number } | null;
+  setSceneLoadProgress: (progress: { loaded: number; total: number } | null) => void;
 }
 
 export const useTransportTimeStore = create<TransportTimeState>((set, get) => ({
@@ -29,6 +32,11 @@ export const useTransportTimeStore = create<TransportTimeState>((set, get) => ({
   },
   isApplyingIRs: false,
   irSwapProgress: null,
+  sceneLoadProgress: null,
+  setSceneLoadProgress: (progress) => {
+    const prev = get().sceneLoadProgress;
+    if (prev?.loaded !== progress?.loaded || prev?.total !== progress?.total) set({ sceneLoadProgress: progress });
+  },
   setApplyingIRs: (applying, progress = null) => {
     const prev = get();
     const next = applying ? progress : null;

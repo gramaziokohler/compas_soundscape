@@ -84,9 +84,23 @@ interface FilteringInternals {
   setFilters?: AnyFn;
 }
 
+/**
+ * The viewer's FilteringExtension, or null. Speckle's getExtension THROWS ("Could not
+ * get Extension of type …") while the extension is not created yet — the viewer is
+ * published to the engine store before its extensions, so never call it unguarded here.
+ */
+function filteringExtensionOf(viewer: Viewer | null): FilteringExtension | null {
+  if (!viewer) return null;
+  try {
+    return viewer.getExtension(FilteringExtension) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /** Size of the viewer's filter state: hidden ids and the descendant-id memo. */
 export function readFilterStateStats(viewer: Viewer | null): Record<string, number> | null {
-  const ext = viewer?.getExtension(FilteringExtension);
+  const ext = filteringExtensionOf(viewer);
   if (!ext) return null;
   const internals = ext as unknown as FilteringInternals;
   const cacheKeys = internals.idCache ? Object.keys(internals.idCache) : [];
@@ -109,7 +123,7 @@ export function installHeapProbes(viewer: Viewer): () => void {
   })) as typeof renderer.setMaterial;
   restores.push(() => { renderer.setMaterial = origSetMaterial; });
 
-  const ext = viewer.getExtension(FilteringExtension) as unknown as FilteringInternals | undefined;
+  const ext = filteringExtensionOf(viewer) as unknown as FilteringInternals | null;
   const origSetFilters = ext?.setFilters;
   if (ext && origSetFilters) {
     ext.setFilters = probe('setFilters', origSetFilters.bind(ext));

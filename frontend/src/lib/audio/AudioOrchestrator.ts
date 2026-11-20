@@ -169,6 +169,9 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   // Decoded IR cache keyed by IR metadata id: shared in-flight decodes, LRU under a
   // RAM-sized budget, the playing + preparing IRs pinned (lib/audio/utils/ir-cache.ts).
   private irCache = new IRCache();
+  /** Budget chosen in settings (or the RAM-sized default) and the emergency scale on top. */
+  private irCacheBaseBytes = defaultIRCacheBudgetBytes();
+  private irCacheBudgetScale = 1;
 
   // ── IR swap pipeline (swapSourceIRs) ──────────────────────────────────────
   // Every simulation / listener switch prepares ALL new IRs while the old ones keep
@@ -202,6 +205,10 @@ export class AudioOrchestrator implements IAudioOrchestrator {
 
   // [dbg:crash-probe] IR swaps still preparing (>1 = a superseded one still winding down).
   private irRunsInFlight = 0;
+  /** Most swaps preparing at once since the last getMemoryStats() (a 1 Hz sample misses short ones). */
+  private irRunsPeak = 0;
+  /** IR swaps started since load (the monitor turns it into switches per window). */
+  private irSwapCount = 0;
 
   // Browser capabilities
   private browserCapabilities: {
@@ -882,6 +889,8 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     });
 
     this.irRunsInFlight++;
+    this.irRunsPeak = Math.max(this.irRunsPeak, this.irRunsInFlight);
+    this.irSwapCount++;
     const startedAt = performance.now();
     const decodesBefore = this.irCache.stats().decodes;
     markCrashProbe('ir-run-start', { receiverId, inFlight: this.irRunsInFlight, sources: plan.length, fade });
@@ -2067,6 +2076,16 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     };
   }
 
+  /**
+   * Give every registered source its simulation IR for the current listener in one swap
+   * (after a scene reload replaced the sources). Resolves once the IRs are committed;
+   * a no-op without an active simulation mapping.
+   */
+  async refreshSourceIRs(): Promise<void> {
+    if (!this.sourceReceiverIRMapping || !this.activeReceiverId || this.simulationMode === 'none') return;
+    await this.swapSourceIRs(this.activeReceiverId, { fade: true });
+  }
+
   /** Abandon the IR swap still preparing (its IRs are never committed). */
   cancelIRSwap(): void {
     if (!this.pendingIRSwap) return;
@@ -2085,7 +2104,21 @@ export class AudioOrchestrator implements IAudioOrchestrator {
 
   /** Scale the IR cache budget (1 = the RAM-sized default). */
   setIRCacheBudgetScale(scale: number): void {
-    this.irCache.setBudgetBytes(defaultIRCacheBudgetBytes() * scale);
+    this.irCacheBudgetScale = scale;
+    this.irCache.setBudgetBytes(this.irCacheBaseBytes * scale);
+  }
+
+  /** IR cache budget from Advanced settings (bytes); null = the RAM-sized default. */
+  setIRCacheBudget(bytes: number | null): void {
+    this.irCacheBaseBytes = bytes ?? defaultIRCacheBudgetBytes();
+    this.irCache.setBudgetBytes(this.irCacheBaseBytes * this.irCacheBudgetScale);
+  }
+
+  /** Peak concurrent IR swaps since the last read, then reset to the current count. */
+  private takeIRRunsPeak(): number {
+    const peak = this.irRunsPeak;
+    this.irRunsPeak = this.irRunsInFlight;
+    return peak;
   }
 
   /** IR cache, convolver and in-flight IR-run stats (crash probe). */
@@ -2102,6 +2135,8 @@ export class AudioOrchestrator implements IAudioOrchestrator {
       convolverNodes: convolvers.nodes,
       convolverFilterBytes: convolvers.filterBytes,
       irRunsInFlight: this.irRunsInFlight,
+      irRunsPeak: this.takeIRRunsPeak(),
+      irSwaps: this.irSwapCount,
     };
   }
 

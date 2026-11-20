@@ -3,7 +3,7 @@
  * model. A subscriber of the shared performance monitor (1 Hz, no frame tracking).
  *
  * Triggers (only these, all above the meter's red so ordinary switches never fire it):
- * - estimated app memory > EMERGENCY_GUARD.CRITICAL_MEMORY_MB for CONSECUTIVE_SAMPLES samples
+ * - estimated app memory > the meter's red × CRITICAL_MEMORY_FACTOR for CONSECUTIVE_SAMPLES samples
  * - the WebGL context is lost
  * - main-thread blocks ≥ CRITICAL_STALL_MS, STALL_REPEAT_COUNT times within the window
  *
@@ -11,9 +11,10 @@
  * pause playback (if it was playing). Playback resumes on its own after RECOVERY_SAMPLES
  * healthy samples.
  */
-import { EMERGENCY_GUARD, PERFORMANCE_METER } from '@/utils/constants';
+import { EMERGENCY_GUARD } from '@/utils/constants';
 import type { PerformanceSample } from '@/types';
 import { subscribePerformance } from './performance-monitor';
+import { memoryThresholds } from './performance-levels';
 import { markCrashProbe } from './crash-probe';
 
 export interface EmergencyGuardActions {
@@ -47,13 +48,14 @@ export function startEmergencyGuard(actions: EmergencyGuardActions): () => void 
 
   const isHealthy = (sample: PerformanceSample) =>
     !sample.contextLost &&
-    sample.memoryMB < PERFORMANCE_METER.THRESHOLDS.MEMORY_MB.WARN &&
+    sample.memoryMB < memoryThresholds(sample).warn &&
     sample.longTasks.worstMs < EMERGENCY_GUARD.CRITICAL_STALL_MS;
 
   return subscribePerformance({
     intervalMs: EMERGENCY_GUARD.SAMPLE_INTERVAL_MS,
     onSample: (sample) => {
-      overMemory = sample.memoryMB > EMERGENCY_GUARD.CRITICAL_MEMORY_MB ? overMemory + 1 : 0;
+      const criticalMB = memoryThresholds(sample).crit * EMERGENCY_GUARD.CRITICAL_MEMORY_FACTOR;
+      overMemory = sample.memoryMB > criticalMB ? overMemory + 1 : 0;
       if (overMemory >= EMERGENCY_GUARD.CONSECUTIVE_SAMPLES) {
         trigger('memory', { memoryMB: Math.round(sample.memoryMB) });
         return;

@@ -2,7 +2,7 @@
  * Text for the performance meter: the headline value per metric and the detail rows.
  */
 import { CRASH_PROBE, PERFORMANCE_METER } from '@/utils/constants';
-import { stallMs } from '@/lib/diagnostics/performance-levels';
+import { memoryThresholds, stallMs } from '@/lib/diagnostics/performance-levels';
 import type { PerformanceMetricId, PerformanceSample } from '@/types';
 
 const MB_PER_GB = 1024;
@@ -26,7 +26,7 @@ export function metricValueText(id: PerformanceMetricId, s: PerformanceSample | 
       return s.frames ? `${stall} ms · ${s.frames.fps} fps` : `${stall} ms`;
     }
     case 'dsp':
-      return s.audio ? `${s.audio.convolverNodes} conv · ${s.audio.irRunsInFlight} IR loads` : '—';
+      return s.audio ? `${s.audio.convolverNodes} conv · ${s.recentIRSwaps} IR switches` : '—';
     case 'gpu':
       if (s.contextLost) return 'context lost';
       return s.gl ? `${s.gl.programs} shaders · +${s.newPrograms}` : '—';
@@ -49,6 +49,8 @@ export function detailRows(s: PerformanceSample | null): Array<[string, string]>
   const rows: Array<[string, string]> = [];
   const nav = typeof navigator !== 'undefined' ? (navigator as Navigator & { deviceMemory?: number }) : null;
   if (s.heap) rows.push(['JS heap', `${formatMB(s.heap.usedMB)} / ${formatMB(s.heap.limitMB)}`]);
+  const limits = memoryThresholds(s);
+  rows.push(['Memory limits', `amber ${formatMB(limits.warn)} · red ${formatMB(limits.crit)}`]);
   if (s.audio) {
     rows.push(['IR cache', `${s.audio.irCacheCount} IRs · ${bytesMB(s.audio.irCacheBytes)} / ${bytesMB(s.audio.irCacheBudgetBytes)}`]);
     rows.push(['Convolver banks', `${s.audio.convolverBanks} · ${bytesMB(s.audio.convolverFilterBytes)}`]);
