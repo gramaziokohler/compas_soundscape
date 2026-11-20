@@ -134,8 +134,6 @@ Readers:
   `setSourceMute` lost the state for sources created after the effect ran.
 - Simulation source counts: `audibleSoundsInScene`. Exporter: `computeMuteSolo` over its variant events.
 
-Dev builds log `[dbg:mute]` (engine silenced ids vs registered sources) on every push.
-
 ## Export Formats
 
 `frontend/src/lib/audio/SoundscapeExporter.ts` handles all export formats (mono / binaural / FOA /

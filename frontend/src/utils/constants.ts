@@ -3412,3 +3412,21 @@ export const ACOUSTIC_MATERIALS_SUMMARY = {
   NAME_SEPARATOR: ', ',
   TOOLTIP_SEPARATOR: '\n',
 } as const;
+
+// Crash probe (lib/diagnostics/crash-probe.ts) — opt-in with `?diag=1`, off with `?diag=0`.
+// Samples memory / audio / WebGL stats and keeps the tail in localStorage so a tab that
+// died ("Aw, Snap") or froze can be inspected after reload.
+export const CRASH_PROBE = {
+  QUERY_PARAM: 'diag',
+  ENABLED_STORAGE_KEY: 'compas-diag-enabled',
+  RECORDS_STORAGE_KEY: 'compas-diag-records',
+  SAMPLE_INTERVAL_MS: 2000,
+  MAX_RECORDS: 300,
+  /** Main-thread tasks at least this long are recorded as freezes. */
+  LONG_TASK_MS: 200,
+  /** Records printed from the previous session when it did not end cleanly. */
+  PREVIOUS_SESSION_TAIL: 15,
+  BYTES_PER_MB: 1024 * 1024,
+  BYTES_PER_SAMPLE: 4, // AudioBuffer channels are Float32
+  LOG_PREFIX: '[dbg:crash-probe]',
+} as const;

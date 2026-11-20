@@ -1759,6 +1759,15 @@ export class SoundSphereManager {
     return light;
   }
 
+  /** Sounds-view point lights: how many exist and how many are visible (crash probe). */
+  public getLightStats(): { total: number; visible: number } {
+    let visible = 0;
+    this.darkModePointLights.forEach((light) => {
+      if (light.visible) visible++;
+    });
+    return { total: this.darkModePointLights.size, visible };
+  }
+
   /** Remove an entity/marker dark-mode light for a sound ID. */
   public removeEntityDarkModeLight(soundId: string): void {
     const light = this.darkModePointLights.get(soundId);

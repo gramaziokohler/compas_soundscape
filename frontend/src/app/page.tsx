@@ -64,6 +64,7 @@ import { reapplyUserPreferences } from "@/lib/user-preferences-sync";
 import { useAudioOrchestrator } from "@/hooks/useAudioOrchestrator";
 import { useAudioOutputDeviceSync } from "@/hooks/useAudioOutputDeviceSync";
 import { useAmbisonicSendSync } from "@/hooks/useAmbisonicSendSync";
+import { useCrashProbe } from "@/hooks/useCrashProbe";
 import { usePffdtdFreeMovement } from "@/hooks/usePffdtdFreeMovement";
 import { applyOutputDevice } from "@/lib/audio/output-device";
 import { useViewportScale } from "@/hooks/useViewportScale";
@@ -1086,6 +1087,8 @@ function HomeContent() {
 
   // Multichannel ambisonic send (16-ch AmbiX → Dante / DAW) settings ↔ orchestrator.
   useAmbisonicSendSync(audioOrchestrator.orchestrator);
+  // [dbg:crash-probe] share-mode crash diagnostics, opt-in with ?diag=1
+  useCrashProbe(audioOrchestrator.orchestrator);
   // Wave-based free positioning: moved listeners / sources get their IR without re-running
   usePffdtdFreeMovement();
 

@@ -48,6 +48,13 @@ export function useSpeckleFPS({
     receiverId: null,
   });
 
+  // Mirror into the engine store too — non-React / outside-this-tree consumers
+  // (useGlobalShortcuts, the DAW track head's "can't zoom in FPS" hint) read
+  // this flag from there instead of threading it down as a prop.
+  useEffect(() => {
+    useSpeckleEngineStore.getState().setIsFirstPersonMode(isFirstPersonMode);
+  }, [isFirstPersonMode]);
+
   // Keep ref in sync
   useEffect(() => {
     isFirstPersonModeRef.current = isFirstPersonMode;

@@ -66,8 +66,10 @@ import {
   formatAudioBufferInfo
 } from './utils/audio-file-decoder';
 import { decodeAudioAllChannels } from './utils/wav-multichannel';
-import { AUDIO_CONTROL, AUDIO_SAMPLE_RATE, DEFAULT_SPEED_OF_SOUND, API_BASE_URL } from '@/utils/constants';
+import { AUDIO_CONTROL, AUDIO_SAMPLE_RATE, CRASH_PROBE, DEFAULT_SPEED_OF_SOUND, API_BASE_URL } from '@/utils/constants';
 import { registerOutputDeviceTarget } from './output-device';
+import { markCrashProbe } from '@/lib/diagnostics/crash-probe';
+import type { AudioMemoryStats } from '@/types';
 import { OutputLevelMeter } from './utils/output-level-meter';
 import { AmbisonicSendController } from './output/AmbisonicSendController';
 
@@ -177,6 +179,9 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   // dry-out clear followed by a drag-back whose async load was superseded, then
   // in-cell nudges — all sharing the wet posKey) self-heals back to convolved.
   private sourceIRAppliedKey: Map<string, string> = new Map();
+
+  // [dbg:crash-probe] updateSourceIRsForReceiver runs in flight (>1 = overlapping switches).
+  private irRunsInFlight = 0;
 
   // Browser capabilities
   private browserCapabilities: {
@@ -694,6 +699,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     simulationSourcePositions?: Record<string, [number, number, number]>,
     simulationSoundToPosKey?: Record<string, string>
   ): Promise<void> {
+    markCrashProbe('ir-mapping-set', { simulationMode, sources: Object.keys(mapping).length, receiver: initialReceiverId ?? null });
     this.sourceReceiverIRMapping = mapping;
     this.simulationMode = simulationMode;
     this.activeReceiverId = initialReceiverId || this.activeReceiverId;
@@ -756,6 +762,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
    */
   async updateActiveReceiver(receiverId: string): Promise<void> {
     console.log('[AudioOrchestrator] 🎯 updateActiveReceiver called:', receiverId);
+    markCrashProbe('listener-switch', { receiverId });
 
     // Record the choice even without a mapping: a listener picked before a
     // simulation is activated must be the one heard once it is.
@@ -776,6 +783,23 @@ export class AudioOrchestrator implements IAudioOrchestrator {
    * @param receiverId - ID of the receiver to use for IR selection
    */
   private async updateSourceIRsForReceiver(receiverId: string): Promise<void> {
+    this.irRunsInFlight++;
+    const startedAt = performance.now();
+    markCrashProbe('ir-run-start', { receiverId, inFlight: this.irRunsInFlight, sources: this.sourceRegistry.size });
+    try {
+      await this.applySourceIRsForReceiver(receiverId);
+    } finally {
+      this.irRunsInFlight--;
+      markCrashProbe('ir-run-end', {
+        receiverId,
+        ms: Math.round(performance.now() - startedAt),
+        inFlight: this.irRunsInFlight,
+        ...this.getMemoryStats(),
+      });
+    }
+  }
+
+  private async applySourceIRsForReceiver(receiverId: string): Promise<void> {
     if (!this.sourceReceiverIRMapping || !this.currentModeInstance) {
       console.warn('[AudioOrchestrator] Cannot update source IRs - missing mapping or mode');
       return;
@@ -868,7 +892,17 @@ export class AudioOrchestrator implements IAudioOrchestrator {
       const arrayBuffer = await response.arrayBuffer();
 
       // Decode keeping every channel (the browser decoder stops at 8: a 3rd-order IR has 16)
+      const decodeStart = performance.now();
       const audioBuffer = await decodeAudioAllChannels(this.audioContext, arrayBuffer);
+      markCrashProbe('ir-decoded', {
+        id: irMetadata.id,
+        channels: audioBuffer.numberOfChannels,
+        sampleRate: audioBuffer.sampleRate,
+        seconds: Math.round(audioBuffer.duration * 100) / 100,
+        fileMB: Math.round(arrayBuffer.byteLength / CRASH_PROBE.BYTES_PER_MB * 10) / 10,
+        decodeMs: Math.round(performance.now() - decodeStart),
+        cacheCount: this.irCache.size + 1,
+      });
 
       // Cache the decoded buffer
       this.irCache.set(cacheKey, audioBuffer);
@@ -886,6 +920,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
    * Clear IR cache (called when simulation changes)
    */
   private clearIRCache(): void {
+    markCrashProbe('ir-cache-clear', { count: this.irCache.size });
     this.irCache.clear();
     console.log('[AudioOrchestrator] IR cache cleared');
   }
@@ -905,6 +940,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     simulationSourcePositions?: Record<string, [number, number, number]>,
     simulationSoundToPosKey?: Record<string, string>
   ): Promise<void> {
+    markCrashProbe('ir-mapping-hotswap', { simulationMode, sources: Object.keys(mapping).length, receiver: activeReceiverId ?? null });
     this.sourceReceiverIRMapping = mapping;
     this.simulationMode = simulationMode;
     this.activeReceiverId = activeReceiverId || this.activeReceiverId;
@@ -1749,12 +1785,6 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     for (const sourceId of this.sourceRegistry.keys()) {
       this.currentModeInstance.setSourceMute(sourceId, this.silencedSources.has(sourceId));
     }
-    if (process.env.NODE_ENV !== 'production') {
-      const registered = [...this.sourceRegistry.keys()];
-      console.debug('[dbg:mute] engine silenced', registered.filter((id) => this.silencedSources.has(id)),
-        'of', registered.length, 'sources; pending (not loaded yet)',
-        [...this.silencedSources].filter((id) => !this.sourceRegistry.has(id)));
-    }
   }
 
   /** Whether a source is currently silenced (muted or soloed out). */
@@ -1908,6 +1938,23 @@ export class AudioOrchestrator implements IAudioOrchestrator {
       masterVolume: this.pendingMasterVolume,
       mode,
       sources,
+    };
+  }
+
+  /** IR cache, convolver and in-flight IR-run stats (crash probe). */
+  getMemoryStats(): AudioMemoryStats {
+    let irCacheBytes = 0;
+    for (const buffer of this.irCache.values()) {
+      irCacheBytes += buffer.length * buffer.numberOfChannels * CRASH_PROBE.BYTES_PER_SAMPLE;
+    }
+    const convolvers = this.ambisonicIRMode?.getConvolverStats() ?? { banks: 0, nodes: 0, filterBytes: 0 };
+    return {
+      irCacheCount: this.irCache.size,
+      irCacheBytes,
+      convolverBanks: convolvers.banks,
+      convolverNodes: convolvers.nodes,
+      convolverFilterBytes: convolvers.filterBytes,
+      irRunsInFlight: this.irRunsInFlight,
     };
   }
 

@@ -443,3 +443,7 @@ export type {
   PffdtdOverlayKind,
 } from './pffdtd';
 export * from './share';
+
+// Import and re-export diagnostics types
+import type { AudioMemoryStats, SoundLightStats, CrashProbeRecord } from './diagnostics';
+export type { AudioMemoryStats, SoundLightStats, CrashProbeRecord };
