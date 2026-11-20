@@ -25,6 +25,8 @@ export interface CrashProbeSources {
   getLightStats: () => SoundLightStats | null;
   getRendererStats: () => RendererStats | null;
   getCanvas: () => HTMLCanvasElement | null;
+  /** Extra per-sample fields (e.g. [dbg:heap] call counters, filter-state sizes). */
+  getExtraStats?: () => Record<string, unknown> | null;
 }
 
 /** Chromium-only `performance.memory` (non-standard; absent elsewhere). */
@@ -117,6 +119,7 @@ function takeSample(sources: CrashProbeSources): CrashProbeRecord {
     }),
     lights: sources.getLightStats(),
     gl: sources.getRendererStats(),
+    ...sources.getExtraStats?.(),
   };
   return { t: new Date().toISOString(), kind: 'sample', data };
 }

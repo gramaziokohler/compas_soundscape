@@ -3421,7 +3421,7 @@ export const CRASH_PROBE = {
   ENABLED_STORAGE_KEY: 'compas-diag-enabled',
   RECORDS_STORAGE_KEY: 'compas-diag-records',
   SAMPLE_INTERVAL_MS: 2000,
-  MAX_RECORDS: 300,
+  MAX_RECORDS: 2000,
   /** Main-thread tasks at least this long are recorded as freezes. */
   LONG_TASK_MS: 200,
   /** Records printed from the previous session when it did not end cleanly. */
@@ -3429,4 +3429,7 @@ export const CRASH_PROBE = {
   BYTES_PER_MB: 1024 * 1024,
   BYTES_PER_SAMPLE: 4, // AudioBuffer channels are Float32
   LOG_PREFIX: '[dbg:crash-probe]',
+  /** [dbg:heap] a single probed call this slow, or allocating this much, is logged on its own. */
+  HEAP_PROBE_SLOW_MS: 50,
+  HEAP_PROBE_ALLOC_MB: 20,
 } as const;
