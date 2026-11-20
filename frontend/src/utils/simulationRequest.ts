@@ -17,7 +17,7 @@ import {
 import { customMaterialDefinitions, isCustomMaterialId } from '@/store/customMaterialStore';
 import { directivityLabel, isResolvableDirectivityId } from '@/store/directivityStore';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
-import { collapseVariantsToOne, groupSoundsByPosition, isOmniDirectivity } from '@/utils/positionKey';
+import { groupSimulationSources, isOmniDirectivity } from '@/utils/positionKey';
 import type { SoundDirectivity } from '@/types/directivity';
 import type { CustomMaterialCoefficients } from '@/types/materials';
 import type { SimulationEngine, SimulationMeshSettings } from '@/types/simulationPreflight';
@@ -115,8 +115,7 @@ export function buildSimulationGeometryRequest(args: BuildArgs): BuildResult {
 
   // Variants of one source (same prompt_index) collapse to a single simulated source;
   // co-located sounds with different directivities stay separate sources (key suffix).
-  const sourceSounds = collapseVariantsToOne(sounds, selectedVariants);
-  const { uniquePositions, soundToPosKey, sourceDirectivities } = groupSoundsByPosition(sourceSounds);
+  const { uniquePositions, soundToPosKey, sourceDirectivities } = groupSimulationSources(sounds, selectedVariants);
 
   const uniqueSourceDirectivities: Record<string, SoundDirectivity> = {};
   for (const [posKey, directivity] of sourceDirectivities) {

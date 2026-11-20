@@ -168,3 +168,34 @@ export function collapseVariantsToOne<T extends { prompt_index?: number; copy_in
   }
   return result;
 }
+
+/**
+ * Simulated sources of a soundscape: variants collapse to one source per prompt
+ * (`collapseVariantsToOne`), then group by position + directivity
+ * (`groupSoundsByPosition`). Every variant of a prompt — not only the selected
+ * representative — is mapped to that source's key in `soundToPosKey`, so
+ * switching variants after a run keeps the source's (directional) IR.
+ */
+export function groupSimulationSources<
+  T extends GroupableSound & { prompt_index?: number | null; copy_index?: number },
+>(
+  sounds: T[],
+  selectedVariants: Record<number, number> = {},
+  precision: number = SIMULATION_POSITION_MATCH_THRESHOLD,
+): ReturnType<typeof groupSoundsByPosition> {
+  const grouped = groupSoundsByPosition(
+    collapseVariantsToOne(sounds as Array<T & { prompt_index?: number }>, selectedVariants),
+    precision,
+  );
+  const keyByPrompt = new Map<number, string>();
+  for (const s of sounds) {
+    const key = grouped.soundToPosKey.get(s.id);
+    if (key !== undefined && s.prompt_index != null) keyByPrompt.set(s.prompt_index, key);
+  }
+  for (const s of sounds) {
+    if (s.prompt_index == null || grouped.soundToPosKey.has(s.id)) continue;
+    const key = keyByPrompt.get(s.prompt_index);
+    if (key !== undefined) grouped.soundToPosKey.set(s.id, key);
+  }
+  return grouped;
+}

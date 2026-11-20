@@ -121,7 +121,7 @@ import {
   SIMPLE_MODE,
   COPY_MATERIALS,
 } from '@/utils/constants';
-import { groupSoundsByPosition, collapseVariantsToOne } from '@/utils/positionKey';
+import { groupSimulationSources } from '@/utils/positionKey';
 import { audibleSoundsInScene } from '@/lib/audio/utils/mute-solo';
 import { useServiceVersions } from '@/hooks/useServiceVersions';
 import { logSimulationLaunch, logSimulationResult } from '@/lib/study/simulationEvents';
@@ -1711,7 +1711,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     // Collapse variants to one representative per prompt so a multi-copy sound counts as ONE
     // simulation source (one position, one IR per receiver) in the source count and saved positions.
     const { soundToPosKey: sourceSoundToPosKey, uniquePositions: renderUniqueSourcePositions } =
-      groupSoundsByPosition(collapseVariantsToOne(activeSoundscapeData ?? [], selectedVariants));
+      groupSimulationSources(activeSoundscapeData ?? [], selectedVariants);
 
     const sourceDisplayNames: Record<string, string> = {};
     const currentSourcePositions: Record<string, [number, number, number]> = {};

@@ -222,6 +222,9 @@ let _hoverHighlightIds: string[] = [];
  *  highlight but with the light primary colour. Kept in a module ref so it
  *  survives every applyFilterColors() re-apply. */
 let _scenarioPreviewIds: string[] = [];
+/** Entities linked to the focused / expanded / DAW-hovered sound card — colored
+ *  like a highlighted sound sphere (warning). Set by useSpeckleSoundHighlight. */
+let _soundFocusHighlightIds: string[] = [];
 
 // ─── Store state/actions interface ───────────────────────────────────────────
 
@@ -338,6 +341,8 @@ export interface SpeckleStoreState {
   clearHoverHighlight: () => void;
   // Scenario preview highlight (expanded scenario card — light primary colour)
   setScenarioPreviewHighlight: (objectIds: string[]) => void;
+  /** Entities of the highlighted sound card(s) — same warning tint as the sound sphere. */
+  setSoundFocusHighlight: (objectIds: string[]) => void;
   clearScenarioPreviewHighlight: () => void;
   zoomToObjectById: (objectId: string | string[]) => void;
 }
@@ -720,6 +725,22 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
             .getPropertyValue('--color-warning-light')
             .trim();
           colorGroups.push({ objectIds: scenarioPreviewIds, color: scenarioPreviewColor });
+        }
+
+        // Sound focus highlight (entities linked to the focused / expanded /
+        // DAW-hovered sound card) — the entity counterpart of the yellow sphere.
+        const soundFocusIds = _soundFocusHighlightIds.filter((id) => !isExcluded(id));
+        if (soundFocusIds.length > 0) {
+          for (const focusId of soundFocusIds) {
+            for (const g of colorGroups) {
+              const idx = g.objectIds.indexOf(focusId);
+              if (idx !== -1) g.objectIds.splice(idx, 1);
+            }
+          }
+          const soundFocusColor = getComputedStyle(document.documentElement)
+            .getPropertyValue('--color-warning')
+            .trim();
+          colorGroups.push({ objectIds: soundFocusIds, color: soundFocusColor });
         }
 
         // Hover highlight (scenario object reference hover)
@@ -1112,6 +1133,14 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
 
       clearHoverHighlight: () => {
         _hoverHighlightIds = [];
+        get().applyFilterColors();
+      },
+
+      setSoundFocusHighlight: (objectIds) => {
+        const same = objectIds.length === _soundFocusHighlightIds.length
+          && objectIds.every((id, i) => id === _soundFocusHighlightIds[i]);
+        if (same) return;
+        _soundFocusHighlightIds = objectIds;
         get().applyFilterColors();
       },
 

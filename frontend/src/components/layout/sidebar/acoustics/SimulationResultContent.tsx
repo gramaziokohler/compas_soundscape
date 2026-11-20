@@ -217,14 +217,16 @@ export function SimulationResultContent({
         const cur = currentSoundPositions[soundId];
         if (!simPos || !cur) continue;
         const dist = Math.hypot(simPos[0] - cur[0], simPos[1] - cur[1], simPos[2] - cur[2]);
+        // Every variant of a card is mapped (one shared source): list the card once.
+        const pushName = (name: string) => { if (!names.includes(name)) names.push(name); };
         if (dist > SIMULATION_POSITION_THRESHOLD) {
-          names.push(currentSoundNames?.[soundId] || soundId);
+          pushName(currentSoundNames?.[soundId] || soundId);
           sourceIds.push(soundId);
           continue;
         }
         const liveDirectivity = liveSounds?.find((s) => s.id === soundId)?.directivity;
         if (directivityKeySuffix(liveDirectivity) !== simPosKey.slice(positionKeyBase(simPosKey).length)) {
-          names.push(`${currentSoundNames?.[soundId] || soundId} (directivity changed)`);
+          pushName(`${currentSoundNames?.[soundId] || soundId} (directivity changed)`);
           sourceIds.push(soundId);
         }
       }

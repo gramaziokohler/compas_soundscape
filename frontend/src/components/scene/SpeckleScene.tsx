@@ -1263,6 +1263,7 @@ export function SpeckleScene({
           isAnyPlaying={playbackState.isPlaying}
           originalIRChannelCount={irChannelCount}
           playbackSchedulerRef={playbackSchedulerRef}
+          onRevealSoundCard={onRevealSoundInScene}
         />
       )}
 

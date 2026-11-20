@@ -26,7 +26,7 @@ import {
   PYROOMACOUSTICS_DEFAULT_ENABLE_GRID,
   PYROOMACOUSTICS_DEFAULT_PARALLEL,
 } from '@/utils/constants';
-import { groupSoundsByPosition, collapseVariantsToOne } from '@/utils/positionKey';
+import { groupSimulationSources } from '@/utils/positionKey';
 import { notifyError } from './errorsStore';
 import { resolveSimulationLayerName, resolveSimulationGeometryObjectIds } from './acousticLayerStore';
 import { customMaterialDefinitions } from './customMaterialStore';
@@ -312,12 +312,11 @@ export const usePyroomAcousticsStore = create<PyroomAcousticsStoreState>()(
           // Group sounds by position to deduplicate source-receiver pairs.
           // Variants of one source (same prompt_index) collapse to a single simulated source
           // so multi-copy sounds are not simulated as N separate sources.
-          const sourceSounds = collapseVariantsToOne(
-            soundscapeData as Array<{ prompt_index?: number; copy_index?: number }>,
-            useAudioControlsStore.getState().selectedVariants,
-          );
           const { uniquePositions: uniqueSourcePositions, soundToPosKey: sourceSoundToPosKey } =
-            groupSoundsByPosition(sourceSounds as Array<{ id: string; position: [number, number, number] }>);
+            groupSimulationSources(
+              soundscapeData as Array<{ id: string; position: [number, number, number]; prompt_index?: number; copy_index?: number }>,
+              useAudioControlsStore.getState().selectedVariants,
+            );
 
           // Build source-receiver pairs: unique source positions × receivers
           const sourceReceiverPairs: any[] = [];

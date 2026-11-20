@@ -63,7 +63,7 @@ import { calculateSoundPosition, type GeometryBounds } from '@/utils/positioning
 import { createSoundEventFromUpload, generatedEventFieldsFromConfig } from '@/utils/event-factory';
 import { cardEventId, configIdsByPromptIndex, newConfigId, remapEventIdToConfig } from '@/utils/config-id';
 import { parseSoundCopyIndex } from '@/lib/audio/utils/variant-sound-id';
-import { soundMatchesCard } from '@/utils/sound-card-match';
+import { findCardIndexForSound, soundMatchesCard } from '@/utils/sound-card-match';
 import {
   captureGenerationSignature,
   captureVariantSignature,
@@ -358,6 +358,21 @@ export function remapSoundPromptIndices<T extends { prompt_index?: number | null
     const next = isSpeechLine ? mapped * 10000 + (pi % 10000) : mapped;
     return next === pi ? s : { ...s, prompt_index: next };
   });
+}
+
+/**
+ * A new variant joins its card's existing acoustic source: it takes the
+ * anchor variant's position AND directivity — including "omni" (no
+ * directivity), so a pattern cleared on the card is not resurrected.
+ */
+function withAnchorSource<T extends { directivity?: SoundDirectivity }>(
+  event: T,
+  anchor: { position: unknown; directivity?: SoundDirectivity },
+): T {
+  const next = { ...event, position: anchor.position };
+  if (anchor.directivity) next.directivity = anchor.directivity;
+  else delete next.directivity;
+  return next;
 }
 
 /**
@@ -2366,9 +2381,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                   (x) => x.prompt_index === tagged.prompt_index && x.id !== tagged.id && x.position?.length === 3,
                 );
                 // Variants share the prompt's position AND directivity (one acoustic source).
-                return anchor
-                  ? { ...tagged, position: anchor.position, ...(anchor.directivity ? { directivity: anchor.directivity } : {}) }
-                  : tagged;
+                return anchor ? withAnchorSource(tagged, anchor) : tagged;
               }),
             ];
 
@@ -2781,11 +2794,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               (x: any) => x.prompt_index === targetIndex && x.id !== mappedEvents[0]?.id && x.position?.length === 3,
             );
             const alignedEvents = anchor
-              ? mappedEvents.map((e) => ({
-                  ...e,
-                  position: anchor.position,
-                  ...(anchor.directivity ? { directivity: anchor.directivity } : {}),
-                }))
+              ? mappedEvents.map((e) => withAnchorSource(e, anchor))
               : mappedEvents;
             const merged = [...currentData, ...alignedEvents];
             set({ generatedSounds: merged, soundscapeData: merged }, false, 'soundscape/regenComplete');
@@ -4095,24 +4104,40 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
         },
 
         updateSoundDirectivity: (soundId, directivity) => {
-          const { soundscapeData, generatedSounds } = get();
-          const existing = soundscapeData?.find((s) => s.id === soundId);
-          const promptIndex = existing?.prompt_index;
-          // Variants of one prompt are ONE acoustic source: the pattern is card-level,
-          // exactly like the position (updateSoundPosition).
-          const update = (sounds: any[]) =>
+          const { soundscapeData, generatedSounds, soundConfigs } = get();
+          const existing =
+            soundscapeData?.find((s) => s.id === soundId) ?? generatedSounds.find((s) => s.id === soundId);
+          // Variants of one card are ONE acoustic source: the pattern is card-level.
+          // Match through the card (config_id, or the encoded speech-line
+          // prompt_index) — an exact prompt_index compare misses variants.
+          const cardIndex = existing ? findCardIndexForSound(existing, soundConfigs) : -1;
+          const matches = (s: SoundEvent) =>
+            s.id === soundId || (cardIndex >= 0 && soundMatchesCard(s, soundConfigs, cardIndex));
+          const update = (sounds: SoundEvent[]) =>
             sounds.map((s) => {
-              const matches = promptIndex !== undefined ? s.prompt_index === promptIndex : s.id === soundId;
-              if (!matches) return s;
+              if (!matches(s)) return s;
               const next = { ...s };
               if (directivity) next.directivity = { ...directivity };
               else delete next.directivity;
               return next;
             });
+          // The card config carries the pattern too, so variants generated later
+          // ("+", regenerate) inherit the current one instead of a stale value.
+          const nextConfigs =
+            cardIndex >= 0
+              ? soundConfigs.map((c, i) => {
+                  if (i !== cardIndex) return c;
+                  const next = { ...c };
+                  if (directivity) next.directivity = { ...directivity };
+                  else delete next.directivity;
+                  return next;
+                })
+              : soundConfigs;
           set(
             {
               soundscapeData: soundscapeData ? update(soundscapeData) : null,
               generatedSounds: update(generatedSounds),
+              soundConfigs: nextConfigs,
             },
             false,
             'soundscape/updateDirectivity',

@@ -3,6 +3,7 @@ import {
   computePositionKey,
   computeSourceKey,
   directivityKeySuffix,
+  groupSimulationSources,
   groupSoundsByPosition,
   isDirectionalSourceKey,
   isOmniDirectivity,
@@ -51,5 +52,29 @@ describe('source keys with directivity', () => {
     expect(soundToPosKey.get('a')).not.toBe(soundToPosKey.get('b'));
     expect(sourceDirectivities.get(soundToPosKey.get('a')!)).toBeUndefined();
     expect(sourceDirectivities.get(soundToPosKey.get('b')!)).toEqual(cardioid);
+  });
+});
+
+describe('groupSimulationSources', () => {
+  const cardioid = { id: 'cardioid', yaw: 0.5, pitch: 0, roll: 0 };
+  const pos: [number, number, number] = [1, 2, 3];
+  const variants = [
+    { id: 'a', position: pos, prompt_index: 0, copy_index: 0, directivity: cardioid },
+    { id: 'b', position: pos, prompt_index: 0, copy_index: 1, directivity: cardioid },
+    { id: 'c', position: pos, prompt_index: 0, copy_index: 2, directivity: cardioid },
+  ];
+
+  it('simulates one directional source per card', () => {
+    const { uniquePositions } = groupSimulationSources(variants, { 0: 1 });
+    expect(uniquePositions.size).toBe(1);
+    expect(isDirectionalSourceKey([...uniquePositions.keys()][0])).toBe(true);
+  });
+
+  it('maps every variant to the source key, not only the selected one', () => {
+    const { soundToPosKey } = groupSimulationSources(variants, { 0: 1 });
+    const key = computeSourceKey(pos, cardioid);
+    expect(soundToPosKey.get('a')).toBe(key);
+    expect(soundToPosKey.get('b')).toBe(key);
+    expect(soundToPosKey.get('c')).toBe(key);
   });
 });

@@ -19,7 +19,7 @@ import { useAcousticsSimulationStore } from '@/store/acousticsSimulationStore';
 import { useReceiversStore } from '@/store/receiversStore';
 import { useGridListenersStore } from '@/store/gridListenersStore';
 import { useAudioControlsStore } from '@/store/audioControlsStore';
-import { collapseVariantsToOne, groupSoundsByPosition } from '@/utils/positionKey';
+import { groupSimulationSources } from '@/utils/positionKey';
 import type { SoundDirectivity } from '@/types/directivity';
 import { isFreshHomeUrl } from '@/utils/homeStage';
 import { progressLanesFromPartial } from '@/utils/progressLanes';
@@ -105,7 +105,7 @@ function buildRecoveredSimulationPositions(): PyroomAcousticsSimulationConfig['s
   const soundscapeData = useSoundscapeStore.getState().soundscapeData;
   if (!soundscapeData || soundscapeData.length === 0) return undefined;
 
-  const sourceSounds = collapseVariantsToOne(
+  const { uniquePositions, soundToPosKey, sourceDirectivities } = groupSimulationSources(
     soundscapeData as Array<{
       id: string;
       position: [number, number, number];
@@ -115,7 +115,6 @@ function buildRecoveredSimulationPositions(): PyroomAcousticsSimulationConfig['s
     }>,
     useAudioControlsStore.getState().selectedVariants,
   );
-  const { uniquePositions, soundToPosKey, sourceDirectivities } = groupSoundsByPosition(sourceSounds);
   if (uniquePositions.size === 0) return undefined;
 
   const receivers = useReceiversStore.getState().receivers;

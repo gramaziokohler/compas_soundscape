@@ -178,6 +178,29 @@ export function useSpeckleSoundHighlight({
     viewer?.requestRender();
   }, [isViewerReady, focusedSoundIndex, expandedSoundCardIndex, soundscapeData, selectedVariants, activeSimulationPositions, hoveredSoundCardIndex, objectSoundLinks, showSoundSpheres, effectiveCardIsGlobal]);
 
+  // Linked entities get the same yellow tint as a highlighted sphere: the focused /
+  // expanded card (unless it plays as a global bed) and the DAW-hovered card.
+  useEffect(() => {
+    if (!isViewerReady) return;
+    const { getObjectLinkCards, setSoundFocusHighlight } = useSpeckleStore.getState();
+    const indices = new Set<number>();
+    const effectiveIndex = focusedSoundIndex ?? expandedSoundCardIndex;
+    if (effectiveIndex !== null && !effectiveCardIsGlobal) indices.add(effectiveIndex);
+    if (hoveredSoundCardIndex !== null) indices.add(hoveredSoundCardIndex);
+    const ids: string[] = [];
+    if (indices.size > 0) {
+      getObjectLinkCards().forEach((cards, objectId) => {
+        for (const idx of cards) {
+          if (indices.has(idx)) { ids.push(objectId); break; }
+        }
+      });
+    }
+    setSoundFocusHighlight(ids);
+  }, [isViewerReady, focusedSoundIndex, expandedSoundCardIndex, hoveredSoundCardIndex, objectSoundLinks, effectiveCardIsGlobal]);
+
+  // Clear the entity tint when the scene unmounts.
+  useEffect(() => () => useSpeckleStore.getState().setSoundFocusHighlight([]), []);
+
   // Zoom to sound sphere when card is double-clicked in sidebar
   useEffect(() => {
     const { coordinator } = useSpeckleEngineStore.getState();

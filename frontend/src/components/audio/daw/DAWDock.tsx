@@ -74,6 +74,8 @@ export interface DAWDockProps {
   /** Distance from the screen bottom (px) — the dock sits on top of the scene bottom bar. */
   bottomOffset?: number;
   playbackSchedulerRef?: React.RefObject<PlaybackSchedulerService | null>;
+  /** Reveal a sound card: activate its sound scene, open it in the sidebar, expand the card. */
+  onRevealSoundCard?: (configIndex: number) => void;
 }
 
 export function DAWDock({
@@ -86,6 +88,7 @@ export function DAWDock({
   leftOffset,
   rightOffset,
   bottomOffset = 0,
+  onRevealSoundCard,
 }: DAWDockProps) {
   // Share view: playback only — no clip drag / trim / delete / menus / edit keys.
   const canEdit = useCanEdit();
@@ -815,6 +818,7 @@ export function DAWDock({
                   onSolo={() => handleSolo(sound.id)}
                   onVolumeChange={(db) => handleVolumeChange(sound.id, db)}
                   onSelectSoundCard={configIdx !== undefined ? () => focusTrack(configIdx) : undefined}
+                  onOpenSoundCard={configIdx !== undefined && onRevealSoundCard ? () => onRevealSoundCard(configIdx) : undefined}
                   isFocused={configIdx !== undefined && configIdx === focusedIndex}
                   onRequestDistribute={(anchor) => openDistributeFor(sound, anchor)}
                   onSelectAllClips={() => selection.replace(clips.map((c) => c.clipKey))}

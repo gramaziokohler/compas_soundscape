@@ -23,6 +23,8 @@ interface SceneTimelineProps {
   isAnyPlaying?: boolean;
   originalIRChannelCount?: number;
   playbackSchedulerRef?: React.RefObject<PlaybackSchedulerService | null>;
+  /** DAW "Open sound card": reveal the card in its sound scene. */
+  onRevealSoundCard?: (configIndex: number) => void;
 }
 
 export function SceneTimeline({
@@ -39,6 +41,7 @@ export function SceneTimeline({
   isAnyPlaying,
   originalIRChannelCount,
   playbackSchedulerRef,
+  onRevealSoundCard,
 }: SceneTimelineProps) {
   // Docked insets are measured from the actual fixed sidebars instead of being
   // derived from props/constants. Sidebar widths are clamped-fluid (viewport
@@ -102,6 +105,7 @@ export function SceneTimeline({
       rightOffset={insets.right}
       bottomOffset={SCENE_BOTTOM_BAR.HEIGHT}
       playbackSchedulerRef={playbackSchedulerRef}
+      onRevealSoundCard={onRevealSoundCard}
     />
   );
 }

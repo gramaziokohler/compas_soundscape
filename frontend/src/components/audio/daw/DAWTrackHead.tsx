@@ -23,6 +23,8 @@ interface DAWTrackHeadProps {
   onSolo: () => void;
   onVolumeChange: (dbfs: number) => void;
   onSelectSoundCard?: () => void;
+  /** Kebab "Open sound card": reveal the card in its sound scene (opens a collapsed scene). */
+  onOpenSoundCard?: () => void;
   /** This track's sound is the shared sound focus (sphere / card / track click). */
   isFocused?: boolean;
   /** Open the transient "Interval settings" popover, anchored so its bottom-left
@@ -56,6 +58,7 @@ function DAWTrackHeadImpl({
   onSolo,
   onVolumeChange,
   onSelectSoundCard,
+  onOpenSoundCard,
   isFocused = false,
   onRequestDistribute,
   onSelectAllClips,
@@ -125,7 +128,7 @@ function DAWTrackHeadImpl({
     ['Select all clips on track', onSelectAllClips],
     ['Clear clips', onClearClips],
     ['Reset track', onResetTrack],
-    ...(onSelectSoundCard ? ([['Open sound card', onSelectSoundCard]] as Array<[string, () => void]>) : []),
+    ...(onOpenSoundCard ? ([['Open sound card', onOpenSoundCard]] as Array<[string, () => void]>) : []),
     ['Zoom to entity', handleZoomToEntity],
     ['Clear entity links', onClearEntityLinks],
   ];
