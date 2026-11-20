@@ -203,6 +203,9 @@ export interface UIStoreState {
   /** Keyboard-shortcuts popover open (bottom bar button or `?`). Not persisted. */
   shortcutsOpen: boolean;
   setShortcutsOpen: (open: boolean) => void;
+  /** Bottom-bar performance meter (edit mode only). Persisted display preference, not undoable. */
+  showPerformanceMeter: boolean;
+  togglePerformanceMeter: () => void;
   /** Show / hide sound spheres and listeners together (bottom bar button or `S`) — drives the same flags as Settings → Display. */
   toggleSoundsAndListenersVisible: () => void;
   /** Incremented each time the user double-clicks a sound card to zoom to its sphere. */
@@ -516,6 +519,9 @@ export const useUIStore = create<UIStoreState>()(
       shortcutsOpen: false,
       setShortcutsOpen: (open) =>
         set({ shortcutsOpen: open }, false, 'ui/setShortcutsOpen'),
+      showPerformanceMeter: false,
+      togglePerformanceMeter: () =>
+        set((s) => ({ showPerformanceMeter: !s.showPerformanceMeter }), false, 'ui/togglePerformanceMeter'),
       // Any visible -> hide both; both hidden -> show both.
       toggleSoundsAndListenersVisible: () =>
         set(

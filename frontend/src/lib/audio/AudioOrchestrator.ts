@@ -25,12 +25,15 @@ import type {
   AmbisonicSendTarget,
   ResonanceRoomSpec,
   ResonanceExportRoom,
+  IRSwapState,
 } from '@/types/audio';
 import { AudioMode } from '@/types/audio';
 
 import { AnechoicMode } from './modes/AnechoicMode';
 import { ResonanceMode } from './modes/ResonanceMode';
-import { AmbisonicIRMode } from './modes/AmbisonicIRMode';
+import { AmbisonicIRMode, type SourceIRCommit } from './modes/AmbisonicIRMode';
+import { IRCache, defaultIRCacheBudgetBytes } from './utils/ir-cache';
+import { mapWithConcurrency } from '@/utils/concurrency';
 import type { IBinauralDecoder } from './core/interfaces/IBinauralDecoder';
 import { OmnitoneDecoder } from './decoders/OmnitoneDecoder';
 
@@ -66,10 +69,10 @@ import {
   formatAudioBufferInfo
 } from './utils/audio-file-decoder';
 import { decodeAudioAllChannels } from './utils/wav-multichannel';
-import { AUDIO_CONTROL, AUDIO_SAMPLE_RATE, CRASH_PROBE, DEFAULT_SPEED_OF_SOUND, API_BASE_URL } from '@/utils/constants';
+import { AUDIO_CONTROL, AUDIO_SAMPLE_RATE, CRASH_PROBE, DEFAULT_SPEED_OF_SOUND, API_BASE_URL, IR_SWAP } from '@/utils/constants';
 import { registerOutputDeviceTarget } from './output-device';
 import { markCrashProbe } from '@/lib/diagnostics/crash-probe';
-import type { AudioMemoryStats } from '@/types';
+import type { AudioContextHealth, AudioMemoryStats } from '@/types';
 import { OutputLevelMeter } from './utils/output-level-meter';
 import { AmbisonicSendController } from './output/AmbisonicSendController';
 
@@ -163,8 +166,25 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   // per-source volume registry above.
   private pendingMasterVolume: number = 1.0;
 
-  // IR cache - prevents double downloads of same IR (keyed by IR metadata id)
-  private irCache: Map<string, AudioBuffer> = new Map();
+  // Decoded IR cache keyed by IR metadata id: shared in-flight decodes, LRU under a
+  // RAM-sized budget, the playing + preparing IRs pinned (lib/audio/utils/ir-cache.ts).
+  private irCache = new IRCache();
+
+  // ── IR swap pipeline (swapSourceIRs) ──────────────────────────────────────
+  // Every simulation / listener switch prepares ALL new IRs while the old ones keep
+  // playing, then commits them at once with a crossfade. A newer request supersedes
+  // (aborts) an older one; an identical request is a no-op.
+  private irSwapEpoch = 0;
+  private irSwapAbort: AbortController | null = null;
+  private pendingIRSwap: { key: string; promise: Promise<void> } | null = null;
+  private appliedIRSwapKey: string | null = null;
+  /** Bumped whenever sourceReceiverIRMapping is replaced by a different object. */
+  private irMappingToken = 0;
+  private irSwapState: IRSwapState = { phase: 'idle', loaded: 0, total: 0 };
+  private irSwapListeners = new Set<(state: IRSwapState) => void>();
+  /** Card IR gain / normalize, applied with the IRs they belong to (deferred while a swap prepares). */
+  private irGainOffset = 0;
+  private irNormalize = false;
 
   // Per-source IR resolve sequence. Bumped every time a source's position asks for
   // a new simulation IR. Async downloads only apply when their sequence is still the
@@ -180,7 +200,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   // in-cell nudges — all sharing the wet posKey) self-heals back to convolved.
   private sourceIRAppliedKey: Map<string, string> = new Map();
 
-  // [dbg:crash-probe] updateSourceIRsForReceiver runs in flight (>1 = overlapping switches).
+  // [dbg:crash-probe] IR swaps still preparing (>1 = a superseded one still winding down).
   private irRunsInFlight = 0;
 
   // Browser capabilities
@@ -700,7 +720,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     simulationSoundToPosKey?: Record<string, string>
   ): Promise<void> {
     markCrashProbe('ir-mapping-set', { simulationMode, sources: Object.keys(mapping).length, receiver: initialReceiverId ?? null });
-    this.sourceReceiverIRMapping = mapping;
+    this.setIRMapping(mapping);
     this.simulationMode = simulationMode;
     this.activeReceiverId = initialReceiverId || this.activeReceiverId;
     this.simulationSourcePositions = simulationSourcePositions || {};
@@ -749,9 +769,10 @@ export class AudioOrchestrator implements IAudioOrchestrator {
       console.warn('[AudioOrchestrator] No IR metadata found in mapping - cannot determine channel count');
     }
 
-    // Update all source IRs based on active receiver (if set)
+    // Update all source IRs based on active receiver (if set). A no-op when the mode
+    // switch above already applied this mapping (same swap key).
     if (this.activeReceiverId) {
-      await this.updateSourceIRsForReceiver(this.activeReceiverId);
+      await this.swapSourceIRs(this.activeReceiverId, { fade: true });
     }
   }
 
@@ -774,154 +795,229 @@ export class AudioOrchestrator implements IAudioOrchestrator {
       return;
     }
 
-    await this.updateSourceIRsForReceiver(receiverId);
+    await this.swapSourceIRs(receiverId, { fade: true });
+  }
+
+  /** Replace the IR mapping; a different object invalidates the applied swap key. */
+  private setIRMapping(mapping: SourceReceiverIRMapping | null): void {
+    if (mapping !== this.sourceReceiverIRMapping) this.irMappingToken++;
+    this.sourceReceiverIRMapping = mapping;
+  }
+
+  /** Subscribe to IR swap progress (drives the "applying IRs" indicator). */
+  onIRSwapState(listener: (state: IRSwapState) => void): () => void {
+    this.irSwapListeners.add(listener);
+    listener(this.irSwapState);
+    return () => {
+      this.irSwapListeners.delete(listener);
+    };
+  }
+
+  private publishIRSwapState(state: IRSwapState): void {
+    this.irSwapState = state;
+    for (const listener of this.irSwapListeners) {
+      try {
+        listener(state);
+      } catch (error) {
+        console.error('[AudioOrchestrator] IR swap listener failed:', error);
+      }
+    }
   }
 
   /**
-   * Update all source IRs based on active receiver
-   * Downloads IR buffers and applies them to each source
-   * @param receiverId - ID of the receiver to use for IR selection
+   * Give every registered source the IR of `receiverId` from the current mapping.
+   *
+   * Coalesced: identical to the pending or applied swap → no-op; a newer swap
+   * aborts the one still preparing. The old IRs keep playing while all new IRs are
+   * fetched and decoded in parallel (shared with any concurrent request for the
+   * same IR); then they are committed together. `fade` crossfades each source from
+   * its old IR (live switches); without it the IRs are set at once (fresh chains
+   * after a mode switch). `force` skips the no-op check.
    */
-  private async updateSourceIRsForReceiver(receiverId: string): Promise<void> {
+  private async swapSourceIRs(receiverId: string, opts: { fade: boolean; force?: boolean }): Promise<void> {
+    const key = `${this.irMappingToken}|${receiverId}|${[...this.sourceRegistry.keys()].sort().join(',')}`;
+    if (!opts.force) {
+      if (this.pendingIRSwap?.key === key) return this.pendingIRSwap.promise;
+      if (!this.pendingIRSwap && this.appliedIRSwapKey === key) {
+        markCrashProbe('ir-swap-skip', { receiverId });
+        return;
+      }
+    }
+
+    this.irSwapAbort?.abort();
+    const abort = new AbortController();
+    this.irSwapAbort = abort;
+    const epoch = ++this.irSwapEpoch;
+    const promise = this.runIRSwap(epoch, key, receiverId, opts.fade, abort.signal);
+    this.pendingIRSwap = { key, promise };
+    try {
+      await promise;
+    } finally {
+      if (this.pendingIRSwap?.promise === promise) this.pendingIRSwap = null;
+    }
+  }
+
+  private async runIRSwap(
+    epoch: number,
+    key: string,
+    receiverId: string,
+    fade: boolean,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const mapping = this.sourceReceiverIRMapping;
+    const mode = this.currentModeInstance;
+    if (!mapping || !(mode instanceof AmbisonicIRMode)) {
+      console.warn('[AudioOrchestrator] IR swap skipped — no mapping or not in AMBISONIC_IR mode');
+      return;
+    }
+
+    // Resolve each source's IR now. Bumping its sequence discards any older
+    // per-source resolve still downloading; a newer one (a drag during the swap)
+    // makes the commit below leave that source alone.
+    const plan = [...this.sourceRegistry].map(([sourceId, { position }]) => {
+      const posKey = this.resolveSimSourcePosKey([position.x, position.y, position.z], sourceId);
+      const seq = (this.sourceIRSeq.get(sourceId) || 0) + 1;
+      this.sourceIRSeq.set(sourceId, seq);
+      return { sourceId, posKey, seq, meta: mapping[posKey]?.[receiverId] ?? null };
+    });
+
     this.irRunsInFlight++;
     const startedAt = performance.now();
-    markCrashProbe('ir-run-start', { receiverId, inFlight: this.irRunsInFlight, sources: this.sourceRegistry.size });
+    const decodesBefore = this.irCache.stats().decodes;
+    markCrashProbe('ir-run-start', { receiverId, inFlight: this.irRunsInFlight, sources: plan.length, fade });
+    this.irCache.pin(plan.flatMap((p) => (p.meta ? [p.meta.id] : [])), true);
+    this.publishIRSwapState({ phase: 'preparing', loaded: 0, total: plan.length });
+
     try {
-      await this.applySourceIRsForReceiver(receiverId);
+      // Prepare: every IR fetched + decoded before anything changes in the graph.
+      // undefined = failed / aborted (that source keeps its current IR).
+      const buffers: Array<AudioBuffer | null | undefined> = new Array(plan.length);
+      let loaded = 0;
+      const { errors } = await mapWithConcurrency(plan, async (p, index) => {
+        try {
+          buffers[index] = p.meta ? await this.irCache.get(p.meta.id, () => this.fetchAndDecodeIR(p.meta!)) : null;
+        } finally {
+          loaded++;
+          if (epoch === this.irSwapEpoch) this.publishIRSwapState({ phase: 'preparing', loaded, total: plan.length });
+        }
+      }, IR_SWAP.FETCH_CONCURRENCY, signal);
+      for (const { item, error } of errors) {
+        console.error(`[AudioOrchestrator] IR for "${item.sourceId}" failed to load — it keeps its current IR:`, error);
+      }
+
+      if (epoch !== this.irSwapEpoch || this.currentModeInstance !== mode) {
+        markCrashProbe('ir-swap-superseded', { receiverId });
+        return;
+      }
+
+      // Commit: one batch, one order check.
+      const entries: SourceIRCommit[] = [];
+      const appliedKeys: Array<[string, string]> = [];
+      const playingIRIds: string[] = [];
+      plan.forEach((p, index) => {
+        const ir = buffers[index];
+        if (ir === undefined || this.sourceIRSeq.get(p.sourceId) !== p.seq || !this.sourceRegistry.has(p.sourceId)) return;
+        entries.push({ sourceId: p.sourceId, ir });
+        appliedKeys.push([p.sourceId, p.posKey]);
+        if (p.meta) playingIRIds.push(p.meta.id);
+      });
+
+      const order = AmbisonicIRMode.orderForIRs(entries.flatMap((e) => (e.ir ? [e.ir] : [])));
+      const orderChanges = order !== null && order !== mode.getAmbisonicOrder();
+      if (orderChanges && fade) {
+        await this.swapIRModeInstance(order, entries);
+      } else {
+        mode.setIRGain(this.irGainOffset, false);
+        mode.setNormalize(this.irNormalize, false);
+        if (orderChanges) await mode.prepareOrder(order);
+        mode.commitSourceIRs(entries, fade ? IR_SWAP.CROSSFADE_S : 0);
+        // A rebuilt pipeline recreated the chains and stopped their voices.
+        if (orderChanges) this.notifyGraphChanged();
+      }
+
+      // Recorded like resolveSourceIR does, or the source's first clip dispatch
+      // (Transport → updateSourcePosition) re-applies the same IR mid-playback.
+      for (const [sourceId, posKey] of appliedKeys) this.sourceIRAppliedKey.set(sourceId, posKey);
+      this.irCache.pin(playingIRIds);
+      this.appliedIRSwapKey = key;
     } finally {
       this.irRunsInFlight--;
+      const cache = this.irCache.stats();
       markCrashProbe('ir-run-end', {
         receiverId,
         ms: Math.round(performance.now() - startedAt),
         inFlight: this.irRunsInFlight,
-        ...this.getMemoryStats(),
+        superseded: epoch !== this.irSwapEpoch,
+        decodes: cache.decodes - decodesBefore,
+        irCacheCount: cache.count,
+        irCacheMB: Math.round(cache.bytes / CRASH_PROBE.BYTES_PER_MB),
       });
+      if (epoch === this.irSwapEpoch) this.publishIRSwapState({ phase: 'idle', loaded: 0, total: 0 });
     }
-  }
-
-  private async applySourceIRsForReceiver(receiverId: string): Promise<void> {
-    if (!this.sourceReceiverIRMapping || !this.currentModeInstance) {
-      console.warn('[AudioOrchestrator] Cannot update source IRs - missing mapping or mode');
-      return;
-    }
-
-    console.log('[AudioOrchestrator] Updating source IRs for receiver:', receiverId);
-
-    // Check if current mode supports per-source IR setting
-    const supportsPerSourceIR = 'setSourceImpulseResponse' in this.currentModeInstance;
-    if (!supportsPerSourceIR) {
-      console.warn('[AudioOrchestrator] Current mode does not support per-source IR setting');
-      return;
-    }
-
-    // Per-source IRs may carry a different ambisonic order than the previously
-    // active (e.g. globally-imported) IR. Applying them can rebuild the mode's
-    // convolvers and kill in-flight voices, so track the order and re-dispatch
-    // playback once afterwards if it changed.
-    const orderBefore = this.ambisonicIRMode?.getAmbisonicOrder();
-
-    // For each source in the registry — look up IR by position key
-    for (const [sourceId, { position }] of this.sourceRegistry) {
-      const posKey = this.resolveSimSourcePosKey([position.x, position.y, position.z], sourceId);
-      const irMetadata = this.sourceReceiverIRMapping[posKey]?.[receiverId];
-
-      if (irMetadata) {
-        try {
-          const irBuffer = await this.downloadAndDecodeIR(irMetadata);
-          await (this.currentModeInstance as any).setSourceImpulseResponse(sourceId, irBuffer);
-          // Record it like resolveSourceIR does, or the source's first clip dispatch
-          // (Transport → updateSourcePosition) sees no applied key and re-applies the
-          // same IR into its convolver mid-playback.
-          this.sourceIRAppliedKey.set(sourceId, posKey);
-
-          console.log(`[AudioOrchestrator] ✅ Updated IR for source "${sourceId}" (posKey ${posKey}) with receiver "${receiverId}"`);
-        } catch (error) {
-          console.error(`[AudioOrchestrator] ❌ Failed to update IR for source "${sourceId}":`, error);
-        }
-      } else {
-        // Position has no simulation IR for this receiver → the sound cannot be
-        // acoustically convolved there; mute it fully instead of erroring/no-op.
-        if ('muteSourceImpulseResponse' in this.currentModeInstance) {
-          await (this.currentModeInstance as any).muteSourceImpulseResponse(sourceId);
-        }
-        this.sourceIRAppliedKey.set(sourceId, posKey);
-        console.log(`[AudioOrchestrator] 🚫 No IR at posKey ${posKey} for "${sourceId}" — muted (out-of-simulation sound)`);
-      }
-    }
-
-    if (
-      this.ambisonicIRMode &&
-      orderBefore !== undefined &&
-      this.ambisonicIRMode.getAmbisonicOrder() !== orderBefore
-    ) {
-      console.log('[AudioOrchestrator] Per-source IRs changed ambisonic order — re-dispatching playback');
-      this.notifyGraphChanged();
-    }
-
-    console.log('[AudioOrchestrator] Finished updating source IRs');
   }
 
   /**
-   * Download and decode an IR from metadata
-   * @param irMetadata - IR metadata containing URL and file info
-   * @returns Decoded AudioBuffer
+   * The new IRs need another ambisonic order: build a second AmbisonicIRMode off the
+   * graph at that order, give it every source and its IR, hand playback over to it
+   * and crossfade (the same handover as a mode switch) — no silent pipeline rebuild.
    */
-  private async downloadAndDecodeIR(irMetadata: ImpulseResponseMetadata): Promise<AudioBuffer> {
+  private async swapIRModeInstance(order: AmbisonicOrder, entries: SourceIRCommit[]): Promise<void> {
+    const ctx = this.audioContext;
+    const oldMode = this.ambisonicIRMode;
+    if (!ctx || !oldMode) return;
+    markCrashProbe('ir-order-swap', { from: oldMode.getAmbisonicOrder(), to: order });
+
+    const next = new AmbisonicIRMode();
+    await next.initialize(ctx);
+    await next.prepareOrder(order);
+    next.setIRGain(this.irGainOffset, false);
+    next.setNormalize(this.irNormalize, false);
+    this.connectModeToOutput(next);
+
+    this.ambisonicIRMode = next;
+    this.currentModeInstance = next;
+    next.setMasterVolume(this.pendingMasterVolume);
+    this.recreateRegisteredSources(next);
+    next.commitSourceIRs(entries, 0);
+    this.notifyGraphChanged();
+
+    await crossfadeModes(oldMode, next, ctx, undefined, this.pendingMasterVolume);
+    try {
+      oldMode.stopAllVoices();
+      oldMode.stopAllSources();
+    } catch {
+      // Already stopped
+    }
+    oldMode.dispose();
+  }
+
+  /** Download and decode one IR (callers go through irCache, never this directly). */
+  private async fetchAndDecodeIR(irMetadata: ImpulseResponseMetadata): Promise<AudioBuffer> {
     if (!this.audioContext) {
       throw new Error('[AudioOrchestrator] Not initialized');
     }
-
-    // Check cache first
-    const cacheKey = irMetadata.id;
-    const cached = this.irCache.get(cacheKey);
-    if (cached) {
-      console.log(`[AudioOrchestrator] Using cached IR: ${irMetadata.name}`);
-      return cached;
+    // metadata.url is relative like "/static/impulse_responses/file.wav"
+    const response = await fetch(`${API_BASE_URL}${irMetadata.url}`);
+    if (!response.ok) {
+      throw new Error(`Failed to download IR ${irMetadata.name}: ${response.statusText}`);
     }
+    const arrayBuffer = await response.arrayBuffer();
+    // Decode keeping every channel (the browser decoder stops at 8: a 3rd-order IR has 16)
+    return decodeAudioAllChannels(this.audioContext, arrayBuffer);
+  }
 
-    try {
-      // Build full URL (metadata.url is relative like "/static/impulse_responses/file.wav")
-      const fullUrl = `${API_BASE_URL}${irMetadata.url}`;
-
-      // Download the IR file
-      const response = await fetch(fullUrl);
-      if (!response.ok) {
-        throw new Error(`Failed to download IR: ${response.statusText}`);
-      }
-
-      const arrayBuffer = await response.arrayBuffer();
-
-      // Decode keeping every channel (the browser decoder stops at 8: a 3rd-order IR has 16)
-      const decodeStart = performance.now();
-      const audioBuffer = await decodeAudioAllChannels(this.audioContext, arrayBuffer);
-      markCrashProbe('ir-decoded', {
-        id: irMetadata.id,
-        channels: audioBuffer.numberOfChannels,
-        sampleRate: audioBuffer.sampleRate,
-        seconds: Math.round(audioBuffer.duration * 100) / 100,
-        fileMB: Math.round(arrayBuffer.byteLength / CRASH_PROBE.BYTES_PER_MB * 10) / 10,
-        decodeMs: Math.round(performance.now() - decodeStart),
-        cacheCount: this.irCache.size + 1,
-      });
-
-      // Cache the decoded buffer
-      this.irCache.set(cacheKey, audioBuffer);
-
-      console.log(`[AudioOrchestrator] Downloaded and decoded IR: ${irMetadata.name} (${audioBuffer.numberOfChannels}ch)`);
-
-      return audioBuffer;
-    } catch (error) {
-      console.error('[AudioOrchestrator] Failed to download/decode IR:', error);
-      throw error;
-    }
+  /** Cached / shared download + decode of one IR. */
+  private downloadAndDecodeIR(irMetadata: ImpulseResponseMetadata): Promise<AudioBuffer> {
+    return this.irCache.get(irMetadata.id, () => this.fetchAndDecodeIR(irMetadata));
   }
 
   /**
    * Clear IR cache (called when simulation changes)
    */
   private clearIRCache(): void {
-    markCrashProbe('ir-cache-clear', { count: this.irCache.size });
+    markCrashProbe('ir-cache-clear', { count: this.irCache.stats().count });
     this.irCache.clear();
+    this.appliedIRSwapKey = null;
     console.log('[AudioOrchestrator] IR cache cleared');
   }
 
@@ -941,7 +1037,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     simulationSoundToPosKey?: Record<string, string>
   ): Promise<void> {
     markCrashProbe('ir-mapping-hotswap', { simulationMode, sources: Object.keys(mapping).length, receiver: activeReceiverId ?? null });
-    this.sourceReceiverIRMapping = mapping;
+    this.setIRMapping(mapping);
     this.simulationMode = simulationMode;
     this.activeReceiverId = activeReceiverId || this.activeReceiverId;
     this.simulationSourcePositions = simulationSourcePositions || {};
@@ -954,9 +1050,10 @@ export class AudioOrchestrator implements IAudioOrchestrator {
       activeReceiverId: this.activeReceiverId
     });
 
-    // Update per-source IRs for the active receiver without any mode/source changes
+    // Prepare every IR of the new mapping while the current ones keep playing, then
+    // crossfade them in at once — no mode switch, no source re-creation.
     if (this.activeReceiverId) {
-      await this.updateSourceIRsForReceiver(this.activeReceiverId);
+      await this.swapSourceIRs(this.activeReceiverId, { fade: true });
     }
   }
 
@@ -972,7 +1069,10 @@ export class AudioOrchestrator implements IAudioOrchestrator {
    * Clear source-receiver IR mapping (exit simulation mode)
    */
   clearSourceReceiverIRMapping(): void {
-    this.sourceReceiverIRMapping = null;
+    this.irSwapAbort?.abort();
+    this.irSwapEpoch++;
+    this.publishIRSwapState({ phase: 'idle', loaded: 0, total: 0 });
+    this.setIRMapping(null);
     this.simulationMode = 'none';
     // activeReceiverId is kept: the listener choice outlives the simulation, so
     // re-activating one (or another) plays the same listener.
@@ -1103,7 +1203,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
         // avoid an unnecessary restart.
         if (orderChanged) {
           if (this.sourceReceiverIRMapping && this.activeReceiverId && this.simulationMode !== 'none') {
-            await this.updateSourceIRsForReceiver(this.activeReceiverId);
+            await this.swapSourceIRs(this.activeReceiverId, { fade: false, force: true });
           }
           this.notifyGraphChanged();
         }
@@ -1301,10 +1401,11 @@ export class AudioOrchestrator implements IAudioOrchestrator {
    * Affects Mono IR, Stereo IR, and Ambisonic IR modes
    */
   setNormalize(normalize: boolean): void {
-    console.log(`[AudioOrchestrator] Setting normalize: ${normalize}`);
-    if (this.ambisonicIRMode) {
-      (this.ambisonicIRMode as any).setNormalize(normalize);
-    }
+    this.irNormalize = normalize;
+    // While a swap prepares, the new card's setting waits for its own IRs (applied
+    // at commit) — applied to the outgoing IRs it could mute them.
+    if (this.pendingIRSwap) return;
+    this.ambisonicIRMode?.setNormalize(normalize);
   }
 
   /**
@@ -1312,9 +1413,10 @@ export class AudioOrchestrator implements IAudioOrchestrator {
    * @param offset - Linear peak offset (-1 to +1): 0 = unchanged, +raises peaks toward clip, -lowers toward mute
    */
   setIRGain(offset: number): void {
-    if (this.ambisonicIRMode) {
-      (this.ambisonicIRMode as any).setIRGain?.(offset);
-    }
+    this.irGainOffset = offset;
+    // Deferred to the commit while a swap prepares (see setNormalize).
+    if (this.pendingIRSwap) return;
+    this.ambisonicIRMode?.setIRGain(offset);
   }
 
   /**
@@ -1480,39 +1582,42 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     if (!this.currentModeInstance) return;
 
     console.log(`[AudioOrchestrator] Re-creating ${this.sourceRegistry.size} sources in new mode`);
+    this.recreateRegisteredSources(this.currentModeInstance);
 
+    // If in simulation mode with active receiver, re-apply all source IRs and wait
+    // for them so the following re-dispatch has convolved chains ready. Forced: the
+    // chains are new even when the mapping and listener are unchanged.
+    if (this.sourceReceiverIRMapping && this.activeReceiverId && this.simulationMode !== 'none') {
+      console.log('[AudioOrchestrator] Re-applying simulation IRs after mode switch');
+      try {
+        await this.swapSourceIRs(this.activeReceiverId, { fade: false, force: true });
+      } catch (error) {
+        console.error('[AudioOrchestrator] Failed to re-apply simulation IRs:', error);
+      }
+    }
+  }
+
+  /** Create every registered source on `mode` with its persisted volume, mute, global flag and directivity. */
+  private recreateRegisteredSources(mode: IAudioMode): void {
     for (const [sourceId, { buffer, position }] of this.sourceRegistry) {
       try {
-        this.currentModeInstance.createSource(sourceId, buffer, position);
-        this.currentModeInstance.setSourceGlobal(sourceId, this.globalSources.has(sourceId));
+        mode.createSource(sourceId, buffer, position);
+        mode.setSourceGlobal(sourceId, this.globalSources.has(sourceId));
         this.pushSourceDirectivity(sourceId);
 
         // Reapply persisted volume — new mode chains always start at unity gain, so
         // without this the user's per-source fader is silently reset on every switch.
         const volume = this.pendingVolumes.get(sourceId);
         if (volume !== undefined) {
-          this.currentModeInstance.setSourceVolume(sourceId, volume);
+          mode.setSourceVolume(sourceId, volume);
         }
 
         // Reapply persisted mute state — new mode instances start unmuted by default
         if (this.silencedSources.has(sourceId)) {
-          this.currentModeInstance.setSourceMute(sourceId, true);
+          mode.setSourceMute(sourceId, true);
         }
-
-        console.log(`[AudioOrchestrator] ✅ Re-created source: ${sourceId}`);
       } catch (error) {
         console.error(`[AudioOrchestrator] ❌ Failed to re-create source ${sourceId}:`, error);
-      }
-    }
-
-    // If in simulation mode with active receiver, re-apply all source IRs and wait
-    // for them so the following re-dispatch has convolved chains ready.
-    if (this.sourceReceiverIRMapping && this.activeReceiverId && this.simulationMode !== 'none') {
-      console.log('[AudioOrchestrator] Re-applying simulation IRs after mode switch');
-      try {
-        await this.updateSourceIRsForReceiver(this.activeReceiverId);
-      } catch (error) {
-        console.error('[AudioOrchestrator] Failed to re-apply simulation IRs:', error);
       }
     }
   }
@@ -1941,16 +2046,58 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     };
   }
 
+  /**
+   * AudioContext health for the performance monitor: state, latencies and the output
+   * timestamp (dropout detection), plus the browser's underrun count where reported
+   * (`AudioContext.playbackStats`, feature-detected). Null before initialization.
+   */
+  getContextHealth(): AudioContextHealth | null {
+    const ctx = this.audioContext;
+    if (!ctx) return null;
+    const timestamp = typeof ctx.getOutputTimestamp === 'function' ? ctx.getOutputTimestamp() : null;
+    const stats = (ctx as AudioContext & { playbackStats?: { underrunEvents?: number } }).playbackStats;
+    return {
+      state: ctx.state,
+      sampleRate: ctx.sampleRate,
+      baseLatency: ctx.baseLatency ?? 0,
+      outputLatency: ctx.outputLatency ?? 0,
+      contextTime: timestamp?.contextTime ?? 0,
+      performanceTime: timestamp?.performanceTime ?? 0,
+      underruns: typeof stats?.underrunEvents === 'number' ? stats.underrunEvents : null,
+    };
+  }
+
+  /** Abandon the IR swap still preparing (its IRs are never committed). */
+  cancelIRSwap(): void {
+    if (!this.pendingIRSwap) return;
+    this.irSwapAbort?.abort();
+    this.irSwapEpoch++;
+    this.publishIRSwapState({ phase: 'idle', loaded: 0, total: 0 });
+    // The card gain / normalize deferred for that swap would otherwise never land.
+    this.ambisonicIRMode?.setIRGain(this.irGainOffset);
+    this.ambisonicIRMode?.setNormalize(this.irNormalize);
+  }
+
+  /** Drop every cached IR that is not playing or being prepared (emergency memory release). */
+  releaseIRMemory(): void {
+    this.irCache.shrinkToPinned();
+  }
+
+  /** Scale the IR cache budget (1 = the RAM-sized default). */
+  setIRCacheBudgetScale(scale: number): void {
+    this.irCache.setBudgetBytes(defaultIRCacheBudgetBytes() * scale);
+  }
+
   /** IR cache, convolver and in-flight IR-run stats (crash probe). */
   getMemoryStats(): AudioMemoryStats {
-    let irCacheBytes = 0;
-    for (const buffer of this.irCache.values()) {
-      irCacheBytes += buffer.length * buffer.numberOfChannels * CRASH_PROBE.BYTES_PER_SAMPLE;
-    }
+    const cache = this.irCache.stats();
     const convolvers = this.ambisonicIRMode?.getConvolverStats() ?? { banks: 0, nodes: 0, filterBytes: 0 };
     return {
-      irCacheCount: this.irCache.size,
-      irCacheBytes,
+      irCacheCount: cache.count,
+      irCacheBytes: cache.bytes,
+      irCacheBudgetBytes: cache.budgetBytes,
+      irDecodes: cache.decodes,
+      irRedecodes: cache.redecodes,
       convolverBanks: convolvers.banks,
       convolverNodes: convolvers.nodes,
       convolverFilterBytes: convolvers.filterBytes,

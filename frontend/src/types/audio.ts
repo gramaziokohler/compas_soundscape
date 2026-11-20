@@ -519,3 +519,25 @@ export interface LowOutputHint {
   /** Target for 'move-closer' (nearest playing sound). */
   target?: Position3D;
 }
+
+/**
+ * Progress of a simulation / listener IR swap (AudioOrchestrator.onIRSwapState).
+ * While `preparing`, the previous IRs keep playing; `loaded`/`total` count the
+ * per-source IRs fetched and decoded so far.
+ */
+export interface IRSwapState {
+  phase: 'idle' | 'preparing';
+  loaded: number;
+  total: number;
+}
+
+/** The fields of an IR-producing simulation card (engine run or imported IRs) the audio engine reads. */
+export interface ActiveIRSimulation {
+  id: string;
+  type: string;
+  sourceReceiverIRMapping?: SourceReceiverIRMapping;
+  simulationPositions?: {
+    sources?: Record<string, [number, number, number]>;
+    soundToPosKey?: Record<string, string>;
+  };
+}

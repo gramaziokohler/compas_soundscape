@@ -445,5 +445,11 @@ export type {
 export * from './share';
 
 // Import and re-export diagnostics types
-import type { AudioMemoryStats, SoundLightStats, CrashProbeRecord } from './diagnostics';
-export type { AudioMemoryStats, SoundLightStats, CrashProbeRecord };
+import type {
+  AudioMemoryStats, SoundLightStats, CrashProbeRecord, RendererStats, AudioContextHealth,
+  PerformanceSupport, PerformanceSample, PerformanceMetricId, MeterLevel,
+} from './diagnostics';
+export type {
+  AudioMemoryStats, SoundLightStats, CrashProbeRecord, RendererStats, AudioContextHealth,
+  PerformanceSupport, PerformanceSample, PerformanceMetricId, MeterLevel,
+};

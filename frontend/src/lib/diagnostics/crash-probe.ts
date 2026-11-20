@@ -1,45 +1,21 @@
 /**
- * Crash probe — temporary `[dbg:crash-probe]` instrumentation for share-mode crashes
+ * Crash probe — `[dbg:crash-probe]` instrumentation for share-mode crashes
  * ("Aw, Snap" / freezes) on very large models.
  *
  * Opt-in per browser with `?diag=1` (remembered in localStorage, `?diag=0` turns it off).
- * Every CRASH_PROBE.SAMPLE_INTERVAL_MS it records JS heap, audio IR memory, convolver
- * count, Sounds-view light count and WebGL renderer stats; events (simulation / listener
- * switches, long main-thread tasks, WebGL context loss) are recorded as they happen.
- * The tail is written to localStorage, so after a renderer crash the reload prints the
- * last records of the session that died. `window.__compasCrashProbe` exposes them.
+ * A subscriber of the shared performance monitor: every CRASH_PROBE.SAMPLE_INTERVAL_MS it
+ * records JS heap, audio IR memory, convolvers, Sounds-view lights and WebGL stats; events
+ * (simulation / listener switches, long main-thread tasks, WebGL context loss) are recorded
+ * as they happen. The tail is written to localStorage, so after a renderer crash the reload
+ * prints the last records of the session that died. `window.__compasCrashProbe` exposes them.
  */
 import { CRASH_PROBE } from '@/utils/constants';
-import type { AudioMemoryStats, SoundLightStats, CrashProbeRecord } from '@/types';
-
-export interface RendererStats {
-  programs: number;
-  geometries: number;
-  textures: number;
-  calls: number;
-  triangles: number;
-}
-
-export interface CrashProbeSources {
-  getAudioStats: () => AudioMemoryStats | null;
-  getLightStats: () => SoundLightStats | null;
-  getRendererStats: () => RendererStats | null;
-  getCanvas: () => HTMLCanvasElement | null;
-  /** Extra per-sample fields (e.g. [dbg:heap] call counters, filter-state sizes). */
-  getExtraStats?: () => Record<string, unknown> | null;
-}
-
-/** Chromium-only `performance.memory` (non-standard; absent elsewhere). */
-interface PerformanceMemory {
-  usedJSHeapSize: number;
-  totalJSHeapSize: number;
-  jsHeapSizeLimit: number;
-}
+import type { CrashProbeRecord, PerformanceSample } from '@/types';
+import { subscribePerformance } from './performance-monitor';
 
 interface CrashProbeWindowHandle {
   records: CrashProbeRecord[];
   previous: CrashProbeRecord[];
-  sample: () => CrashProbeRecord | null;
 }
 
 const CLEAN_EXIT_EVENT = 'pagehide';
@@ -47,8 +23,8 @@ const CLEAN_EXIT_EVENT = 'pagehide';
 let active = false;
 let records: CrashProbeRecord[] = [];
 
-function toMB(bytes: number): number {
-  return Math.round((bytes / CRASH_PROBE.BYTES_PER_MB) * 10) / 10;
+function round1(value: number): number {
+  return Math.round(value * 10) / 10;
 }
 
 function readStorage(key: string): string | null {
@@ -95,31 +71,29 @@ export function markCrashProbe(event: string, data?: Record<string, unknown>): v
   push(record);
 }
 
-function heapStats(): Record<string, number> | null {
-  const memory = (performance as Performance & { memory?: PerformanceMemory }).memory;
-  if (!memory) return null;
-  return {
-    heapUsedMB: toMB(memory.usedJSHeapSize),
-    heapTotalMB: toMB(memory.totalJSHeapSize),
-    heapLimitMB: toMB(memory.jsHeapSizeLimit),
-  };
-}
-
-function takeSample(sources: CrashProbeSources): CrashProbeRecord {
-  const audio = sources.getAudioStats();
+/** Flatten a monitor sample into the probe's record fields (stable keys across versions). */
+function sampleRecord(sample: PerformanceSample, extra: Record<string, unknown> | null): CrashProbeRecord {
+  const { heap, audio, gl } = sample;
   const data: Record<string, unknown> = {
-    ...heapStats(),
+    ...(heap && { heapUsedMB: round1(heap.usedMB), heapTotalMB: round1(heap.totalMB), heapLimitMB: round1(heap.limitMB) }),
     ...(audio && {
       irCacheCount: audio.irCacheCount,
-      irCacheMB: toMB(audio.irCacheBytes),
+      irCacheMB: round1(audio.irCacheBytes / CRASH_PROBE.BYTES_PER_MB),
+      irCacheBudgetMB: round1(audio.irCacheBudgetBytes / CRASH_PROBE.BYTES_PER_MB),
+      irDecodes: audio.irDecodes,
+      irRedecodes: audio.irRedecodes,
       convolverBanks: audio.convolverBanks,
       convolverNodes: audio.convolverNodes,
-      convolverFilterMB: toMB(audio.convolverFilterBytes),
+      convolverFilterMB: round1(audio.convolverFilterBytes / CRASH_PROBE.BYTES_PER_MB),
       irRunsInFlight: audio.irRunsInFlight,
     }),
-    lights: sources.getLightStats(),
-    gl: sources.getRendererStats(),
-    ...sources.getExtraStats?.(),
+    lights: sample.lights,
+    gl,
+    newPrograms: sample.newPrograms,
+    frames: sample.frames,
+    xruns: sample.xruns,
+    voices: sample.playingVoices,
+    ...extra,
   };
   return { t: new Date().toISOString(), kind: 'sample', data };
 }
@@ -145,10 +119,11 @@ function reportPreviousSession(): CrashProbeRecord[] {
 }
 
 /**
- * Start sampling. Returns a stop function. Only one probe runs at a time;
+ * Start recording. Returns a stop function. Only one probe runs at a time;
  * a second start while running returns a no-op stop.
+ * @param getExtraStats - extra per-sample fields (e.g. [dbg:heap] call counters)
  */
-export function startCrashProbe(sources: CrashProbeSources): () => void {
+export function startCrashProbe(getExtraStats?: () => Record<string, unknown> | null): () => void {
   if (active || typeof window === 'undefined') return () => {};
   active = true;
 
@@ -160,45 +135,21 @@ export function startCrashProbe(sources: CrashProbeSources): () => void {
     url: window.location.pathname,
     deviceMemoryGB: nav.deviceMemory ?? null,
     cores: nav.hardwareConcurrency ?? null,
-    ...heapStats(),
   });
 
-  // WebGL context loss: the canvas can be (re)created after start, so re-check each sample.
-  let watchedCanvas: HTMLCanvasElement | null = null;
-  const onContextLost = () => markCrashProbe('webglcontextlost');
-  const onContextRestored = () => markCrashProbe('webglcontextrestored');
-  const watchCanvas = () => {
-    const canvas = sources.getCanvas();
-    if (canvas === watchedCanvas) return;
-    watchedCanvas?.removeEventListener('webglcontextlost', onContextLost);
-    watchedCanvas?.removeEventListener('webglcontextrestored', onContextRestored);
-    canvas?.addEventListener('webglcontextlost', onContextLost);
-    canvas?.addEventListener('webglcontextrestored', onContextRestored);
-    watchedCanvas = canvas;
-  };
-
-  // Freezes: main-thread tasks longer than LONG_TASK_MS (Chromium only).
-  let longTaskObserver: PerformanceObserver | null = null;
-  if (PerformanceObserver.supportedEntryTypes?.includes('longtask')) {
-    longTaskObserver = new PerformanceObserver((list) => {
-      for (const entry of list.getEntries()) {
-        if (entry.duration >= CRASH_PROBE.LONG_TASK_MS) {
-          markCrashProbe('longtask', { ms: Math.round(entry.duration) });
-        }
-      }
-    });
-    longTaskObserver.observe({ type: 'longtask', buffered: false });
-  }
-
-  const sample = () => {
-    watchCanvas();
-    const record = takeSample(sources);
-    console.log(CRASH_PROBE.LOG_PREFIX, 'sample', record.data);
-    push(record);
-    return record;
-  };
-  const intervalId = window.setInterval(sample, CRASH_PROBE.SAMPLE_INTERVAL_MS);
-  sample();
+  const unsubscribe = subscribePerformance({
+    intervalMs: CRASH_PROBE.SAMPLE_INTERVAL_MS,
+    onSample: (sample) => {
+      const record = sampleRecord(sample, getExtraStats?.() ?? null);
+      console.log(CRASH_PROBE.LOG_PREFIX, 'sample', record.data);
+      push(record);
+    },
+    onEvent: ({ name, data }) => {
+      const ms = typeof data?.ms === 'number' ? data.ms : 0;
+      if (name === 'longtask' && ms < CRASH_PROBE.LONG_TASK_MS) return;
+      markCrashProbe(name, data);
+    },
+  });
 
   const onPageHide = () => markCrashProbe(CLEAN_EXIT_EVENT);
   window.addEventListener('pagehide', onPageHide);
@@ -206,16 +157,12 @@ export function startCrashProbe(sources: CrashProbeSources): () => void {
   const handle: CrashProbeWindowHandle = {
     get records() { return records; },
     previous,
-    sample: () => (active ? sample() : null),
   };
   (window as Window & { __compasCrashProbe?: CrashProbeWindowHandle }).__compasCrashProbe = handle;
 
   return () => {
-    window.clearInterval(intervalId);
-    longTaskObserver?.disconnect();
+    unsubscribe();
     window.removeEventListener('pagehide', onPageHide);
-    watchedCanvas?.removeEventListener('webglcontextlost', onContextLost);
-    watchedCanvas?.removeEventListener('webglcontextrestored', onContextRestored);
     markCrashProbe(CLEAN_EXIT_EVENT, { reason: 'stopped' });
     active = false;
   };

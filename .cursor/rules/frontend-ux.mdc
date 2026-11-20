@@ -84,7 +84,9 @@ Rules:
 `SCENE_BOTTOM_BAR`) holding every scene-level control: left = "Sound is blue" home (always shown),
 a "Simple" button (Expert mode only), undo/redo, save; center = playback (the only transport — the DAW's top status strip has none; the
 DAW panel opens above the bar); right = volume, reset
-view, refresh, Object Explorer / load model, then shortcuts, notifications, settings. Sidebars stop at
+view, refresh, Object Explorer / load model, then performance meter (edit mode only; Gauge
+button that turns into a DAW-style strip — `components/scene/performance/`), shortcuts,
+notifications, settings. Sidebars stop at
 its top edge. Add new scene-level controls here as `BarButton`s — do not reintroduce floating corner
 buttons.
 

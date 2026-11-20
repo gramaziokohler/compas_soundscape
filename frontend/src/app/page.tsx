@@ -65,6 +65,8 @@ import { useAudioOrchestrator } from "@/hooks/useAudioOrchestrator";
 import { useAudioOutputDeviceSync } from "@/hooks/useAudioOutputDeviceSync";
 import { useAmbisonicSendSync } from "@/hooks/useAmbisonicSendSync";
 import { useCrashProbe } from "@/hooks/useCrashProbe";
+import { usePerformanceSources } from "@/hooks/usePerformanceSources";
+import { useIRSwapIndicator } from "@/hooks/useIRSwapIndicator";
 import { usePffdtdFreeMovement } from "@/hooks/usePffdtdFreeMovement";
 import { applyOutputDevice } from "@/lib/audio/output-device";
 import { useViewportScale } from "@/hooks/useViewportScale";
@@ -90,7 +92,7 @@ import type { ListenerExpandRequest } from "@/types/receiver";
 import { parseGridPointId } from "@/utils/gridListenerPoints";
 import { deselectActiveScene } from "@/utils/sceneSelection";
 import { captureHomeElements, mergeHomeElements, type HomeElementsSnapshot } from "@/utils/home-elements-import";
-import type { AcousticSimulationMode, ResonanceRoomSpec } from "@/types/audio";
+import type { AcousticSimulationMode, ActiveIRSimulation, ResonanceRoomSpec, SourceReceiverIRMapping } from "@/types/audio";
 import type { AudioAnalysisConfig, AnalysisConfig } from "@/types/analysis";
 import { CARD_TYPE_LABELS } from "@/types/card";
 import type { SelectedGeometry, AcousticMaterial } from "@/types/materials";
@@ -1087,8 +1089,12 @@ function HomeContent() {
 
   // Multichannel ambisonic send (16-ch AmbiX → Dante / DAW) settings ↔ orchestrator.
   useAmbisonicSendSync(audioOrchestrator.orchestrator);
+  // Shared performance monitor sources (meter, ?diag=1 crash probe, emergency guard)
+  usePerformanceSources(audioOrchestrator.orchestrator);
   // [dbg:crash-probe] share-mode crash diagnostics, opt-in with ?diag=1
-  useCrashProbe(audioOrchestrator.orchestrator);
+  useCrashProbe();
+  // Bottom-bar "applying acoustics" indicator, driven by the orchestrator's IR swaps
+  useIRSwapIndicator(audioOrchestrator.orchestrator);
   // Wave-based free positioning: moved listeners / sources get their IR without re-running
   usePffdtdFreeMovement();
 
@@ -1268,99 +1274,57 @@ function HomeContent() {
     return mapping && Object.keys(mapping).length > 0 ? mapping : null;
   }, [acousticsSimulation.simulationConfigs]);
 
-  // Set source-receiver IR mapping when simulation completes (PyroomAcoustics)
-  // Uses hot-swap (no stop) when already in IR mode and switching between completed simulations
-  const prevIRMappingIndexRef = useRef<number | null>(acousticsSimulation.activeSimulationIndex);
-  // Only the latest IR apply may clear the bottom-bar "applying" indicator.
-  const irApplySeqRef = useRef(0);
+  // Push the active simulation's IR mapping to the orchestrator. Keyed on the
+  // mapping OBJECT and the receiver ids — not on the whole simulationConfigs array,
+  // whose unrelated writes (material re-assignments on card remount) used to re-fire
+  // this effect and start a second, overlapping IR swap on every switch.
+  const activeSimConfig = acousticsSimulation.activeSimulationIndex !== null
+    ? acousticsSimulation.simulationConfigs[acousticsSimulation.activeSimulationIndex]
+    : undefined;
+  const activeIRSim = activeSimConfig && (isEngineSimulation(activeSimConfig) || activeSimConfig.type === 'import-irs')
+    ? (activeSimConfig as ActiveIRSimulation)
+    : null;
+  const activeIRMapping = activeIRSim?.sourceReceiverIRMapping ?? null;
+  const activeIRSimRef = useRef(activeIRSim);
+  activeIRSimRef.current = activeIRSim;
+  const receiverIdsKey = receivers.receivers.map((r) => r.id).join('|');
+  // Mapping pushed last; null after a card without IRs (then the next one is a fresh set, not a hot-swap).
+  const prevIRMappingRef = useRef<SourceReceiverIRMapping | null>(null);
 
   useEffect(() => {
-    if (!audioOrchestrator.orchestrator) return;
-
-    // Check if active simulation is Pyroomacoustics and has source-receiver mapping
-    if (acousticsSimulation.activeSimulationIndex !== null) {
-      const activeConfig = acousticsSimulation.simulationConfigs[acousticsSimulation.activeSimulationIndex];
-
-      if (activeConfig && (isEngineSimulation(activeConfig) || activeConfig.type === 'import-irs')) {
-        const simConfig = activeConfig as any;
-        const simulationMode = activeConfig.type === 'import-irs' ? 'pyroomacoustics' : activeConfig.type === 'hybrid' ? 'pffdtd' : activeConfig.type as AcousticSimulationMode;
-
-        // If simulation has source-receiver IR mapping, pass it to AudioOrchestrator
-        if (simConfig.sourceReceiverIRMapping) {
-          // Keep the listener being heard (chosen before or after activation, or a
-          // moved receiver re-pushing the mapping). Falling back to receivers[0]
-          // only when none is chosen — otherwise activation would silently switch
-          // listeners and play the wrong IRs until the user picked one again.
-          const heardReceiverId = audioOrchestrator.orchestrator.getActiveReceiverId();
-          const listenerReceiverId = heardReceiverId && receivers.receivers.some((r) => r.id === heardReceiverId)
-            ? heardReceiverId
-            : receivers.receivers[0]?.id;
-          // Actual simulation-time source coordinates — lets the orchestrator resolve a
-          // new sound's IR by distance to the recorded position, not grid-cell equality.
-          const simulationSourcePositions = simConfig.simulationPositions?.sources;
-
-          // Determine if we can hot-swap: already in AMBISONIC_IR mode and previous sim also had IR mapping
-          const prevMapping = getSimIRMapping(prevIRMappingIndexRef.current);
-          const currentMode = audioOrchestrator.orchestrator.getCurrentMode();
-          const canHotSwap = prevMapping !== null && currentMode === 'ambisonic_ir';
-
-          // Re-pushes of the same simulation (moved receiver, free positioning)
-          // are quick; only a newly activated simulation shows the indicator.
-          const { setApplyingIRs } = useTransportTimeStore.getState();
-          const applySeq = ++irApplySeqRef.current;
-          if (prevIRMappingIndexRef.current !== acousticsSimulation.activeSimulationIndex) {
-            setApplyingIRs(true);
-          }
-          const finishApply = () => {
-            if (irApplySeqRef.current === applySeq) setApplyingIRs(false);
-          };
-
-          if (canHotSwap) {
-            console.log('[Page] Hot-swapping IR mapping (no stop)', {
-              simulationId: activeConfig.id,
-              sourceCount: Object.keys(simConfig.sourceReceiverIRMapping).length
-            });
-            audioOrchestrator.orchestrator.hotSwapSourceReceiverIRMapping(
-              simConfig.sourceReceiverIRMapping,
-              simulationMode,
-              listenerReceiverId,
-              simulationSourcePositions,
-              simConfig.simulationPositions?.soundToPosKey
-            ).then(() => {
-              console.log('[Page] ✅ IR mapping hot-swapped successfully');
-            }).catch(error => {
-              console.error('[Page] ❌ Failed to hot-swap IR mapping:', error);
-            }).finally(finishApply);
-          } else {
-            console.log('[Page] Setting source-receiver IR mapping from simulation', {
-              simulationId: activeConfig.id,
-              hasMapping: !!simConfig.sourceReceiverIRMapping,
-              sourceCount: Object.keys(simConfig.sourceReceiverIRMapping).length
-            });
-            audioOrchestrator.orchestrator.setSourceReceiverIRMapping(
-              simConfig.sourceReceiverIRMapping,
-              simulationMode,
-              listenerReceiverId,
-              simulationSourcePositions,
-              simConfig.simulationPositions?.soundToPosKey
-            ).then(() => {
-              console.log('[Page] ✅ Source-receiver IR mapping applied successfully');
-            }).catch(error => {
-              console.error('[Page] ❌ Failed to set source-receiver IR mapping:', error);
-            }).finally(finishApply);
-          }
-        }
-      }
+    const orchestrator = audioOrchestrator.orchestrator;
+    if (!orchestrator) return;
+    const sim = activeIRSimRef.current;
+    if (!sim || !activeIRMapping) {
+      prevIRMappingRef.current = null;
+      return;
     }
+    const simulationMode: AcousticSimulationMode =
+      sim.type === 'import-irs' ? 'pyroomacoustics' : sim.type === 'hybrid' ? 'pffdtd' : (sim.type as AcousticSimulationMode);
 
-    prevIRMappingIndexRef.current = acousticsSimulation.activeSimulationIndex;
-  }, [
-    audioOrchestrator.orchestrator,
-    acousticsSimulation.activeSimulationIndex,
-    acousticsSimulation.simulationConfigs,
-    receivers.receivers,
-    getSimIRMapping
-  ]);
+    // Keep the listener being heard (chosen before or after activation, or a moved
+    // receiver re-pushing the mapping). Falling back to receivers[0] only when none
+    // is chosen — otherwise activation would silently switch listeners.
+    const receiverList = useReceiversStore.getState().receivers;
+    const heardReceiverId = orchestrator.getActiveReceiverId();
+    const listenerReceiverId = heardReceiverId && receiverList.some((r) => r.id === heardReceiverId)
+      ? heardReceiverId
+      : receiverList[0]?.id;
+    // Actual simulation-time source coordinates — lets the orchestrator resolve a new
+    // sound's IR by distance to the recorded position, not grid-cell equality.
+    const positions = sim.simulationPositions;
+
+    // Hot-swap (no stop) when already in IR mode and the previous card had IRs too.
+    const canHotSwap = prevIRMappingRef.current !== null && orchestrator.getCurrentMode() === 'ambisonic_ir';
+    prevIRMappingRef.current = activeIRMapping;
+
+    // Progress / the "applying IRs" indicator come from orchestrator.onIRSwapState
+    // (useIRSwapIndicator), so listener switches and every caller are covered.
+    const apply = canHotSwap
+      ? orchestrator.hotSwapSourceReceiverIRMapping(activeIRMapping, simulationMode, listenerReceiverId, positions?.sources, positions?.soundToPosKey)
+      : orchestrator.setSourceReceiverIRMapping(activeIRMapping, simulationMode, listenerReceiverId, positions?.sources, positions?.soundToPosKey);
+    apply.catch((error) => console.error('[Page] ❌ Failed to apply the simulation IR mapping:', error));
+  }, [audioOrchestrator.orchestrator, activeIRMapping, receiverIdsKey]);
 
   // Log simulation-tab switches. Playback is intentionally NOT stopped here:
   // switching cards changes the acoustic rendering, which is handed over

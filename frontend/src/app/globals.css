@@ -1835,6 +1835,139 @@ button.mv-row:hover:not(:disabled) {
   color: var(--color-primary);
   margin: 6px 0 2px;
 }
+/* ── Meter primitives (components/ui/MeterBar.tsx, Sparkline.tsx) ── */
+.meter-bar {
+  position: relative;
+  display: inline-block;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--color-secondary-light);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.meter-bar--compact { height: 3px; }
+.meter-bar__fill {
+  position: absolute;
+  inset: 0;
+  transform-origin: left center;
+  background: var(--color-success);
+  transition: transform 300ms ease-out, background-color 300ms ease-out;
+}
+.meter-bar--warn .meter-bar__fill { background: var(--color-warning); }
+.meter-bar--crit .meter-bar__fill { background: var(--color-error); }
+.meter-bar--na .meter-bar__fill { background: var(--color-border-strong); }
+.meter-bar__peak {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  margin-left: -1px;
+  background: var(--foreground);
+  opacity: 0.6;
+  transition: left 300ms ease-out;
+}
+.sparkline { flex-shrink: 0; color: var(--color-success); }
+.sparkline--warn { color: var(--color-warning); }
+.sparkline--crit { color: var(--color-error); }
+.sparkline--na { color: var(--color-border-strong); }
+/* ── Performance meter (components/scene/performance) ── */
+.perf-level--ok { color: var(--color-success); }
+.perf-level--warn { color: var(--color-warning); }
+.perf-level--crit { color: var(--color-error); }
+.perf-level--na { color: var(--color-secondary-hover); }
+.perf-meter-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+.perf-meter-strip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--foreground);
+  cursor: pointer;
+}
+.perf-meter-strip:hover,
+.perf-meter-strip--open { background: var(--color-secondary-light); }
+.perf-meter-strip__bars {
+  display: grid;
+  grid-template-columns: auto auto;
+  column-gap: 8px;
+  row-gap: 3px;
+}
+.perf-meter-strip__item { display: flex; align-items: center; gap: 4px; }
+.perf-meter-strip__label,
+.perf-meter-row__label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1;
+  color: var(--color-secondary-hover);
+}
+.perf-meter-panel { padding: 4px 12px 10px; }
+.perf-meter-panel__header { display: flex; align-items: center; gap: 8px; }
+.perf-meter-panel__header .bar-popover__title { flex: 1; }
+.perf-meter-panel__headroom {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+}
+.perf-meter-panel__close {
+  display: flex;
+  padding: 2px;
+  border-radius: 4px;
+  color: var(--color-secondary-hover);
+}
+.perf-meter-panel__close:hover { background: var(--color-secondary-light); color: var(--foreground); }
+.perf-meter-panel__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 0;
+  text-align: left;
+  cursor: pointer;
+}
+.perf-meter-row {
+  display: grid;
+  grid-template-columns: 32px auto auto 1fr;
+  align-items: center;
+  gap: 8px;
+}
+.perf-meter-row__value {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--foreground);
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.perf-meter-panel__details-toggle {
+  font-size: 10px;
+  color: var(--color-secondary-hover);
+}
+.perf-meter-panel__details-toggle:hover { color: var(--foreground); }
+.perf-meter-panel__details { display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
+.perf-meter-detail {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10px;
+}
+.perf-meter-detail dt { color: var(--color-secondary-hover); }
+.perf-meter-detail dd { font-family: var(--font-mono); color: var(--foreground); text-align: right; }
+@media (prefers-reduced-motion: reduce) {
+  .meter-bar__fill,
+  .meter-bar__peak { transition: none; }
+}
 /* Selectable rows in a bar popover (render style dropdown — SceneRenderStyleButton.tsx) */
 .bar-option {
   display: flex;

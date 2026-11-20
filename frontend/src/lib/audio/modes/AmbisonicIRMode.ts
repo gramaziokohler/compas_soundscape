@@ -48,7 +48,7 @@ import { OmnitoneDecoder } from '../decoders/OmnitoneDecoder';
 import { SourceLevelMeter } from '../utils/source-level';
 import { AmbisonicConvolver } from '../utils/ambisonic-convolver';
 import { omniLevelGain, toOmniFilter } from '../utils/global-source';
-import { AMBISONIC, AUDIO_CONTROL, CRASH_PROBE, IMPULSE_RESPONSE } from '@/utils/constants';
+import { AMBISONIC, AUDIO_CONTROL, CRASH_PROBE, IMPULSE_RESPONSE, IR_SWAP } from '@/utils/constants';
 import { linearToDbfs } from '@/utils/utils';
 
 /**
@@ -60,6 +60,14 @@ interface ConvolverBank {
   filter: AudioBuffer;
   isGlobal: boolean;
   users: number;
+  /** Pending disposal after the last user left (lets the reverb tail ring out). */
+  releaseTimer: ReturnType<typeof setTimeout> | null;
+}
+
+/** One source's IR for commitSourceIRs: a decoded IR, or null to mute (no IR at its position). */
+export interface SourceIRCommit {
+  sourceId: string;
+  ir: AudioBuffer | null;
 }
 
 /**
@@ -81,6 +89,9 @@ interface SourceChain {
 
   // Shared convolver set for this chain's filter (null until a filter is loaded)
   bank: ConvolverBank | null;
+  // Per-chain send into the bank (irGainNode → link → bank). Ramped on an IR swap so
+  // the old bank's input fades out (its tail rings on) while the new one fades in.
+  link: GainNode | null;
   filterBuffer: AudioBuffer | null; // Filter last loaded into the bank, before any omni conversion
   sourceIRBuffer: AudioBuffer | null; // Per-source IR buffer (for simulation mode)
   sourceIRPeak: number; // Peak amplitude of the IR fed to the convolver (0 = no IR / identity)
@@ -475,6 +486,7 @@ export class AmbisonicIRMode implements IAudioMode {
       irGainNode,
       levelMeter,
       bank: null,
+      link: null,
       filterBuffer: null,
       sourceIRBuffer: null, // No per-source IR yet (will be set in simulation mode)
       sourceIRPeak: initialIRPeak,
@@ -606,16 +618,7 @@ export class AmbisonicIRMode implements IAudioMode {
     if (!this.audioContext) return;
 
     // All-zero filter → silence (its bank holds no ConvolverNode at all).
-    this.loadFilter(chain, this.getConstantIR('silent'));
-    chain.sourceIRBuffer = null;
-    chain.sourceIRPeak = 0;
-    chain.sourceIRL2 = 0;
-    chain.irSilenced = true;
-    chain.normGainValue = 1.0;
-    this.applyIRGain(chain);
-    if (this.normalizeEnabled && this.audioContext) {
-      chain.normGainNode.gain.setValueAtTime(1.0, this.audioContext.currentTime);
-    }
+    this.applySourceMute(chain, 0);
 
     console.log(`[AmbisonicIRMode] 🔇 Muted source "${sourceId}" (zero-IR) — out of simulation position`);
   }
@@ -657,22 +660,91 @@ export class AmbisonicIRMode implements IAudioMode {
       return;
     }
 
-    this.loadFilter(chain, this.getConvolverIR(processedBuffer));
+    this.applySourceIR(chain, processedBuffer, 0);
+
+    console.log(`[AmbisonicIRMode] ✅ Updated IR for source "${sourceId}" (${channels}ch → ${processedBuffer.numberOfChannels}ch, ${processedBuffer.length} samples @ ${processedBuffer.sampleRate}Hz, ${chain.bank?.convolver.activeChannels ?? 0} convolvers shared by ${chain.bank?.users ?? 0} sources)`);
+  }
+
+  /**
+   * Load a processed per-source IR into a chain. With fadeS > 0 the old bank's send
+   * fades out (its tail keeps ringing) while the new one fades in, and the IR gain /
+   * normalization stages glide to their new values over the same time.
+   */
+  private applySourceIR(chain: SourceChain, processedBuffer: AudioBuffer, fadeS: number): void {
+    this.loadFilter(chain, this.getConvolverIR(processedBuffer), fadeS);
     chain.sourceIRBuffer = processedBuffer;
     chain.sourceIRPeak = this.computePeak(processedBuffer);
     chain.sourceIRL2 = this.computeL2(processedBuffer);
     chain.irSilenced = false;
 
-    // Compute per-source normalization gain
+    // Per-source normalization gain, then the current IR gain offset so the
+    // rendered peak matches the preview.
     chain.normGainValue = this.computeNormGain(processedBuffer);
-    if (this.normalizeEnabled && this.audioContext) {
-      chain.normGainNode.gain.setValueAtTime(chain.normGainValue, this.audioContext.currentTime);
+    this.setParam(chain.normGainNode.gain, this.normalizeEnabled ? chain.normGainValue : 1.0, fadeS);
+    this.setParam(chain.irGainNode.gain, this.computeIRGainValue(chain.sourceIRPeak), fadeS);
+  }
+
+  /** Zero-IR mute of a chain (see muteSourceImpulseResponse), optionally crossfaded. */
+  private applySourceMute(chain: SourceChain, fadeS: number): void {
+    this.loadFilter(chain, this.getConstantIR('silent'), fadeS);
+    chain.sourceIRBuffer = null;
+    chain.sourceIRPeak = 0;
+    chain.sourceIRL2 = 0;
+    chain.irSilenced = true;
+    chain.normGainValue = 1.0;
+    this.setParam(chain.irGainNode.gain, this.computeIRGainValue(0), fadeS);
+    this.setParam(chain.normGainNode.gain, 1.0, fadeS);
+  }
+
+  /** Set an AudioParam now, or glide to it linearly over fadeS seconds. */
+  private setParam(param: AudioParam, value: number, fadeS: number): void {
+    if (!this.audioContext) return;
+    const now = this.audioContext.currentTime;
+    param.cancelScheduledValues(now);
+    param.setValueAtTime(param.value, now);
+    if (fadeS > 0) param.linearRampToValueAtTime(value, now + fadeS);
+    else param.setValueAtTime(value, now);
+  }
+
+  /** Ambisonic order a set of per-source IRs needs (mono/stereo IRs render as FOA). */
+  static orderForIRs(irs: Iterable<AudioBuffer>): AmbisonicOrder | null {
+    let order: AmbisonicOrder | null = null;
+    for (const ir of irs) {
+      const channels = ir.numberOfChannels;
+      const o: AmbisonicOrder =
+        channels === AMBISONIC.CHANNELS.SOA ? 2 : channels === AMBISONIC.CHANNELS.TOA ? 3 : 1;
+      if (order === null || o > order) order = o;
     }
+    return order;
+  }
 
-    // Apply the current IR gain offset so the rendered peak matches the preview
-    this.applyIRGain(chain);
+  /** Rebuild this (source-free) instance's pipeline at `order` before sources are created. */
+  async prepareOrder(order: AmbisonicOrder): Promise<void> {
+    await this.ensureOrder(order);
+  }
 
-    console.log(`[AmbisonicIRMode] ✅ Updated IR for source "${sourceId}" (${channels}ch → ${processedBuffer.numberOfChannels}ch, ${processedBuffer.length} samples @ ${processedBuffer.sampleRate}Hz, ${chain.bank?.convolver.activeChannels ?? 0} convolvers shared by ${chain.bank?.users ?? 0} sources)`);
+  /**
+   * Apply a whole simulation / listener switch at once. Every IR must already be
+   * decoded and match the current order (the orchestrator swaps to a fresh instance
+   * when the order changes). With fadeS > 0 each source crossfades from its old IR
+   * to the new one: sound never stops and old reverb tails decay naturally.
+   */
+  commitSourceIRs(entries: SourceIRCommit[], fadeS: number): void {
+    if (!this.audioContext) return;
+    for (const { sourceId, ir } of entries) {
+      const chain = this.sourceChains.get(sourceId);
+      if (!chain) continue;
+      if (ir === null) {
+        if (!chain.irSilenced) this.applySourceMute(chain, fadeS);
+        continue;
+      }
+      const processed = this.processSourceIR(ir);
+      if (processed.numberOfChannels !== this.numAmbisonicChannels) {
+        console.warn(`[AmbisonicIRMode] commitSourceIRs: "${sourceId}" IR has ${processed.numberOfChannels}ch, pipeline ${this.numAmbisonicChannels}ch — skipped`);
+        continue;
+      }
+      this.applySourceIR(chain, processed, fadeS);
+    }
   }
 
   /** Mono/stereo IR → FOA, resampled to the context rate; cached per raw buffer. */
@@ -750,7 +822,7 @@ export class AmbisonicIRMode implements IAudioMode {
    * Chains whose filter is the same AudioBuffer share one bank — their irGain
    * outputs sum at its input, which equals summing separate convolutions.
    */
-  private loadFilter(chain: SourceChain, filter: AudioBuffer): void {
+  private loadFilter(chain: SourceChain, filter: AudioBuffer, fadeS: number = 0): void {
     chain.filterBuffer = filter;
     if (!this.audioContext || !this.irMixBus) return;
 
@@ -759,34 +831,78 @@ export class AmbisonicIRMode implements IAudioMode {
     let bank = banks.get(filter);
     if (bank && bank === chain.bank) return;
 
-    this.releaseBank(chain);
     if (!bank) {
       const convolver = new AmbisonicConvolver(this.audioContext, this.ambisonicOrder);
       convolver.updateFilters(isGlobal ? toOmniFilter(this.audioContext, filter) : filter);
       convolver.out.connect(this.irMixBus);
-      bank = { convolver, filter, isGlobal, users: 0 };
+      bank = { convolver, filter, isGlobal, users: 0, releaseTimer: null };
       banks.set(filter, bank);
     }
+    // A bank still ringing out its tail is reused instead of disposed.
+    if (bank.releaseTimer !== null) {
+      clearTimeout(bank.releaseTimer);
+      bank.releaseTimer = null;
+    }
     bank.users++;
-    chain.irGainNode.connect(bank.convolver.in);
+
+    const fade = chain.bank ? fadeS : 0; // nothing to fade from on a first load
+    const link = this.audioContext.createGain();
+    link.gain.value = fade > 0 ? 0 : 1;
+    if (fade > 0) this.setParam(link.gain, 1, fade);
+    chain.irGainNode.connect(link);
+    link.connect(bank.convolver.in);
+
+    const oldBank = chain.bank;
+    const oldLink = chain.link;
     chain.bank = bank;
+    chain.link = link;
+    this.releaseLink(oldBank, oldLink, fade);
   }
 
   /** Detach a chain from its bank; the last user disposes the bank's convolvers. */
   private releaseBank(chain: SourceChain): void {
-    const bank = chain.bank;
-    if (!bank) return;
-    try {
-      chain.irGainNode.disconnect(bank.convolver.in);
-    } catch {
-      // Already disconnected
-    }
+    this.releaseLink(chain.bank, chain.link, 0);
     chain.bank = null;
+    chain.link = null;
+  }
+
+  /**
+   * Drop one chain→bank send. On a hard switch (fadeS 0) it is cut and an unused
+   * bank disposed at once. When faded, the send ramps to 0 and an unused bank is
+   * disposed only after its tail (≤ IR_SWAP.TAIL_RELEASE_MAX_MS), so the old
+   * reverb decays instead of being cut.
+   */
+  private releaseLink(bank: ConvolverBank | null, link: GainNode | null, fadeS: number): void {
+    if (!bank) return;
+    const disconnect = () => {
+      try {
+        link?.disconnect();
+      } catch {
+        // Already disconnected
+      }
+    };
+    if (link && fadeS > 0) {
+      this.setParam(link.gain, 0, fadeS);
+      setTimeout(disconnect, fadeS * 1000 + IR_SWAP.LINK_DISCONNECT_MARGIN_MS);
+    } else {
+      disconnect();
+    }
 
     bank.users--;
     if (bank.users > 0) return;
-    bank.convolver.dispose();
-    (bank.isGlobal ? this.omniBanks : this.spatialBanks).delete(bank.filter);
+    const dispose = () => {
+      bank.releaseTimer = null;
+      if (bank.users > 0) return;
+      bank.convolver.dispose();
+      const banks = bank.isGlobal ? this.omniBanks : this.spatialBanks;
+      if (banks.get(bank.filter) === bank) banks.delete(bank.filter);
+    };
+    if (fadeS <= 0) {
+      dispose();
+      return;
+    }
+    const tailMs = Math.min(bank.filter.duration * 1000, IR_SWAP.TAIL_RELEASE_MAX_MS);
+    bank.releaseTimer = setTimeout(dispose, fadeS * 1000 + tailMs);
   }
 
   /**
@@ -1124,8 +1240,12 @@ export class AmbisonicIRMode implements IAudioMode {
     });
     this.sourceChains.clear();
     this.voices.clear();
-    this.spatialBanks.forEach((bank) => bank.convolver.dispose());
-    this.omniBanks.forEach((bank) => bank.convolver.dispose());
+    const disposeBank = (bank: ConvolverBank) => {
+      if (bank.releaseTimer !== null) clearTimeout(bank.releaseTimer);
+      bank.convolver.dispose();
+    };
+    this.spatialBanks.forEach(disposeBank);
+    this.omniBanks.forEach(disposeBank);
     this.spatialBanks.clear();
     this.omniBanks.clear();
     this.constantIRs.clear();
@@ -1258,11 +1378,13 @@ export class AmbisonicIRMode implements IAudioMode {
    * source chains. Each IR is scaled so its convolver-input peak becomes
    * effectivePeak + offset; reaching 0 mutes, reaching 1 clips.
    */
-  setIRGain(offset: number): void {
+  setIRGain(offset: number, apply: boolean = true): void {
     this.currentIRGainOffset = Math.max(
       IMPULSE_RESPONSE.GAIN_OFFSET_MIN,
       Math.min(IMPULSE_RESPONSE.GAIN_OFFSET_MAX, offset)
     );
+    // apply=false: only record it — commitSourceIRs applies it with the new IRs.
+    if (!apply) return;
     for (const chain of this.sourceChains.values()) {
       this.applyIRGain(chain);
     }
@@ -1273,9 +1395,10 @@ export class AmbisonicIRMode implements IAudioMode {
    * When enabled, the IR is scaled so its peak amplitude equals NORMALIZATION_SCALE.
    * Re-applies the peak-offset gain because the effective peak changes.
    */
-  setNormalize(enabled: boolean): void {
+  setNormalize(enabled: boolean, apply: boolean = true): void {
     this.normalizeEnabled = enabled;
-    if (!this.audioContext) return;
+    // apply=false: only record it — commitSourceIRs applies it with the new IRs.
+    if (!apply || !this.audioContext) return;
     for (const chain of this.sourceChains.values()) {
       chain.normGainNode.gain.setValueAtTime(
         enabled ? chain.normGainValue : 1.0,

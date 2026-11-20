@@ -3433,3 +3433,105 @@ export const CRASH_PROBE = {
   HEAP_PROBE_SLOW_MS: 50,
   HEAP_PROBE_ALLOC_MB: 20,
 } as const;
+
+// Simulation / listener IR swap (AudioOrchestrator.swapSourceIRs + AmbisonicIRMode.commitSourceIRs).
+// The old IRs keep playing while the new set is fetched and decoded; then every
+// source crossfades at once, so A/B switches never cut the sound.
+export const IR_SWAP = {
+  /** Parallel IR downloads + decodes while preparing a swap. */
+  FETCH_CONCURRENCY: 6,
+  /** Old→new IR send crossfade (s). The old bank's reverb tail keeps decaying after it. */
+  CROSSFADE_S: 0.12,
+  /** Old banks are disposed after the fade plus their IR length, capped here (ms). */
+  TAIL_RELEASE_MAX_MS: 4000,
+  /** Extra wait after the fade before disconnecting the old send (ms). */
+  LINK_DISCONNECT_MARGIN_MS: 50,
+  /** The "applying IRs" indicator only appears when a swap takes longer than this (ms). */
+  SPINNER_DELAY_MS: 150,
+} as const;
+
+// Decoded simulation-IR cache budget (lib/audio/utils/ir-cache.ts). Sized from the
+// browser's coarse device RAM (navigator.deviceMemory, Chromium only, capped at 8 GB).
+export const IR_CACHE = {
+  MB_PER_GB: 32,
+  MIN_MB: 128,
+  MAX_MB: 512,
+  /** Budget when the browser does not report device memory (Firefox, Safari). */
+  DEFAULT_MB: 192,
+} as const;
+
+// Performance meter + shared monitor (lib/diagnostics/performance-monitor.ts,
+// components/scene/performance/*). Edit mode only. Thresholds are tuned below the
+// values measured before a share-view crash on a very large model; no colours here
+// (levels map to --color-success / --color-warning / --color-error in globals.css).
+export const PERFORMANCE_METER = {
+  SAMPLE_INTERVAL_MS: 1000,
+  /** Sparkline length (samples). */
+  HISTORY_LENGTH: 60,
+  PEAK_HOLD_MS: 3000,
+  /** Peak tick fall per second after the hold (fraction of full scale). */
+  PEAK_DECAY_PER_S: 0.1,
+  /** Fast-attack / slow-release smoothing of the displayed value (EMA factors). */
+  SMOOTH_RISE: 0.6,
+  SMOOTH_FALL: 0.2,
+  /** A level only drops back once the value is this fraction below its threshold. */
+  HYSTERESIS: 0.05,
+  /** Long tasks / frame gaps shorter than this are not stalls (ms). */
+  STALL_MS: 50,
+  /** Window for worst stall, long tasks and shader recompiles (ms). */
+  STALL_WINDOW_MS: 10000,
+  /** A jump of more than this between wall-clock and audio-clock progress counts as a dropout (ms). */
+  XRUN_DRIFT_MS: 20,
+  XRUN_WINDOW_MS: 30000,
+  /** Amber / red thresholds per metric (value units in the comments). */
+  THRESHOLDS: {
+    MEMORY_MB: { WARN: 1200, CRIT: 1800 },        // heap + IR cache + convolver filters
+    STALL_MS: { WARN: 100, CRIT: 500 },           // worst main-thread block in the window
+    FPS: { WARN: 30, CRIT: 15 },                  // below = worse
+    CONVOLVERS: { WARN: 40, CRIT: 60 },           // ConvolverNodes alive
+    IR_LOADS: { WARN: 2, CRIT: 3 },               // IR swaps preparing at once
+    NEW_PROGRAMS: { WARN: 1, CRIT: 5 },           // shaders compiled in the window
+    XRUNS: { WARN: 1, CRIT: 5 },                  // dropouts in the xrun window
+  },
+  /** Strip / panel geometry (px). */
+  STRIP_BAR_WIDTH: 32,
+  PANEL_WIDTH: 280,
+  SPARK_WIDTH: 48,
+  SPARK_HEIGHT: 12,
+  /** Below this viewport width the strip shows only the headroom dot (px). */
+  COMPACT_BELOW_PX: 1100,
+  LABELS: { mem: 'MEM', cpu: 'CPU', dsp: 'DSP', gpu: 'GPU', xrun: 'XRUN' },
+  TITLES: {
+    mem: 'Memory the app holds: JS heap + impulse responses + convolver filters',
+    cpu: 'Main thread: worst freeze in the last 10 s and frame rate',
+    dsp: 'Audio: convolvers running and impulse-response sets loading',
+    gpu: 'Graphics: shader recompiles in the last 10 s (a recompile freezes big models)',
+    xrun: 'Audio dropouts in the last 30 s',
+  },
+  HEADROOM_WORDS: { ok: 'OK', warn: 'Tight', crit: 'Critical', na: '—' },
+  BUTTON_TITLE: 'Performance meter',
+  HIDE_TITLE: 'Hide performance meter',
+  AUDIO_ONLY_NOTE: 'audio only — this browser does not report heap memory',
+  NOT_SUPPORTED_NOTE: 'not available in this browser',
+} as const;
+
+// Emergency guard (lib/diagnostics/emergency-guard.ts). The last resort before a crash:
+// release IR memory, cancel the IR swap in progress and pause playback until the tab
+// recovers. Thresholds sit above the performance meter's red so ordinary switches
+// never trigger it — sound keeps playing in every normal situation.
+export const EMERGENCY_GUARD = {
+  SAMPLE_INTERVAL_MS: 1000,
+  /** Estimated app memory (heap + IRs + convolvers) above this for CONSECUTIVE_SAMPLES (MB). */
+  CRITICAL_MEMORY_MB: 2400,
+  CONSECUTIVE_SAMPLES: 2,
+  /** Main-thread blocks this long, STALL_REPEAT_COUNT times within STALL_REPEAT_WINDOW_MS. */
+  CRITICAL_STALL_MS: 1000,
+  STALL_REPEAT_COUNT: 2,
+  STALL_REPEAT_WINDOW_MS: 10000,
+  /** Healthy samples in a row before playback resumes. */
+  RECOVERY_SAMPLES: 3,
+  /** IR cache budget after an emergency (fraction of the RAM-sized default). */
+  IR_BUDGET_SCALE_AFTER: 0.5,
+  RECOVERING_MESSAGE: 'Running low on memory — playback paused while the app recovers.',
+  RECOVERED_MESSAGE: 'Recovered — playback resumed.',
+} as const;

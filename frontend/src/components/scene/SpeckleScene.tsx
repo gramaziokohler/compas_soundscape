@@ -22,6 +22,7 @@ import type * as THREE from 'three';
 // Custom hooks (Phase 1-4 refactor)
 import { useSpeckleViewerInit } from '@/components/scene/hooks/useSpeckleViewerInit';
 import { useSpeckleFPS } from '@/components/scene/hooks/useSpeckleFPS';
+import { useEmergencyGuard } from '@/hooks/useEmergencyGuard';
 import { useFaceFocusedSound } from '@/components/scene/hooks/useFaceFocusedSound';
 import { useSpeckleAreaDrawing } from '@/components/scene/hooks/useSpeckleAreaDrawing';
 import { useSpeckleAnalysisPreview } from '@/components/scene/hooks/useSpeckleAnalysisPreview';
@@ -1053,6 +1054,15 @@ export function SpeckleScene({
     pauseTimeline();
     storePauseAll();
   }, [pauseTimeline, storePauseAll]);
+
+  // Last resort before a crash on very large models: free IR memory and pause until
+  // the tab recovers (never fires on ordinary switches — see EMERGENCY_GUARD).
+  useEmergencyGuard({
+    audioOrchestrator,
+    isPlaying: playbackState.isPlaying,
+    onPause: handlePauseAll,
+    onPlay: handlePlayAll,
+  });
 
   const handleStopAll = useCallback(() => {
     // Transport.stop() kills every in-flight voice unconditionally (not just the

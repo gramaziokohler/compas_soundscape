@@ -792,6 +792,38 @@ SceneBottomBar → SceneRenderStyleButton (dropdown: Rendered · Ghosted · Arct
 └─────────────────────────────────────────────────────────────┘
 ```
 
+#### Seamless simulation / listener switches (IR swap)
+
+Every simulation-card and listener switch goes through one pipeline,
+`AudioOrchestrator.swapSourceIRs` (`hotSwapSourceReceiverIRMapping`, `setSourceReceiverIRMapping`,
+`updateActiveReceiver`, mode-switch re-creation):
+
+```
+request ─ coalesce (same mapping object + listener + sources → no-op; newer → aborts older)
+        ─ prepare: every source's IR fetched + decoded in parallel (IR_SWAP.FETCH_CONCURRENCY),
+                   shared in-flight decodes, LRU IRCache under a RAM-sized budget
+                   — the previous IRs keep playing meanwhile
+        ─ commit:  AmbisonicIRMode.commitSourceIRs — each chain's send to its old convolver
+                   bank fades out over IR_SWAP.CROSSFADE_S (that bank's tail rings on, then it is
+                   disposed) while the send to the new bank fades in; the card's IR gain /
+                   normalize glide with them. An ambisonic-order change builds a second
+                   AmbisonicIRMode off the graph and crossfades instances instead.
+        ─ progress: onIRSwapState → useIRSwapIndicator → bottom-bar "Applying acoustics n/N"
+                   (only when preparing takes > IR_SWAP.SPINNER_DELAY_MS)
+```
+
+### Performance Monitoring & Emergency Guard
+
+One sampler, `lib/diagnostics/performance-monitor.ts`, serves every consumer so nothing
+is polled twice. `usePerformanceSources` (page.tsx) wires the orchestrator (IR cache,
+convolvers, AudioContext health), the Sounds-view light pool and the WebGL renderer.
+
+| Consumer | When | What |
+| --- | --- | --- |
+| Performance meter (`components/scene/performance/`) | Edit mode, bottom-bar Gauge toggle (`uiStore.showPerformanceMeter`) | 1 Hz with frame tracking: MEM / CPU / DSP / GPU / XRUN bars, peaks, sparklines, headroom |
+| Emergency guard (`lib/diagnostics/emergency-guard.ts`, `useEmergencyGuard` in SpeckleScene) | Always, editor and share view | 1 Hz: critical memory, WebGL context loss or repeated >1 s stalls → release IRs, cancel the IR swap, pause; resume once healthy |
+| Crash probe (`lib/diagnostics/crash-probe.ts`) | `?diag=1` (sticky; `?diag=0` off) | 2 s records + events in localStorage, survives "Aw, Snap"; `window.__compasCrashProbe.previous` after reload; `[dbg:heap]` call probes on Speckle filter passes |
+
 ### Multichannel Ambisonic Send (Dante → Holophonix / DAW)
 
 Streams the active mode's **pre-decoder** bus live as (order+1)² discrete ACN/SN3D (AmbiX)

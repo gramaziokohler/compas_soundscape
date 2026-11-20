@@ -15,6 +15,7 @@ import { useAudioControlsStore } from "@/store/audioControlsStore";
 import { resolveSoundAudioUrl } from "@/lib/audio/utils/resolve-sound-url";
 import { orderVariants } from "@/lib/audio/utils/variant-sound-id";
 import { syncDirectionIndicator } from "@/lib/three/sound-direction-indicator";
+import { markCrashProbe } from "@/lib/diagnostics/crash-probe";
 // import type { BoundingBoxBounds } from "@/lib/three/BoundingBoxManager"; // Bounding-box placement removed
 
 /**
@@ -104,9 +105,18 @@ export class SoundSphereManager {
 
   // Dark mode state
   private darkModeEnabled: boolean = false;
+  /**
+   * Per-sound light STATE (position, colour, reactive intensity, mute…). These lights
+   * are never added to the scene: three.js compiles the number of lights into every
+   * material's shader, so a changing count (sounds muted / culled / added on a
+   * listener switch) recompiled every shader of a huge model — a >1 s freeze.
+   * The renderer only sees `darkModeLightPool`.
+   */
   private darkModePointLights: Map<string, THREE.PointLight> = new Map();
-  /** Group holding entity/marker dark-mode lights (not parented to a mesh). */
+  /** Group holding the fixed render-light pool while Sounds view is on. */
   private darkModeLightsGroup: THREE.Group | null = null;
+  /** DARK_MODE.MAX_ACTIVE_LIGHTS always-visible render lights; unused slots shine at intensity 0. */
+  private darkModeLightPool: THREE.PointLight[] = [];
   /** Sound IDs currently allowed to cast shadows (bounded by the shadow budget). */
   private darkModeShadowCasters: Set<string> = new Set();
   /** When true, non-playing sound lights are hidden (active playback). */
@@ -703,6 +713,10 @@ export class SoundSphereManager {
         })));
       }
     }
+
+    // [dbg:ir-swap] which sources a scene / simulation switch removes (share view reloads)
+    const removedIds = [...this.soundMetadata.keys()].filter((id) => !visibleSoundIds.has(id));
+    if (removedIds.length > 0) markCrashProbe('sound-sources-removed', { count: removedIds.length, kept: this.soundMetadata.size - removedIds.length });
 
     // Remove audio sources and stale positions for sounds no longer visible
     for (const [soundId] of this.soundMetadata) {
@@ -1517,12 +1531,12 @@ export class SoundSphereManager {
       group.scale.setScalar(scale);
     });
 
-    // Bound the number of VISIBLE sound lights. Three compiles every visible
+    // Bound the number of rendered sound lights. Three compiles every visible
     // light into every standard material's shader; beyond a modest count the
     // fragment uniform budget can be exceeded, which blacks out / mangles the
-    // shading (the "not all lit / messy" symptom with many sources). Keep only
-    // the closest lights that want to be visible.
-    if (this.darkModePointLights.size > 0) {
+    // shading (the "not all lit / messy" symptom with many sources). The closest
+    // lights that want to be visible are copied into the fixed pool below.
+    if (this.darkModePointLights.size > 0 || this.darkModeLightPool.length > 0) {
       const candidates: Array<{ light: THREE.PointLight; dist: number }> = [];
       const tmpLightPos = new THREE.Vector3();
       this.darkModePointLights.forEach((light, soundId) => {
@@ -1548,6 +1562,13 @@ export class SoundSphereManager {
       const cap = DARK_MODE.MAX_ACTIVE_LIGHTS;
       candidates.forEach((c, i) => {
         c.light.visible = i < cap;
+      });
+      // Feed the fixed render pool: same light count every frame, so switching
+      // listeners / muting never recompiles the model's shaders.
+      this.darkModeLightPool.forEach((slot, i) => {
+        const source = candidates[i]?.light;
+        if (source) SoundSphereManager.copyLightToSlot(source, slot);
+        else slot.intensity = 0;
       });
     }
   }
@@ -1630,12 +1651,8 @@ export class SoundSphereManager {
     this.darkModePointLights.clear();
     this.darkModeShadowCasters.clear();
 
-    // Remove the entity/marker lights group
-    if (this.darkModeLightsGroup) {
-      this.scene.remove(this.darkModeLightsGroup);
-      this.darkModeLightsGroup.clear();
-      this.darkModeLightsGroup = null;
-    }
+    // Remove the render-light pool
+    this.removeDarkModeLightPool();
 
     // Restore per-state sphere visuals: pending placeholders come back dimmer
     // (PENDING_OPACITY), everything else at the normal transparent-primary opacity.
@@ -1675,7 +1692,7 @@ export class SoundSphereManager {
     // Shadow budget: only a bounded number of lights cast shadows.
     this.applyShadowBudget(light, soundId);
 
-    this.ensureDarkModeLightsGroup().add(light);
+    this.ensureDarkModeLightsGroup();
     this.darkModePointLights.set(soundId, light);
   }
 
@@ -1713,15 +1730,47 @@ export class SoundSphereManager {
     return promptIdx !== undefined && this.entitySurfaceInfo.largePrompts.has(promptIdx);
   }
 
+  /** Create the Sounds-view render-light pool once (fixed count → no shader recompiles). */
   private ensureDarkModeLightsGroup(): THREE.Group {
     if (!this.darkModeLightsGroup) {
       const group = new THREE.Group();
       group.name = 'DarkModeLightsGroup';
       group.layers.enableAll();
+      this.darkModeLightPool = Array.from({ length: DARK_MODE.MAX_ACTIVE_LIGHTS }, (_, i) => {
+        const light = new THREE.PointLight(
+          getCssColorHex('--color-primary'),
+          0,
+          DARK_MODE.POINT_LIGHT_DISTANCE,
+          DARK_MODE.POINT_LIGHT_DECAY
+        );
+        light.name = `DarkModeLightSlot_${i}`;
+        light.layers.enableAll();
+        group.add(light);
+        return light;
+      });
       this.scene.add(group);
       this.darkModeLightsGroup = group;
     }
     return this.darkModeLightsGroup;
+  }
+
+  /** Remove the render-light pool (Sounds view off / dispose). */
+  private removeDarkModeLightPool(): void {
+    if (!this.darkModeLightsGroup) return;
+    this.scene.remove(this.darkModeLightsGroup);
+    this.darkModeLightPool.forEach((light) => light.dispose());
+    this.darkModeLightsGroup.clear();
+    this.darkModeLightsGroup = null;
+    this.darkModeLightPool = [];
+  }
+
+  /** Copy a sound light's state into a pool slot (same shader key, new values). */
+  private static copyLightToSlot(source: THREE.PointLight, slot: THREE.PointLight): void {
+    source.getWorldPosition(slot.position);
+    slot.color.copy(source.color);
+    slot.intensity = source.intensity;
+    slot.distance = source.distance;
+    slot.decay = source.decay;
   }
 
   /**
@@ -1754,18 +1803,18 @@ export class SoundSphereManager {
     light.userData.noShadow = this.isLargeMarkerLight(soundId);
     light.userData.muted = this.isLightSilenced(light, soundId);
     this.applyShadowBudget(light, soundId);
-    this.ensureDarkModeLightsGroup().add(light);
+    this.ensureDarkModeLightsGroup();
     this.darkModePointLights.set(soundId, light);
     return light;
   }
 
-  /** Sounds-view point lights: how many exist and how many are visible (crash probe). */
-  public getLightStats(): { total: number; visible: number } {
-    let visible = 0;
-    this.darkModePointLights.forEach((light) => {
-      if (light.visible) visible++;
-    });
-    return { total: this.darkModePointLights.size, visible };
+  /**
+   * Sounds-view lights (crash probe / performance meter): sound lights, how many of
+   * them currently shine through the pool, and the fixed pool size the renderer sees.
+   */
+  public getLightStats(): { total: number; visible: number; pool: number } {
+    const visible = this.darkModeLightPool.filter((slot) => slot.intensity > 0).length;
+    return { total: this.darkModePointLights.size, visible, pool: this.darkModeLightPool.length };
   }
 
   /** Remove an entity/marker dark-mode light for a sound ID. */
@@ -2063,12 +2112,8 @@ export class SoundSphereManager {
     // Remove sound spheres group from scene
     this.scene.remove(this.soundSpheresGroup);
 
-    // Remove dark-mode lights group from scene
-    if (this.darkModeLightsGroup) {
-      this.scene.remove(this.darkModeLightsGroup);
-      this.darkModeLightsGroup.clear();
-      this.darkModeLightsGroup = null;
-    }
+    // Remove the dark-mode render-light pool from the scene
+    this.removeDarkModeLightPool();
 
     // Clear tracking
     this.spherePositions.clear();

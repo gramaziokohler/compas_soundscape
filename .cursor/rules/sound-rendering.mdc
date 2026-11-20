@@ -158,8 +158,34 @@ after activating a simulation, until each sound had played once).
   identity/silent IRs, and the orchestrator's `irCache` returns one decoded buffer per IR id.
 - **All-zero IR channels get no ConvolverNode** (`AmbisonicConvolver`). A mono IR stored as FOA is
   one convolver, a mute IR none.
-- **Record `sourceIRAppliedKey` whenever an IR is applied** (`updateSourceIRsForReceiver`,
+- **Record `sourceIRAppliedKey` whenever an IR is applied** (`swapSourceIRs`,
   `resolveSourceIR`). A missing key makes the first clip dispatch re-apply the IR mid-playback.
+
+### Simulation / listener switches — prepare, then crossfade (never a gap)
+
+A/B comparison of simulations and listeners while playing must never cut the sound.
+
+- **One pipeline:** every whole-scene IR change goes through `AudioOrchestrator.swapSourceIRs`.
+  Never loop `setSourceImpulseResponse` over sources for a switch (that was sequential, left
+  sources silent while later ones downloaded, and overlapped with other runs).
+- **Coalesced:** a request equal to the pending/applied one (mapping object identity via
+  `irMappingToken` + listener + source ids) is a no-op; a newer one aborts the older
+  (`irSwapEpoch`, AbortController). Page effects must key on the mapping object, not on the
+  whole `simulationConfigs` array.
+- **Prepare off the graph:** all IRs decoded first through `IRCache` (shared in-flight
+  promise per id, LRU byte budget, playing + preparing IRs pinned). Card IR gain / normalize
+  are deferred while a swap prepares and applied at commit — applied to the outgoing IRs they
+  could zero `irGainNode`.
+- **Commit with a send crossfade:** chains reach banks through a per-chain `link` gain
+  (`irGainNode → link → bank`). `loadFilter(chain, filter, fadeS)` fades the old link out and
+  the new in; an old bank without users is disposed only after `fadeS + its IR length`
+  (≤ `IR_SWAP.TAIL_RELEASE_MAX_MS`) so its reverb tail rings out. Reusing a bank still ringing
+  cancels its disposal.
+- **Order change:** build a second `AmbisonicIRMode` off the graph and hand over with
+  `crossfadeModes` (`swapIRModeInstance`) — never `ensureOrder` on the live instance during a
+  switch (it recreates every chain and stops their voices).
+- **Indicator:** `onIRSwapState` → `useIRSwapIndicator` → `transportTimeStore.isApplyingIRs`
+  + progress; shown only after `IR_SWAP.SPINNER_DELAY_MS`.
 
 - `decoders/OmnitoneDecoder.ts` is the only binaural decoder: `createFOARenderer` for order 1,
   `createHOARenderer` for orders 2/3. HRIRs are Omnitone's built-in set (no custom HRTF loading).

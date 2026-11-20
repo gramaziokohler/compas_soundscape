@@ -7,6 +7,7 @@ import { Spinner } from '@/components/ui/Spinner';
 import { NotificationCenter } from '@/components/ui/NotificationCenter';
 import { UndoRedoToolbar } from '@/components/ui/UndoRedoToolbar';
 import { SceneShortcutsButton } from '@/components/scene/SceneShortcutsButton';
+import { PerformanceMeterButton } from '@/components/scene/performance/PerformanceMeterButton';
 import { LowOutputHintPopover } from '@/components/scene/LowOutputHintPopover';
 import { SceneVolumeButton } from '@/components/scene/SceneVolumeButton';
 import { SceneRenderStyleButton } from '@/components/scene/SceneRenderStyleButton';
@@ -138,6 +139,7 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
   // Public share view: a player only — no app navigation, history, model or settings.
   const canEdit = useCanEdit();
   const isApplyingIRs = useTransportTimeStore((s) => s.isApplyingIRs);
+  const irSwapProgress = useTransportTimeStore((s) => s.irSwapProgress);
   // Share view: "Tour" shows / hides the coach-mark tour (resuming at its step);
   // active (blue) while the tour is on screen.
   const tutorialActive = useShareViewStore((s) => s.tutorialActive);
@@ -299,8 +301,10 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
                 </svg>
               }
             />
-            {/* Absolutely placed after "Timeline" so the centred playback group never shifts. */}
-            {isPlaying && isApplyingIRs && (
+            {/* Absolutely placed after "Timeline" so the centred playback group never shifts.
+                Shown while a simulation / listener switch prepares its IRs (the previous
+                ones keep playing), only when that takes longer than IR_SWAP.SPINNER_DELAY_MS. */}
+            {isApplyingIRs && (
               <span
                 className="bar-busy"
                 role="status"
@@ -309,6 +313,9 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
               >
                 <Spinner size={12} />
                 {SCENE_BOTTOM_BAR.APPLYING_IRS_LABEL}
+                {irSwapProgress && irSwapProgress.total > 0 && (
+                  <span className="tabular-nums">{` ${irSwapProgress.loaded}/${irSwapProgress.total}`}</span>
+                )}
               </span>
             )}
           </>
@@ -444,6 +451,7 @@ export function SceneBottomBar(props: SceneBottomBarProps) {
         )}
         {canEdit && (
         <>
+        <PerformanceMeterButton />
         <SceneShortcutsButton isFirstPersonMode={isFirstPersonMode} />
         <NotificationCenter />
         <BarButton

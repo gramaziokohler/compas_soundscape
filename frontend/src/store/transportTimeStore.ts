@@ -9,14 +9,17 @@ import { create } from 'zustand';
  * longer re-renders the whole scene tree every frame. Play/pause/duration stay
  * in `useTransportClock`'s `playbackState`.
  *
- * `isApplyingIRs` is set by page.tsx while a newly activated simulation's IRs
- * are downloaded and loaded into the convolvers (bottom-bar busy indicator).
+ * `isApplyingIRs` / `irSwapProgress` mirror the AudioOrchestrator's IR swap
+ * (useIRSwapIndicator): a simulation or listener switch whose IRs take longer than
+ * IR_SWAP.SPINNER_DELAY_MS to prepare, while the previous IRs keep playing.
  */
 interface TransportTimeState {
   currentTimeMs: number;
   setCurrentTimeMs: (ms: number) => void;
   isApplyingIRs: boolean;
-  setApplyingIRs: (applying: boolean) => void;
+  /** IRs fetched + decoded so far for the swap in progress (null when idle). */
+  irSwapProgress: { loaded: number; total: number } | null;
+  setApplyingIRs: (applying: boolean, progress?: { loaded: number; total: number } | null) => void;
 }
 
 export const useTransportTimeStore = create<TransportTimeState>((set, get) => ({
@@ -25,8 +28,17 @@ export const useTransportTimeStore = create<TransportTimeState>((set, get) => ({
     if (get().currentTimeMs !== ms) set({ currentTimeMs: ms });
   },
   isApplyingIRs: false,
-  setApplyingIRs: (applying) => {
-    if (get().isApplyingIRs !== applying) set({ isApplyingIRs: applying });
+  irSwapProgress: null,
+  setApplyingIRs: (applying, progress = null) => {
+    const prev = get();
+    const next = applying ? progress : null;
+    if (
+      prev.isApplyingIRs !== applying ||
+      prev.irSwapProgress?.loaded !== next?.loaded ||
+      prev.irSwapProgress?.total !== next?.total
+    ) {
+      set({ isApplyingIRs: applying, irSwapProgress: next });
+    }
   },
 }));
 

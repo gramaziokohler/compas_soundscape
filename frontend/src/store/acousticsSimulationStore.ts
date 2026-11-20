@@ -44,6 +44,7 @@ import { UNDO_HISTORY_LIMIT, undoEquality, type RegisterTemporalStoreOptions } f
 import { notifyError } from './errorsStore';
 import { useUIStore } from './uiStore';
 import { clampRoomBounds, defaultResonanceMaterials } from '@/lib/audio/utils/resonance-rooms';
+import { markCrashProbe } from '@/lib/diagnostics/crash-probe';
 
 // ─── Undo ─────────────────────────────────────────────────────────────────────
 //
@@ -451,6 +452,8 @@ export const useAcousticsSimulationStore = create<AcousticsSimulationStoreState>
                 ([k, v]) => (current as any)[k] !== v,
               );
               if (!hasChanges) return s;
+              // [dbg:ir-swap] which config writes happen around a simulation switch
+              markCrashProbe('sim-config-update', { index, keys: Object.keys(updates) });
 
               const next = s.simulationConfigs.map((cfg, i) => {
                 if (i !== index) return cfg;
