@@ -80,6 +80,7 @@ import { apiService } from "@/services/api";
 import { API_BASE_URL, DEFAULT_BACKGROUND_DURATION_SECONDS, DEFAULT_DBFS, DEFAULT_NUM_SOUNDS, RECEIVER_CONFIG, SPIRAL_PLACEMENT, DEFAULT_LISTENER_ORIENTATION, TTS_DEFAULT_LANGUAGE, SANDBOX_MODEL_ID, WORKSPACE_MESSAGES, STUDY_LOG, SCENE_TRANSFER, SHARE_VIEW } from "@/utils/constants";
 import { notifyPrivateWorkspaceModel } from "@/utils/workspaceNotifications";
 import { parseAuthoredSeconds } from "@/lib/audio/utils/timeline-utils";
+import { isCardInActiveScene } from "@/lib/audio/utils/mute-solo";
 import { getCameraFrontSpiralPosition } from "@/lib/three/spiral-placement";
 import type { LoadTab, SoundGenerationConfig, SoundEvent } from "@/types";
 import type { SoundscapeData } from "@/types/soundscape";
@@ -1645,9 +1646,8 @@ function HomeContent() {
         // When activeSoundParentIndex is set, only show sounds matching that parent.
         // When null (e.g., after auto-advance from restore), show all sounds
         // including parented ones — otherwise restored soundscapes lose their 3D spheres.
-        if (activeSoundParentIndex !== null
-            && config.parentUsageOriginalIndex !== activeSoundParentIndex
-        ) return [];
+        // Same scene predicate as useMuteSolo, so mute/solo is resolved over the same sounds.
+        if (!isCardInActiveScene(config, activeSoundParentIndex)) return [];
 
         if (generatedByPrompt.has(index)) {
           const events = generatedByPrompt.get(index)!;

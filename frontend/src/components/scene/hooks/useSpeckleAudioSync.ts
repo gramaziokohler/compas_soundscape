@@ -3,7 +3,7 @@ import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { useAudioControlsStore } from '@/store/audioControlsStore';
 import { useSoundscapeStore } from '@/store/soundscapeStore';
 import { DEFAULT_DBFS } from '@/utils/constants';
-import { isSoundSilenced } from '@/lib/audio/utils/mute-solo';
+import { computeMuteSolo } from '@/lib/audio/utils/mute-solo';
 import { isConfigGlobal } from '@/lib/audio/utils/global-source';
 import { findCardIndexForSound } from '@/utils/sound-card-match';
 import type { SoundEvent } from '@/types';
@@ -64,33 +64,18 @@ export function useSpeckleAudioSync({
   }, [soundVolumes, soundscapeData, audioOrchestrator, globalBaseDbfs]);
 
   // ============================================================================
-  // Effect - Apply Mute/Solo States
+  // Effect - Push Mute/Solo State (audio engine + spheres)
   // ============================================================================
+  // soundscapeData is the active scene's data (page.tsx filters it with the
+  // same isCardInActiveScene predicate useMuteSolo uses), so the engine and
+  // the UI resolve mute/solo over the same tracks. The whole silenced set is
+  // pushed; the orchestrator and sphere manager keep it and apply it to every
+  // source / mesh / light created afterwards.
   useEffect(() => {
-    if (audioOrchestrator && soundscapeData) {
-      const { coordinator } = useSpeckleEngineStore.getState();
-      const soundSphereManager = coordinator?.getSoundSphereManager();
-
-      // Per-prompt effective mute: a card is dimmed when ANY of its variants is
-      // muted, or when solo mode is active and its track is not soloed.
-      const promptMuted = new Map<number, boolean>();
-
-      soundscapeData.forEach((soundEvent) => {
-        const shouldBeMuted = isSoundSilenced(soundEvent.id, mutedSounds, soloedSounds);
-
-        audioOrchestrator.setSourceMute(soundEvent.id, shouldBeMuted);
-        soundSphereManager?.setSourceMuted(soundEvent.id, shouldBeMuted);
-
-        const promptIdx = (soundEvent as any).prompt_index ?? 0;
-        const isCardMuted = promptMuted.get(promptIdx) ?? false;
-        promptMuted.set(promptIdx, isCardMuted || shouldBeMuted);
-      });
-
-      promptMuted.forEach((muted, promptIdx) => {
-        soundSphereManager?.setPromptMuted(promptIdx, muted);
-      });
-    }
-  }, [mutedSounds, soloedSounds, soundscapeData, audioOrchestrator]);
+    const { silencedIds, silencedPrompts } = computeMuteSolo(soundscapeData ?? [], mutedSounds, soloedSounds);
+    audioOrchestrator?.setSilencedSources(silencedIds);
+    coordinator?.getSoundSphereManager()?.setSilencedPrompts(silencedPrompts);
+  }, [mutedSounds, soloedSounds, soundscapeData, audioOrchestrator, coordinator]);
 
   // ============================================================================
   // Effect - Global (non-spatial) background sounds

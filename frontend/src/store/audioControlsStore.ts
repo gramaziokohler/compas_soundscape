@@ -117,10 +117,11 @@ export interface AudioControlsStoreState {
   selectedVariants: Record<number, number>;
   soundVolumes: Record<string, number>;
   soundTrims: Record<string, TrimRange>;
+  /** Mute intent (variant ids). Resolve what is silent with computeMuteSolo / useMuteSolo. */
   mutedSounds: Set<string>;
   /**
    * Every variant sound id of each soloed track (several tracks may be soloed).
-   * Non-empty = solo mode: only these ids are audible (see isSoundSilenced).
+   * Non-empty = solo mode: only these tracks are audible, scoped to the active scene (see computeMuteSolo).
    */
   soloedSounds: Set<string>;
   previewingSoundId: string | null;

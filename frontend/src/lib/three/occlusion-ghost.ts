@@ -11,6 +11,11 @@
  * the stored depth is the obstacle's (nearer), so the ghost passes and draws.
  * Partial occlusion (half behind a column) is handled per pixel by the GPU.
  *
+ * This needs the model depth, which Speckle clears before its OVERLAY pass, so
+ * attaching a ghost also moves the parent from the OVERLAY layer to
+ * OCCLUSION_GHOST.LAYER, drawn by the occludable pass that
+ * lib/three/speckle-occlusion-pass.ts adds to every pipeline.
+ *
  * The ghost follows its parent automatically: position / scale / visibility by
  * being a child, colour and opacity copied from the parent material right
  * before each draw (so selection, mismatch, muted, dark mode … need no extra
@@ -28,7 +33,10 @@
  */
 
 import * as THREE from 'three';
+import { ObjectLayers } from '@speckle/viewer';
 import { OCCLUSION_GHOST } from '@/utils/constants';
+
+const SPECKLE_OVERLAY_LAYER = ObjectLayers.OVERLAY;
 
 export const OCCLUSION_GHOST_NAME = 'occlusionGhost';
 
@@ -83,9 +91,15 @@ export function attachOcclusionGhost(parent: THREE.Mesh, opacityRatio: number): 
     ghost = new THREE.Mesh(parent.geometry, material);
   }
 
+  // Move the parent from the OVERLAY layer (drawn after Speckle clears depth)
+  // to the occludable layer, drawn while the model depth is still there.
+  // Layer 0 stays enabled: raycasters pick on the default layer.
+  parent.layers.disable(SPECKLE_OVERLAY_LAYER);
+  parent.layers.enable(OCCLUSION_GHOST.LAYER);
+
   ghost.name = OCCLUSION_GHOST_NAME;
   ghost.renderOrder = parent.renderOrder + OCCLUSION_GHOST.RENDER_ORDER_OFFSET;
-  ghost.layers.mask = parent.layers.mask;
+  ghost.layers.set(OCCLUSION_GHOST.LAYER);
   // Cached instance bounds can go stale when points move; the ghost is cheap to draw.
   ghost.frustumCulled = false;
   // Never pickable: drag, hover and selection only ever hit the parent.

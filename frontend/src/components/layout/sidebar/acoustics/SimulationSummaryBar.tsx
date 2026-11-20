@@ -40,7 +40,7 @@ import {
   useUIStore,
 } from '@/store';
 import { collapseVariantsToOne, groupSoundsByPosition } from '@/utils/positionKey';
-import { isSoundSilenced } from '@/lib/audio/utils/mute-solo';
+import { audibleSoundsInScene } from '@/lib/audio/utils/mute-solo';
 import { SectionHighlight } from '@/components/ui/SectionHighlight';
 import { SCENE_BOTTOM_BAR, SIMPLE_MODE } from '@/utils/constants';
 import { OBJECT_EXPLORER_PANEL_ID, openMaterialsExplorer } from './openMaterialsExplorer';
@@ -76,21 +76,10 @@ export function SimulationSummaryBar() {
   const [highlight, setHighlight] = useState<{ key: HighlightKey; trigger: number } | null>(null);
 
   // Mirrors AcousticsSection.activeSoundscapeData so the count matches the sim.
-  const activeSoundscapeData = useMemo(() => {
-    const unmuted = (soundscapeData ?? []).filter((s) => !isSoundSilenced(s.id, mutedSounds, soloedSounds));
-    if (activeSoundParentIndex === null || activeSoundParentIndex === undefined) {
-      return unmuted;
-    }
-    const matchingPromptIndices = new Set<number>();
-    (soundConfigs ?? []).forEach((config, idx) => {
-      if (config.parentUsageOriginalIndex === activeSoundParentIndex) {
-        matchingPromptIndices.add(idx);
-      }
-    });
-    return unmuted.filter(
-      (s) => s.prompt_index !== undefined && matchingPromptIndices.has(s.prompt_index),
-    );
-  }, [soundscapeData, mutedSounds, soloedSounds, activeSoundParentIndex, isInSoundsStep, soundConfigs]);
+  const activeSoundscapeData = useMemo(
+    () => audibleSoundsInScene(soundscapeData ?? [], soundConfigs ?? [], activeSoundParentIndex, mutedSounds, soloedSounds),
+    [soundscapeData, mutedSounds, soloedSounds, activeSoundParentIndex, soundConfigs],
+  );
 
   const sourceCount = useMemo(() => {
     const { uniquePositions } = groupSoundsByPosition(

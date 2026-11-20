@@ -29,7 +29,7 @@ import { applyFadeInOut, resolveClipFade, type FadeOptions } from './utils/fade-
 import { audioBufferToWavBlob24 } from './utils/wav-encode';
 import { resolveVariantSoundIdByPrompt } from './utils/variant-sound-id';
 import { resolveIterationTrim } from './utils/iteration-trim';
-import { isSoundSilenced } from './utils/mute-solo';
+import { computeMuteSolo } from './utils/mute-solo';
 import { applyOmniToEncoder, toOmniFilter } from './utils/global-source';
 import { GLOBAL_SOURCE } from '@/utils/constants';
 import { assignSourceRooms, isolateResonanceDirectPath } from './utils/resonance-rooms';
@@ -178,9 +178,18 @@ export async function exportSoundscapeToWav(
 ): Promise<void> {
   onProgress?.(0.02);
 
-  const activeSounds = sounds.filter((s) => {
-    return !isSoundSilenced(s.id, config.mutedSounds, config.soloedSounds ?? new Set());
-  });
+  // Same track-level, scene-scoped resolution as live playback: the timeline
+  // tracks ARE the active scene, resolved by prompt via the variant events.
+  const promptOf = new Map((config.variantEvents ?? []).map((e) => [e.id, e.prompt_index]));
+  const { silencedIds } = computeMuteSolo(
+    [
+      ...(config.variantEvents ?? []).map((e) => ({ id: e.id, prompt_index: e.prompt_index ?? null })),
+      ...sounds.map((s) => ({ id: s.id, prompt_index: promptOf.get(s.id) ?? null })),
+    ],
+    config.mutedSounds,
+    config.soloedSounds ?? new Set(),
+  );
+  const activeSounds = sounds.filter((s) => !silencedIds.has(s.id));
 
   if (activeSounds.length === 0) {
     throw new Error('No active sounds to export');

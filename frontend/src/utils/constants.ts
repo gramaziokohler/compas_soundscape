@@ -2009,6 +2009,12 @@ export const OCCLUSION_GHOST = {
   LISTENER_OPACITY_RATIO: 0.3,
   /** Drawn right after its parent, so the parent's depth is already written. */
   RENDER_ORDER_OFFSET: 1,
+  /**
+   * three.js layer of occludable objects and their ghosts, drawn by the
+   * occludable pass (lib/three/speckle-occlusion-pass.ts) before Speckle clears
+   * depth for the OVERLAY layer (4). Outside Speckle's ObjectLayers (0–14).
+   */
+  LAYER: 20,
 } as const;
 
 // Object Label Sprites (shown above sound spheres and receivers)
@@ -3279,6 +3285,19 @@ export const FPS_HELP_POPUP = {
   GAP: 12,           // px — distance from the anchor (left of the FPS bubble row)
   MOUSE_ICON_SIZE: '14px',
   Z_INDEX: 60,
+} as const;
+
+/** DAW track head: "can't zoom" hint shown to the right of a track when "Zoom
+ *  to entity" is used while locked in first-person view, where the 3D camera
+ *  can't move (components/audio/daw/DAWTrackHead.tsx). Reuses the `.fps-hint`
+ *  look (components/scene/FpsHelpPopup.tsx). */
+export const DAW_FPS_ZOOM_HINT = {
+  WIDTH: 220,       // px
+  GAP: 10,          // px — distance from the track head's right edge
+  Z_INDEX: 999999,  // matches the track-head kebab menu it can appear alongside
+  TITLE: 'Zoom unavailable',
+  MESSAGE: 'Leave first-person view to zoom to this entity.',
+  CLOSE_LABEL: 'Dismiss hint',
 } as const;
 
 /** Share view: FPS controls hint above the scene bottom bar (components/scene/FpsControlsHint.tsx). */

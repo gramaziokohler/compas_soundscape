@@ -31,7 +31,8 @@ interface DAWLaneProps {
   pxPerSecond: number;
   trackHeight: number;
   timelineDurationMs: number;
-  isMuted: boolean;
+  /** Muted, or not soloed while another track is soloed: the lane and its clips grey out. */
+  isSilenced: boolean;
   isDraggable: boolean;
   selectedClipKeys: Set<string>;
   /** clipKey -> live drag offset (ms); only present for clips in the active gesture. */
@@ -61,7 +62,7 @@ function DAWLaneImpl({
   pxPerSecond,
   trackHeight,
   timelineDurationMs,
-  isMuted,
+  isSilenced,
   isDraggable,
   selectedClipKeys,
   dragPreview,
@@ -108,7 +109,7 @@ function DAWLaneImpl({
         minWidth: `${contentWidth}px`,
         height: `${trackHeight}px`,
         borderBottom: '1px solid var(--color-border)',
-        backgroundColor: isMuted ? 'color-mix(in srgb, var(--color-secondary-light) 40%, transparent)' : 'transparent',
+        backgroundColor: isSilenced ? 'var(--color-daw-silenced-lane)' : 'transparent',
         backgroundImage: `repeating-linear-gradient(90deg, var(--color-border) 0, var(--color-border) 1px, transparent 1px, transparent ${tickStepPx}px)`,
         backgroundPosition: '0 0',
       }}
@@ -125,7 +126,7 @@ function DAWLaneImpl({
           trimEnd={clip.trim?.end}
           color={color}
           name={clip.label}
-          isMuted={isMuted}
+          isMuted={isSilenced}
           isDraggable={isDraggable && !clip.excluded}
           isSelected={!clip.excluded && selectedClipKeys.has(clip.clipKey)}
           isOverlapping={overlapFlags.get(clip.clipKey) ?? false}

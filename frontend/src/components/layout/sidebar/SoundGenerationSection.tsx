@@ -1,6 +1,7 @@
 'use client';
 
 import { useCanEdit } from '@/hooks/useCanEdit';
+import { useMuteSolo } from '@/hooks/useMuteSolo';
 import { useMemo, useCallback, useEffect, useState, useRef } from "react";
 import type { SoundGenerationSectionProps } from "@/types/components";
 import type { SoundGenerationConfig, SoundEvent, CardType, CardBaseConfig, AnalysisConfig } from "@/types";
@@ -229,8 +230,7 @@ export function SoundGenerationSection({
   const onMute               = useAudioControlsStore((s) => s.handleMute);
   const onSolo               = useAudioControlsStore((s) => s.handleSolo);
   const onVariantChange      = useAudioControlsStore((s) => s.handleVariantChange);
-  const mutedSounds          = useAudioControlsStore((s) => s.mutedSounds);
-  const soloedSounds         = useAudioControlsStore((s) => s.soloedSounds);
+  const muteSolo             = useMuteSolo();
   const soundVolumes         = useAudioControlsStore((s) => s.soundVolumes);
   const selectedVariants     = useAudioControlsStore((s) => s.selectedVariants);
   const previewingSoundId    = useAudioControlsStore((s) => s.previewingSoundId);
@@ -550,10 +550,11 @@ export function SoundGenerationSection({
     const generatedSound = getGeneratedSound(originalIndex);
     const variants = getVariantsForPrompt(originalIndex);
     const selectedVariantIdx = getSelectedVariantIdx(originalIndex);
-    const isMuted = generatedSound ? mutedSounds.has(generatedSound.id) : false;
-    const isSoloed = generatedSound ? soloedSounds.has(generatedSound.id) : false;
-    // When any track is soloed, dim every non-soloed generated card the same way as muted
-    const isEffectivelyMuted = isMuted || (soloedSounds.size > 0 && isGenerated && !isSoloed);
+    // Track-level, scene-scoped (useMuteSolo): the card is dimmed exactly when
+    // its sound is silent — muted, or soloed out by a track of THIS scene.
+    const isMuted = generatedSound ? muteSolo.isMuted(generatedSound.id) : false;
+    const isSoloed = generatedSound ? muteSolo.isSoloed(generatedSound.id) : false;
+    const isEffectivelyMuted = generatedSound ? muteSolo.isSilenced(generatedSound.id) : false;
 
     // Build custom menu items
     const customButtons: CustomMenuItem[] = [];
@@ -1279,8 +1280,7 @@ export function SoundGenerationSection({
     getVariantsForPrompt,
     getSelectedVariantIdx,
     getCollapsedInfo,
-    mutedSounds,
-    soloedSounds,
+    muteSolo,
     modelEntities.length,
     useSpeckleViewer,
     isLinkingEntity,

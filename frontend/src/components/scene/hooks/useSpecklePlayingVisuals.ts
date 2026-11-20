@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { useAudioControlsStore } from '@/store';
 import { getPreviewLevel } from '@/lib/audio/previewRegistry';
-import { isSoundSilenced } from '@/lib/audio/utils/mute-solo';
+import { computeMuteSolo } from '@/lib/audio/utils/mute-solo';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
 import type { SoundEvent } from '@/types';
 import { DARK_MODE } from '@/utils/constants';
@@ -70,14 +70,9 @@ export function useSpecklePlayingVisuals({
       idToPrompt.set(s.id, (s as { prompt_index?: number }).prompt_index ?? 0);
     });
 
-    // Prompt indices that are actually audible. Under solo, only soloed
-    // tracks are audible; otherwise any track with a non-muted variant is.
-    const audiblePrompt = new Set<number>();
-    (soundscapeData ?? []).forEach((s) => {
-      if ((s as { isPending?: boolean }).isPending) return;
-      const pi = (s as { prompt_index?: number }).prompt_index ?? 0;
-      if (!isSoundSilenced(s.id, mutedSounds, soloedSounds)) audiblePrompt.add(pi);
-    });
+    // Silenced tracks (muted / soloed out) never pulse nor light — same
+    // resolution as the audio engine (useSpeckleAudioSync).
+    const { silencedPrompts } = computeMuteSolo(soundscapeData ?? [], mutedSounds, soloedSounds);
 
     const clearAll = () => {
       soundSphereManager.setIdleLightsOff(false);
@@ -120,7 +115,7 @@ export function useSpecklePlayingVisuals({
         const promptIdx = idToPrompt.get(id);
         if (promptIdx === undefined) return;
         // Muted / non-soloed tracks stay silent: no pulse, no light.
-        if (!audiblePrompt.has(promptIdx)) return;
+        if (silencedPrompts.has(promptIdx)) return;
         audiblePlayingCount++;
 
         let level: number;
@@ -144,16 +139,9 @@ export function useSpecklePlayingVisuals({
 
       // Lights: mesh lights are keyed by the visible variant's id; entity/marker
       // lights by the sound id. Promote only playing lights to shadow casters.
-      //
-      // Re-assert the per-light mute flag here too: dark-mode lights may be
-      // created AFTER a track was already muted (enable-dark-mode doesn't replay
-      // mute), so the manager's copy would otherwise stay unmuted and the muted
-      // sphere's light would leak into the scene.
+      // (Light mute flags are owned by SoundSphereManager.setSilencedPrompts,
+      // which also applies them to lights created later.)
       const shadowCasters: string[] = [];
-      (soundscapeData ?? []).forEach((s) => {
-        if ((s as { isPending?: boolean }).isPending) return;
-        soundSphereManager.setSourceMuted(s.id, isSoundSilenced(s.id, mutedSounds, soloedSounds));
-      });
       soundSphereManager.getSoundSphereMeshes().forEach((mesh) => {
         const ev = mesh.userData.soundEvent as SoundEvent | undefined;
         const id = ev?.id;

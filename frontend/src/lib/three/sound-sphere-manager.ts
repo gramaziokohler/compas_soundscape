@@ -89,6 +89,13 @@ export class SoundSphereManager {
   private entityLinkedIds: Set<string> = new Set();
   // sound id → prompt index (for deciding large-marker light behaviour).
   private soundPromptIndex: Map<string, number> = new Map();
+  private lightPromptIndex: Map<string, number> = new Map();
+  /**
+   * Prompt indices whose track is silenced (muted or soloed out), pushed whole
+   * by useSpeckleAudioSync (computeMuteSolo). Re-applied to meshes and lights
+   * whenever they are created or rebuilt, so a scene switch can't drop it.
+   */
+  private silencedPrompts: Set<number> = new Set();
   // Previous visible sound ID set — used to detect sound-set changes for the fast path.
   // soundMetadata intentionally contains ALL non-pending variants (not just the visible
   // selection), so a size comparison against it is invalid for multi-variant prompts.
@@ -235,6 +242,12 @@ export class SoundSphereManager {
     // Refresh the sound → prompt map (drives large-marker light behaviour).
     realSoundData.forEach((s) => {
       this.soundPromptIndex.set(s.id, (s as any).prompt_index ?? 0);
+    });
+    // Every id (iteration entity copies included) → prompt, for mute/solo of lights.
+    this.lightPromptIndex.clear();
+    soundscapeData.forEach((s) => {
+      const pi = (s as { prompt_index?: number | null }).prompt_index;
+      if (pi != null) this.lightPromptIndex.set(s.id, pi);
     });
 
     console.log('[SoundSphereManager:update] soundscapeData.length:', soundscapeData.length,
@@ -557,6 +570,8 @@ export class SoundSphereManager {
     this.soundMeshes = result.meshes;
     this.draggableObjects = result.draggableObjects;
     this.pruneOwnerlessLights();
+    // New / rebuilt meshes (e.g. after a scene switch) take the current mute/solo state.
+    this.applySilencedState();
 
     // Update userData.soundEvent on every mesh to reflect the latest data
     // (e.g. display_name changes). updateDraggableMeshes reuses existing
@@ -1651,7 +1666,7 @@ export class SoundSphereManager {
     light.userData.wantVisible = true;
     // Inherit the track's current mute state: a sound muted before dark mode was
     // enabled must not start lighting the scene.
-    light.userData.muted = mesh.userData.isMuted === true;
+    light.userData.muted = this.isMeshSilenced(mesh);
     // The light lives in the dedicated lights group (NOT as a child of the mesh)
     // so hiding sound spheres does not also hide the light. Its position is
     // synced from the mesh each frame in updateScreenSpaceScale.
@@ -1737,6 +1752,7 @@ export class SoundSphereManager {
     light.userData.wantVisible = true;
     // Large surface markers must shine through the surface (light both faces).
     light.userData.noShadow = this.isLargeMarkerLight(soundId);
+    light.userData.muted = this.isLightSilenced(light, soundId);
     this.applyShadowBudget(light, soundId);
     this.ensureDarkModeLightsGroup().add(light);
     this.darkModePointLights.set(soundId, light);
@@ -1852,30 +1868,42 @@ export class SoundSphereManager {
   }
 
   /**
-   * Show or hide the point light for a specific sound sphere (dark mode only).
-   * When muted, the point light is disabled so the sphere no longer illuminates the scene.
+   * Replace the set of silenced prompts (computeMuteSolo). Dims the sphere and
+   * switches off the dark-mode light of every silenced track; meshes and
+   * lights created later read the same set.
    */
-  public setSourceMuted(soundId: string, muted: boolean): void {
-    const light = this.darkModePointLights.get(soundId);
-    if (!light) return;
-    light.userData.muted = muted;
+  public setSilencedPrompts(prompts: ReadonlySet<number>): void {
+    this.silencedPrompts = new Set(prompts);
+    this.applySilencedState();
+  }
+
+  private isMeshSilenced(mesh: THREE.Object3D): boolean {
+    const pi = (mesh.userData.soundEvent as { prompt_index?: number | null } | undefined)?.prompt_index;
+    return pi != null && this.silencedPrompts.has(pi);
+  }
+
+  private isLightSilenced(light: THREE.PointLight, soundId: string): boolean {
+    const owner = light.userData.ownerMesh as THREE.Mesh | undefined;
+    if (owner) return this.isMeshSilenced(owner);
+    const pi = this.lightPromptIndex.get(soundId) ?? this.soundPromptIndex.get(soundId);
+    return pi !== undefined && this.silencedPrompts.has(pi);
+  }
+
+  private applySilencedState(): void {
+    this.soundMeshes.forEach((mesh) => this.applyMeshMuted(mesh, this.isMeshSilenced(mesh)));
+    this.darkModePointLights.forEach((light, soundId) => {
+      light.userData.muted = this.isLightSilenced(light, soundId);
+    });
   }
 
   /**
-   * Dim (or restore) a card's sound sphere based on its effective mute state.
-   * A card is considered muted when ANY of its variants is muted, or when solo
-   * mode is active and its track is not one of the soloed tracks.
-   *
-   * Only the selected variant of a card has a visible mesh, but the mesh is
-   * keyed by prompt index here so muting a non-selected variant still dims the
-   * card's sphere.
+   * Dim (or restore) one sphere. Only the selected variant of a card has a
+   * mesh; it is matched by prompt index, so its whole track decides.
+   * A mesh whose state is unchanged is left alone (keeps the creation-time
+   * dark-mode / pending look).
    */
-  public setPromptMuted(promptIdx: number, muted: boolean): void {
-    const mesh = this.soundMeshes.find(m => {
-      const ev = m.userData.soundEvent as SoundEvent | undefined;
-      return (ev as any)?.prompt_index === promptIdx;
-    });
-    if (!mesh) return;
+  private applyMeshMuted(mesh: THREE.Mesh, muted: boolean): void {
+    if ((mesh.userData.isMuted === true) === muted) return;
     const material = mesh.material as THREE.MeshBasicMaterial;
     const isPending = !!((mesh.userData.soundEvent as SoundEvent | undefined)?.isPending);
     mesh.userData.isMuted = muted;

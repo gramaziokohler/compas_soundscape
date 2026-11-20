@@ -20,9 +20,11 @@ import { computeTimelineOverrun } from './daw-overrun';
 import type { ClipTrimCopy } from '@/store/audioControlsStore';
 import { parseTriggerExpression } from '@/lib/audio/utils/trigger-ref';
 import { trackVariants } from '@/lib/audio/utils/variant-sound-id';
+import { useMuteSolo } from '@/hooks/useMuteSolo';
 import { useAudioControlsStore } from '@/store/audioControlsStore';
 import { useSoundscapeStore } from '@/store/soundscapeStore';
 import { useSpeckleStore } from '@/store/speckleStore';
+import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { useUIStore } from '@/store/uiStore';
 import { useSceneWorkflowStore } from '@/store/sceneWorkflowStore';
 import { clearPreferredPlaybackTarget, setPreferredPlaybackTarget } from '@/lib/shortcuts/shortcut-targets';
@@ -88,8 +90,8 @@ export function DAWDock({
   // Share view: playback only — no clip drag / trim / delete / menus / edit keys.
   const canEdit = useCanEdit();
   const timelineDurationMs = useAudioControlsStore((s) => s.timelineDurationMs);
-  const mutedSounds = useAudioControlsStore((s) => s.mutedSounds);
-  const soloedSounds = useAudioControlsStore((s) => s.soloedSounds);
+  // Track mute/solo, scoped to the active sound scene (same as the audio engine).
+  const muteSolo = useMuteSolo();
   const soundVolumes = useAudioControlsStore((s) => s.soundVolumes);
   const iterationLinks = useAudioControlsStore((s) => s.iterationLinks);
   const iterationTrims = useAudioControlsStore((s) => s.iterationTrims);
@@ -115,6 +117,9 @@ export function DAWDock({
   const generatedSounds = useSoundscapeStore((s) => s.generatedSounds);
   const soundConfigs = useSoundscapeStore((s) => s.soundConfigs);
   const objectSoundLinks = useSpeckleStore((s) => s.objectSoundLinks);
+  // The 3D camera is locked to a listener while in first-person view — zooming
+  // to an entity has no effect, so the track head shows a hint instead.
+  const isFirstPersonMode = useSpeckleEngineStore((s) => s.isFirstPersonMode);
 
   const {
     pxPerSecond, setPxPerSecond, snapMode, setSnapMode, dockHeight, setDockHeight, dockAutoFit, setDockAutoFit,
@@ -324,6 +329,14 @@ export function DAWDock({
     if (nodeIds.length === 0) return;
     useSpeckleStore.getState().zoomToObjectById(nodeIds);
   }, [soundConfigs]);
+
+  // Opens the sound card and zooms the 3D view to its linked entity — the
+  // track head's name double-click, its "Zoom to entity" menu item and a
+  // clip's double-click all trigger exactly this.
+  const handleZoomToEntity = useCallback((configIdx: number) => {
+    triggerZoomToSoundCard(configIdx);
+    handleZoomToLinkedEntity(configIdx);
+  }, [triggerZoomToSoundCard, handleZoomToLinkedEntity]);
 
   /* ---- Track-head kebab actions ---- */
   // Which track has its transient "Interval settings" popover open, anchored at
@@ -795,20 +808,20 @@ export function DAWDock({
                   clipCount={clips.filter((c) => !c.excluded).length}
                   excludedCount={sound.excludedIterations?.length ?? 0}
                   trackHeight={trackHeight}
-                  isMuted={mutedSounds.has(sound.id)}
-                  isSoloed={soloedSounds.has(sound.id)}
+                  isMuted={muteSolo.isMuted(sound.id)}
+                  isSoloed={muteSolo.isSoloed(sound.id)}
                   volumeDbfs={soundVolumes[sound.id] ?? soundConfigs[configIdx ?? -1]?.dbfs ?? DEFAULT_DBFS}
                   onMute={() => handleMute(sound.id)}
                   onSolo={() => handleSolo(sound.id)}
                   onVolumeChange={(db) => handleVolumeChange(sound.id, db)}
                   onSelectSoundCard={configIdx !== undefined ? () => focusTrack(configIdx) : undefined}
                   isFocused={configIdx !== undefined && configIdx === focusedIndex}
-                  onDoubleClickSoundCard={configIdx !== undefined ? () => { triggerZoomToSoundCard(configIdx); handleZoomToLinkedEntity(configIdx); } : undefined}
                   onRequestDistribute={(anchor) => openDistributeFor(sound, anchor)}
                   onSelectAllClips={() => selection.replace(clips.map((c) => c.clipKey))}
                   onClearClips={() => handleClearClips(sound)}
                   onResetTrack={() => handleResetTrack(sound)}
-                  onZoomToLinkedEntity={() => configIdx !== undefined && handleZoomToLinkedEntity(configIdx)}
+                  onZoomToEntity={configIdx !== undefined ? () => handleZoomToEntity(configIdx) : undefined}
+                  isFirstPersonMode={isFirstPersonMode}
                   onClearEntityLinks={() => clearAllIterationLinksForSound(sound.id)}
                   onHoverTrack={() => configIdx !== undefined && setHoveredSoundCardIndex(configIdx)}
                   onHoverTrackEnd={() => setHoveredSoundCardIndex(null)}
@@ -820,7 +833,7 @@ export function DAWDock({
                   pxPerSecond={pxPerSecond}
                   trackHeight={trackHeight}
                   timelineDurationMs={timelineDurationMs}
-                  isMuted={mutedSounds.has(sound.id)}
+                  isSilenced={muteSolo.isSilenced(sound.id)}
                   isDraggable={canEdit}
                   selectedClipKeys={selection.selectedClipKeys}
                   dragPreview={gesture.dragPreview}
@@ -828,7 +841,8 @@ export function DAWDock({
                   isDuplicating={gesture.isDuplicating}
                   tickStepPx={tickStepPx}
                   onClipPointerDown={(e, clip) => {
-                    if (!canEdit) return;
+                    // Share view: no drag/selection — a clip press only focuses its sound.
+                    if (!canEdit) { if (configIdx !== undefined) focusTrack(configIdx); return; }
                     selection.onClipPressed(clip.clipKey, e, clips.map((c) => c.clipKey));
                     gesture.beginDrag(e, { clipKey: clip.clipKey, soundId: sound.id, iterationIndex: clip.iterationIndex, startMs: clip.startMs, durationMs: clip.durationMs });
                   }}
@@ -847,7 +861,7 @@ export function DAWDock({
                   }}
                   onDeleteClip={(iterationIndex) => { if (!canEdit) return; ensureTrackMaterialized(soundsRef, sound.id); handleRemoveTimestamp(sound.id, iterationIndex); }}
                   onClipContextMenu={(iterationIndex, x, y) => { if (canEdit) setContextMenu({ soundId: sound.id, iterationIndex, x, y }); }}
-                  onClipDoubleClick={configIdx !== undefined ? () => { triggerZoomToSoundCard(configIdx); handleZoomToLinkedEntity(configIdx); } : undefined}
+                  onClipDoubleClick={configIdx !== undefined ? () => handleZoomToEntity(configIdx) : undefined}
                   onClipHover={(iterationIndex) => handleIterationHover(sound.id, iterationIndex, configIdx)}
                   onClipHoverEnd={handleIterationHoverEnd}
                 />

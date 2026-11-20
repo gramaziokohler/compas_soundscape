@@ -135,8 +135,11 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   // Source registry - tracks all sources for re-creation on mode switch
   private sourceRegistry: Map<string, { buffer: AudioBuffer; position: Position }> = new Map();
 
-  // Mute registry - persists mute state across mode switches
-  private muteRegistry: Map<string, boolean> = new Map();
+  // Silenced sources (muted or soloed out), pushed whole by useSpeckleAudioSync
+  // (computeMuteSolo). Independent of source lifetime: applied to every source
+  // on push, on createSource and on mode switch, so the order in which buffers
+  // load, scenes switch and modes change can never leave a source unmuted.
+  private silencedSources: Set<string> = new Set();
 
   // Global (non-spatial) sources - persists across mode switches and may be set
   // before a source's buffer has loaded. Positions stay in sourceRegistry either
@@ -1418,12 +1421,8 @@ export class AudioOrchestrator implements IAudioOrchestrator {
       this.currentModeInstance.setSourceVolume(sourceId, pendingVolume);
     }
 
-    // Apply mute/solo state set before the buffer finished loading. The mute
-    // sync effect runs as soon as the scene's sound list changes (e.g. switching
-    // back to a sound scene), while the sources are only created once their
-    // buffers load — without this they would start unmuted while the UI shows
-    // them muted/soloed-out.
-    if (this.muteRegistry.get(sourceId)) {
+    // Mute/solo is pushed before buffers finish loading, so apply it on creation.
+    if (this.silencedSources.has(sourceId)) {
       this.currentModeInstance.setSourceMute(sourceId, true);
     }
 
@@ -1460,8 +1459,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
         }
 
         // Reapply persisted mute state — new mode instances start unmuted by default
-        const isMuted = this.muteRegistry.get(sourceId);
-        if (isMuted) {
+        if (this.silencedSources.has(sourceId)) {
           this.currentModeInstance.setSourceMute(sourceId, true);
         }
 
@@ -1605,7 +1603,6 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   removeSource(sourceId: string): void {
     // Remove from registries regardless of mode state
     this.sourceRegistry.delete(sourceId);
-    this.muteRegistry.delete(sourceId);
     this.pendingVolumes.delete(sourceId);
     this.sourceIRSeq.delete(sourceId);
     this.sourceIRAppliedKey.delete(sourceId);
@@ -1741,18 +1738,28 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   }
 
   /**
-   * Set mute state for a specific source
-   * Routes to current mode implementation
+   * Replace the whole set of silenced sources (muted or soloed out), computed
+   * by computeMuteSolo. Every registered source not in the set is unmuted, so
+   * the engine always equals the latest set; sources created later read it in
+   * createSource / reCreateSourcesInCurrentMode.
    */
-  setSourceMute(sourceId: string, muted: boolean): void {
-    // Always persist mute state so it survives mode switches
-    this.muteRegistry.set(sourceId, muted);
-
-    if (!this.currentModeInstance) {
-      return;
+  setSilencedSources(ids: ReadonlySet<string>): void {
+    this.silencedSources = new Set(ids);
+    if (!this.currentModeInstance) return;
+    for (const sourceId of this.sourceRegistry.keys()) {
+      this.currentModeInstance.setSourceMute(sourceId, this.silencedSources.has(sourceId));
     }
+    if (process.env.NODE_ENV !== 'production') {
+      const registered = [...this.sourceRegistry.keys()];
+      console.debug('[dbg:mute] engine silenced', registered.filter((id) => this.silencedSources.has(id)),
+        'of', registered.length, 'sources; pending (not loaded yet)',
+        [...this.silencedSources].filter((id) => !this.sourceRegistry.has(id)));
+    }
+  }
 
-    this.currentModeInstance.setSourceMute(sourceId, muted);
+  /** Whether a source is currently silenced (muted or soloed out). */
+  isSourceSilenced(sourceId: string): boolean {
+    return this.silencedSources.has(sourceId);
   }
 
   /**
@@ -1886,7 +1893,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
         id,
         position: { x, y, z },
         level: this.getSourceLevel(id),
-        muted: this.muteRegistry.get(id) ?? false,
+        muted: this.silencedSources.has(id),
         // Global sources have no distance attenuation.
         distance: distanceMatters && listener && !this.globalSources.has(id)
           ? Math.hypot(x - listener.x, y - listener.y, z - listener.z)

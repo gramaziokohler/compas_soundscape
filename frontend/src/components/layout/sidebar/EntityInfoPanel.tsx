@@ -10,6 +10,7 @@ import { SoundResultContent } from '@/components/layout/sidebar/sound/SoundResul
 import { SoundPreContent } from '@/components/layout/sidebar/sound/SoundPreContent';
 import { VariantsBar } from '@/components/ui/VariantsBar';
 import { createTtsSpeechLines } from '@/hooks/useTtsSpeechLines';
+import { useMuteSolo } from '@/hooks/useMuteSolo';
 import { orderVariants } from '@/lib/audio/utils/variant-sound-id';
 import type { SoundEvent } from '@/types';
 
@@ -68,7 +69,7 @@ export function EntityInfoPanel({
   // ── Shared preview/playback state (same store the sound card uses) ──
   const selectedVariants = useAudioControlsStore((s) => s.selectedVariants);
   const soundVolumes = useAudioControlsStore((s) => s.soundVolumes);
-  const mutedSounds = useAudioControlsStore((s) => s.mutedSounds);
+  const muteSolo = useMuteSolo();
   const previewingSoundId = useAudioControlsStore((s) => s.previewingSoundId);
   const onVolumeChange = useAudioControlsStore((s) => s.handleVolumeChange);
   const onVariantChange = useAudioControlsStore((s) => s.handleVariantChange);
@@ -158,7 +159,7 @@ export function EntityInfoPanel({
     if (variants.length > 0) {
       const selectedVariantIdx = selectedVariants?.[cardIndex] ?? 0;
       const generatedSound = variants[selectedVariantIdx] || variants[0];
-      const isMuted = mutedSounds?.has(generatedSound.id) ?? false;
+      const isMuted = muteSolo.isMuted(generatedSound.id);
       const isRegenerating = regeneratingIndices.includes(cardIndex);
 
       const isTextToAudioType = !config?.type || config.type === 'text-to-audio';

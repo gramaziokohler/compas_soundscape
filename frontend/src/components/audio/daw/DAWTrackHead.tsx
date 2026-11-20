@@ -2,8 +2,9 @@
 
 import { useCanEdit } from '@/hooks/useCanEdit';
 import { useState, useCallback, useEffect, useRef, memo } from 'react';
+import { Icon } from '@/components/ui/Icon';
 import { RangeSlider } from '@/components/ui/RangeSlider';
-import { DAW, DEFAULT_DBFS, POPUP_MENU, SOUND_CATEGORIES, soundCategoryTooltip } from '@/utils/constants';
+import { DAW, DAW_FPS_ZOOM_HINT, DEFAULT_DBFS, POPUP_MENU, SOUND_CATEGORIES, soundCategoryTooltip } from '@/utils/constants';
 import { useViewportClampedPosition } from '@/hooks/useViewportClampedPosition';
 import type { TimelineSound } from '@/types/audio';
 
@@ -24,14 +25,18 @@ interface DAWTrackHeadProps {
   onSelectSoundCard?: () => void;
   /** This track's sound is the shared sound focus (sphere / card / track click). */
   isFocused?: boolean;
-  onDoubleClickSoundCard?: () => void;
   /** Open the transient "Interval settings" popover, anchored so its bottom-left
    * corner touches the kebab button's top-right corner (anchor = kebab top-right). */
   onRequestDistribute: (anchor: { x: number; y: number }) => void;
   onSelectAllClips: () => void;
   onClearClips: () => void;
   onResetTrack: () => void;
-  onZoomToLinkedEntity: () => void;
+  /** Zoom the 3D view to this track's linked entity — same action for the name's
+   * double-click and the "Zoom to entity" menu item. */
+  onZoomToEntity?: () => void;
+  /** The 3D camera is locked to a listener's first-person view: zooming has no
+   * effect, so a hint explains why instead of performing it. */
+  isFirstPersonMode?: boolean;
   onClearEntityLinks: () => void;
   onHoverTrack?: () => void;
   onHoverTrackEnd?: () => void;
@@ -52,12 +57,12 @@ function DAWTrackHeadImpl({
   onVolumeChange,
   onSelectSoundCard,
   isFocused = false,
-  onDoubleClickSoundCard,
   onRequestDistribute,
   onSelectAllClips,
   onClearClips,
   onResetTrack,
-  onZoomToLinkedEntity,
+  onZoomToEntity,
+  isFirstPersonMode = false,
   onClearEntityLinks,
   onHoverTrack,
   onHoverTrackEnd,
@@ -69,6 +74,7 @@ function DAWTrackHeadImpl({
   const kebabRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const kebabAnchorRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!menuPos) return;
@@ -90,13 +96,37 @@ function DAWTrackHeadImpl({
     menuRef, menuPos?.x ?? 0, menuPos?.y ?? 0, POPUP_MENU.VIEWPORT_MARGIN, menuPos?.flipBottomY,
   );
 
+  // "Can't zoom" hint — shown instead of zooming while the camera is locked to
+  // a listener's first-person view (zoomToObjectById would have no effect).
+  const [fpsHintAnchor, setFpsHintAnchor] = useState<{ left: number; centerY: number } | null>(null);
+  useEffect(() => {
+    if (!fpsHintAnchor) return;
+    const close = () => setFpsHintAnchor(null);
+    window.addEventListener('pointerdown', close);
+    return () => window.removeEventListener('pointerdown', close);
+  }, [fpsHintAnchor]);
+  // Leaving first-person view makes the hint moot.
+  useEffect(() => {
+    if (!isFirstPersonMode) setFpsHintAnchor(null);
+  }, [isFirstPersonMode]);
+
+  const handleZoomToEntity = useCallback(() => {
+    if (!onZoomToEntity) return;
+    if (isFirstPersonMode) {
+      const rect = rootRef.current?.getBoundingClientRect();
+      if (rect) setFpsHintAnchor({ left: rect.right, centerY: rect.top + rect.height / 2 });
+      return;
+    }
+    onZoomToEntity();
+  }, [onZoomToEntity, isFirstPersonMode]);
+
   const menuItems: Array<[string, () => void]> = [
     ['Distribute evenly', () => onRequestDistribute(kebabAnchorRef.current)],
     ['Select all clips on track', onSelectAllClips],
     ['Clear clips', onClearClips],
     ['Reset track', onResetTrack],
     ...(onSelectSoundCard ? ([['Open sound card', onSelectSoundCard]] as Array<[string, () => void]>) : []),
-    ['Zoom to linked entity', onZoomToLinkedEntity],
+    ['Zoom to entity', handleZoomToEntity],
     ['Clear entity links', onClearEntityLinks],
   ];
 
@@ -106,6 +136,7 @@ function DAWTrackHeadImpl({
 
   return (
     <div
+      ref={rootRef}
       style={{
         width: `${DAW.HEAD_WIDTH}px`,
         height: `${trackHeight}px`,
@@ -151,7 +182,7 @@ function DAWTrackHeadImpl({
         <span
           title={displayName}
           onClick={onSelectSoundCard}
-          onDoubleClick={onDoubleClickSoundCard}
+          onDoubleClick={onZoomToEntity ? handleZoomToEntity : undefined}
           style={{
             fontSize: '10px', fontWeight: 600, color: 'var(--foreground)', flex: 1,
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
@@ -212,6 +243,36 @@ function DAWTrackHeadImpl({
             ))}
           </div>
         )}
+        {fpsHintAnchor && (
+          <div
+            className="bar-hint fps-hint"
+            role="status"
+            aria-live="polite"
+            style={{
+              left: fpsHintAnchor.left + DAW_FPS_ZOOM_HINT.GAP,
+              top: fpsHintAnchor.centerY,
+              width: DAW_FPS_ZOOM_HINT.WIDTH,
+              zIndex: DAW_FPS_ZOOM_HINT.Z_INDEX,
+            }}
+          >
+            <div className="bar-hint__body">
+              <p className="bar-hint__title">{DAW_FPS_ZOOM_HINT.TITLE}</p>
+              <p className="bar-hint__message">{DAW_FPS_ZOOM_HINT.MESSAGE}</p>
+            </div>
+            <button
+              type="button"
+              className="bar-hint__close"
+              onClick={() => setFpsHintAnchor(null)}
+              title={DAW_FPS_ZOOM_HINT.CLOSE_LABEL}
+              aria-label={DAW_FPS_ZOOM_HINT.CLOSE_LABEL}
+            >
+              <Icon size="12px">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </Icon>
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Row 2: sub-label — hidden when the track is too short to fit it */}
@@ -230,8 +291,8 @@ function DAWTrackHeadImpl({
           title={isMuted ? 'Unmute' : 'Mute'}
           style={{
             fontSize: '8px', padding: '1px 4px', borderRadius: '2px', border: 'none', cursor: 'pointer',
-            backgroundColor: isMuted ? 'var(--color-warning)' : 'var(--color-secondary-light)',
-            color: isMuted ? '#000' : 'var(--foreground)', fontWeight: 600, lineHeight: 1.5, flexShrink: 0,
+            backgroundColor: isMuted ? 'var(--color-error)' : 'var(--color-secondary-light)',
+            color: isMuted ? 'var(--color-on-blue)' : 'var(--color-error)', fontWeight: 600, lineHeight: 1.5, flexShrink: 0,
           }}
         >
           M
@@ -241,8 +302,9 @@ function DAWTrackHeadImpl({
           title={isSoloed ? 'Unsolo' : 'Solo'}
           style={{
             fontSize: '8px', padding: '1px 4px', borderRadius: '2px', border: 'none', cursor: 'pointer',
-            backgroundColor: isSoloed ? 'var(--color-primary)' : 'var(--color-secondary-light)',
-            color: isSoloed ? 'var(--color-on-blue)' : 'var(--foreground)', fontWeight: 600, lineHeight: 1.5, flexShrink: 0,
+            // Same yellow as a selected sound sphere (useSpeckleSoundHighlight).
+            backgroundColor: isSoloed ? 'var(--color-warning)' : 'var(--color-secondary-light)',
+            color: isSoloed ? 'var(--color-on-warning)' : 'var(--color-warning)', fontWeight: 600, lineHeight: 1.5, flexShrink: 0,
           }}
         >
           S

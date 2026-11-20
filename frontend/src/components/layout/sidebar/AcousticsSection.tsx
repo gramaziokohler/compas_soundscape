@@ -121,7 +121,7 @@ import {
   COPY_MATERIALS,
 } from '@/utils/constants';
 import { groupSoundsByPosition, collapseVariantsToOne } from '@/utils/positionKey';
-import { isSoundSilenced } from '@/lib/audio/utils/mute-solo';
+import { audibleSoundsInScene } from '@/lib/audio/utils/mute-solo';
 import { useServiceVersions } from '@/hooks/useServiceVersions';
 import { logSimulationLaunch, logSimulationResult } from '@/lib/study/simulationEvents';
 import { recordInflightJob, removeInflightJob } from '@/lib/job-tracker';
@@ -420,20 +420,12 @@ export function AcousticsSection(props: AcousticsSectionProps) {
 
   // Active soundscape: exclude silenced sounds (muted, or not soloed while a solo is
   // active) and limit to the active sound section
-  const activeSoundscapeData = useMemo(() => {
-    const unmuted = (soundscapeData ?? []).filter((s) => !isSoundSilenced(s.id, mutedSounds, soloedSounds));
-    if (activeSoundParentIndex === null || activeSoundParentIndex === undefined) {
-      return unmuted;
-    }
-    // Build a set of prompt_indices whose parent usage matches the active section
-    const matchingPromptIndices = new Set<number>();
-    (soundConfigsFromStore ?? []).forEach((config, idx) => {
-      if (config.parentUsageOriginalIndex === activeSoundParentIndex) {
-        matchingPromptIndices.add(idx);
-      }
-    });
-    return unmuted.filter((s) => s.prompt_index !== undefined && matchingPromptIndices.has(s.prompt_index));
-  }, [soundscapeData, mutedSounds, soloedSounds, activeSoundParentIndex, isInSoundsStep, soundConfigsFromStore]);
+  const activeSoundscapeData = useMemo(
+    () => audibleSoundsInScene(
+      soundscapeData ?? [], soundConfigsFromStore ?? [], activeSoundParentIndex, mutedSounds, soloedSounds,
+    ),
+    [soundscapeData, mutedSounds, soloedSounds, activeSoundParentIndex, soundConfigsFromStore],
+  );
 
   // Only fetch materials when a card of that type exists
   // Wave-based (PFFDTD) cards share the pyroomacoustics absorption database and `pyroom_` ids.

@@ -11,6 +11,7 @@ import { useAudioControlsStore, useReceiversStore, useSpeckleStore } from '@/sto
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { notifyError } from '@/store/errorsStore';
 import { useCanEdit } from '@/hooks/useCanEdit';
+import { useMuteSolo } from '@/hooks/useMuteSolo';
 import { KEYBOARD_SHORTCUTS } from '@/utils/constants';
 import type { ContextMenuHit } from '@/lib/three/speckle-event-bridge';
 import type { SoundEvent } from '@/types';
@@ -88,8 +89,7 @@ export function SceneContextMenu({
   onRevealListener,
   onEnterListener,
 }: SceneContextMenuProps) {
-  const mutedSounds = useAudioControlsStore((s) => s.mutedSounds);
-  const soloedSounds = useAudioControlsStore((s) => s.soloedSounds);
+  const muteSolo = useMuteSolo();
   const receivers = useReceiversStore((s) => s.receivers);
   const canEdit = useCanEdit();
 
@@ -138,8 +138,8 @@ export function SceneContextMenu({
       const soundId = soundEvent?.id;
       const promptKey = object.userData.promptKey as string | undefined;
       const promptIndex = promptKey ? parseInt(promptKey.replace('prompt_', ''), 10) : NaN;
-      const muted = !!soundId && mutedSounds.has(soundId);
-      const soloed = !!soundId && soloedSounds.has(soundId);
+      const muted = !!soundId && muteSolo.isMuted(soundId);
+      const soloed = !!soundId && muteSolo.isSoloed(soundId);
       return [
         {
           kind: 'action', key: 'mute', label: muted ? 'Unmute' : 'Mute',
@@ -199,7 +199,7 @@ export function SceneContextMenu({
       SEPARATOR,
       CLEAR_ITEM,
     ];
-  }, [hit, mutedSounds, soloedSounds, receivers, canEdit, onOpenExplorer, onRevealSound, onRevealListener, onEnterListener]);
+  }, [hit, muteSolo, receivers, canEdit, onOpenExplorer, onRevealSound, onRevealListener, onEnterListener]);
 
   return <ActionMenu x={x} y={y} items={items} onClose={onClose} />;
 }

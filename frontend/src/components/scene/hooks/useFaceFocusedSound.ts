@@ -22,8 +22,10 @@ export function useFaceFocusedSound(soundscapeData: SoundEvent[] | null): void {
 
   useEffect(() => {
     if (!soundFocus || soundFocus.source === 'scene') return;
-    const { coordinator, isFirstPersonMode } = useSpeckleEngineStore.getState();
-    if (!coordinator || !isFirstPersonMode || !isShareViewActive()) return;
+    // The camera controller is the FPS source of truth (speckleEngineStore.isFirstPersonMode
+    // is never written; useSpeckleFPS keeps its own React state).
+    const { coordinator } = useSpeckleEngineStore.getState();
+    if (!coordinator?.isFirstPersonMode() || !isShareViewActive()) return;
     const target = getLiveSoundPosition(coordinator.getSoundSphereManager(), soundFocus.index, soundscapeData);
     if (target) coordinator.faceFirstPersonToward(target, FPS_FACE_SOURCE_DURATION_MS);
   }, [soundFocus?.version]); // eslint-disable-line react-hooks/exhaustive-deps

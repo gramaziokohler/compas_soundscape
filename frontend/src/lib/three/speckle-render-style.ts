@@ -22,6 +22,7 @@ import {
 import type { RenderStyle } from '@/types';
 import { RENDER_STYLE } from '@/utils/constants';
 import { GhostedViewPipeline, WireframeViewPipeline } from '@/lib/three/speckle-render-pipelines';
+import { installOccludablePass } from '@/lib/three/speckle-occlusion-pass';
 
 /** Last style applied per viewer — a re-created viewer starts with no entry. */
 const appliedStyles = new WeakMap<Viewer, RenderStyle>();
@@ -61,13 +62,17 @@ function applyEdgeOptions(viewer: Viewer, pipeline: Pipeline): void {
 export function applyRenderStyle(viewer: Viewer, style: RenderStyle): void {
   if (appliedStyles.get(viewer) === style) return;
   // The viewer starts on the stock DefaultPipeline — nothing to swap.
+  const renderer = viewer.getRenderer();
   if (!appliedStyles.has(viewer) && style === 'rendered') {
+    installOccludablePass(renderer.pipeline);
     appliedStyles.set(viewer, style);
+    viewer.requestRender(UpdateFlags.RENDER_RESET);
     return;
   }
 
-  const renderer = viewer.getRenderer();
   const pipeline = createPipeline(renderer, style);
+  // Sound spheres / listeners are depth-tested against the model in their own pass.
+  installOccludablePass(pipeline);
   // The setter re-applies clipping planes, resets and resizes the pipeline.
   renderer.pipeline = pipeline;
   // 'rendered' keeps the stock edge options so it looks exactly like the

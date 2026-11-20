@@ -104,14 +104,37 @@ Single source of truth for all runtime playback state. Import from `@/store` bar
 | ----- | ---- | ------- |
 | `soundVolumes` | `Record<soundId, number>` | Per-sound volume, dBFS |
 | `soundTimestamps` | `Record<soundId, number[]>` | Explicit clip start times (seconds); no entry = auto track |
-| `mutedSounds` | `Set<soundId>` | Muted sound IDs |
-| `soloedSounds` | `Set<soundId>` | Every variant id of each soloed track (multi-solo; empty = none). Resolve audibility with `isSoundSilenced` (`lib/audio/utils/mute-solo.ts`) |
+| `mutedSounds` | `Set<soundId>` | Mute intent (variant ids; a track is muted when ANY of its ids is in the set) |
+| `soloedSounds` | `Set<soundId>` | Solo intent, same id semantics (multi-solo). See Mute / Solo below — never read these two sets directly to decide what is silent |
 | `iterationLinks` | `Record<clipKey, IterationLink>` | Per-clip variant/entity overrides |
 | `iterationTrims` | `Record<clipKey, TrimRange>` | Per-clip trim overrides (see Per-Clip Trim) |
 | `timelineDurationMs` | `number` | Total timeline length in milliseconds |
 
 `handleTimestampsChange`/`handleTimestampsChangeBatch` never sort — free drag and overlap are safe.
 Use the batch variant so one drag/nudge/delete-multi is as few undo entries as possible.
+
+## Mute / Solo (one resolution, pushed everywhere)
+
+`computeMuteSolo` (`lib/audio/utils/mute-solo.ts`) is the only place that decides what is silent:
+
+- A track is a `prompt_index` group (all variants + `_iter_` entity copies share its state).
+- **Solo is scoped to the active sound scene**: only tracks of the sounds passed in count, so a track
+  soloed in scene A never silences scene B (that leak made a whole scene silent with no button lit).
+- Pending placeholders are never silenced.
+
+Readers:
+
+- React UI (DAW M/S buttons + lane dimming, sound card `dimmed` + menu, EntityInfoPanel, scene
+  context menu): `useMuteSolo()`. Its scope is `soundsInActiveScene`, built with
+  `isCardInActiveScene` — the same predicate page.tsx uses for the 3D/audio soundscape data.
+- Audio engine + spheres: `useSpeckleAudioSync` pushes the WHOLE result —
+  `AudioOrchestrator.setSilencedSources(ids)` and `SoundSphereManager.setSilencedPrompts(prompts)`.
+  Both keep the set and apply it on every source/mesh/light they create later (buffers load and
+  meshes rebuild after a scene switch). Never mute per source/per event: the old per-event
+  `setSourceMute` lost the state for sources created after the effect ran.
+- Simulation source counts: `audibleSoundsInScene`. Exporter: `computeMuteSolo` over its variant events.
+
+Dev builds log `[dbg:mute]` (engine silenced ids vs registered sources) on every push.
 
 ## Export Formats
 

@@ -79,7 +79,7 @@ export function useSpeckleSoundHighlight({
     // (userData.simMismatch, set by useSpeckleSimulationMismatch) stay red so the
     // mismatch coloring survives selection changes. Opacity is never touched here —
     // that would clobber both the per-state base opacity and the muted-dim state
-    // set by setPromptMuted.
+    // set by setSilencedPrompts.
     sphereMeshes.forEach(sphere => {
       const material = sphere.material as THREE.MeshStandardMaterial;
       if (material.color) {

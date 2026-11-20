@@ -96,6 +96,10 @@
   --color-warning-tint: rgba(245, 179, 11, 0.16);
   --color-warning-tint-border: rgba(217, 119, 6, 0.45);
   --color-warning-text: #8a5300;
+  /* Text on a solid --color-warning fill (DAW solo button) */
+  --color-on-warning: #1c1d21;
+  /* DAW lane wash for a silenced track (muted, or not soloed while a solo is active) */
+  --color-daw-silenced-lane: rgba(28, 29, 33, 0.13);
 
   /* Sidebar panels — frosted glass over the 3D canvas */
   --sidebar-bg: rgba(237, 236, 227, 0.72);
@@ -227,6 +231,7 @@
     --color-warning-tint: rgba(245, 179, 11, 0.12);
     --color-warning-tint-border: rgba(245, 179, 11, 0.35);
     --color-warning-text: #fbd36b;
+    --color-daw-silenced-lane: rgba(23, 24, 27, 0.4);
   }
 }
 
@@ -255,6 +260,7 @@ html[data-theme="dark"] {
   --color-warning-tint: rgba(245, 179, 11, 0.12);
   --color-warning-tint-border: rgba(245, 179, 11, 0.35);
   --color-warning-text: #fbd36b;
+  --color-daw-silenced-lane: rgba(23, 24, 27, 0.4);
 }
 
 body {
