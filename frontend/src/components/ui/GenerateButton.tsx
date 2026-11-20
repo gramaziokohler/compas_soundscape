@@ -1,8 +1,10 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Play, Sparkles } from 'lucide-react';
+import { ChevronDown, Play, Sparkles } from 'lucide-react';
 import { OptionalShortcutTooltip, ariaKeyShortcuts } from '@/components/ui/ShortcutTooltip';
+import { ProgressLanes } from '@/components/ui/ProgressLanes';
+import type { ProgressLane } from '@/types';
 import type { ShortcutId } from '@/utils/constants';
 
 /**
@@ -65,6 +67,8 @@ export interface GenerateButtonProps {
   onDoneAction?: () => void;
   /** Keyboard shortcut for the idle action — shown in a ShortcutTooltip instead of the native title. */
   shortcut?: ShortcutId;
+  /** Parallel parts of the run; with two or more, a chevron next to the status line shows one row each */
+  lanes?: ProgressLane[] | null;
 }
 
 /** How long the disabled-click error message stays visible before fading back to the label */
@@ -83,9 +87,11 @@ export function GenerateButton({
   doneLabel,
   onDoneAction,
   shortcut,
+  lanes,
 }: GenerateButtonProps) {
   // Disabled-click feedback: flash the reason in red, then return to the label.
   const [showDisabledMsg, setShowDisabledMsg] = useState(false);
+  const [lanesOpen, setLanesOpen] = useState(false);
   const disabledMsgTimerRef = useRef<number | null>(null);
   const [doneHovered, setDoneHovered] = useState(false);
 
@@ -138,19 +144,34 @@ export function GenerateButton({
   if (status === 'generating') {
     const clamped = Math.max(0, Math.min(progress || 0, 100));
     const hasStop = !!onStop;
+    const hasLanes = !!lanes && lanes.length > 1;
     return (
       <div className="w-full">
-        {/* Status line + stop square */}
+        {/* Status line + lanes toggle + stop square */}
         <div className="gen-status">
-          <span>{statusText || 'Working…'}</span>
-          {hasStop && (
-            <button className="stop" onClick={onStop} aria-label="Stop" title="Stop" />
-          )}
+          <span className="gen-status-text">{statusText || 'Working…'}</span>
+          <span className="gen-status-actions">
+            {hasLanes && (
+              <button
+                className={`lanes-toggle${lanesOpen ? ' open' : ''}`}
+                onClick={() => setLanesOpen((open) => !open)}
+                aria-expanded={lanesOpen}
+                aria-label={lanesOpen ? 'Hide parallel parts' : 'Show parallel parts'}
+                title={lanesOpen ? 'Hide parallel parts' : `Show the ${lanes.length} parallel parts`}
+              >
+                <ChevronDown size={12} />
+              </button>
+            )}
+            {hasStop && (
+              <button className="stop" onClick={onStop} aria-label="Stop" title="Stop" />
+            )}
+          </span>
         </div>
         {/* Progress track / fill */}
         <div className="progress-track">
           <div className="progress-fill" style={{ width: `${clamped}%` }} />
         </div>
+        {hasLanes && lanesOpen && <ProgressLanes lanes={lanes} />}
       </div>
     );
   }

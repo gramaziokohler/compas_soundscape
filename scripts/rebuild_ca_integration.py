@@ -47,6 +47,7 @@ PR_BRANCHES = (
     "feat/directivity",
     "feat/hybrid-output-limit",
     "chore/benchmark-tools",
+    "feat/render-progress",  # stacked on feat/integration-hooks
 )
 GH_PUSH = ("-c", "credential.helper=", "-c", "credential.helper=!'/c/Program Files/GitHub CLI/gh.exe' auth git-credential")
 CONFLICT_BLOCK = re.compile(r"^<<<<<<< [^\r\n]*\r?\n(.*?)^=======\r?\n(.*?)^>>>>>>> [^\r\n]*\r?\n", re.S | re.M)

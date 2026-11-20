@@ -275,7 +275,8 @@ def run_hybrid_from_geometry(
         )
         ga = simulate_pairs(
             mesh, offset, pairs_data, settings,
-            lambda fraction, text: _write_progress(progress_file, 10.0 + (HYBRID_PROGRESS_GA_END - 10.0) * fraction, f"Geometric part: {text}"),
+            lambda fraction, text, partial: _write_progress(
+                progress_file, 10.0 + (HYBRID_PROGRESS_GA_END - 10.0) * fraction, f"Geometric part: {text}", partial),
         )
         ga_by_pair = {
             (str(pairs_data[r.pair_index]["source_id"]), str(pairs_data[r.pair_index]["receiver_id"])): r.rir

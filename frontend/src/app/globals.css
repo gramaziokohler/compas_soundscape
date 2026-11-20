@@ -2886,6 +2886,31 @@ body:has(#scene-view-mode-toolbar:hover) .share-tutorial-tip[data-step='viewMode
 .progress-track { height: 3px; background: var(--color-border-strong); border-radius: 2px; overflow: hidden; }
 .progress-fill { height: 100%; background: var(--color-primary); border-radius: 2px; transition: width 0.3s; }
 
+/* Status line text + its actions (parallel-parts chevron, stop square) */
+.gen-status-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gen-status-actions { display: flex; align-items: flex-start; gap: 6px; flex-shrink: 0; padding-left: 6px; }
+.gen-status .lanes-toggle {
+  display: flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px; margin-top: 2px; padding: 0; border: none; background: none;
+  color: inherit; cursor: pointer; transition: transform 0.15s;
+}
+.gen-status .lanes-toggle.open { transform: rotate(180deg); }
+.gen-status .lanes-toggle:hover { color: var(--color-info); }
+
+/* One row per parallel part of a run (ProgressLanes), under the progress bar */
+.progress-lanes {
+  display: flex; flex-direction: column; gap: var(--card-space-sm);
+  margin-top: var(--card-space-md); padding-top: var(--card-space-sm);
+  border-top: 1px solid var(--color-border);
+  font-size: 10.5px; color: var(--color-secondary-hover);
+}
+.progress-lane-row { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 2px; }
+.progress-lane-label { flex-shrink: 0; }
+.progress-lane-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
+.progress-lane-time { margin-left: 6px; font-variant-numeric: tabular-nums; opacity: 0.75; }
+.progress-lane-track { height: 2px; }
+.progress-lane-queued { opacity: 0.6; }
+
 /* Variant tags — spacing from the content above is owned by the card body
    stack (Card renders the bar in the card-stack container), not by the row. */
 .tag-row { display: flex; gap: 6px; }
@@ -3209,6 +3234,10 @@ body:has(#scene-view-mode-toolbar:hover) .share-tutorial-tip[data-step='viewMode
 }
 .card-generated .gen-status .stop:not(.card-settings-inset *) {
   background: var(--color-on-blue);
+}
+.card-generated .progress-lanes:not(.card-settings-inset *) {
+  color: var(--color-on-blue-muted);
+  border-top-color: var(--color-on-blue-faint);
 }
 .card-generated .gen-status .stop:hover:not(.card-settings-inset *) {
   background: var(--color-on-blue-muted);

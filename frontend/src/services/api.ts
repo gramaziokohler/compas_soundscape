@@ -1849,6 +1849,8 @@ export const apiService = {
       ir_files: string[];
       results_file: string;
     } | null;
+    /** compas_acoustics runs: `{ ca_progress: { lanes } }` while the pairs render in several processes */
+    partial?: unknown;
     queue_position?: number | null;
     queue_total?: number | null;
   }> {

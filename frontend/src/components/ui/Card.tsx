@@ -127,6 +127,7 @@ function CardView<TConfig extends CardBaseConfig>({
   isRunning = false,
   progress = 0,
   status,
+  progressLanes,
   error,
   color = 'primary' as const,
   defaultName,
@@ -643,6 +644,7 @@ function CardView<TConfig extends CardBaseConfig>({
               status={generateStatus}
               progress={progress}
               statusText={status}
+              lanes={progressLanes}
               label={actionButtonLabel}
               isAi={actionIsAi}
               disabled={actionButtonDisabled}

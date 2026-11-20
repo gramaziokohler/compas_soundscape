@@ -25,7 +25,9 @@ compas_acoustics is imported lazily: the legacy engine and the rest of the backe
 from __future__ import annotations
 
 import math
+import os
 import re
+import tempfile
 from contextlib import contextmanager
 import dataclasses
 from dataclasses import dataclass, field
@@ -39,6 +41,7 @@ from config.constants import (
     CA_AMBISONIC_NORMALIZATION,
     CA_DIFFRACTION_OFF,
     CA_PER_PAIR_SEEDS,
+    CA_PROGRESS_POLL_S,
     CA_RENDER_MARGIN_DB,
     CA_RENDER_MIN_S,
     CA_RENDER_PAD_S,
@@ -49,7 +52,10 @@ from config.constants import (
     PYROOMACOUSTICS_DEFAULT_SCATTERING,
     PYROOMACOUSTICS_RAY_TRACING_RECEIVER_RADIUS,
     PYROOMACOUSTICS_SAMPLE_RATE,
+    TEMP_SIMULATIONS_DIR,
 )
+from services.ca_progress import Lane, LaneWriter, lane_label, read_lane, stage_spans
+from services.ca_progress import summary as lanes_summary
 from services.pyroomacoustics_directivity import build_pra_directivity
 from services.simulation_mesh_service import SimulationMesh, material_key
 
@@ -616,19 +622,25 @@ def _one_thread_per_process() -> None:
         pass
 
 
-def _simulate_group_task(mesh, offset, pairs, indices, settings, references):
-    """Pool entry of ``_simulate_group`` (one process per chunk; float32 responses to keep the hand-back small)."""
+def _simulate_group_task(mesh, offset, pairs, indices, settings, references, lane_path=None):
+    """Pool entry of ``_simulate_group`` (one process per chunk; float32 responses to keep the hand-back small).
+
+    ``lane_path``: the file this process writes its progress to (``ca_progress.LaneWriter``).
+    """
     import time
 
     _one_thread_per_process()
     started = time.perf_counter()
     stages: dict = {}
     last = [started, "setup"]
+    lane = LaneWriter(lane_path) if lane_path else None
 
     def report(stage, done, of):
         now = time.perf_counter()
         stages[last[1]] = stages.get(last[1], 0.0) + now - last[0]
         last[0], last[1] = now, stage
+        if lane is not None and stage != "end":
+            lane(stage, done, of)
 
     responses, notes = _simulate_group(mesh, offset, pairs, indices, settings, references, report=report)
     report("end", None, None)
@@ -646,19 +658,23 @@ def _metrics_task(items: list) -> list:
             for index, rir, generation in items]
 
 
-def _gather(pool, tasks: list, on_done: Callable[[int], None]) -> list:
-    """Results of pool ``tasks`` (``(fn, args, weight)``) in task order; ``on_done(weight)`` as each finishes."""
+def _gather(pool, tasks: list, on_done: Callable[[int, int], None],
+            on_tick: Optional[Callable[[], None]] = None) -> list:
+    """Results of pool ``tasks`` (``(fn, args, weight)``) in task order; ``on_done(k, weight)`` as task
+    ``k`` finishes, ``on_tick()`` every ``CA_PROGRESS_POLL_S`` while they run."""
     from concurrent.futures import FIRST_COMPLETED, wait
 
     futures = {pool.submit(fn, *args): (k, weight) for k, (fn, args, weight) in enumerate(tasks)}
     results: list = [None] * len(tasks)
     pending = set(futures)
     while pending:
-        done, pending = wait(pending, return_when=FIRST_COMPLETED)
+        done, pending = wait(pending, timeout=CA_PROGRESS_POLL_S if on_tick else None, return_when=FIRST_COMPLETED)
         for future in done:
             k, weight = futures[future]
             results[k] = future.result()   # the first failure aborts the rest (child_pool kills them)
-            on_done(weight)
+            on_done(k, weight)
+        if on_tick is not None and pending:
+            on_tick()
     return results
 
 
@@ -667,12 +683,13 @@ def simulate_pairs(
     offset: np.ndarray,
     pairs: list[dict],
     settings: EngineSettings,
-    progress: Callable[[float, str], None],
+    progress: Callable[[float, str, Optional[dict]], None],
 ) -> EngineRun:
     """One response per pair (in ``pairs`` order) with compas_acoustics.
 
     ``pairs`` are the app's pair dicts (``source_id``, ``source_position``, ``receiver_id``,
-    ``receiver_position``, optional ``source_directivity_spec``); ``progress(fraction, text)``.
+    ``receiver_position``, optional ``source_directivity_spec``); ``progress(fraction, text, partial)``,
+    ``partial`` the job's ``{"ca_progress": ...}`` rows while the pairs render in several processes, else None.
 
     compas_acoustics spreads its ray tracing over ``settings.n_jobs`` processes, but renders an
     ambisonic response (image sources + the 96-line feedback delay network + its shaping) and the
@@ -695,11 +712,11 @@ def simulate_pairs(
     # compas_acoustics reports stages, some with counts and some without: the bar never steps back
     report_progress, furthest = progress, [0.0]
 
-    def progress(fraction: float, text: str) -> None:
+    def progress(fraction: float, text: str, detail: Optional[dict] = None) -> None:
         furthest[0] = max(furthest[0], float(fraction))
-        report_progress(furthest[0], text)
+        report_progress(furthest[0], text, detail)
 
-    progress(0.0, "compas_acoustics: building the room...")
+    progress(0.0, "Building the room…")
     geometry = room_geometry(mesh, offset)
     _, notes = build_method(settings)
     ambisonic = settings.ambisonic_order > 0
@@ -721,11 +738,15 @@ def simulate_pairs(
     shared_mesh = dataclasses.replace(mesh, visibility=None)  # the pool only needs walls and materials
     responses: list[PairResponse] = []
 
+    spans = stage_spans(ambisonic)
+
     def staged(lo: float, hi: float, prefix: str = ""):
+        """compas_acoustics' reports of one process, as the bar from ``lo`` to ``hi`` and its step's line."""
+        lane = Lane("", 0, spans, settings.n_rays)
+
         def report(stage, done, of):
-            inner = (done / of) if (done is not None and of) else 0.0
-            text = f"{prefix}{stage}" + (f" {done}/{of}" if done is not None and of else "")
-            progress(min(lo + (hi - lo) * inner, 0.999), f"compas_acoustics: {text}...")
+            lane.update(stage, done, of)
+            progress(min(lo + (hi - lo) * lane.fraction, 0.999), f"{prefix}{lane.text}")
         return report
 
     import time
@@ -734,36 +755,41 @@ def simulate_pairs(
     if ambisonic and spread:
         # Each part traces its own rays once (reference + directional histogram) and renders them.
         worker_settings = dataclasses.replace(settings, n_jobs=1)
-        tasks = []
-        for indices in groups:
-            for chunk in render_chunks(pairs, indices, n_workers):
-                tasks.append((_simulate_group_task, (shared_mesh, offset, pairs, chunk, worker_settings, None), len(chunk)))
-        start = 0.0
-        done_pairs = [0]
-
-        def rendered(weight: int) -> None:
-            done_pairs[0] += weight
-            progress(min(start + (1.0 - start) * done_pairs[0] / len(pairs), 0.999),
-                     f"compas_acoustics: rendering {done_pairs[0]}/{len(pairs)} pairs ({min(n_workers, len(tasks))} at once)...")
-
-        progress(start, f"compas_acoustics: rendering {len(pairs)} pairs ({min(n_workers, len(tasks))} at once)...")
-        if len(tasks) == 1 or n_workers == 1:
-            for _, args, weight in tasks:
-                found, new = _simulate_group(mesh, offset, pairs, args[3], settings, args[5], geometry=geometry,
-                                             report=staged(start + (1.0 - start) * done_pairs[0] / len(pairs),
-                                                           start + (1.0 - start) * (done_pairs[0] + weight) / len(pairs)))
-                add_notes(new)
-                responses.extend(found)
-                done_pairs[0] += weight
+        chunks = [chunk for indices in groups for chunk in render_chunks(pairs, indices, n_workers)]
+        if len(chunks) == 1:
+            found, new = _simulate_group(mesh, offset, pairs, chunks[0], settings, geometry=geometry, report=staged(0.0, 1.0))
+            add_notes(new)
+            responses.extend(found)
         else:
-            with child_pool(min(n_workers, len(tasks))) as pool:
-                for found, new in _gather(pool, tasks, rendered):
-                    add_notes(new)
-                    for r in found:
-                        r.rir = np.asarray(r.rir, dtype=np.float64)
-                        responses.append(r)
+            # every part writes its last report to a file of its own; the job reads them as one row per part
+            os.makedirs(TEMP_SIMULATIONS_DIR, exist_ok=True)
+            with tempfile.TemporaryDirectory(prefix="ca_lanes_", dir=TEMP_SIMULATIONS_DIR) as lane_dir:
+                paths = [os.path.join(lane_dir, f"lane{k}.json") for k in range(len(chunks))]
+                lanes = [Lane(lane_label(pairs, chunk), len(chunk), spans, settings.n_rays) for chunk in chunks]
+                tasks = [(_simulate_group_task, (shared_mesh, offset, pairs, chunk, worker_settings, None, path), len(chunk))
+                         for chunk, path in zip(chunks, paths)]
+
+                def report_lanes() -> None:
+                    for lane, path in zip(lanes, paths):
+                        last = read_lane(path) if lane.state != "done" else None
+                        if last is not None:
+                            lane.update(*last)
+                    fraction, text, detail = lanes_summary(lanes, len(pairs))
+                    progress(min(fraction, 0.999), text, detail)
+
+                def rendered(k: int, weight: int) -> None:
+                    lanes[k].finish()
+                    report_lanes()
+
+                report_lanes()
+                with child_pool(min(n_workers, len(tasks))) as pool:
+                    for found, new in _gather(pool, tasks, rendered, on_tick=report_lanes):
+                        add_notes(new)
+                        for r in found:
+                            r.rir = np.asarray(r.rir, dtype=np.float64)
+                            responses.append(r)
         print(f"  compas_acoustics: {len(pairs)} pairs rendered in {time.perf_counter() - started:.0f} s "
-              f"({len(tasks)} part(s), {min(n_workers, len(tasks))} process(es))")
+              f"({len(chunks)} part(s), {min(n_workers, len(chunks))} process(es))")
     else:
         # one process renders everything; the metrics of many mono responses go to the pool
         pooled_metrics = spread and not ambisonic and len(pairs) >= 4
@@ -771,7 +797,7 @@ def simulate_pairs(
         for g, indices in enumerate(groups):
             lo, hi = top * g / len(groups), top * (g + 1) / len(groups)
             prefix = f"Group {g + 1}/{len(groups)}: " if len(groups) > 1 else ""
-            progress(lo, f"compas_acoustics: {prefix}simulating {len(indices)} pair(s)...")
+            progress(lo, f"{prefix}Simulating {len(indices)} pair(s)…")
             found, new = _simulate_group(mesh, offset, pairs, indices, settings, report=staged(lo, lo + 0.95 * (hi - lo), prefix),
                                          metrics=not pooled_metrics, geometry=geometry)
             add_notes(new)
@@ -781,12 +807,12 @@ def simulate_pairs(
             parts = _split([(r.pair_index, r.rir.astype(np.float32), r.generation) for r in responses], n_workers)
             done_pairs = [0]
 
-            def measured(weight: int) -> None:
+            def measured(k: int, weight: int) -> None:
                 done_pairs[0] += weight
                 progress(min(top + (1.0 - top) * done_pairs[0] / len(pairs), 0.999),
-                         f"compas_acoustics: acoustic metrics {done_pairs[0]}/{len(pairs)}...")
+                         f"Acoustic metrics · {done_pairs[0]}/{len(pairs)} responses")
 
-            progress(top, f"compas_acoustics: acoustic metrics of {len(pairs)} responses...")
+            progress(top, f"Acoustic metrics · 0/{len(pairs)} responses")
             with child_pool(len(parts)) as pool:
                 for part in _gather(pool, [(_metrics_task, (items,), len(items)) for items in parts], measured):
                     for index, found in part:

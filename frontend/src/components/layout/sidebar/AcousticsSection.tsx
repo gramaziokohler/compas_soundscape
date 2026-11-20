@@ -22,6 +22,7 @@
 'use client';
 
 import { GA_ENGINE } from '@/utils/constants';
+import { progressLanesFromPartial } from '@/utils/progressLanes';
 import { resolveEngine, usesCompasAcoustics } from '@/lib/acoustics/geometric-engine';
 import { isEngineSimulation, isGeometricSimulation } from '@/types/acoustics';
 import { useAcousticPathsStore, type RunAcousticPathsArgs } from '@/store';
@@ -587,7 +588,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         const pollInterval = setInterval(async () => {
           try {
             const statusData = await apiService.getPyroomacousticsSimulationStatus(simulationId);
-            handleUpdateConfig(index, { progress: statusData.progress, status: statusData.status } as any);
+            handleUpdateConfig(index, { progress: statusData.progress, status: statusData.status, progressLanes: progressLanesFromPartial(statusData.partial) } as any);
             if (!isLegacyJobTerminal(statusData)) return;
             clearInterval(pollInterval);
             pollIntervalsRef.current.delete(index);
@@ -808,7 +809,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             ? `Queued — position ${statusData.queue_position} of ${statusData.queue_total}`
             : statusData.status;
 
-          handleUpdateConfig(index, { progress: statusData.progress, status: statusStr } as any);
+          handleUpdateConfig(index, { progress: statusData.progress, status: statusStr, progressLanes: progressLanesFromPartial(statusData.partial) } as any);
 
           if (!isLegacyJobTerminal(statusData)) return; // keep polling
 
@@ -2272,6 +2273,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             isRunning={isRunning}
             progress={(config as any).progress ?? 0}
             status={(config as any).status}
+            progressLanes={(config as any).progressLanes ?? null}
             error={(config as any).error}
             onToggleExpand={() => onToggleExpand(index)}
             onUpdateConfig={(idx, updates) => handleUpdateConfig(idx, updates)}

@@ -531,6 +531,56 @@ CA_RENDER_MIN_S = 0.2
 # PFFDTD, saved soundscapes, playback gains) are at 1/r. Multiplied by this at export.
 CA_TO_APP_LEVEL_SCALE = 4.0 * 3.141592653589793
 
+# Live progress of a compas_acoustics run (services/ca_progress.py). compas_acoustics reports
+# (stage, done, of); each stage gets a label, the unit of its counts, and the span of a part's bar
+# it covers. Spans measured on a 2 x 2 pair, order-2 ambisonic run (10k rays): ray tracing ~25 %,
+# image sources ~4 %, then the three rendering steps about a quarter each.
+CA_PROGRESS_STAGE_LABELS = {
+    "references": "Reference response",
+    "ray tracing": "Ray tracing",
+    "diffraction": "Diffraction",
+    "responses": "Responses",
+    "image sources": "Image sources",
+    "directional histograms": "Directional histograms",
+    "energy map: rays": "Energy map rays",
+    "energy map: image sources": "Energy map image sources",
+    "rendering": "Rendering",
+    "rendering: early reflections": "Early reflections",
+    "rendering: late reverberation": "Late reverberation (FDN)",
+    "rendering: ambisonic encoding": "Ambisonic encoding",
+    "rendering: binaural encoding": "Binaural encoding",
+}
+CA_PROGRESS_STAGE_UNITS = {  # "ray tracing" counts rays when split over processes, else sources
+    "responses": "responses",
+    "directional histograms": "sources",
+    "rendering": "pairs",
+    "rendering: early reflections": "pairs",
+    "rendering: late reverberation": "pairs",
+    "rendering: ambisonic encoding": "pairs",
+    "rendering: binaural encoding": "pairs",
+}
+CA_PROGRESS_SPANS_AMBISONIC = {
+    "references": (0.0, 0.02),
+    "ray tracing": (0.02, 0.27),
+    "diffraction": (0.27, 0.3),
+    "responses": (0.3, 0.34),
+    "image sources": (0.34, 0.38),
+    "directional histograms": (0.38, 0.42),
+    "rendering": (0.42, 1.0),
+    "rendering: early reflections": (0.42, 0.62),
+    "rendering: late reverberation": (0.62, 0.8),
+    "rendering: ambisonic encoding": (0.8, 1.0),
+    "rendering: binaural encoding": (0.8, 1.0),
+}
+CA_PROGRESS_SPANS_MONO = {
+    "image sources": (0.0, 0.1),
+    "ray tracing": (0.0, 0.6),
+    "diffraction": (0.6, 0.7),
+    "responses": (0.7, 1.0),
+}
+CA_PROGRESS_POLL_S = 0.5    # how often the job reads its rendering processes' progress
+CA_PROGRESS_WRITE_S = 0.25  # how often a rendering process writes its own (a stage change always writes)
+
 # Default Simulation Settings
 # Hybrid ISM + ray tracing (max_order=3, air absorption on) is the validated
 # configuration (see pyroomacoustics_test_ach.py and acoustic-sim.mdc). Pure

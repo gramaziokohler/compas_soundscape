@@ -230,8 +230,8 @@ def test_parallel_rendering_gives_the_serial_responses():
     offset = room_offset(mesh)
     base = dict(ambisonic_order=1, max_order=1, ray_tracing=True, n_rays=2000, air_absorption=False)
     stages = []
-    serial = engine.simulate_pairs(mesh, offset, pairs, engine.EngineSettings(**base, n_jobs=1), lambda f, t: None)
-    parallel = engine.simulate_pairs(mesh, offset, pairs, engine.EngineSettings(**base, n_jobs=2), lambda f, t: stages.append((f, t)))
+    serial = engine.simulate_pairs(mesh, offset, pairs, engine.EngineSettings(**base, n_jobs=1), lambda f, t, d: None)
+    parallel = engine.simulate_pairs(mesh, offset, pairs, engine.EngineSettings(**base, n_jobs=2), lambda f, t, d: stages.append((f, t, d)))
     assert [r.pair_index for r in parallel.responses] == [0, 1, 2, 3]
     for a, b in zip(serial.responses, parallel.responses):
         assert a.rir.shape[1] == b.rir.shape[1] == 4
@@ -240,9 +240,30 @@ def test_parallel_rendering_gives_the_serial_responses():
         assert a.rir.shape == b.rir.shape
         np.testing.assert_allclose(b.rir, a.rir, rtol=1e-6, atol=1e-6)
         assert b.metrics is not None and b.metrics["acoustic_parameters_bands"]
-    fractions = [f for f, _ in stages]
+    fractions = [f for f, _, _ in stages]
     assert fractions == sorted(fractions) and fractions[-1] <= 1.0
-    assert any("rendering" in t and "at once" in t for _, t in stages)
+    # one row per process: its sources and listeners, its step, and the pairs done overall
+    rows = [d["ca_progress"] for _, _, d in stages if d]
+    assert rows and all(r["pairs_total"] == 4 and len(r["lanes"]) == 2 for r in rows)
+    assert {lane["label"] for lane in rows[0]["lanes"]} == {"S1 → R1–2", "S2 → R1–2"}
+    assert rows[-1]["pairs_done"] == 4 and all(lane["state"] == "done" for lane in rows[-1]["lanes"])
+    assert all(t.endswith(f"pairs {r['pairs_done']}/4") for (_, t, d), r in zip([s for s in stages if s[2]], rows))
+
+
+def test_progress_lines_name_the_step_and_its_counts():
+    from services import ca_progress
+
+    assert ca_progress.describe("rendering: late reverberation", 2, 3, 10000) == "Late reverberation (FDN) · 2/3 pairs"
+    assert ca_progress.describe("ray tracing", 6200, 20000, 10000) == "Ray tracing · 6,200/20,000 rays"
+    assert ca_progress.describe("ray tracing", 1, 3, 10000) == "Ray tracing · 1/3 sources"
+    assert ca_progress.describe("image sources", None, None, 10000) == "Image sources"
+    assert ca_progress.describe("new stage", None, None, 0) == "New stage"
+    lane = ca_progress.Lane("S1 → R1", 1, ca_progress.stage_spans(True), 10000)
+    lane.update("rendering: late reverberation", 0, 1)
+    halfway = lane.fraction
+    lane.update("references", None, None)  # a stage met again never moves the bar back
+    assert lane.fraction == halfway and 0.5 < halfway < 1.0
+    assert ca_progress._ranges([1, 2, 3, 5, 7, 8]) == "1–3, 5, 7–8"
 
 
 def test_mono_metrics_from_the_pool_match():
@@ -254,8 +275,8 @@ def test_mono_metrics_from_the_pool_match():
     mesh = _prepared_shoebox([source] + list(receivers.values()))
     offset = room_offset(mesh)
     base = dict(max_order=2, ray_tracing=False, air_absorption=False)
-    serial = engine.simulate_pairs(mesh, offset, pairs, engine.EngineSettings(**base, n_jobs=1), lambda f, t: None)
-    pooled = engine.simulate_pairs(mesh, offset, pairs, engine.EngineSettings(**base, n_jobs=2), lambda f, t: None)
+    serial = engine.simulate_pairs(mesh, offset, pairs, engine.EngineSettings(**base, n_jobs=1), lambda f, t, d: None)
+    pooled = engine.simulate_pairs(mesh, offset, pairs, engine.EngineSettings(**base, n_jobs=2), lambda f, t, d: None)
     for a, b in zip(serial.responses, pooled.responses):
         np.testing.assert_allclose(b.rir, a.rir)
         assert a.metrics is not None and b.metrics is not None

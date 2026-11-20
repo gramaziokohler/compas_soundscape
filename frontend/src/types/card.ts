@@ -151,6 +151,21 @@ export interface CardExecutionState {
   status: string;
   /** Error message if failed */
   error: string | null;
+  /** One row per parallel part of the run, shown under the progress bar's expand toggle */
+  progressLanes?: ProgressLane[] | null;
+}
+
+/** Progress of one parallel part of a run (e.g. a compas_acoustics rendering process). */
+export interface ProgressLane {
+  /** What the part covers, e.g. "S1–2 → R1–3" */
+  label: string;
+  /** Its current step with counts, e.g. "Late reverberation (FDN) · 2/3 pairs" */
+  text: string;
+  /** 0-1 */
+  fraction: number;
+  state: 'queued' | 'running' | 'done';
+  /** Seconds since the part started (null while queued) */
+  elapsedS: number | null;
 }
 
 /**

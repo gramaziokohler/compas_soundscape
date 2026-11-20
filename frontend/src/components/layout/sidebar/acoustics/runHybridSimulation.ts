@@ -16,6 +16,7 @@ import { captureGenerationSignature } from '@/utils/generationSignature';
 import { SIMULATION_STATUS_MISS_TOLERANCE, PFFDTD } from '@/utils/constants';
 import { simulationSourceSnapshot, type SimulationGeometryRequest } from '@/utils/simulationRequest';
 import { hybridResultLine } from '@/lib/acoustics/hybrid';
+import { progressLanesFromPartial } from '@/utils/progressLanes';
 import type { GridListenerSnapshot, HybridSimulationConfig, SimulationConfig } from '@/types/acoustics';
 
 export interface RunHybridSimulationDeps {
@@ -78,7 +79,7 @@ export async function runHybridSimulation(deps: RunHybridSimulationDeps): Promis
       const statusStr = st.queue_position != null
         ? `Queued — position ${st.queue_position} of ${st.queue_total}`
         : st.status;
-      update({ progress: st.progress, status: statusStr });
+      update({ progress: st.progress, status: statusStr, progressLanes: progressLanesFromPartial(st.partial) });
       if (!isLegacyJobTerminal(st)) return; // keep polling
 
       stop();

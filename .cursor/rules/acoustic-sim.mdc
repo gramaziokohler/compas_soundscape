@@ -88,6 +88,14 @@ Step 5 above is the **legacy** engine. Since the compas_acoustics migration
 - **Air:** CA derives the speed of sound from temperature and humidity. The request's
   `sound_speed` becomes the temperature (343 m/s ≈ 20 °C), clamped to 0–30 °C. `air_temperature`
   and `air_humidity` override it.
+- **Progress:** CA reports `(stage, done, of)`; `services/ca_progress.py` turns each report into a
+  bar fraction (`CA_PROGRESS_SPANS_*`) and a line ("Late reverberation (FDN) · 2/3 pairs"). The
+  hybrid's rendering stage reports its steps (`rendering: early reflections` / `late reverberation`
+  / `ambisonic encoding`) while pairs render. When the pairs render in several processes, each one
+  writes its last report to `temp/simulations/ca_lanes_*/lane<k>.json`. The job reads them every
+  `CA_PROGRESS_POLL_S` into the status line and `partial.ca_progress.lanes`. The card's ▾ next to
+  the status line shows one row per process (`components/ui/ProgressLanes.tsx`). One-process ray
+  tracing has no ray count: tracing rays in batches changes the responses.
 - **Level:** CA writes 1/(4πr). The adapter multiplies by `CA_TO_APP_LEVEL_SCALE` (4π), so IRs stay
   at the app's 1/r level (legacy engine, PFFDTD, saved soundscapes, playback gains).
 - **Export:** both engines write **float32** WAVs through `_export_pair()` (the old int16 export

@@ -130,7 +130,7 @@ def test_simulation_without_the_edges_equals_no_diffraction(mesh, doc):
     base = dict(max_order=1, ray_tracing=False, air_absorption=False, n_jobs=1)
 
     def run(**kwargs):
-        out = engine.simulate_pairs(mesh, offset, PAIRS, engine.EngineSettings(**base, **kwargs), lambda f, t: None)
+        out = engine.simulate_pairs(mesh, offset, PAIRS, engine.EngineSettings(**base, **kwargs), lambda f, t, d: None)
         return out.responses[0].rir
 
     plain = run()

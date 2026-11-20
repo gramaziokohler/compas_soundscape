@@ -1,6 +1,6 @@
 // Import card types
-import type { CardType, CardBaseConfig, CardState, CardProps, CardHeaderProps, CardButtonBarProps, CardExecutionState, SavedObjectVisibility } from './card';
-export type { CardType, CardBaseConfig, CardState, CardProps, CardHeaderProps, CardButtonBarProps, CardExecutionState, SavedObjectVisibility };
+import type { CardType, CardBaseConfig, CardState, CardProps, CardHeaderProps, CardButtonBarProps, CardExecutionState, ProgressLane, SavedObjectVisibility } from './card';
+export type { CardType, CardBaseConfig, CardState, CardProps, CardHeaderProps, CardButtonBarProps, CardExecutionState, ProgressLane, SavedObjectVisibility };
 export { CARD_TYPE_LABELS } from './card';
 
 // Import and re-export Speckle Scene types

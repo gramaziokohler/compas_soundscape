@@ -74,11 +74,14 @@ def _atomic_replace(src: str, dst: str) -> None:
             time.sleep(0.05 * (attempt + 1))
 
 
-def _write_progress(progress_file: str, value: int, status: str) -> None:
-    """Atomically write progress JSON via temp-file + os.replace()."""
+def _write_progress(progress_file: str, value: int, status: str, partial: Optional[dict] = None) -> None:
+    """Atomically write progress JSON via temp-file + os.replace(); ``partial`` becomes the job's ``partial``."""
+    payload: dict = {"value": value, "status": status}
+    if partial:
+        payload["partial"] = partial
     tmp = progress_file + ".tmp"
     with open(tmp, "w") as f:
-        json.dump({"value": value, "status": status}, f)
+        json.dump(payload, f)
     _atomic_replace(tmp, progress_file)
 
 
@@ -595,8 +598,8 @@ def _run_compas_acoustics(
         f"ray tracing {rays}, diffraction {settings.diffraction}, {settings.n_jobs} process(es)"
     )
 
-    def _progress(fraction: float, text: str) -> None:
-        _write_progress(progress_file, min(int(20 + 65.0 * fraction), 85), text)
+    def _progress(fraction: float, text: str, partial: Optional[dict] = None) -> None:
+        _write_progress(progress_file, min(int(20 + 65.0 * fraction), 85), text, partial)
 
     run = simulate_pairs(mesh, offset, pairs_data, settings, _progress)
     for note in run.notes:

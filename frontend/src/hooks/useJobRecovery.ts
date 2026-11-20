@@ -22,6 +22,7 @@ import { useAudioControlsStore } from '@/store/audioControlsStore';
 import { collapseVariantsToOne, groupSoundsByPosition } from '@/utils/positionKey';
 import type { SoundDirectivity } from '@/types/directivity';
 import { isFreshHomeUrl } from '@/utils/homeStage';
+import { progressLanesFromPartial } from '@/utils/progressLanes';
 import { isShareViewActive } from '@/store/shareViewStore';
 import { cardEventId } from '@/utils/config-id';
 import { latestAcousticsJobPerCard } from '@/utils/acousticsJobRecovery';
@@ -445,6 +446,7 @@ function updateProgress(jobType: JobType, progress: number, statusText: string, 
           isRunning: true,
           progress,
           status: statusText,
+          progressLanes: progressLanesFromPartial(partial),
           ...(jobType === 'pffdtd' ? pffdtdPartialPatch(partial as PffdtdJobPartial | null) : {}),
         } as any);
       }
