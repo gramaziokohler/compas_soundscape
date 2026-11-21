@@ -74,6 +74,28 @@ def _write_result(result_file: str, payload: dict) -> None:
     write_json(result_file, payload)
 
 
+def _simulation_processes(simulation_id: str, mesh, offset) -> int:
+    """compas_acoustics processes for this job: PYROOMACOUSTICS_MAX_PROCESSES, fewer when the
+    predicted peak (from Eyring's T60 of the prepared room) would not fit in the RAM free now
+    (services/sim_scheduler.simulation_processes)."""
+    from services.sim_scheduler import available_memory_gb, simulation_processes
+
+    t60 = None
+    try:
+        from services.compas_acoustics_engine import room_geometry
+        from services.hybrid_job import predicted_rt60
+
+        t60 = predicted_rt60(room_geometry(mesh, offset))
+    except Exception as exc:  # noqa: BLE001 - the estimate must never fail the job
+        print(f"[{simulation_id[:8]}] no T60 estimate for the process count: {exc}")
+    free = available_memory_gb()
+    n = simulation_processes(constants.PYROOMACOUSTICS_MAX_PROCESSES, free, t60)
+    if n < constants.PYROOMACOUSTICS_MAX_PROCESSES:
+        print(f"[{simulation_id[:8]}] {n} process(es) instead of {constants.PYROOMACOUSTICS_MAX_PROCESSES}: "
+              f"Eyring T60 {t60 if t60 is None else round(t60, 2)} s, {free:.0f} GB free")
+    return n
+
+
 def split_processes(max_processes: int, n_emitters: int) -> tuple[int, int]:
     """(emitter rooms simulated at once, processes splitting the rays of each room)."""
     at_once = max(1, min(max_processes, n_emitters))
@@ -564,7 +586,7 @@ def _run_compas_acoustics(
         air_temperature=air_temperature,
         air_humidity=air_humidity,
         diffraction=diffraction or CA_DIFFRACTION_DEFAULT,
-        n_jobs=constants.PYROOMACOUSTICS_MAX_PROCESSES if parallel else 1,
+        n_jobs=_simulation_processes(simulation_id, mesh, offset) if parallel else 1,
         reciprocity=PYROOMACOUSTICS_RECIPROCITY_ENABLED,
         tail=tail or CA_TAIL_DEFAULT,
         n_slopes=int(n_slopes),

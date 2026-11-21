@@ -12,6 +12,7 @@ progress/result to Redis (workers/_subprocess_common.py).
 from __future__ import annotations
 
 import os
+import time
 
 # CPU worker never touches the GPU — keep TensorFlow/YAMNet off CUDA.
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "-1")
@@ -28,7 +29,15 @@ from services.sed_worker import run_sed_analysis
 from services.simulation_preflight_worker import run_simulation_preflight
 from services.acoustic_paths_service import run_acoustic_paths
 from workers._subprocess_common import MultiSlotSubprocessRunner
-from config.constants import JOB_TYPE_PYROOMACOUSTICS, JOB_TYPE_QUEUE
+
+from config.constants import (
+    CPU_LIGHT_SLOTS,
+    QUEUE_CPU,
+    QUEUE_CPU_LIGHT,
+    SIM_MAX_CONCURRENT,
+    SIM_START_MIN_FREE_GB,
+)
+from services.sim_scheduler import available_memory_gb
 
 _TARGET_FNS = {
     "pyroomacoustics_speckle": run_pyroomacoustics_simulation,
@@ -44,7 +53,16 @@ _TARGET_FNS = {
 
 
 class CpuRunner(MultiSlotSubprocessRunner):
-    queue_key = JOB_TYPE_QUEUE[JOB_TYPE_PYROOMACOUSTICS]  # "queue:cpu" — shared by pyroom/sed/loop
+    """Two lanes in one worker process:
+
+    * ``slots`` simulation slots: card simulations from the simulation scheduler
+      (services/sim_scheduler.py: fair across workspaces, at most SIM_MAX_CONCURRENT at once),
+      then jobs left in the old shared ``queue:cpu``;
+    * CPU_LIGHT_SLOTS light slots: preflight, path views, voxel preview, SED, loop, directivity
+      (``queue:cpu-light``), so they never wait behind a simulation.
+    """
+
+    queue_key = QUEUE_CPU_LIGHT
 
     def __init__(self, job_store, state, worker_id: str, slots: int):
         super().__init__(job_store, state, worker_id, slots)
@@ -53,6 +71,12 @@ class CpuRunner(MultiSlotSubprocessRunner):
         # real slot count, not the default, so the slots together fill the cores.
         os.environ["CPU_WORKER_SLOTS"] = str(max(1, slots))
 
+    def lanes(self):
+        return [
+            ("sim", self.slots, _lease_simulation),
+            ("light", CPU_LIGHT_SLOTS, lambda store: store.lease([QUEUE_CPU_LIGHT], timeout=5)),
+        ]
+
     def _resolve(self, job: Job):
         variant = job.payload.get("variant")
         target_fn = _TARGET_FNS.get(variant)
@@ -60,3 +84,14 @@ class CpuRunner(MultiSlotSubprocessRunner):
             raise ValueError(f"Unknown CPU job variant: {variant!r}")
         kwargs = dict(job.payload.get("kwargs", {}))
         return target_fn, kwargs
+
+
+def _lease_simulation(store):
+    """Next simulation from the scheduler, else a job left in the old shared queue (blocks ~2 s)."""
+    job = store.lease_simulation(SIM_MAX_CONCURRENT, SIM_START_MIN_FREE_GB, available_memory_gb)
+    if job is not None:
+        return job
+    job = store.lease([QUEUE_CPU], timeout=2)
+    if job is None:
+        time.sleep(0.5)  # BLPOP may return at once on some Redis builds: never spin
+    return job

@@ -41,7 +41,8 @@ Client polls GET /api/jobs/{id}  (routers/jobs.py reads the Redis hash)
 | -------- | ----------- | ------- | ----- |
 | `sound` (TangoFlux) | `queue:gpu` | `worker_main --role gpu` (1 model per process, resident) | `GPU_WORKER_SLOTS` (2) |
 | `sa3` (Stable Audio 3) | `queue:sa3` | `worker_main --role sa3` — **must run in the isolated `compas-sa3` env** (resident) | `SA3_WORKER_SLOTS` (1) |
-| `pyroomacoustics`, `sed`, `loop` | `queue:cpu` | `--role cpu` — child process per job | `CPU_WORKER_SLOTS` (4) |
+| card simulations (`pyroomacoustics` speckle/geometry variants) | `simq:<workspace>` (simulation scheduler) | `--role cpu` simulation slots — child process per job | `--slots` (production 2), at most `SIM_MAX_CONCURRENT` (2) on the host |
+| preflight, path views, voxel preview, `sed`, `loop`, directivity | `queue:cpu-light` | `--role cpu` light slots | `CPU_LIGHT_SLOTS` (2) |
 | `pffdtd`, `pffdtd_animation` | `queue:pffdtd` | `--role pffdtd` — child process per job (CUDA engine in the isolated `compas-pffdtd` env) | `PFFDTD_WORKER_SLOTS` (1) |
 | `llm`, `model_analysis`, `tts` | *(none)* | **Inside the API process** as `asyncio.create_task`, semaphore-gated | `LLM_MAX_CONCURRENT` (8), `TTS_MAX_CONCURRENT` (2) |
 
@@ -96,7 +97,17 @@ async def generate_sounds(request: SoundGenerationRequest, req: Request):
 
 Processes per simulation job: `PYROOMACOUSTICS_MAX_PROCESSES` defaults to `os.cpu_count() //
 CPU_WORKER_SLOTS`; `CpuRunner` exports its `--slots` as `CPU_WORKER_SLOTS` to the spawned job
-processes, so all slots busy fill the cores without oversubscribing them.
+processes, so all slots busy fill the cores without oversubscribing them. `_simulation_processes`
+(`pyroomacoustics_worker.py`) lowers it when the predicted peak (Eyring T60 -> response length,
+`sim_scheduler.simulation_processes`) would not fit in the RAM free at the start.
+
+**Simulation scheduler** (`services/sim_scheduler.py`, `WorkerJobStore.lease_simulation`): card simulations
+wait in one list per workspace (`simq:<ws>`, workspaces in `sim:workspaces`); a job hash stores its list in
+`queue`, which cancel, the reaper, `requeue_tail` and the position read (`_queue_of`). A simulation slot takes
+the head of the workspace with the fewest running (`sim:active`, released on complete/fail/cancel/reaper and
+pruned when the hash says the job ended), at most `SIM_MAX_CONCURRENT`, a further one only with
+`SIM_START_MIN_FREE_GB` free. Then it drains jobs left in the old `queue:cpu`. The position shown is the fair
+order (`sim_scheduler.queue_position`). Benchmark behind the numbers: `docs/acoustic_job_scheduler_plan.md`.
 
 ## GPU Worker — Resident Model, Clip-Level Yielding, Cooperative Cancel
 

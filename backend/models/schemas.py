@@ -129,7 +129,11 @@ class JobCancelResponse(BaseModel):
 class QueueStatusResponse(BaseModel):
     gpu: int
     sa3: int = 0
-    cpu: int
+    cpu: int                 # jobs left in the old shared CPU queue
+    cpu_light: int = 0       # short CPU jobs (preflight, path views, SED, loop, ...)
+    sim: int = 0             # card simulations waiting in the simulation scheduler
+    sim_running: int = 0     # card simulations running
+    pffdtd: int = 0
 
 
 # ─── Loop Analysis Schemas ────────────────────────────────────────────────────

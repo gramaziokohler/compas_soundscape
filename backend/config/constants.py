@@ -1322,17 +1322,51 @@ JOB_STATUS_CANCELLED = "cancelled"
 JOB_STATUS_ERROR = "error"
 
 # Redis queue names per job type -> worker role
+QUEUE_CPU = "queue:cpu"
+# Short CPU jobs (preflight, path views, voxel preview, SED, loop, directivity): their own slots
+# (CPU_LIGHT_SLOTS) so they never wait behind hour-long simulations.
+QUEUE_CPU_LIGHT = "queue:cpu-light"
 JOB_TYPE_QUEUE = {
     JOB_TYPE_SOUND: "queue:gpu",
     JOB_TYPE_SA3: "queue:sa3",
-    JOB_TYPE_PYROOMACOUSTICS: "queue:cpu",
-    JOB_TYPE_SED: "queue:cpu",
-    JOB_TYPE_LOOP: "queue:cpu",
+    # Card simulations go to the simulation scheduler (SIM_QUEUE_PREFIX); its other variants are light.
+    JOB_TYPE_PYROOMACOUSTICS: QUEUE_CPU_LIGHT,
+    JOB_TYPE_SED: QUEUE_CPU_LIGHT,
+    JOB_TYPE_LOOP: QUEUE_CPU_LIGHT,
     JOB_TYPE_PFFDTD: "queue:pffdtd",
     JOB_TYPE_PFFDTD_ANIMATION: "queue:pffdtd",
-    JOB_TYPE_DIRECTIVITY_IMPORT: "queue:cpu",
-    JOB_TYPE_DIRECTIVITY_PRESET_BUILD: "queue:cpu",
+    JOB_TYPE_DIRECTIVITY_IMPORT: QUEUE_CPU_LIGHT,
+    JOB_TYPE_DIRECTIVITY_PRESET_BUILD: QUEUE_CPU_LIGHT,
 }
+CPU_LIGHT_SLOTS = int(os.environ.get("CPU_LIGHT_SLOTS", "2"))
+
+# ─── Simulation scheduler (services/sim_scheduler.py) ────────────────────────
+# Card simulations (pyroomacoustics job variants below) wait in one list per workspace,
+# SIM_QUEUE_PREFIX + <workspace>. A CPU worker's simulation slot takes the next one from the
+# workspace with the fewest simulations running (oldest first within a workspace), at most
+# SIM_MAX_CONCURRENT at once on the host. Benchmark 2026-11-21 (8-core host): one simulation
+# saturates the machine at 4-8 processes; more at once barely raise throughput, delay every
+# result and can run out of memory.
+SIMULATION_VARIANTS = ("pyroomacoustics_speckle", "pyroomacoustics_geometry")
+SIM_QUEUE_PREFIX = "simq:"
+SIM_WORKSPACES_KEY = "sim:workspaces"   # set of workspaces with queued simulations
+SIM_ACTIVE_KEY = "sim:active"           # hash job_id -> workspace of running simulations
+SIM_LEASE_LOCK_KEY = "sim:lease-lock"
+SIM_LEASE_LOCK_MS = 10_000
+SIM_MAX_CONCURRENT = int(os.environ.get("SIM_MAX_CONCURRENT", "2"))
+# A further simulation starts only while the host has this much RAM free (the first always starts).
+SIM_START_MIN_FREE_GB = float(os.environ.get("SIM_START_MIN_FREE_GB", "8"))
+# Processes of a simulation, bounded by the RAM free when it starts (minus a reserve) divided by
+# an estimate of one process's peak: max(MIN, PER_S * predicted response length). Calibrated on
+# the benchmark: ~1-3.6 GB per process for responses under 2 s, 8.7-14.4 GB for 12 s (hall).
+SIM_MEMORY_RESERVE_GB = float(os.environ.get("SIM_MEMORY_RESERVE_GB", "4"))
+SIM_MEMORY_PER_PROCESS_MIN_GB = 3.6
+SIM_MEMORY_GB_PER_RESPONSE_S = 1.2
+# Predicted response length from Eyring's T60: factor * T60 + offset, clipped (the hybrid's
+# render length was 1.4-2.5 x T60 + a little in the benchmark rooms).
+SIM_RESPONSE_T60_FACTOR = 1.3
+SIM_RESPONSE_OFFSET_S = 0.5
+SIM_RESPONSE_MAX_S = 12.0
 
 # GPU-style jobs share the per-session fairness cap and the pending-GPU set.
 GPU_LIKE_JOB_TYPES = (JOB_TYPE_SOUND, JOB_TYPE_SA3)

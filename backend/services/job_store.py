@@ -45,7 +45,15 @@ from config.constants import (
     JOB_QUEUED_MAX_AGE_S,
     JOB_QUEUED_EXPIRED_MESSAGE,
     GPU_QUEUE_PER_SESSION_MAX,
+    QUEUE_CPU,
+    QUEUE_CPU_LIGHT,
+    SIM_ACTIVE_KEY,
+    SIM_LEASE_LOCK_KEY,
+    SIM_LEASE_LOCK_MS,
+    SIM_QUEUE_PREFIX,
+    SIM_WORKSPACES_KEY,
 )
+from services.sim_scheduler import is_sim_queue, pick_workspace, queue_for, queue_position
 from services.study_server_events import log_job_enqueued
 
 
@@ -112,6 +120,12 @@ def _queue_key_for_type(job_type: str) -> Optional[str]:
     return JOB_TYPE_QUEUE.get(job_type)
 
 
+def _queue_of(data: dict) -> Optional[str]:
+    """The list a job waits in: the one stored at enqueue (simulations: their workspace's list),
+    else its type's queue (jobs enqueued before the field existed)."""
+    return data.get("queue") or _queue_key_for_type(data.get("type", ""))
+
+
 # ─── API-side store (async) ────────────────────────────────────────────────────
 
 class AsyncJobStore:
@@ -121,8 +135,12 @@ class AsyncJobStore:
         self.redis = client if client is not None else redis_async.from_url(url, decode_responses=True)
 
     async def enqueue(self, job_type: str, session_id: Optional[str], payload: dict) -> str:
-        """Create a job hash, push it onto its queue, return the job_id."""
-        queue_key = _queue_key_for_type(job_type)
+        """Create a job hash, push it onto its queue, return the job_id.
+
+        Card simulations go to their workspace's list of the simulation scheduler
+        (services/sim_scheduler.py); everything else to its type's queue.
+        """
+        queue_key = queue_for(job_type, payload, session_id)
         if queue_key is None:
             raise ValueError(f"Job type {job_type!r} has no queue — use enqueue_io() instead")
 
@@ -151,11 +169,14 @@ class AsyncJobStore:
             "created": str(now),
             "payload": json.dumps(payload),
             "cancel_requested": "0",
+            "queue": queue_key,
         }
 
         pipe = self.redis.pipeline()
         pipe.hset(job_key(job_id), mapping=mapping)
         pipe.rpush(queue_key, job_id)
+        if is_sim_queue(queue_key):
+            pipe.sadd(SIM_WORKSPACES_KEY, queue_key[len(SIM_QUEUE_PREFIX):])
         if job_type in GPU_LIKE_JOB_TYPES and session_id:
             pipe.sadd(pending_gpu_key(session_id), job_id)
         await pipe.execute()
@@ -174,8 +195,10 @@ class AsyncJobStore:
         position: Optional[int] = None
         total: Optional[int] = None
         if status == JOB_STATUS_QUEUED:
-            queue_key = _queue_key_for_type(job_type)
-            if queue_key is not None:
+            queue_key = _queue_of(data)
+            if is_sim_queue(queue_key):
+                position, total = await self._sim_position(queue_key, job_id)
+            elif queue_key is not None:
                 pos = await self.redis.lpos(queue_key, job_id)
                 total = await self.redis.llen(queue_key)
                 position = (pos + 1) if pos is not None else None
@@ -197,6 +220,18 @@ class AsyncJobStore:
             client_meta=_parse_json_field(data.get("client_meta", "")),
         )
 
+    async def _sim_position(self, queue_key: str, job_id: str) -> tuple[Optional[int], Optional[int]]:
+        """Position of a queued simulation in the scheduler's fair order (sim_scheduler.queue_position)."""
+        index = await self.redis.lpos(queue_key, job_id)
+        if index is None:
+            return None, None
+        lengths = {}
+        for ws in await self.redis.smembers(SIM_WORKSPACES_KEY):
+            lengths[ws] = await self.redis.llen(SIM_QUEUE_PREFIX + ws)
+        workspace = queue_key[len(SIM_QUEUE_PREFIX):]
+        lengths[workspace] = max(lengths.get(workspace, 0), index + 1)
+        return queue_position(index, workspace, lengths)
+
     async def cancel(self, job_id: str) -> bool:
         """Cancel a queued job immediately, or signal a running job to stop.
 
@@ -212,7 +247,7 @@ class AsyncJobStore:
         session_id = data.get("session_id", "")
 
         if status == JOB_STATUS_QUEUED:
-            queue_key = _queue_key_for_type(job_type)
+            queue_key = _queue_of(data)
             pipe = self.redis.pipeline()
             if queue_key is not None:
                 pipe.lrem(queue_key, 1, job_id)
@@ -248,10 +283,15 @@ class AsyncJobStore:
         for role, queue_key in {
             "gpu": "queue:gpu",
             "sa3": "queue:sa3",
-            "cpu": "queue:cpu",
+            "cpu": QUEUE_CPU,  # jobs queued before the light lane and the simulation scheduler
+            "cpu_light": QUEUE_CPU_LIGHT,
             "pffdtd": JOB_TYPE_QUEUE[JOB_TYPE_PFFDTD],
         }.items():
             depths[role] = await self.redis.llen(queue_key)
+        depths["sim"] = 0
+        for ws in await self.redis.smembers(SIM_WORKSPACES_KEY):
+            depths["sim"] += await self.redis.llen(SIM_QUEUE_PREFIX + ws)
+        depths["sim_running"] = await self.redis.hlen(SIM_ACTIVE_KEY)
         return depths
 
     async def list_session_jobs(self, session_id: str) -> list[JobView]:
@@ -295,7 +335,7 @@ class AsyncJobStore:
         job_id = key.split(":", 1)[1]
         job_type = data.get("type", "")
         session_id = data.get("session_id", "")
-        queue_key = _queue_key_for_type(job_type)
+        queue_key = _queue_of(data)
         pipe = self.redis.pipeline()
         if queue_key is not None:
             pipe.lrem(queue_key, 0, job_id)
@@ -341,7 +381,7 @@ class AsyncJobStore:
             session_id = data.get("session_id", "")
             attempts = int(data.get("attempts") or 0)
 
-            queue_key = _queue_key_for_type(job_type)
+            queue_key = _queue_of(data)
             if queue_key is None:
                 # IO job types (llm/model_analysis/tts) run in-process with no
                 # queue to requeue onto — a dead API process is handled by
@@ -356,6 +396,9 @@ class AsyncJobStore:
                     "worker_id": "",
                 })
                 pipe.rpush(queue_key, job_id)
+                pipe.hdel(SIM_ACTIVE_KEY, job_id)
+                if is_sim_queue(queue_key):
+                    pipe.sadd(SIM_WORKSPACES_KEY, queue_key[len(SIM_QUEUE_PREFIX):])
                 await pipe.execute()
             else:
                 pipe = self.redis.pipeline()
@@ -365,6 +408,7 @@ class AsyncJobStore:
                     "error": "Worker heartbeat timed out after max attempts",
                 })
                 pipe.expire(key, JOB_RESULT_TTL_S)
+                pipe.hdel(SIM_ACTIVE_KEY, job_id)
                 if job_type in GPU_LIKE_JOB_TYPES and session_id:
                     pipe.srem(pending_gpu_key(session_id), job_id)
                 await pipe.execute()
@@ -493,7 +537,10 @@ class WorkerJobStore:
         if popped is None:
             return None
         _queue_key, job_id = popped
+        return self._start(job_id)
 
+    def _start(self, job_id: str) -> Job:
+        """Mark a job taken off its queue as running and return it."""
         key = job_key(job_id)
         now = time.time()
         attempts = self.redis.hincrby(key, "attempts", 1)
@@ -544,6 +591,7 @@ class WorkerJobStore:
             "result": json.dumps(result),
         })
         pipe.expire(key, JOB_RESULT_TTL_S)
+        pipe.hdel(SIM_ACTIVE_KEY, job_id)
         if job_type in GPU_LIKE_JOB_TYPES and session_id:
             pipe.srem(pending_gpu_key(session_id), job_id)
         pipe.execute()
@@ -561,6 +609,7 @@ class WorkerJobStore:
             "error": err,
         })
         pipe.expire(key, JOB_RESULT_TTL_S)
+        pipe.hdel(SIM_ACTIVE_KEY, job_id)
         if job_type in GPU_LIKE_JOB_TYPES and session_id:
             pipe.srem(pending_gpu_key(session_id), job_id)
         pipe.execute()
@@ -575,6 +624,7 @@ class WorkerJobStore:
         pipe = self.redis.pipeline()
         pipe.hset(key, mapping={"status": JOB_STATUS_CANCELLED, "status_text": "Cancelled"})
         pipe.expire(key, JOB_RESULT_TTL_S)
+        pipe.hdel(SIM_ACTIVE_KEY, job_id)
         if job_type in GPU_LIKE_JOB_TYPES and session_id:
             pipe.srem(pending_gpu_key(session_id), job_id)
         pipe.execute()
@@ -595,8 +645,7 @@ class WorkerJobStore:
         """
         key = job_key(job_id)
         data = self.redis.hgetall(key)
-        job_type = data.get("type", "")
-        queue_key = _queue_key_for_type(job_type)
+        queue_key = _queue_of(data)
 
         pipe = self.redis.pipeline()
         pipe.hset(key, mapping={
@@ -607,7 +656,57 @@ class WorkerJobStore:
             "cancel_requested": "0",
         })
         pipe.rpush(queue_key, job_id)
+        pipe.hdel(SIM_ACTIVE_KEY, job_id)
+        if is_sim_queue(queue_key):
+            pipe.sadd(SIM_WORKSPACES_KEY, queue_key[len(SIM_QUEUE_PREFIX):])
         pipe.execute()
+
+    def lease_simulation(self, max_concurrent: int, min_free_gb: float, available_gb=None) -> Optional[Job]:
+        """Take the next card simulation in the scheduler's fair order, or None.
+
+        None while ``max_concurrent`` simulations run, or while one runs and the host has less than
+        ``min_free_gb`` free (``available_gb()``: free RAM in GB, None = unknown). Otherwise the head
+        job of the workspace with the fewest simulations running (sim_scheduler.pick_workspace).
+        Non-blocking; a short Redis lock keeps two slots from taking a place at once.
+        """
+        token = uuid.uuid4().hex
+        if not self.redis.set(SIM_LEASE_LOCK_KEY, token, nx=True, px=SIM_LEASE_LOCK_MS):
+            return None
+        try:
+            active = self.redis.hgetall(SIM_ACTIVE_KEY)
+            for job_id in list(active):  # a slot not released by a crash: the hash says it is over
+                if self.redis.hget(job_key(job_id), "status") != JOB_STATUS_RUNNING:
+                    self.redis.hdel(SIM_ACTIVE_KEY, job_id)
+                    active.pop(job_id)
+            if len(active) >= max_concurrent:
+                return None
+            if active and available_gb is not None:
+                free = available_gb()
+                if free is not None and free < min_free_gb:
+                    return None
+            waiting: dict[str, float] = {}
+            for ws in self.redis.smembers(SIM_WORKSPACES_KEY):
+                head = self.redis.lindex(SIM_QUEUE_PREFIX + ws, 0)
+                if head is None:
+                    self.redis.srem(SIM_WORKSPACES_KEY, ws)
+                    if self.redis.llen(SIM_QUEUE_PREFIX + ws):  # pushed meanwhile
+                        self.redis.sadd(SIM_WORKSPACES_KEY, ws)
+                    continue
+                waiting[ws] = float(self.redis.hget(job_key(head), "created") or 0.0)
+            running: dict[str, int] = {}
+            for ws in active.values():
+                running[ws] = running.get(ws, 0) + 1
+            workspace = pick_workspace(waiting, running)
+            if workspace is None:
+                return None
+            job_id = self.redis.lpop(SIM_QUEUE_PREFIX + workspace)
+            if job_id is None:
+                return None
+            self.redis.hset(SIM_ACTIVE_KEY, job_id, workspace)
+            return self._start(job_id)
+        finally:
+            if self.redis.get(SIM_LEASE_LOCK_KEY) == token:
+                self.redis.delete(SIM_LEASE_LOCK_KEY)
 
     def close(self) -> None:
         self.redis.close()

@@ -14,7 +14,7 @@ import os
 import threading
 import time
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Optional
 
 from services.finished_simulations import is_simulation_job, write_record
 from services.job_store import Job, WorkerJobStore
@@ -112,25 +112,32 @@ class MultiSlotSubprocessRunner:
     def _resolve(self, job: Job) -> tuple[Callable, dict]:
         raise NotImplementedError
 
+    def lanes(self) -> list[tuple[str, int, Callable[[WorkerJobStore], Optional[Job]]]]:
+        """(name, slots, lease) per lane; each slot thread calls ``lease(store)`` until shutdown.
+        Default: one lane of ``slots`` blocking on ``queue_key``."""
+        return [("", self.slots, lambda store: store.lease([self.queue_key], timeout=5))]
+
     def run_forever(self, shutdown: threading.Event) -> None:
-        threads = [
-            threading.Thread(target=self._slot_loop, args=(i, shutdown), daemon=True)
-            for i in range(self.slots)
-        ]
+        threads = []
+        for lane, slots, lease in self.lanes():
+            for i in range(slots):
+                slot_id = f"{lane}{i}"
+                threads.append(threading.Thread(target=self._slot_loop, args=(slot_id, shutdown, lease), daemon=True))
         for t in threads:
             t.start()
         shutdown.wait()
         for t in threads:
             t.join(timeout=10)
 
-    def _slot_loop(self, slot_index: int, shutdown: threading.Event) -> None:
+    def _slot_loop(self, slot_index, shutdown: threading.Event, lease=None) -> None:
         # Each slot owns its own Redis client — safe for concurrent BLPOP.
         store = WorkerJobStore()
         slot_worker_id = f"{self.worker_id}:{slot_index}"
+        lease = lease or (lambda s: s.lease([self.queue_key], timeout=5))
         try:
             while not shutdown.is_set():
                 try:
-                    job = store.lease([self.queue_key], timeout=5)
+                    job = lease(store)
                 except Exception as exc:
                     print(f"[worker:{slot_worker_id}] lease error: {exc}")
                     time.sleep(2)

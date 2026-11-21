@@ -33,6 +33,7 @@ from config.constants import (  # noqa: E402
     JOB_MAX_ATTEMPTS,
     JOB_QUEUED_MAX_AGE_S,
     JOB_QUEUED_EXPIRED_MESSAGE,
+    QUEUE_CPU_LIGHT,
 )
 
 
@@ -104,7 +105,7 @@ def test_lease_progress_complete_roundtrip():
     async def body():
         job_id = await api.enqueue(JOB_TYPE_PYROOMACOUSTICS, "session-a", {"x": 1})
 
-        job = worker.lease(["queue:cpu"], timeout=1)
+        job = worker.lease([QUEUE_CPU_LIGHT], timeout=1)
         assert job is not None
         assert job.job_id == job_id
         assert job.payload == {"x": 1}
@@ -134,7 +135,7 @@ def test_fail_sets_error_status():
 
     async def body():
         job_id = await api.enqueue(JOB_TYPE_PYROOMACOUSTICS, "session-a", {})
-        worker.lease(["queue:cpu"], timeout=1)
+        worker.lease([QUEUE_CPU_LIGHT], timeout=1)
         worker.fail(job_id, "boom")
         view = await api.get(job_id)
         assert view.status == "error"
@@ -154,7 +155,7 @@ def test_cancel_queued_job_removes_from_list():
         assert view.status == JOB_STATUS_CANCELLED
 
         # Queue must be empty — a lease should time out immediately.
-        assert worker.lease(["queue:cpu"], timeout=1) is None
+        assert worker.lease([QUEUE_CPU_LIGHT], timeout=1) is None
 
     run(body())
 
@@ -164,7 +165,7 @@ def test_cancel_running_job_sets_flag_and_publishes():
 
     async def body():
         job_id = await api.enqueue(JOB_TYPE_PYROOMACOUSTICS, "session-a", {})
-        worker.lease(["queue:cpu"], timeout=1)
+        worker.lease([QUEUE_CPU_LIGHT], timeout=1)
 
         pubsub = worker.redis.pubsub()
         pubsub.subscribe("job:cancel")
@@ -232,7 +233,7 @@ def test_pool_depths():
         await api.enqueue(JOB_TYPE_PYROOMACOUSTICS, "s1", {})
         await api.enqueue(JOB_TYPE_PYROOMACOUSTICS, "s1", {})
         depths = await api.pool_depths()
-        assert depths == {"gpu": 1, "sa3": 0, "cpu": 2, "pffdtd": 0}
+        assert depths == {"gpu": 1, "sa3": 0, "cpu": 0, "cpu_light": 2, "pffdtd": 0, "sim": 0, "sim_running": 0}
 
     run(body())
 
@@ -242,7 +243,7 @@ def test_reaper_requeues_stale_running_job_then_fails_after_max_attempts():
 
     async def body():
         job_id = await api.enqueue(JOB_TYPE_PYROOMACOUSTICS, "session-a", {})
-        worker.lease(["queue:cpu"], timeout=1)
+        worker.lease([QUEUE_CPU_LIGHT], timeout=1)
 
         # Simulate a dead worker: heartbeat far in the past.
         stale = time.time() - 10_000
@@ -254,7 +255,7 @@ def test_reaper_requeues_stale_running_job_then_fails_after_max_attempts():
         assert view.status == JOB_STATUS_QUEUED
 
         # Lease again, bump attempts up to the max, then let it go stale again.
-        worker.lease(["queue:cpu"], timeout=1)
+        worker.lease([QUEUE_CPU_LIGHT], timeout=1)
         await api.redis.hset(job_key(job_id), "attempts", str(JOB_MAX_ATTEMPTS))
         await api.redis.hset(job_key(job_id), "heartbeat", str(stale))
 
@@ -342,7 +343,7 @@ def test_reaper_expires_jobs_queued_over_the_max_age():
             assert await api.redis.ttl(job_key(job_id)) > 0
         assert (await api.get(fresh)).status == JOB_STATUS_QUEUED
         # the expired job left the worker queue; the fresh one is still in it
-        assert await api.redis.lrange("queue:cpu", 0, -1) == [fresh]
+        assert await api.redis.lrange(QUEUE_CPU_LIGHT, 0, -1) == [fresh]
 
     run(body())
 
