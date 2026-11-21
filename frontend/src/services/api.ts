@@ -3,9 +3,9 @@ import type { HybridSettings } from '@/types/acoustics';
 import { hybridFormFields } from '@/lib/acoustics/hybrid';
 import type { GeometricEngineSettings } from '@/types/acoustics';
 import type { AcousticPathKind, AcousticPathsJobResult, AcousticPathsPayload } from '@/types/acousticPaths';
-import { API_BASE_URL, SHARE_VIEW, SPECKLE_DIRECT_UPLOAD, SPECKLE_INGESTION } from '@/utils/constants';
+import { API_BASE_URL, JOB_NOT_FOUND_ERROR, SHARE_VIEW, SPECKLE_DIRECT_UPLOAD, SPECKLE_INGESTION } from '@/utils/constants';
 import { isShareViewActive, useShareViewStore } from '@/store/shareViewStore';
-import type { CompasGeometry, SoundEvent, SoundGenerationConfig, FileUploadResponse, JobType, JobRecord, UserPreferences, BugReportPayload, BugReportCreated, ClientDiagnosticEvent } from '@/types';
+import type { CompasGeometry, SoundEvent, SoundGenerationConfig, FileUploadResponse, JobType, JobRecord, FinishedSimulation, UserPreferences, BugReportPayload, BugReportCreated, ClientDiagnosticEvent } from '@/types';
 import { recordFailedRequest } from '@/lib/diagnostics/diagnosticsBuffer';
 import type { TtsCustomVoice, TtsCustomVoiceCreateRequest, TtsDialectsResponse, TtsLanguageMatch } from '@/types/ttsLanguage';
 import type { ImpulseResponseMetadata, IRMetricBlocks } from '@/types/audio';
@@ -2914,7 +2914,7 @@ export const apiService = {
       const job = await getUnifiedJobStatus(jobId);
       return toLegacyJobStatus(job);
     } catch {
-      return { completed: false, cancelled: false, error: 'Job not found or expired', progress: 0, status: 'unknown' };
+      return { completed: false, cancelled: false, error: JOB_NOT_FOUND_ERROR, progress: 0, status: 'unknown' };
     }
   },
 
@@ -2943,6 +2943,39 @@ export const apiService = {
    * Used on page load to reattach to work started before the window closed,
    * even when local storage has been cleared or the app is opened elsewhere.
    */
+  /**
+   * Finished simulation jobs of a model in this workspace, newest first
+   * (GET /api/finished-simulations). Kept past the job hash's 1 h TTL, so a
+   * result is applied even when no tab was polling when it finished. Never throws.
+   */
+  async getFinishedSimulations(modelId: string): Promise<FinishedSimulation[]> {
+    try {
+      const response = await fetchWithErrorHandling(
+        `${API_BASE_URL}/api/finished-simulations?model_id=${encodeURIComponent(modelId)}`,
+        undefined,
+        'Finished simulations'
+      );
+      if (!response.ok) return [];
+      const records = await response.json();
+      if (!Array.isArray(records)) return [];
+      const out: FinishedSimulation[] = [];
+      for (const r of records as Array<{ job_id: string; job_type: string; completed: number; meta?: JobRecord['meta'] | null; result?: unknown }>) {
+        const jobType = r.job_type === 'pyroomacoustics' ? 'pyroom' : r.job_type === 'pffdtd' ? 'pffdtd' : null;
+        if (!jobType) continue;
+        out.push({
+          jobId: r.job_id,
+          jobType,
+          completedMs: (r.completed ?? 0) * 1000,
+          ...(r.meta ? { meta: r.meta } : {}),
+          result: r.result ?? null,
+        });
+      }
+      return out;
+    } catch {
+      return [];
+    }
+  },
+
   async getActiveJobs(): Promise<ActiveJob[]> {
     // Backend job type names differ from the frontend JobType union for pyroom
     // and the Stable Audio 3 lane (its own queue, but polled as a sound job).

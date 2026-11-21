@@ -46,6 +46,13 @@ _TARGET_FNS = {
 class CpuRunner(MultiSlotSubprocessRunner):
     queue_key = JOB_TYPE_QUEUE[JOB_TYPE_PYROOMACOUSTICS]  # "queue:cpu" — shared by pyroom/sed/loop
 
+    def __init__(self, job_store, state, worker_id: str, slots: int):
+        super().__init__(job_store, state, worker_id, slots)
+        # Job processes are spawned and re-import config.constants: they size
+        # PYROOMACOUSTICS_MAX_PROCESSES (cores // CPU_WORKER_SLOTS) on this worker's
+        # real slot count, not the default, so the slots together fill the cores.
+        os.environ["CPU_WORKER_SLOTS"] = str(max(1, slots))
+
     def _resolve(self, job: Job):
         variant = job.payload.get("variant")
         target_fn = _TARGET_FNS.get(variant)

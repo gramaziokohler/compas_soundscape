@@ -985,6 +985,21 @@ export const LLM_JOB_STATUS_MISS_TOLERANCE = 5;
 // the card as failed. Consecutive failures tolerated (~30 s at 1–1.5 s per poll).
 export const SIMULATION_STATUS_MISS_TOLERANCE = 20;
 
+// In-flight job records (lib/job-tracker.ts) and backend-listed jobs are recovered
+// for this long after submission. Simulations run for over an hour, and the
+// backend keeps a finished simulation's record (GET /api/finished-simulations) as
+// long as the temp janitor keeps its IR files: TEMP_JANITOR_MAX_AGE_H (24 h).
+export const JOB_RECOVERY_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+// `getJobStatus` reports a job the backend no longer knows (its Redis hash
+// expired JOB_RESULT_TTL_S after it finished) with this error.
+export const JOB_NOT_FOUND_ERROR = 'Job not found or expired';
+
+// While a simulation card is running or waits on a run id, the page re-checks the
+// backend's finished-simulation records this often, so a result is applied even
+// when the poll that submitted it died (closed/crashed tab, Load latest, remount).
+export const FINISHED_SIMULATION_RECONCILE_INTERVAL_MS = 20_000;
+
 export const DEFAULT_SOUND_CONFIG = {
   prompt: "",
   duration: DEFAULT_DURATION_SECONDS,

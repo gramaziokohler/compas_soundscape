@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { JobRecord } from '@/types';
-import { latestAcousticsJobPerCard } from './acousticsJobRecovery';
+import type { FinishedSimulation, JobRecord } from '@/types';
+import { latestAcousticsJobPerCard, shouldApplyFinished } from './acousticsJobRecovery';
 
 const job = (jobId: string, timestamp: number, jobType: JobRecord['jobType'], configId?: string): JobRecord => ({
   jobId,
@@ -33,5 +33,25 @@ describe('latestAcousticsJobPerCard', () => {
     const { keep, superseded } = latestAcousticsJobPerCard([noCard, noCard2, sound, pyroom]);
     expect(keep).toEqual([noCard, noCard2, sound, pyroom]);
     expect(superseded).toEqual([]);
+  });
+});
+
+describe('shouldApplyFinished', () => {
+  const rec: FinishedSimulation = { jobId: 'job-1', jobType: 'pyroom', completedMs: 5000, result: { simulation_id: 'sim-a' } };
+
+  it('applies to the card waiting on this run, even over an older result', () => {
+    expect(shouldApplyFinished({ currentSimulationRunId: 'job-1', currentSimulationId: 'old', completedAt: 9000 }, rec, 'sim-a')).toBe(true);
+  });
+
+  it('applies to an idle card that lost its run id and holds nothing newer', () => {
+    expect(shouldApplyFinished({}, rec, 'sim-a')).toBe(true);
+    expect(shouldApplyFinished({ currentSimulationId: 'old', completedAt: 1000 }, rec, 'sim-a')).toBe(true);
+  });
+
+  it('never replaces the same result, a newer result or another run', () => {
+    expect(shouldApplyFinished({ currentSimulationId: 'sim-a' }, rec, 'sim-a')).toBe(false);
+    expect(shouldApplyFinished({ currentSimulationId: 'newer', completedAt: 6000 }, rec, 'sim-a')).toBe(false);
+    expect(shouldApplyFinished({ currentSimulationRunId: 'job-2' }, rec, 'sim-a')).toBe(false);
+    expect(shouldApplyFinished({ isRunning: true }, rec, 'sim-a')).toBe(false);
   });
 });

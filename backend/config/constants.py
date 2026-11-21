@@ -606,11 +606,8 @@ PYROOMACOUSTICS_RAY_TRACING_ENERGY_THRES = 1e-7  # Threshold for ray termination
 PYROOMACOUSTICS_RAY_TRACING_TIME_THRES = 10.0  # Maximum ray flight time (seconds)
 PYROOMACOUSTICS_RAY_TRACING_HIST_BIN_SIZE = 0.004  # Time granularity of energy bins (seconds)
 PYROOMACOUSTICS_RAY_TRACING_RECOMMENDED_MAX_ORDER = 3  # Recommended max_order for hybrid simulator
-# Processes one parallel simulation job may use: rooms (emitter + some of its listeners)
-# run one per process, leftover processes split the rays of each room (fork's
-# multi-process ray tracer). Capped by the machine's CPU count. Each running CPU job
-# (CPU_WORKER_SLOTS) uses up to this many.
-PYROOMACOUSTICS_MAX_PROCESSES = max(1, min(int(os.environ.get("PYROOMACOUSTICS_MAX_PROCESSES", "8")), os.cpu_count() or 1))
+# PYROOMACOUSTICS_MAX_PROCESSES (processes per simulation job) is defined with the
+# worker pool sizes below: it is the machine's cores divided by CPU_WORKER_SLOTS.
 PYROOMACOUSTICS_DEFAULT_PARALLEL = True  # "Parallel" toggle of the simulation card
 # Swap sources and listeners when that needs fewer emitter runs (see utils/reciprocity.py)
 PYROOMACOUSTICS_RECIPROCITY_ENABLED = os.environ.get("PYROOMACOUSTICS_RECIPROCITY", "1") != "0"
@@ -807,6 +804,10 @@ TEMP_PARENT_DIR = str(BACKEND_DIR / "temp")
 TEMP_UPLOADS_DIR = str(BACKEND_DIR / "temp" / "uploads")
 TEMP_LIBRARY_DIR = str(BACKEND_DIR / "temp" / "library_downloads")
 TEMP_SIMULATIONS_DIR = str(BACKEND_DIR / "temp" / "simulations")
+# One JSON record per finished acoustics simulation job (<workspace>/<job_id>.json),
+# written by the worker so a client can apply the result after the Redis job hash
+# expired (JOB_RESULT_TTL_S). Pruned by the temp janitor with the IR files it points to.
+TEMP_FINISHED_SIMULATIONS_DIR = str(BACKEND_DIR / "temp" / "finished_simulations")
 PREFLIGHT_PAYLOAD_DIR = str(BACKEND_DIR / "temp" / "simulations" / "preflight")  # + /<workspace id>/preflight_<id>.json
 TEMP_STATIC_DIR = str(BACKEND_DIR / "temp" / "static")
 TEMP_ANALYSIS_DIR = str(BACKEND_DIR / "temp" / "analysis")
@@ -1240,6 +1241,18 @@ CPU_WORKER_SLOTS = int(os.environ.get("CPU_WORKER_SLOTS", "4"))
 SA3_WORKER_SLOTS = int(os.environ.get("SA3_WORKER_SLOTS", "1"))
 PFFDTD_WORKER_SLOTS = int(os.environ.get("PFFDTD_WORKER_SLOTS", "1"))  # one GPU solve at a time
 
+# Processes one parallel simulation job may use: rooms (emitter + some of its listeners)
+# run one per process, leftover processes split the rays of each room (fork's
+# multi-process ray tracer). Default: the machine's logical cores divided by the CPU
+# worker's slots, so that all slots running at once fill the machine without
+# oversubscribing it (the CPU runner exports its --slots as CPU_WORKER_SLOTS to the
+# job processes). PYROOMACOUSTICS_MAX_PROCESSES overrides it; capped by the core count.
+_CPU_COUNT = os.cpu_count() or 1
+PYROOMACOUSTICS_MAX_PROCESSES = max(1, min(
+    int(os.environ.get("PYROOMACOUSTICS_MAX_PROCESSES", str(_CPU_COUNT // max(1, CPU_WORKER_SLOTS)))),
+    _CPU_COUNT,
+))
+
 # Fairness / rate limiting
 GPU_QUEUE_PER_SESSION_MAX = int(os.environ.get("GPU_QUEUE_PER_SESSION_MAX", "3"))
 
@@ -1254,6 +1267,10 @@ JOB_RESULT_TTL_S = int(os.environ.get("JOB_RESULT_TTL_S", "3600"))
 JOB_CLIENT_META_MAX_BYTES = 16 * 1024
 JOB_REAPER_INTERVAL_S = int(os.environ.get("JOB_REAPER_INTERVAL_S", "30"))
 JOB_MAX_ATTEMPTS = int(os.environ.get("JOB_MAX_ATTEMPTS", "2"))
+# The reaper fails jobs still queued after this long (a lost queue entry or an IO job
+# whose API process died before it started would otherwise stay "queued" forever).
+JOB_QUEUED_MAX_AGE_S = int(os.environ.get("JOB_QUEUED_MAX_AGE_S", str(24 * 3600)))
+JOB_QUEUED_EXPIRED_MESSAGE = "Expired: still queued after 24 h"
 WORKER_HEARTBEAT_INTERVAL_S = int(os.environ.get("WORKER_HEARTBEAT_INTERVAL_S", "10"))
 
 # SSE

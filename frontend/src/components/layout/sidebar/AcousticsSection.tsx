@@ -125,7 +125,7 @@ import { groupSimulationSources } from '@/utils/positionKey';
 import { audibleSoundsInScene } from '@/lib/audio/utils/mute-solo';
 import { useServiceVersions } from '@/hooks/useServiceVersions';
 import { logSimulationLaunch, logSimulationResult } from '@/lib/study/simulationEvents';
-import { recordInflightJob, removeInflightJob } from '@/lib/job-tracker';
+import { recordInflightJob, removeInflightJob, claimSimulationResult, releaseSimulationResult } from '@/lib/job-tracker';
 import { captureGenerationSignature, getGenerationRevertPatch, getModifiedGenerationFields, isGenerationDirty } from '@/utils/generationSignature';
 
 interface AcousticsSectionProps {
@@ -834,6 +834,10 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             return;
           }
 
+          // The finished-simulation reconcile (useJobRecovery) may already be
+          // importing this result into the card — never import it twice.
+          if (!claimSimulationResult(result.simulation_id)) return;
+
           // ── Import IRs + build results text ──────────────────────────────
           const irImportResult = await importPyroomIRFiles(result.simulation_id, result.ir_files);
           logSimulationResult(index, 'pyroomacoustics', result.simulation_id, irImportResult);
@@ -864,6 +868,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             } as any);
             if (onIRImported) onIRImported();
           } else {
+            releaseSimulationResult(result.simulation_id);
             handleUpdateConfig(index, {
               isRunning: false,
               error: 'Simulation completed but failed to import impulse responses.',

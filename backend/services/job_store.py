@@ -42,6 +42,8 @@ from config.constants import (
     JOB_HEARTBEAT_TIMEOUT_S,
     JOB_RESULT_TTL_S,
     JOB_MAX_ATTEMPTS,
+    JOB_QUEUED_MAX_AGE_S,
+    JOB_QUEUED_EXPIRED_MESSAGE,
     GPU_QUEUE_PER_SESSION_MAX,
 )
 from services.study_server_events import log_job_enqueued
@@ -288,8 +290,28 @@ class AsyncJobStore:
         views.sort(key=lambda v: v.created, reverse=True)
         return views
 
+    async def _expire_queued(self, key: str, data: dict) -> None:
+        """Fail a job that has waited in the queue longer than JOB_QUEUED_MAX_AGE_S."""
+        job_id = key.split(":", 1)[1]
+        job_type = data.get("type", "")
+        session_id = data.get("session_id", "")
+        queue_key = _queue_key_for_type(job_type)
+        pipe = self.redis.pipeline()
+        if queue_key is not None:
+            pipe.lrem(queue_key, 0, job_id)
+        pipe.hset(key, mapping={
+            "status": JOB_STATUS_ERROR,
+            "status_text": "Error",
+            "error": JOB_QUEUED_EXPIRED_MESSAGE,
+        })
+        pipe.expire(key, JOB_RESULT_TTL_S)
+        if job_type in GPU_LIKE_JOB_TYPES and session_id:
+            pipe.srem(pending_gpu_key(session_id), job_id)
+        await pipe.execute()
+
     async def reap_once(self) -> int:
-        """Re-queue or fail running jobs whose worker heartbeat went stale.
+        """Re-queue or fail running jobs whose worker heartbeat went stale, and
+        fail jobs still queued after JOB_QUEUED_MAX_AGE_S.
 
         Returns the number of jobs acted on. Intended to be called on a
         periodic asyncio task from the API lifespan.
@@ -298,7 +320,17 @@ class AsyncJobStore:
         now = time.time()
         async for key in self.redis.scan_iter(match="job:*"):
             data = await self.redis.hgetall(key)
-            if not data or data.get("status") != JOB_STATUS_RUNNING:
+            if not data:
+                continue
+            if data.get("status") == JOB_STATUS_QUEUED:
+                # Age from the last sign of life: a job the reaper re-queued
+                # after a long run is not stale because it was created long ago.
+                last_seen = max(float(data.get("created") or now), float(data.get("heartbeat") or 0.0))
+                if now - last_seen > JOB_QUEUED_MAX_AGE_S:
+                    await self._expire_queued(key, data)
+                    acted += 1
+                continue
+            if data.get("status") != JOB_STATUS_RUNNING:
                 continue
             heartbeat = float(data.get("heartbeat") or 0.0)
             if now - heartbeat < JOB_HEARTBEAT_TIMEOUT_S:
@@ -549,6 +581,11 @@ class WorkerJobStore:
 
     def is_cancel_requested(self, job_id: str) -> bool:
         return self.redis.hget(job_key(job_id), "cancel_requested") == "1"
+
+    def get_client_meta(self, job_id: str) -> Optional[dict]:
+        """The card mapping the submitting client attached (POST /api/jobs/{id}/meta)."""
+        meta = _parse_json_field(self.redis.hget(job_key(job_id), "client_meta") or "")
+        return meta if isinstance(meta, dict) else None
 
     def requeue_tail(self, job_id: str, payload: dict) -> None:
         """Push the (updated) job back onto the tail of its queue.

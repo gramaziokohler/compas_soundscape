@@ -16,7 +16,20 @@ import time
 from pathlib import Path
 from typing import Callable
 
+from services.finished_simulations import is_simulation_job, write_record
 from services.job_store import Job, WorkerJobStore
+
+
+def _record_finished_simulation(job_store: WorkerJobStore, job: Job, result) -> None:
+    """Keep a simulation's result past its Redis TTL (services/finished_simulations.py).
+    Best-effort: a failed record must never fail the finished job."""
+    if not is_simulation_job(job.type, job.payload):
+        return
+    try:
+        meta = job_store.get_client_meta(job.job_id)
+        write_record(job.job_id, job.type, job.session_id, job.payload, meta, result)
+    except Exception as exc:
+        print(f"[worker] could not record finished simulation {job.job_id}: {exc}")
 
 
 def run_subprocess_job(
@@ -67,6 +80,7 @@ def run_subprocess_job(
                 result = json.load(f)
             if result.get("type") == "done":
                 job_store.complete(job.job_id, result.get("result"))
+                _record_finished_simulation(job_store, job, result.get("result"))
             else:
                 job_store.fail(job.job_id, result.get("message", "Unknown error"))
         except Exception:

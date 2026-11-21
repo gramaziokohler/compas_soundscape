@@ -13,8 +13,10 @@ import json
 from fastapi import APIRouter, HTTPException, Request
 
 from config.constants import JOB_CLIENT_META_MAX_BYTES
+from services.finished_simulations import list_records
 from services.job_store import job_store, JobNotFoundError
 from models.schemas import (
+    FinishedSimulationRecord,
     JobStatusResponse,
     JobCancelResponse,
     JobClientMetaRequest,
@@ -56,6 +58,16 @@ async def list_jobs(request: Request):
     """
     views = await job_store.list_session_jobs(_session_id(request))
     return [_to_response(v) for v in views]
+
+
+@router.get("/api/finished-simulations", response_model=list[FinishedSimulationRecord])
+async def list_finished_simulations(model_id: str, request: Request):
+    """Finished simulation jobs of one model in the caller's workspace, newest first.
+
+    Outlives the job hash's JOB_RESULT_TTL_S, so a client that lost track of a
+    run (closed or crashed tab, expired local record) can still apply its result.
+    """
+    return [FinishedSimulationRecord(**r) for r in list_records(_session_id(request), model_id)]
 
 
 @router.get("/api/jobs/{job_id}", response_model=JobStatusResponse)

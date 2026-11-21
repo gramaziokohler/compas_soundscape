@@ -86,7 +86,17 @@ async def generate_sounds(request: SoundGenerationRequest, req: Request):
    `process.kill()` their child.
 6. Reaper (asyncio task in `main.py` lifespan): every `JOB_REAPER_INTERVAL_S`, running jobs whose
    heartbeat is older than `JOB_HEARTBEAT_TIMEOUT_S` (90 s) are re-queued (up to `JOB_MAX_ATTEMPTS`)
-   or failed.
+   or failed. Jobs still `queued` `JOB_QUEUED_MAX_AGE_S` (24 h) after their last sign of life
+   (`max(created, heartbeat)`) are failed with `JOB_QUEUED_EXPIRED_MESSAGE` and leave their queue.
+7. Finished simulations outlive the hash: when a card simulation (`pyroomacoustics` speckle/geometry
+   variants, `pffdtd` incl. hybrid) completes, `_subprocess_common.py` writes
+   `temp/finished_simulations/<workspace>/<job_id>.json` (`services/finished_simulations.py`: result +
+   the client's card meta). `GET /api/finished-simulations?model_id=` lists them; the temp janitor
+   prunes them with the IR files (24 h). The frontend applies them (`reconcileFinishedSimulations`).
+
+Processes per simulation job: `PYROOMACOUSTICS_MAX_PROCESSES` defaults to `os.cpu_count() //
+CPU_WORKER_SLOTS`; `CpuRunner` exports its `--slots` as `CPU_WORKER_SLOTS` to the spawned job
+processes, so all slots busy fill the cores without oversubscribing them.
 
 ## GPU Worker — Resident Model, Clip-Level Yielding, Cooperative Cancel
 

@@ -105,6 +105,17 @@ class JobStatusResponse(BaseModel):
     created: Optional[float] = None
 
 
+class FinishedSimulationRecord(BaseModel):
+    """A finished acoustics simulation job kept past its Redis TTL
+    (services/finished_simulations.py) so a client can still apply its result."""
+    job_id: str
+    job_type: str                 # "pyroomacoustics" | "pffdtd"
+    completed: float              # epoch seconds
+    model_id: Optional[str] = None
+    meta: Optional[dict] = None   # the submitting client's card mapping
+    result: Optional[object] = None
+
+
 class JobClientMetaRequest(BaseModel):
     """Client card mapping (model id, config ids, …) attached to a job so any
     member of the workspace can reattach it to the right cards."""

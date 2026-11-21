@@ -1,4 +1,4 @@
-import type { JobRecord } from '@/types';
+import type { FinishedSimulation, JobRecord } from '@/types';
 
 /**
  * Split recovered job records so each simulation card gets at most one
@@ -40,4 +40,25 @@ export function latestAcousticsJobPerCard(records: JobRecord[]): {
 function acousticsConfigId(record: JobRecord): string | undefined {
   if (record.jobType !== 'pyroom' && record.jobType !== 'pffdtd') return undefined;
   return record.meta?.configId;
+}
+
+/** Run state of a simulation card, as recovery reads it. */
+export interface CardRunState {
+  id?: string;
+  isRunning?: boolean;
+  currentSimulationRunId?: string | null;
+  currentSimulationId?: string | null;
+  completedAt?: number | null;
+}
+
+/**
+ * Whether a finished simulation record (GET /api/finished-simulations) should be
+ * applied to its card: the card waits on exactly this run, or it holds neither
+ * this result nor a newer one and no other run owns it.
+ */
+export function shouldApplyFinished(card: CardRunState, rec: FinishedSimulation, simulationId: string): boolean {
+  if (card.currentSimulationRunId === rec.jobId) return true;
+  if (card.currentSimulationId === simulationId) return false;
+  if (card.currentSimulationRunId || card.isRunning) return false;
+  return rec.completedMs > (card.completedAt ?? 0);
 }

@@ -200,6 +200,16 @@ const storage: PersistStorage<State> = {
   `meta.modelId` is another model are skipped.
 - Recovery waits for `domainReady` (page `domainRestored`, set when the URL bootstrap finished
   restoring) — recovering before the restore lets `restoreSoundscape` overwrite the merged result.
+- Records live `JOB_RECOVERY_MAX_AGE_MS` (24 h) — simulations run for over an hour. A tracked
+  acoustics job whose hash expired (`JOB_NOT_FOUND_ERROR`) is looked up in the backend's
+  finished-simulation records instead of failing the card.
+- **Finished-simulation reconcile** (`reconcileFinishedSimulations`): after discovery, every
+  `FINISHED_SIMULATION_RECONCILE_INTERVAL_MS` while a card runs or holds a run id, and after **Load
+  latest**, the page applies `GET /api/finished-simulations` records to their cards
+  (`shouldApplyFinished`: the card waits on that run, or holds no newer result and no other run owns
+  it). It survives what the submitting poll does not: a crashed/closed tab, a remount, Load latest,
+  a 409 that kept the run id out of the save. `claimSimulationResult` (lib/job-tracker.ts) makes the
+  submitting poll and the recovery paths import a result once.
 - Viewers never auto-reload domain state. The heartbeat's workspace `revision` vs the store's
   `loadedRevision` lights the **Load latest** bar button (`selectHasNewerSave`); clicking it
   re-applies the owner's saved `soundscape.json` and calls `discoverRunningWorkspaceJobs()` for jobs

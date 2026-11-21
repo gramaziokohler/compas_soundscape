@@ -330,6 +330,16 @@ export interface JobRecord {
   };
 }
 
+/** A finished acoustics simulation job kept past its Redis TTL (GET /api/finished-simulations). */
+export interface FinishedSimulation {
+  jobId: string;
+  jobType: Extract<JobType, 'pyroom' | 'pffdtd'>;
+  /** Completion time in ms. */
+  completedMs: number;
+  meta?: JobRecord['meta'];
+  result: any;
+}
+
 export type SoundState = 'playing' | 'paused' | 'stopped';
 
 // Per-user preferences (Advanced Settings)

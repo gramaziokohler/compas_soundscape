@@ -31,6 +31,8 @@ from config.constants import (  # noqa: E402
     JOB_STATUS_CANCELLED,
     GPU_QUEUE_PER_SESSION_MAX,
     JOB_MAX_ATTEMPTS,
+    JOB_QUEUED_MAX_AGE_S,
+    JOB_QUEUED_EXPIRED_MESSAGE,
 )
 
 
@@ -316,5 +318,44 @@ def test_sweep_orphaned_io_jobs_marks_running_as_error():
         view = await api.get(job_id)
         assert view.status == "error"
         assert view.error == "Server restarted"
+
+    run(body())
+
+
+def test_reaper_expires_jobs_queued_over_the_max_age():
+    api, _ = make_stores()
+
+    async def body():
+        old = await api.enqueue(JOB_TYPE_PYROOMACOUSTICS, "session-a", {})
+        fresh = await api.enqueue(JOB_TYPE_PYROOMACOUSTICS, "session-a", {})
+        io_old = await api.enqueue_io("tts", "session-a")
+        long_ago = time.time() - JOB_QUEUED_MAX_AGE_S - 60
+        for job_id in (old, io_old):
+            await api.redis.hset(job_key(job_id), mapping={"created": str(long_ago), "heartbeat": str(long_ago)})
+
+        acted = await api.reap_once()
+        assert acted == 2
+        for job_id in (old, io_old):
+            view = await api.get(job_id)
+            assert view.status == "error"
+            assert view.error == JOB_QUEUED_EXPIRED_MESSAGE
+            assert await api.redis.ttl(job_key(job_id)) > 0
+        assert (await api.get(fresh)).status == JOB_STATUS_QUEUED
+        # the expired job left the worker queue; the fresh one is still in it
+        assert await api.redis.lrange("queue:cpu", 0, -1) == [fresh]
+
+    run(body())
+
+
+def test_reaper_keeps_a_requeued_job_created_long_ago():
+    api, _ = make_stores()
+
+    async def body():
+        job_id = await api.enqueue(JOB_TYPE_PYROOMACOUSTICS, "session-a", {})
+        long_ago = time.time() - JOB_QUEUED_MAX_AGE_S - 60
+        # created long ago, but a worker heartbeat shows it ran until recently
+        await api.redis.hset(job_key(job_id), mapping={"created": str(long_ago), "heartbeat": str(time.time())})
+        assert await api.reap_once() == 0
+        assert (await api.get(job_id)).status == JOB_STATUS_QUEUED
 
     run(body())

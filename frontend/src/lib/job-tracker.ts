@@ -1,6 +1,7 @@
 import type { JobRecord, JobType } from '@/types';
 import { apiService } from '@/services/api';
 import { useUIStore } from '@/store/uiStore';
+import { JOB_RECOVERY_MAX_AGE_MS } from '@/utils/constants';
 
 /**
  * In-flight job tracker.
@@ -17,11 +18,29 @@ import { useUIStore } from '@/store/uiStore';
 const STORAGE_KEY = 'compas-inflight-jobs';
 
 /**
- * Records older than the backend's `JOB_RESULT_TTL_S` (3600 s) can no longer be
- * fetched — the Redis hash has expired — so drop them. Kept in sync with
- * `backend/config/constants.py::JOB_RESULT_TTL_S`.
+ * Records are kept for JOB_RECOVERY_MAX_AGE_MS after submission: a simulation can
+ * run for more than an hour, and a finished one stays recoverable from the
+ * backend's finished-simulation records after its job hash expired.
  */
-const MAX_AGE_MS = 60 * 60 * 1000;
+const MAX_AGE_MS = JOB_RECOVERY_MAX_AGE_MS;
+
+/**
+ * Simulation results being imported into a card in this tab, by simulation id.
+ * The submitting poll and the recovery paths (useJobRecovery) can both see the
+ * same finished job; whoever claims it first imports it, the others skip it.
+ */
+const _claimedSimulationResults = new Set<string>();
+
+export function claimSimulationResult(simulationId: string): boolean {
+  if (_claimedSimulationResults.has(simulationId)) return false;
+  _claimedSimulationResults.add(simulationId);
+  return true;
+}
+
+/** Give a claim back when its import failed, so another path may retry it. */
+export function releaseSimulationResult(simulationId: string): void {
+  _claimedSimulationResults.delete(simulationId);
+}
 
 /** Model the current page is bound to (Speckle model or saved Home project). */
 function currentModelId(): string | undefined {

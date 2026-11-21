@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { apiService } from '@/services/api';
-import { getStoredJobs, removeInflightJob } from '@/lib/job-tracker';
+import { getStoredJobs, removeInflightJob, claimSimulationResult, releaseSimulationResult } from '@/lib/job-tracker';
 import {
   useSoundscapeStore,
   beginSoundGeneration,
@@ -24,8 +24,14 @@ import type { SoundDirectivity } from '@/types/directivity';
 import { isFreshHomeUrl } from '@/utils/homeStage';
 import { progressLanesFromPartial } from '@/utils/progressLanes';
 import { isShareViewActive } from '@/store/shareViewStore';
+import { useUIStore } from '@/store/uiStore';
+import {
+  FINISHED_SIMULATION_RECONCILE_INTERVAL_MS,
+  JOB_NOT_FOUND_ERROR,
+  JOB_RECOVERY_MAX_AGE_MS,
+} from '@/utils/constants';
 import { cardEventId } from '@/utils/config-id';
-import { latestAcousticsJobPerCard } from '@/utils/acousticsJobRecovery';
+import { latestAcousticsJobPerCard, shouldApplyFinished, type CardRunState } from '@/utils/acousticsJobRecovery';
 import { generatedEventFieldsFromConfig } from '@/utils/event-factory';
 import { parseSoundCopyIndex } from '@/lib/audio/utils/variant-sound-id';
 import {
@@ -34,19 +40,20 @@ import {
   buildSimulationResultsText,
   buildPffdtdSimulationResultsText,
 } from '@/utils/acousticMetrics';
-import type { JobType, JobRecord } from '@/types';
+import type { FinishedSimulation, JobType, JobRecord } from '@/types';
 import type { ActiveJob } from '@/services/api';
 import type { PffdtdSimulationConfig, PyroomAcousticsSimulationConfig } from '@/types/acoustics';
 import type { PffdtdJobPartial } from '@/types/pffdtd';
 
 const POLL_INTERVAL_MS = 1500;
 
-/** Matches the backend `JOB_RESULT_TTL_S` (3600 s). */
-const MAX_AGE_MS = 60 * 60 * 1000;
-
+/** A job submitted longer ago is neither polled nor recoverable (see JOB_RECOVERY_MAX_AGE_MS). */
 function isJobLikelyStillAlive(record: JobRecord): boolean {
-  return Date.now() - record.timestamp < MAX_AGE_MS;
+  return Date.now() - record.timestamp < JOB_RECOVERY_MAX_AGE_MS;
 }
+
+const isAcousticsJob = (jobType: JobType): jobType is 'pyroom' | 'pffdtd' =>
+  jobType === 'pyroom' || jobType === 'pffdtd';
 
 /**
  * Find the acoustics simulation card a job belongs to. Prefers the stable
@@ -268,9 +275,25 @@ export function useJobRecovery({ domainReady }: { domainReady: boolean }): {
       } catch (err) {
         console.log('[useJobRecovery] Discovery failed', err);
       } finally {
+        // Results no tab applied (and whose job hash may have expired): the
+        // backend's finished-simulation records of this model.
+        await reconcileFinishedSimulations();
         setRecoveryResolved(true);
       }
     })();
+  }, [domainReady]);
+
+  // While a card runs or waits on a run id, keep checking the finished records:
+  // the poll that submitted the job may be gone (crashed tab, Load latest, remount).
+  useEffect(() => {
+    if (!domainReady || isShareViewActive()) return;
+    const interval = setInterval(() => {
+      const configs = useAcousticsSimulationStore.getState().simulationConfigs as CardRunState[];
+      if (configs.some((c) => c.isRunning || c.currentSimulationRunId)) {
+        void reconcileFinishedSimulations();
+      }
+    }, FINISHED_SIMULATION_RECONCILE_INTERVAL_MS);
+    return () => clearInterval(interval);
   }, [domainReady]);
 
   return {
@@ -327,6 +350,15 @@ async function recoverJob(record: JobRecord): Promise<void> {
       return;
     }
 
+    if (status.error === JOB_NOT_FOUND_ERROR && isAcousticsJob(jobType)) {
+      // The job hash expired (1 h after it finished): its result may still be
+      // in the backend's finished-simulation records.
+      console.log(`[useJobRecovery] ${jobType} job ${jobId} expired — looking for its finished record`);
+      removeInflightJob(jobId);
+      await recoverExpiredAcousticsJob(record);
+      return;
+    }
+
     if (status.cancelled || status.error) {
       console.log(`[useJobRecovery] Job ${jobId} (${jobType}) is cancelled/error — cleaning up`);
       removeInflightJob(jobId);
@@ -370,6 +402,13 @@ function startPolling(jobType: JobType, jobId: string, record: JobRecord): void 
   const interval = setInterval(async () => {
     try {
       const status = await apiService.getJobStatus(jobType, jobId);
+
+      if (status.error === JOB_NOT_FOUND_ERROR && isAcousticsJob(jobType)) {
+        clearInterval(interval);
+        removeInflightJob(jobId);
+        await recoverExpiredAcousticsJob(record);
+        return;
+      }
 
       if (status.cancelled || status.error) {
         clearInterval(interval);
@@ -622,6 +661,24 @@ async function recoverAcousticsJob(
   record: JobRecord,
 ): Promise<void> {
   const simulationId: string = result?.simulation_id || jobId;
+  // The submitting poll or another recovery path may be importing this result.
+  if (!claimSimulationResult(simulationId)) return;
+  let applied = false;
+  try {
+    applied = await applyAcousticsResult(jobType, jobId, simulationId, result, record);
+  } finally {
+    if (!applied) releaseSimulationResult(simulationId);
+  }
+}
+
+/** recoverAcousticsJob's import; true once the card holds this result (or already did). */
+async function applyAcousticsResult(
+  jobType: 'pyroom' | 'pffdtd',
+  jobId: string,
+  simulationId: string,
+  result: any,
+  record: JobRecord,
+): Promise<boolean> {
   // Local records carry a configId, so we know the card should come back with
   // the bootstrap restore — wait briefly for it. Backend-discovered records are
   // resolved immediately by the persisted run id (or dropped if the card is gone).
@@ -630,7 +687,7 @@ async function recoverAcousticsJob(
     : findAcousticsConfigIndex(jobId, simulationId, record);
   if (index < 0) {
     console.log(`[useJobRecovery] ${jobType} job ${jobId} completed but no matching simulation card — result dropped`);
-    return;
+    return false;
   }
 
   const store = useAcousticsSimulationStore.getState();
@@ -644,7 +701,7 @@ async function recoverAcousticsJob(
       status: 'Complete!',
       currentSimulationRunId: null,
     } as any);
-    return;
+    return true;
   }
 
   const irFiles: string[] = Array.isArray(result?.ir_files) ? result.ir_files : [];
@@ -655,7 +712,7 @@ async function recoverAcousticsJob(
       error: 'Simulation completed but generated no impulse responses.',
       currentSimulationRunId: null,
     } as any);
-    return;
+    return true;
   }
 
   const irImportResult = jobType === 'pyroom'
@@ -669,7 +726,7 @@ async function recoverAcousticsJob(
       error: 'Simulation completed but failed to import impulse responses.',
       currentSimulationRunId: null,
     } as any);
-    return;
+    return false;
   }
 
   const resultsText = jobType === 'pyroom'
@@ -695,6 +752,70 @@ async function recoverAcousticsJob(
     // hybrid runs (tracked as 'pffdtd' jobs) report their crossover with the result
     ...(result?.hybrid ? { hybridInfo: result.hybrid } : {}),
   } as any);
+  return true;
+}
+
+function finishedToJobRecord(rec: FinishedSimulation): JobRecord {
+  return { jobId: rec.jobId, jobType: rec.jobType, timestamp: rec.completedMs, ...(rec.meta ? { meta: rec.meta } : {}) };
+}
+
+/** Model of the open page (URL first, then the loaded model / Home project). */
+function currentPageModelId(): string | null {
+  const ui = useUIStore.getState();
+  return pageModelId() ?? ui.globalSpeckleData?.model_id ?? ui.homeProject?.modelId ?? null;
+}
+
+let _reconciling = false;
+
+/**
+ * Apply finished simulations no tab applied: the backend keeps a record of every
+ * finished simulation job (GET /api/finished-simulations, ~24 h, past the job
+ * hash's 1 h TTL). Each card gets at most its newest record, and only when
+ * `shouldApplyFinished` allows it, so a newer run or result is never replaced.
+ * Safe to call repeatedly: an applied result is skipped by its simulation id.
+ */
+export async function reconcileFinishedSimulations(): Promise<void> {
+  if (_reconciling || isShareViewActive() || isFreshHomeUrl()) return;
+  const modelId = currentPageModelId();
+  if (!modelId) return;
+  _reconciling = true;
+  try {
+    const records = await apiService.getFinishedSimulations(modelId);
+    const seenCards = new Set<number>();
+    for (const rec of records) {
+      const record = finishedToJobRecord(rec);
+      const simulationId: string = rec.result?.simulation_id || rec.jobId;
+      const index = findAcousticsConfigIndex(rec.jobId, simulationId, record);
+      if (index < 0 || seenCards.has(index)) continue;
+      seenCards.add(index); // newest record first: older ones never reach this card
+      const card = useAcousticsSimulationStore.getState().simulationConfigs[index] as CardRunState | undefined;
+      if (!card || !shouldApplyFinished(card, rec, simulationId)) continue;
+      console.log(`[useJobRecovery] applying finished ${rec.jobType} job ${rec.jobId} to card ${card.id}`);
+      _handledJobIds.add(rec.jobId);
+      removeInflightJob(rec.jobId);
+      await recoverAcousticsJob(rec.jobType, rec.jobId, rec.result, record);
+    }
+  } catch (err) {
+    console.log('[useJobRecovery] Finished-simulation reconcile failed', err);
+  } finally {
+    _reconciling = false;
+  }
+}
+
+/** A tracked acoustics job whose hash expired: apply its finished record, or fail the card. */
+async function recoverExpiredAcousticsJob(record: JobRecord): Promise<void> {
+  const modelId = currentPageModelId();
+  const finished = modelId
+    ? (await apiService.getFinishedSimulations(modelId)).find((r) => r.jobId === record.jobId)
+    : undefined;
+  if (finished) {
+    await recoverAcousticsJob(finished.jobType, finished.jobId, finished.result, {
+      ...finishedToJobRecord(finished),
+      meta: finished.meta ?? record.meta,
+    });
+    return;
+  }
+  resetJobState(record.jobType, record, 'The simulation result is no longer available. Run it again.');
 }
 
 function recoverLoopJob(result: any, record: JobRecord): void {

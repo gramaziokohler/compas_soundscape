@@ -77,7 +77,7 @@ import { useViewportScale } from "@/hooks/useViewportScale";
 import { useUndoRedo } from "@/hooks/useUndoRedo";
 import { scheduleUndoSafeDeletion } from "@/lib/undo-safe-deletion";
 import { useGlobalShortcuts } from "@/hooks/useGlobalShortcuts";
-import { useJobRecovery, discoverRunningWorkspaceJobs } from "@/hooks/useJobRecovery";
+import { useJobRecovery, discoverRunningWorkspaceJobs, reconcileFinishedSimulations } from "@/hooks/useJobRecovery";
 import { useApplySavedObjectVisibility } from "@/hooks/useApplySavedObjectVisibility";
 import { useModelVersionSession } from "@/hooks/useModelVersionSession";
 import { useListenerOrientationAutosave } from "@/hooks/useListenerOrientationAutosave";
@@ -2102,6 +2102,8 @@ function HomeContent() {
       markSoundscapeLoaded(loadResponse.revision);
       // Jobs the owner started since this page loaded show up as generating too.
       await discoverRunningWorkspaceJobs();
+      // The reload replaced the cards: re-apply results that finished meanwhile.
+      await reconcileFinishedSimulations();
     } catch (err) {
       console.error('[page:loadLatest] Failed to load the latest soundscape:', err);
       notifyError(WORKSPACE_MESSAGES.LOAD_LATEST_FAILED, 'warning');
