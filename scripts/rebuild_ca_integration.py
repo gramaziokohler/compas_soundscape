@@ -48,6 +48,7 @@ PR_BRANCHES = (
     "feat/hybrid-output-limit",
     "chore/benchmark-tools",
     "feat/render-progress",  # stacked on feat/integration-hooks
+    "feat/ray-progress",  # stacked on feat/render-progress
     "feat/udfa-polar-lowpass",
 )
 GH_PUSH = ("-c", "credential.helper=", "-c", "credential.helper=!'/c/Program Files/GitHub CLI/gh.exe' auth git-credential")

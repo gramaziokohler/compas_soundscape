@@ -247,7 +247,7 @@ def test_parallel_rendering_gives_the_serial_responses():
     assert rows and all(r["pairs_total"] == 4 and len(r["lanes"]) == 2 for r in rows)
     assert {lane["label"] for lane in rows[0]["lanes"]} == {"S1 → R1–2", "S2 → R1–2"}
     assert rows[-1]["pairs_done"] == 4 and all(lane["state"] == "done" for lane in rows[-1]["lanes"])
-    assert all(t.endswith(f"pairs {r['pairs_done']}/4") for (_, t, d), r in zip([s for s in stages if s[2]], rows))
+    assert all(t.endswith(f" · {r['pairs_done']}/4 pairs") for (_, t, d), r in zip([s for s in stages if s[2]], rows))
 
 
 def test_progress_lines_name_the_step_and_its_counts():
@@ -257,7 +257,18 @@ def test_progress_lines_name_the_step_and_its_counts():
     assert ca_progress.describe("ray tracing", 6200, 20000, 10000) == "Ray tracing · 6,200/20,000 rays"
     assert ca_progress.describe("ray tracing", 1, 3, 10000) == "Ray tracing · 1/3 sources"
     assert ca_progress.describe("image sources", None, None, 10000) == "Image sources"
+    assert ca_progress.describe("image sources", 1234, None, 10000) == "Image sources · 1,234 reflections"
     assert ca_progress.describe("new stage", None, None, 0) == "New stage"
+    # collapsed line: the slowest part's phase and the pairs done, never a part's own step
+    spans = ca_progress.stage_spans(True)
+    tracing, rendering = ca_progress.Lane("S1–2 → R1–2", 4, spans, 10000), ca_progress.Lane("S3 → R1–2", 2, spans, 10000)
+    assert ca_progress.summary([tracing, rendering], 6)[1] == "Starting · 0/6 pairs"
+    tracing.update("ray tracing", 6000, 20000)
+    rendering.update("rendering: ambisonic encoding", 0, 2)
+    assert ca_progress.summary([tracing, rendering], 6)[1] == "Tracing sound paths · 0/6 pairs"
+    tracing.update("rendering: early reflections", 0, 4)
+    rendering.finish()
+    assert ca_progress.summary([tracing, rendering], 6)[1] == "Rendering responses · 2/6 pairs"
     lane = ca_progress.Lane("S1 → R1", 1, ca_progress.stage_spans(True), 10000)
     lane.update("rendering: late reverberation", 0, 1)
     halfway = lane.fraction

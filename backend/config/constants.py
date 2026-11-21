@@ -550,7 +550,8 @@ CA_PROGRESS_STAGE_LABELS = {
     "rendering: ambisonic encoding": "Ambisonic encoding",
     "rendering: binaural encoding": "Binaural encoding",
 }
-CA_PROGRESS_STAGE_UNITS = {  # "ray tracing" counts rays when split over processes, else sources
+CA_PROGRESS_STAGE_UNITS = {  # "ray tracing" counts rays (sources when one process per source traces them)
+    "image sources": "reflections",  # found so far, with no total
     "responses": "responses",
     "directional histograms": "sources",
     "rendering": "pairs",
@@ -559,6 +560,22 @@ CA_PROGRESS_STAGE_UNITS = {  # "ray tracing" counts rays when split over process
     "rendering: ambisonic encoding": "pairs",
     "rendering: binaural encoding": "pairs",
 }
+# The collapsed line of a run split over processes: the phase of its slowest part, then the pairs done
+# ("Rendering responses · 3/18 pairs"); each part's own step and counts are in its expanded row.
+CA_PROGRESS_PHASES = {
+    "references": "Tracing sound paths",
+    "image sources": "Tracing sound paths",
+    "ray tracing": "Tracing sound paths",
+    "diffraction": "Tracing sound paths",
+    "directional histograms": "Tracing sound paths",
+    "responses": "Rendering responses",
+    "rendering": "Rendering responses",
+    "rendering: early reflections": "Rendering responses",
+    "rendering: late reverberation": "Rendering responses",
+    "rendering: ambisonic encoding": "Rendering responses",
+    "rendering: binaural encoding": "Rendering responses",
+}
+CA_PROGRESS_PHASE_STARTING = "Starting"
 CA_PROGRESS_SPANS_AMBISONIC = {
     "references": (0.0, 0.02),
     "ray tracing": (0.02, 0.27),

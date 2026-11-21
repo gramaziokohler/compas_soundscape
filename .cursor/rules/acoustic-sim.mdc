@@ -93,9 +93,12 @@ Step 5 above is the **legacy** engine. Since the compas_acoustics migration
   hybrid's rendering stage reports its steps (`rendering: early reflections` / `late reverberation`
   / `ambisonic encoding`) while pairs render. When the pairs render in several processes, each one
   writes its last report to `temp/simulations/ca_lanes_*/lane<k>.json`. The job reads them every
-  `CA_PROGRESS_POLL_S` into the status line and `partial.ca_progress.lanes`. The card's ▾ next to
-  the status line shows one row per process (`components/ui/ProgressLanes.tsx`). One-process ray
-  tracing has no ray count: tracing rays in batches changes the responses.
+  `CA_PROGRESS_POLL_S` into `partial.ca_progress.lanes`. The card's ▾ next to the status line shows
+  one row per process with its step and counts (`components/ui/ProgressLanes.tsx`); the collapsed
+  line stays high-level: the slowest process's phase (`CA_PROGRESS_PHASES`) and the pairs done
+  ("Rendering responses · 3/18 pairs"). CA counts rays as traced ("Ray tracing · 6,000/20,000
+  rays", a source's rays in power-of-two parts, bit-identical) and reflections as each source's
+  image search ends ("Image sources · 1,234 reflections", no total).
 - **Level:** CA writes 1/(4πr). The adapter multiplies by `CA_TO_APP_LEVEL_SCALE` (4π), so IRs stay
   at the app's 1/r level (legacy engine, PFFDTD, saved soundscapes, playback gains).
 - **Export:** both engines write **float32** WAVs through `_export_pair()` (the old int16 export

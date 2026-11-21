@@ -15,6 +15,8 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
+from config.constants import CA_PROGRESS_PHASE_STARTING
+from config.constants import CA_PROGRESS_PHASES
 from config.constants import CA_PROGRESS_SPANS_AMBISONIC
 from config.constants import CA_PROGRESS_SPANS_MONO
 from config.constants import CA_PROGRESS_STAGE_LABELS
@@ -31,14 +33,15 @@ def stage_spans(ambisonic: bool) -> dict:
 
 
 def describe(stage: Optional[str], done: Optional[int], of: Optional[int], n_rays: int) -> str:
-    """``"Ray tracing · 6,200/15,000 rays"``; the stage's label alone when it has no counts."""
+    """``"Ray tracing · 6,200/15,000 rays"``, ``"Image sources · 1,234 reflections"`` (found so far, no total); the
+    stage's label alone when it has no counts."""
     if not stage:
         return ""
     label = CA_PROGRESS_STAGE_LABELS.get(stage, stage[:1].upper() + stage[1:])
     if done is None:
         return label
     if stage == "ray tracing":
-        # split over processes it counts rays (sources x rays), one source at a time it counts sources
+        # rays (sources x rays); a run with one process per source counts the sources
         unit = "rays" if n_rays and of and of >= n_rays and of % n_rays == 0 else "sources"
     else:
         unit = CA_PROGRESS_STAGE_UNITS.get(stage, "")
@@ -138,14 +141,22 @@ def read_lane(path: str) -> Optional[tuple]:
         return None
 
 
+def phase(lanes: list[Lane]) -> str:
+    """The high-level phase of the slowest running part ("Tracing sound paths", "Rendering responses")."""
+    running = [lane for lane in lanes if lane.state == LANE_RUNNING and lane.stage]
+    if not running:
+        return CA_PROGRESS_PHASE_STARTING
+    stage = min(running, key=lambda lane: lane.fraction).stage
+    return CA_PROGRESS_PHASES.get(stage, CA_PROGRESS_STAGE_LABELS.get(stage, stage))
+
+
 def summary(lanes: list[Lane], pairs_total: int) -> tuple[float, str, dict]:
-    """The run's fraction, its line (the slowest running part's step and the pairs done) and its ``partial``."""
+    """The run's fraction, its collapsed line (``"Rendering responses · 3/18 pairs"``) and its ``partial``, whose rows
+    hold each part's own step and counts."""
     weight = sum(lane.pairs for lane in lanes) or 1
     fraction = sum(lane.fraction * lane.pairs for lane in lanes) / weight
     pairs_done = sum(lane.pairs for lane in lanes if lane.state == LANE_DONE)
-    running = [lane for lane in lanes if lane.state == LANE_RUNNING]
-    head = min(running, key=lambda lane: lane.fraction).text if running else "Rendering"
-    text = f"{head} · pairs {pairs_done}/{pairs_total}"
+    text = f"{phase(lanes)} · {pairs_done}/{pairs_total} pairs"
     detail = {PARTIAL_KEY: {"pairs_done": pairs_done, "pairs_total": pairs_total,
                             "lanes": [lane.as_dict() for lane in lanes]}}
     return fraction, text, detail
