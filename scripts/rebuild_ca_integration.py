@@ -50,6 +50,7 @@ PR_BRANCHES = (
     "feat/render-progress",  # stacked on feat/integration-hooks
     "feat/ray-progress",  # stacked on feat/render-progress
     "feat/udfa-polar-lowpass",
+    "docs/contributing-checks",
 )
 GH_PUSH = ("-c", "credential.helper=", "-c", "credential.helper=!'/c/Program Files/GitHub CLI/gh.exe' auth git-credential")
 CONFLICT_BLOCK = re.compile(r"^<<<<<<< [^\r\n]*\r?\n(.*?)^=======\r?\n(.*?)^>>>>>>> [^\r\n]*\r?\n", re.S | re.M)
