@@ -15,6 +15,7 @@ import type {
 import type { SoundGenerationConfig } from '@/types';
 import { useAudioControlsStore } from '@/store';
 import { ModifiedFieldsProvider } from '@/components/ui/ModifiedMark';
+import { formatScenarioPeople } from '@/utils/scenarioSpeech';
 
 /**
  * SettingsSummary Component
@@ -402,7 +403,7 @@ export function getSettingsRows(config: CardBaseConfig): SettingsRow[] {
       case 'scenario': {
         const c = config as ScenarioConfig;
         if (c.userContext) rows.push({ label: 'Context', value: c.userContext, expandable: true });
-        rows.push({ label: 'People', value: String(c.peopleCount) });
+        rows.push({ label: 'People', value: formatScenarioPeople(c) });
         rows.push({ label: 'Likeliness', value: String(c.likeliness) });
         if (c.useAnalysisResult) rows.push({ label: 'Use Analysis Result', value: 'Yes' });
         break;

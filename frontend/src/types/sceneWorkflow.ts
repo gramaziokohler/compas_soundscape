@@ -29,8 +29,6 @@ export interface SceneWorkflowOptions {
   audioModel: string;
   /** LLM for the model analysis + scenario / foley / speech agents (LLM_MODEL_* constant). */
   llmModel: string;
-  /** Scenario agent: number of people in the scene. */
-  peopleCount: number;
   /** Scenario agent: plausibility of the scenario (1 = unusual … 10 = typical). */
   likeliness: number;
   /** Foley agent: how finely the scenario's actions are split into sound events. */

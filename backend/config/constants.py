@@ -144,19 +144,41 @@ DEFAULT_FOLEY_SOUND_DETAIL = "balanced"
 # Z = height, floor at z = 0. Keeps LLM-guessed [x, y, z] positions inside a
 # plausible 6 x 10 x 3 m room instead of a tiny origin-centred cluster.
 VIRTUAL_ROOM_DIMENSIONS = {"width": 6.0, "depth": 10.0, "height": 3.0}
-VIRTUAL_ROOM_BOUNDS = {
-    "min": [
-        -VIRTUAL_ROOM_DIMENSIONS["width"] / 2,
-        -VIRTUAL_ROOM_DIMENSIONS["depth"] / 2,
-        0.0,
-    ],
-    "max": [
-        VIRTUAL_ROOM_DIMENSIONS["width"] / 2,
-        VIRTUAL_ROOM_DIMENSIONS["depth"] / 2,
-        VIRTUAL_ROOM_DIMENSIONS["height"],
-    ],
-    **VIRTUAL_ROOM_DIMENSIONS,
-}
+
+
+def bounds_from_dimensions(width: float, depth: float, height: float) -> dict:
+    """total_bounds of a width x depth x height room centred on the origin in
+    X/Y with its floor at z = 0 (the virtual-room convention)."""
+    return {
+        "min": [-width / 2, -depth / 2, 0.0],
+        "max": [width / 2, depth / 2, height],
+        "width": width,
+        "depth": depth,
+        "height": height,
+    }
+
+
+VIRTUAL_ROOM_BOUNDS = bounds_from_dimensions(
+    VIRTUAL_ROOM_DIMENSIONS["width"],
+    VIRTUAL_ROOM_DIMENSIONS["depth"],
+    VIRTUAL_ROOM_DIMENSIONS["height"],
+)
+
+# Room size the scenarist may read from the prompt / image when no model is
+# loaded (e.g. "a room of 8x10x4"). Dimensions outside this range are ignored
+# and the virtual room is used instead.
+SCENARIO_ROOM_DIM_MIN_M = 1.0
+SCENARIO_ROOM_DIM_MAX_M = 300.0
+
+# Where the scenario agents' room extents come from (meta.room_source).
+ROOM_SOURCE_MODEL = "model"        # model analysis total_bounds
+ROOM_SOURCE_REQUEST = "request"    # live model / uploaded geometry bounds
+ROOM_SOURCE_SCENARIO = "scenario"  # dimensions the scenarist read from the prompt
+ROOM_SOURCE_DEFAULT = "default"    # VIRTUAL_ROOM_BOUNDS fallback
+
+# LLM-guessed foley / speech positions are clamped this far inside the room
+# extents, so a guess outside the room still lands in it.
+SOUND_POSITION_WALL_MARGIN_M = 0.2
 
 # ============================================================================
 # Audio Processing Configuration

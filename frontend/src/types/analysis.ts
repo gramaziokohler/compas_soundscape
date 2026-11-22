@@ -137,7 +137,14 @@ export interface ScenarioEventItem {
 export interface ScenarioItem {
   title: string;
   duration: string;
+  /** Total people — the requested count, or the one the scenarist inferred from the prompt. */
   peopleCount: number;
+  /** Who they are, e.g. "2 adults, 3 children" (absent on older scenarios). */
+  peopleDescription?: string;
+  /** False when the prompt asked for no voices or nobody talks — the speech agent is skipped. */
+  hasSpeech?: boolean;
+  /** [width, depth, height] (m) the scenarist read from the prompt / image; [] when none. */
+  roomDimensions?: number[];
   likeliness: number;
   events: ScenarioEventItem[];
 }
@@ -252,7 +259,8 @@ export type FoleySoundDetail = 'essential' | 'balanced' | 'detailed' | 'exhausti
 export interface ScenarioConfig extends AnalysisBaseConfig {
   type: 'scenario';
   userContext: string;
-  peopleCount: number;
+  /** People in the scenario; null = the scenarist infers them from the prompt / image. */
+  peopleCount: number | null;
   likeliness: number;
   /** Length (ms) of the single generated sound scene this scenario produces —
    *  drives this scenario's DAW timeline section when its sounds are active. */

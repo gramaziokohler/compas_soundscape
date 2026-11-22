@@ -1062,6 +1062,18 @@ canvas {
   text-align: right;
   -moz-appearance: textfield;
 }
+/* Free-text input of an EditableTextChip (e.g. the speech language). */
+.bubble-chip__input--text {
+  width: 12ch;
+  text-align: left;
+}
+/* Composer while an image is dragged over it. */
+.bubble-composer--drop {
+  border-radius: 8px;
+  outline: 1.5px dashed var(--color-primary);
+  outline-offset: 4px;
+  background: var(--color-blue-tint);
+}
 .bubble-chip__input::-webkit-inner-spin-button,
 .bubble-chip__input::-webkit-outer-spin-button {
   -webkit-appearance: none;

@@ -8,7 +8,7 @@ import { ToggleField } from '@/components/ui/ToggleField';
 import { useAnalysisStore, useCardFlowStore, useScenarioPreviewStore, useSpeckleStore } from '@/store';
 import { pauseStore, commitStore } from '@/store';
 import { ScenarioResultContent } from './ScenarioResultContent';
-import { AUDIO_PLAYBACK, SCENARIO_TIMELINE } from '@/utils/constants';
+import { AUDIO_PLAYBACK, SCENARIO_PEOPLE, SCENARIO_TIMELINE } from '@/utils/constants';
 import {
   ID_HEX_DOT_RE,
   OBJECT_REF_RE,
@@ -234,6 +234,9 @@ export function ScenarioContent({
     parent?.type === 'model-analysis' &&
     !!(parent as AnalyzeModelConfig).analysisResult?.analysisId;
   const isModified = useIsFieldModified();
+  // null = Auto: the scenarist infers the people from the context.
+  const peopleAuto = config.peopleCount === null;
+  const inferredPeople = config.scenarioResult?.scenarios?.[0]?.peopleCount;
 
   return (
     <div className="card-stack">
@@ -273,18 +276,27 @@ export function ScenarioContent({
         />
       </div>
 
+      <ToggleField
+        label="Infer people from the context"
+        modified={isModified('peopleCount')}
+        checked={peopleAuto}
+        onChange={(checked) =>
+          onUpdateConfig(index, { peopleCount: checked ? null : (inferredPeople ?? SCENARIO_PEOPLE.DEFAULT) })
+        }
+        disabled={isAnalyzing}
+      />
+
       <div className="flex gap-4">
         <div className="flex-1">
           <RangeSlider
-            label="People"
-            modified={isModified('peopleCount')}
-            min={0}
-            max={20}
+            label={peopleAuto ? 'People (auto)' : 'People'}
+            min={SCENARIO_PEOPLE.MIN}
+            max={SCENARIO_PEOPLE.MAX}
             step={1}
-            value={config.peopleCount}
-            defaultValue={5}
+            value={config.peopleCount ?? inferredPeople ?? SCENARIO_PEOPLE.DEFAULT}
+            defaultValue={SCENARIO_PEOPLE.DEFAULT}
             onChange={(v) => onUpdateConfig(index, { peopleCount: v })}
-            disabled={isAnalyzing}
+            disabled={isAnalyzing || peopleAuto}
           />
         </div>
         <div className="flex-1">

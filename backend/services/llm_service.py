@@ -64,7 +64,10 @@ from config.constants import (
     MODEL_ANALYSIS_CHARS_PER_TOKEN,
     MODEL_ANALYSIS_SIZE_ROUND_M,
     MODEL_ANALYSIS_PROMPT_SAMPLE_IDS,
+    ROOM_SOURCE_DEFAULT,
+    SOUND_POSITION_WALL_MARGIN_M,
 )
+from utils.spatial import clamp_position, room_extents_text
 from utils.entity_grouping import EntityRecord, group_entities, compact_furniture_for_prompt
 
 
@@ -1650,10 +1653,11 @@ For the duration estimation (in seconds with 0.1 precision):
         user_context: str | None,
         furniture_context: str,
         duration: int,
-        people_count: int,
+        people_count: int | None,
         likeliness: int,
         has_furniture: bool = True,
         room_bounds: str | None = None,
+        room_is_default: bool = False,
     ) -> tuple[str, str]:
         """Build system and user prompts for the scenarist agent.
 
@@ -1661,9 +1665,11 @@ For the duration estimation (in seconds with 0.1 precision):
         Single source of truth used by both scenarist_agent and stream_scenarist_agent.
 
         When ``has_furniture`` is False the LLM must NOT hallucinate linked entity IDs;
-        instead it anchors actions to fixed positions. If ``room_bounds`` is provided
-        (the full 3D model bounding box, available even with no furniture), the scene
-        is placed strictly inside those extents.
+        instead it anchors actions to fixed positions. ``room_bounds`` is the readable
+        room extents (see ``utils.spatial.room_extents_text``); when
+        ``room_is_default`` they are only the assumed virtual room, and a size the
+        user states or implies replaces them (reported in ``roomDimensions``).
+        ``people_count`` None lets the agent infer the people from the context.
         """
         duration_mmss = f"{duration // 60}:{duration % 60:02d}"
         context_note = (
@@ -1693,7 +1699,7 @@ For the duration estimation (in seconds with 0.1 precision):
         elif room_bounds:
             spatial_grounding = (
                 "You must anchor every human movement, gesture, and pathing decision strictly within the "
-                f"room extents {room_bounds}. No object list is available — do NOT invent object references, "
+                f"room extents ({room_bounds}). No object list is available — do NOT invent object references, "
                 "IDs, or linked entities; describe each action at an explicit fixed [x, y, z] position."
             )
             constraint_1 = (
@@ -1703,8 +1709,8 @@ For the duration estimation (in seconds with 0.1 precision):
                 "positions explicitly (e.g. 'at [3.2, 1.0, 1.5] near the east wall')."
             )
             spatial_analysis_step = (
-                f"1. Spatial Analysis: Work strictly within the room extents {room_bounds}. "
-                "Identify plausible zones (center, corners, edges) for each action."
+                "1. Spatial Analysis: Work strictly within the room extents. Lay out plausible zones "
+                "(entrance, walls, corners, windows, work or play areas) over the WHOLE floor area."
             )
             example_description = (
                 'Detailed behavioral description with an explicit fixed [x, y, z] position '
@@ -1729,6 +1735,39 @@ For the duration estimation (in seconds with 0.1 precision):
                 '(no object IDs).'
             )
 
+        if room_is_default:
+            room_size_rule = (
+                "Room Size: The room extents above are only an ASSUMED default room. If the Additional "
+                "Context or the reference image states or implies the size of the space (e.g. 'a room of "
+                "8x10x4', 'a 12 m long hall', 'a small bathroom', 'a large open-plan office'), use THAT size "
+                "instead: width along x and depth along y, both centred on 0, floor at z = 0, ceiling at "
+                "z = height. Place every position inside that room and report it in `roomDimensions` as "
+                "[width, depth, height] in metres ('AxBxC' means width A, depth B, height C; with only two "
+                "values choose a plausible height). If nothing states or implies a size, return "
+                "`roomDimensions: []` and keep the default extents."
+            )
+        else:
+            room_size_rule = "Room Size: The room size is fixed by the 3D model — return `roomDimensions: []`."
+
+        if people_count is None:
+            people_line = "- People Count: not given — infer it (see rule 3)"
+            people_rule = (
+                "3. People: Infer the people from the Additional Context and the reference image. If they "
+                "state counts or a breakdown (e.g. '2 people and 3 children', 'a teacher with 20 pupils', "
+                "'empty', 'nobody'), follow them EXACTLY. Otherwise choose a plausible number for this kind "
+                "of space, time of day and activity."
+            )
+        else:
+            people_line = f"- People Count: {people_count}"
+            people_rule = (
+                f"3. People: Use {people_count} people, unless the Additional Context states other counts "
+                "or a breakdown (e.g. '2 people and 3 children') — then the context wins, exactly."
+            )
+        people_rule += (
+            " Report the total in `peopleCount` and who they are in `peopleDescription` "
+            "(e.g. '2 adults, 3 children'; '' when nobody is present)."
+        )
+
         system_prompt = (
             "You are an expert architectural scenarist and spatial behavioral psychologist. "
             "Your job is to simulate hyper-realistic human interactions within a 3D architectural space.\n\n"
@@ -1736,7 +1775,9 @@ For the duration estimation (in seconds with 0.1 precision):
             "### Core Operational Directives\n"
             "1. Spatial Grounding: Do not allow humans to walk through objects. Account for proximity, "
             "clearance, sightlines, comfort, and group effects (e.g., people crowding around a table "
-            "or leaving walking lanes open).\n"
+            "or leaving walking lanes open). Use the WHOLE space: spread people and activities over its "
+            "full width and depth (walls, corners, entrance, windows), give each person or activity its "
+            "own zone, and do not gather everything around the centre unless the scenario requires it.\n"
             "2. The Likeliness Spectrum:\n"
             "   - High Likeliness (7–10): Simulate mundane, high-probability routines. Focus on "
             "micro-behaviors (fidgeting, checking phones, shifting weight).\n"
@@ -1752,7 +1793,7 @@ For the duration estimation (in seconds with 0.1 precision):
             f"furniture list, and scenario parameters. The scenario must last approximately "
             f"{duration_mmss} ({duration} seconds).\n\n"
             f"### Input Parameters\n"
-            f"- People Count: {people_count}\n"
+            f"{people_line}\n"
             f"- Likeliness (1–10): {likeliness}\n"
             f"- Space Typology & Bounds: {furniture_context}"
             f"{context_note}\n\n"
@@ -1760,12 +1801,17 @@ For the duration estimation (in seconds with 0.1 precision):
             f"{constraint_1}\n"
             f"2. Timeline Continuity: The `events` array must be sequential. Timestamps cannot overlap, "
             f"and there must be no gaps between events. Each event block must span between 5 to 30 seconds.\n"
-            f"3. Scale to People Count:\n"
+            f"{people_rule}\n"
+            f"4. Scale to People Count:\n"
             f"   - 0 People: Focus on environmental changes (sunlight shifting, a robotic vacuum, "
             f"wind through a window, ambient soundscape echoes).\n"
             f"   - 1–2 People: Focus on intimate, detailed micro-interactions and psychological "
             f"tension/comfort.\n"
-            f"   - Large Groups: Focus on spatial crowding, bottlenecks, and split-group dynamics.\n\n"
+            f"   - Large Groups: Focus on spatial crowding, bottlenecks, and split-group dynamics.\n"
+            f"5. Speech: Set `hasSpeech` to false when the Additional Context asks for no voices, no speech, "
+            f"no talking or silence, or when nobody present would speak (e.g. 0 people). Then never describe "
+            f"anyone speaking, talking, greeting, singing or on the phone. Otherwise set it to true.\n"
+            f"6. {room_size_rule}\n\n"
             f"### Step-by-Step Generation Process\n"
             f"Follow these steps inside your thinking process:\n"
             f"{spatial_analysis_step}\n"
@@ -1777,7 +1823,10 @@ For the duration estimation (in seconds with 0.1 precision):
             f"[{{\n"
             f'  "title": "Descriptive and evocative scenario name",\n'
             f'  "duration": "{duration_mmss}",\n'
-            f'  "peopleCount": {people_count},\n'
+            f'  "peopleCount": <total number of people>,\n'
+            f'  "peopleDescription": "who they are, e.g. 2 adults, 3 children",\n'
+            f'  "hasSpeech": true,\n'
+            f'  "roomDimensions": [],\n'
             f'  "likeliness": {likeliness},\n'
             f'  "events": [\n'
             f'    {{\n'
@@ -1790,43 +1839,65 @@ For the duration estimation (in seconds with 0.1 precision):
         return system_prompt, user_prompt
 
     @staticmethod
-    def _scenarist_furniture_context(furniture_list: dict | None) -> tuple[str, bool, str | None]:
+    def _scenarist_furniture_context(furniture_list: dict | None) -> tuple[str, bool, str | None, bool]:
         """Derive the scenarist context inputs from the (optional) analysis result.
 
         Returns:
-            (furniture_context, has_furniture, room_bounds)
+            (furniture_context, has_furniture, room_bounds, room_is_default)
             - furniture_context: JSON string of the furniture_list with sampled
                                 object IDs per group (or "{}").
             - has_furniture:    True when architectural objects are present.
-            - room_bounds:      Human-readable "[min] to [max] (w x d x h)" of the
-                                full 3D model bounding box (available even with no
-                                furniture), or None.
+            - room_bounds:      Readable per-axis extents of meta.total_bounds
+                                (available even with no furniture), or None.
+            - room_is_default:  True when those extents are only the virtual-room
+                                fallback (no model), so a size stated in the
+                                prompt may replace them.
         """
         furniture_context = _furniture_prompt_json(furniture_list)
         meta = (furniture_list or {}).get("meta") or {}
-        bounds = meta.get("total_bounds") or {}
-
         has_furniture = bool(
             (furniture_list or {}).get("architecturalObjects")
             or (furniture_list or {}).get("objects")
         )
+        room_bounds = room_extents_text(meta.get("total_bounds"))
+        room_is_default = meta.get("room_source") == ROOM_SOURCE_DEFAULT
+        return furniture_context, has_furniture, room_bounds, room_is_default
 
-        room_bounds: str | None = None
-        mn = bounds.get("min") or []
-        mx = bounds.get("max") or []
-        if len(mn) >= 3 and len(mx) >= 3:
-            dims = []
-            for key in ("width", "depth", "height"):
-                v = bounds.get(key)
-                if v is not None:
-                    dims.append(f"{float(v):.2f}")
-            extents = (
-                f"[{float(mn[0]):.2f}, {float(mn[1]):.2f}, {float(mn[2]):.2f}] to "
-                f"[{float(mx[0]):.2f}, {float(mx[1]):.2f}, {float(mx[2]):.2f}]"
-            )
-            room_bounds = extents + (f" ({' x '.join(dims)})" if dims else "")
+    @staticmethod
+    def _room_extents(furniture_list: dict | None) -> str | None:
+        """Readable room extents (meta.total_bounds) for the foley / speech prompts."""
+        return room_extents_text(((furniture_list or {}).get("meta") or {}).get("total_bounds"))
 
-        return furniture_context, has_furniture, room_bounds
+    @staticmethod
+    def _spatial_placement_rules(room_extents: str | None) -> str:
+        """SPATIAL PLACEMENT block shared by the foley and speech prompts."""
+        room_line = (
+            f"- The room is: {room_extents}. Every position MUST be inside it.\n"
+            if room_extents
+            else "- Keep every position inside a plausible, self-consistent room.\n"
+        )
+        return (
+            "SPATIAL PLACEMENT (MANDATORY):\n"
+            f"{room_line}"
+            "- Use the WHOLE room. Put each source where its action happens in the scenario, and keep "
+            "different sources and different people apart. Do NOT cluster sources around the room centre: "
+            "only background beds go at the centre.\n"
+            "- Doors, windows and wall-mounted devices sit on a wall plane (x or y at its min or max extent). "
+            "Outdoor sounds (traffic, rain on glass, birds) sit at a window / facade wall.\n"
+            "- Heights (z above the floor): footsteps and floor impacts ~0.05 m; chairs ~0.45 m; table, desk "
+            "or counter actions ~0.75-0.9 m; seated speech ~1.25 m; standing speech ~1.6 m; children's voices "
+            "~1.0-1.2 m; HVAC, ceiling fans and lights just below the ceiling.\n"
+            "- Keep each person's or activity's position consistent with where the scenario places them.\n\n"
+        )
+
+    @staticmethod
+    def _clamp_entry_positions(entries: list | None, furniture_list: dict | None) -> None:
+        """Clamp the LLM-guessed ``position`` of foley / speech entries inside the room
+        (in place). Empty positions (sounds linked to objects) stay empty."""
+        bounds = ((furniture_list or {}).get("meta") or {}).get("total_bounds")
+        for entry in entries or []:
+            if isinstance(entry, dict) and entry.get("position"):
+                entry["position"] = clamp_position(entry["position"], bounds, SOUND_POSITION_WALL_MARGIN_M)
 
     @staticmethod
     def _foley_detail_rules(sound_detail: str) -> str:
@@ -1852,6 +1923,7 @@ For the duration estimation (in seconds with 0.1 precision):
         scenarios_json: str,
         furniture_json: str,
         sound_detail: str = DEFAULT_FOLEY_SOUND_DETAIL,
+        room_extents: str | None = None,
     ) -> tuple[str, str]:
         """Build system and user prompts for the foley artist agent.
 
@@ -1905,8 +1977,9 @@ For the duration estimation (in seconds with 0.1 precision):
             '   - "objectsInvolved": non-empty hex ID list → set "position" to an empty list []. '
             "The position will be derived from the linked objects by the audio engine.\n"
             '   - "position": when objectsInvolved is empty (e.g. footsteps, ambient hum, HVAC), '
-            "provide a plausible [x, y, z] centroid within the room using the bounding box and nearby object "
-            "bounds as reference. Ambient/background sounds should be placed at the room centroid.\n"
+            "provide the [x, y, z] where the sound happens, following the SPATIAL PLACEMENT rules below and "
+            "using the room extents and nearby object bounds as reference. Ambient/background beds go at the "
+            "room centroid; discrete events go where their action happens, NOT at the centre.\n"
             "8. Always add at least one background sound that matches the space.\n"
             '9. Classify each entry with a "category": use "background" for continuous/ambient '
             'beds (HVAC, room tone, distant traffic) and "sound event" for discrete, punctual actions '
@@ -1921,6 +1994,7 @@ For the duration estimation (in seconds with 0.1 precision):
             "few times gets 2 to 3; a very frequent action (e.g. many footsteps, several door closings) "
             "gets 4 to 5. Background beds always get 1. Never exceed 5.\n\n"
             f"{self._foley_detail_rules(sound_detail)}"
+            f"{self._spatial_placement_rules(room_extents)}"
             "Output Format — respond ONLY with a JSON array:\n"
             "[\n"
             "  {\n"
@@ -2107,7 +2181,7 @@ For the duration estimation (in seconds with 0.1 precision):
         llm_model: str = DEFAULT_LLM_MODEL,
         furniture_list: dict | None = None,
         duration: int = 150,
-        people_count: int = 5,
+        people_count: int | None = None,
         likeliness: int = 9,
     ) -> dict:
         """
@@ -2120,17 +2194,20 @@ For the duration estimation (in seconds with 0.1 precision):
             furniture_list: JSON result from analyze_3dmodel / save_results_json
                             containing architectural_objects and meta (optional).
             duration:      Approximate duration of the scenario in seconds (default: 150).
-            people_count:  Number of people in the scenario (default: 5).
+            people_count:  Number of people in the scenario; None (default) lets the
+                           agent infer it from the context.
             likeliness:    Likeliness score 1–10 (default: 9).
 
         Returns:
             dict with a "scenarios" key — list containing 1 scenario dict with:
             title, duration, peopleCount, likeliness, events.
         """
-        furniture_context, has_furniture, room_bounds = self._scenarist_furniture_context(furniture_list)
+        furniture_context, has_furniture, room_bounds, room_is_default = (
+            self._scenarist_furniture_context(furniture_list)
+        )
         system_prompt, user_prompt = self._build_scenarist_prompts(
             user_context, furniture_context, duration, people_count, likeliness,
-            has_furniture=has_furniture, room_bounds=room_bounds,
+            has_furniture=has_furniture, room_bounds=room_bounds, room_is_default=room_is_default,
         )
 
         # ── Retry with exponential back-off ───────────────────────────────────
@@ -2156,7 +2233,7 @@ For the duration estimation (in seconds with 0.1 precision):
         llm_model: str = DEFAULT_LLM_MODEL,
         furniture_list: dict | None = None,
         duration: int = 150,
-        people_count: int = 5,
+        people_count: int | None = None,
         likeliness: int = 9,
         screenshots: list[str] | None = None,
         on_progress=None,
@@ -2174,15 +2251,23 @@ For the duration estimation (in seconds with 0.1 precision):
         """
         from models.schemas import ScenarioResponse as _ScenarioResponse
 
-        furniture_context, has_furniture, room_bounds = self._scenarist_furniture_context(furniture_list)
+        furniture_context, has_furniture, room_bounds, room_is_default = (
+            self._scenarist_furniture_context(furniture_list)
+        )
         system_prompt, user_prompt = self._build_scenarist_prompts(
             user_context, furniture_context, duration, people_count, likeliness,
-            has_furniture=has_furniture, room_bounds=room_bounds,
+            has_furniture=has_furniture, room_bounds=room_bounds, room_is_default=room_is_default,
         )
-        if screenshots:
+        if screenshots and not (user_context or "").strip():
             user_prompt += (
-                "\n\nA reference image of the space is attached. Ground the scenario "
-                "in what it shows: the type of place, its materials, its occupants and activities."
+                "\n\nA reference image of the space is attached and it is the ONLY brief (no text was "
+                "given). Infer everything from it: the type of place, its approximate size, its materials, "
+                "who is there and how many, what they are doing, and the time of day."
+            )
+        elif screenshots:
+            user_prompt += (
+                "\n\nA reference image of the space is attached. Ground the scenario in what it "
+                "shows: the type of place, its size, its materials, its occupants and activities."
             )
 
         import uuid as _uuid
@@ -2235,6 +2320,9 @@ For the duration estimation (in seconds with 0.1 precision):
                 "title": scenario.get("title", ""),
                 "duration": scenario.get("duration", ""),
                 "peopleCount": scenario.get("peopleCount", 0),
+                "peopleDescription": scenario.get("peopleDescription", ""),
+                "hasSpeech": scenario.get("hasSpeech", True),
+                "roomDimensions": scenario.get("roomDimensions", []),
                 "likeliness": scenario.get("likeliness", 0),
             }
             for event in scenario.get("events", []):
@@ -2291,7 +2379,8 @@ For the duration estimation (in seconds with 0.1 precision):
         scenarios_json = json.dumps({"scenarios": selected_scenarios}, indent=2)
         furniture_json = _furniture_prompt_json(furniture_list)
         system_prompt, user_prompt = self._build_foley_prompts(
-            scenarios_json, furniture_json, sound_detail
+            scenarios_json, furniture_json, sound_detail,
+            room_extents=self._room_extents(furniture_list),
         )
 
         # ── Call LLM with structured output ───────────────────────────────────
@@ -2326,7 +2415,8 @@ For the duration estimation (in seconds with 0.1 precision):
         scenarios_json = json.dumps({"scenarios": all_scenarios}, indent=2)
         furniture_json = _furniture_prompt_json(furniture_list)
         system_prompt, user_prompt = self._build_foley_prompts(
-            scenarios_json, furniture_json, sound_detail
+            scenarios_json, furniture_json, sound_detail,
+            room_extents=self._room_extents(furniture_list),
         )
 
         result = await self._call_llm(
@@ -2338,6 +2428,7 @@ For the duration estimation (in seconds with 0.1 precision):
         )
         if not isinstance(result, dict):
             result = result.model_dump() if hasattr(result, "model_dump") else dict(result)
+        self._clamp_entry_positions(result.get("sounds"), furniture_list)
         return result
 
     async def stream_foley_artist(
@@ -2402,6 +2493,7 @@ For the duration estimation (in seconds with 0.1 precision):
         scenarios_json: str,
         furniture_json: str = "{}",
         language: str | None = None,
+        room_extents: str | None = None,
     ) -> tuple[str, str]:
         """Build system and user prompts for the speech scripting agent.
 
@@ -2452,10 +2544,12 @@ For the duration estimation (in seconds with 0.1 precision):
             f"(pick the names that best fit each person, one distinct name per distinct person, "
             f"and reuse the same name for the same person throughout): {allowed_characters}.\n"
             "9. Spatial position: for each character, estimate a plausible [x, y, z] position "
-            "where the character is standing or sitting when they speak. Use the object bounding boxes "
-            "and room bounds as reference. Speech height is typically z = 1.25 m (seated) to 1.60 m "
-            "(standing). Use one position poer character."
-            "Place the character near the object(s) they are interacting with in average.\n\n"
+            "where the character is standing or sitting when they speak, following the SPATIAL PLACEMENT "
+            "rules below. Use the object bounding boxes and room extents as reference. Use one position per "
+            "character, near the object(s) or zone they mostly interact with, and keep different characters "
+            "apart unless the scenario puts them together.\n"
+            "10. If the scenario has \"hasSpeech\": false, return an empty JSON array [].\n\n"
+            f"{self._spatial_placement_rules(room_extents)}"
             "Output Format — respond ONLY with a JSON array:\n"
             "[\n"
             "  {\n"
@@ -2517,7 +2611,8 @@ For the duration estimation (in seconds with 0.1 precision):
         scenarios_json = json.dumps({"scenarios": all_scenarios}, indent=2)
         furniture_json = _furniture_prompt_json(furniture_list)
         system_prompt, user_prompt = self._build_speech_prompts(
-            scenarios_json, furniture_json, language=language
+            scenarios_json, furniture_json, language=language,
+            room_extents=self._room_extents(furniture_list),
         )
 
         result = await self._call_llm(
@@ -2529,6 +2624,7 @@ For the duration estimation (in seconds with 0.1 precision):
         )
         if not isinstance(result, dict):
             result = result.model_dump() if hasattr(result, "model_dump") else dict(result)
+        self._clamp_entry_positions(result.get("speeches"), furniture_list)
         return result
 
     async def stream_speech_agent(

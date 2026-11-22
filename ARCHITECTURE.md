@@ -554,11 +554,24 @@ sceneWorkflowStore (scenes run concurrently + independently, no frontend queue; 
   the expert sidebar, the DAW / 3D scene and the 3D highlights.
   analyze   → analysisStore.handleAnalyze(context)        (skipped/reused if analyzed)
   scenario  → analysisStore.handleScenarioAnalyze(usage)
-  foley     → analysisStore.handleAnalyze(usage)          (foley + speech; ScenarioConfig.includeSpeech)
+  foley     → analysisStore.handleAnalyze(usage)          (foley + speech; speech skipped when
+              utils/scenarioSpeech.isScenarioSpeechSkipped: includeSpeech off, or the scenario
+              has hasSpeech=false / 0 people)
   generate  → page.handleSendAnalysisToGeneration (registered) → soundscapeStore.handleGenerateFiltered
-  Composer reference image → ScenarioConfig.referenceImages → /api/scenarist `screenshots`
-  (always), plus a fresh model-analysis card when a model is loaded and "Re-run model analysis" is on.
-  Empty composer prompt is allowed when a model is loaded (scenario built from the analysis alone).
+  People are never asked in the composer: ScenarioConfig.peopleCount = null (Auto) omits
+  `people_count`, and the scenarist infers them from the prompt / image ("2 people and 3
+  children", "no voices"), returning peopleCount, peopleDescription and hasSpeech.
+  Composer reference image (picked, dropped or pasted) → ScenarioConfig.referenceImages →
+  /api/scenarist `screenshots` (always), plus a fresh model-analysis card when a model is loaded
+  and "Re-run model analysis" is on. An empty composer prompt is allowed when a model is loaded
+  or an image is attached (scenario built from the analysis / the image alone).
+
+Scenario agent room (routers/generation._load_furniture_list → meta.total_bounds + room_source)
+  model analysis bounds > request bounding_box (live model / uploaded geometry) > the
+  scenario's roomDimensions (size the scenarist read from the prompt, e.g. "a room of 8x10x4",
+  only asked for while the room is the default) > VIRTUAL_ROOM_BOUNDS (6 x 10 x 3 m).
+  Foley / speech prompts get the readable extents + shared placement rules, and their guessed
+  positions are clamped inside the room (utils/spatial.clamp_position).
   Each step is idempotent (skipped when its result exists) → same runner powers Resume.
   Each step writes sidebarWizardStep / cardFlowStore + uiStore.sidebarNavCommand so a
   mounted expert Sidebar follows the pipeline live.

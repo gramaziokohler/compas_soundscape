@@ -38,6 +38,7 @@ import type { IndexMapper } from '@/utils/cardIndexRemap';
 import { remapIndexKeyedRecord } from '@/utils/cardIndexRemap';
 import { createLiveIndexRegistry, type LiveIndexRef } from '@/utils/liveIndexRegistry';
 import { newConfigId } from '@/utils/config-id';
+import { isScenarioSpeechDone } from '@/utils/scenarioSpeech';
 import {
   SCENE_WORKFLOW_STEPS,
   deriveSceneTitle,
@@ -87,10 +88,6 @@ type StepOutcome = 'ran' | 'reused' | 'skipped';
 function scenarioAt(index: number): ScenarioConfig | null {
   const cfg = useAnalysisStore.getState().analysisConfigs[index];
   return cfg?.type === 'scenario' ? cfg : null;
-}
-
-function speechDone(sc: ScenarioConfig): boolean {
-  return sc.includeSpeech === false || (sc.speechResult?.speeches?.length ?? 0) > 0;
 }
 
 function failureMessage(fallback: string): string {
@@ -219,7 +216,6 @@ export function defaultSceneOptions(): SceneWorkflowOptions {
     durationMs: SIMPLE_MODE.DEFAULT_DURATION_MS,
     audioModel: useSoundscapeStore.getState().audioModel,
     llmModel: useSoundscapeStore.getState().llmModel,
-    peopleCount: SIMPLE_MODE.SCENARIO_PEOPLE_COUNT,
     likeliness: SIMPLE_MODE.SCENARIO_LIKELINESS,
     soundDetail: DEFAULT_FOLEY_SOUND_DETAIL,
     // Empty = keep the app-wide TTS language (Settings › Audio).
@@ -348,7 +344,7 @@ export const useSceneWorkflowStore = create<SceneWorkflowStoreState>()(
         const run = requireRun(runId);
         const sc = scenarioAt(run.usageIndex);
         if (!sc) throw new StepError('Scene card not found');
-        if (sc.foleyResult && speechDone(sc)) return 'skipped';
+        if (sc.foleyResult && isScenarioSpeechDone(sc)) return 'skipped';
         navigateIfFocus(run, 1);
         // handleAnalyze dispatches a scenario with a result to foley + speech.
         await useAnalysisStore.getState().handleAnalyze(run.usageIndex);
@@ -489,7 +485,8 @@ export const useSceneWorkflowStore = create<SceneWorkflowStoreState>()(
             // Empty prompt (model loaded): no provisional title — the scenario title takes over.
             display_name: deriveSceneTitle(prompt) || undefined,
             userContext: prompt.trim(),
-            peopleCount: options.peopleCount,
+            // The scenarist infers the people from the prompt / image.
+            peopleCount: null,
             likeliness: options.likeliness,
             llmModel: options.llmModel,
             timelineDurationMs: options.durationMs,

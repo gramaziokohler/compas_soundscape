@@ -36,8 +36,13 @@ from config.constants import (
     LLM_PROGRESS_WRITING_MIN,
     LLM_PROGRESS_WRITING_MAX,
     VIRTUAL_ROOM_BOUNDS,
+    ROOM_SOURCE_DEFAULT,
+    ROOM_SOURCE_MODEL,
+    ROOM_SOURCE_REQUEST,
+    ROOM_SOURCE_SCENARIO,
 )
 from utils.llm_errors import llm_error_message
+from utils.spatial import scenario_room_bounds
 
 router = APIRouter()
 
@@ -176,14 +181,16 @@ def _normalize_total_bounds(bounds: dict | None) -> dict | None:
 def _load_furniture_list(
     analysis_id: str | None,
     bounding_box: dict | None = None,
+    scenario_data: dict | None = None,
 ) -> dict:
     """Load the (optional) analysis result as a furniture list for the scenario
     agents.
 
-    Always returns a dict. When no analysis result is available (no context
-    model) — or when it carries no ``meta.total_bounds`` — the room extents fall
-    back to the request-provided ``bounding_box`` and finally to the virtual
-    room so the LLM still has a spatial reference to place sounds in.
+    Always returns a dict whose ``meta.total_bounds`` is the room the agents
+    place sounds in, by precedence: the analysis result's extents, the
+    request ``bounding_box`` (live model / uploaded geometry), the room size
+    the scenarist read from the prompt or image (``scenario_data``), and
+    finally the virtual room. ``meta.room_source`` names the one used.
     """
     raw: dict | None = None
     if analysis_id and _UUID_RE.match(analysis_id):
@@ -195,14 +202,17 @@ def _load_furniture_list(
             except Exception as load_err:
                 print(f"[generation] failed to load analysis {analysis_id}: {load_err}")
 
-    total_bounds = (
-        (raw.get("meta") or {}).get("total_bounds") if raw else None
-    )
+    total_bounds = (raw.get("meta") or {}).get("total_bounds") if raw else None
+    room_source = ROOM_SOURCE_MODEL
     if not total_bounds:
-        total_bounds = _normalize_total_bounds(bounding_box) or VIRTUAL_ROOM_BOUNDS
+        total_bounds, room_source = _normalize_total_bounds(bounding_box), ROOM_SOURCE_REQUEST
+    if not total_bounds:
+        total_bounds, room_source = scenario_room_bounds(scenario_data), ROOM_SOURCE_SCENARIO
+    if not total_bounds:
+        total_bounds, room_source = VIRTUAL_ROOM_BOUNDS, ROOM_SOURCE_DEFAULT
 
     furniture_list: dict = {"architecturalObjects": (raw or {}).get("objects", [])}
-    furniture_list["meta"] = {"total_bounds": total_bounds}
+    furniture_list["meta"] = {"total_bounds": total_bounds, "room_source": room_source}
     return furniture_list
 
 
@@ -558,7 +568,7 @@ async def scenarist(request: ScenaristStreamRequest, req: Request):
 async def foley_artist(request: FoleyArtistRequest, req: Request):
     """Enqueue foley artist. Poll GET /api/jobs/{job_id} for thought progress."""
     scenario_data = _load_json_id_file("scenarios", request.scenario_id, "scenario_id")
-    furniture_list = _load_furniture_list(request.analysis_id, request.bounding_box)
+    furniture_list = _load_furniture_list(request.analysis_id, request.bounding_box, scenario_data)
     sound_detail = request.sound_detail
     llm_model = request.llm_model
 
@@ -625,7 +635,7 @@ class SpeechAgentRequest(BaseModel):
 async def speech_agent(request: SpeechAgentRequest, req: Request):
     """Enqueue speech agent. Poll GET /api/jobs/{job_id} for thought progress."""
     scenario_data = _load_json_id_file("scenarios", request.scenario_id, "scenario_id")
-    furniture_list = _load_furniture_list(request.analysis_id, request.bounding_box)
+    furniture_list = _load_furniture_list(request.analysis_id, request.bounding_box, scenario_data)
     llm_model = request.llm_model
     language = request.language
 

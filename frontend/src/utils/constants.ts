@@ -2371,6 +2371,14 @@ export const SCENARIO_TIMELINE = {
   STEP_SECONDS: 30,
 } as const;
 
+/** Scenario card "People" slider (Detailed mode). The card defaults to Auto (null): the scenarist infers the people. */
+export const SCENARIO_PEOPLE = {
+  /** Slider value when Auto is turned off and no count was inferred yet. */
+  DEFAULT: 5,
+  MIN: 0,
+  MAX: 20,
+} as const;
+
 // ============================================================================
 // WaveSurfer Enhanced Timeline Configuration
 // ============================================================================
@@ -3045,8 +3053,6 @@ export const SIMPLE_MODE = {
   DIFFUSION_STEPS: DEFAULT_DIFFUSION_STEPS,
   DURATION_OPTIONS_MS: [30_000, 60_000, 120_000],
   DEFAULT_DURATION_MS: 30_000,
-  /** People-chip click-to-cycle values (double-click enters an exact count). */
-  PEOPLE_OPTIONS: [0, 2, 5, 20],
   /** Delay before a chip single click commits, so a double click doesn't also cycle (ms). */
   CHIP_DOUBLE_CLICK_MS: 250,
   /** Text-to-audio models offered in the composer. */
@@ -3054,12 +3060,11 @@ export const SIMPLE_MODE = {
   /** LLMs offered in the composer. */
   /** OpenAI / Anthropic models are intentionally hidden from the composer menu. */
   LLM_MODEL_OPTIONS: [LLM_MODEL_GEMINI_FLASH, LLM_MODEL_GEMINI_PRO],
-  /** Example shown in the composer's free-text speech-language field. */
+  /** Example shown while typing a free-text speech language in the language chip. */
   SPEECH_LANGUAGE_PLACEHOLDER: 'Swiss German',
+  /** Language-chip click-to-cycle values (double-click types any language or dialect). */
+  SPEECH_LANGUAGE_OPTIONS: ['English', 'French', 'German', 'Swiss German', 'Italian', 'Spanish'],
   /** Scenario card defaults / bounds for composer-created scenes. */
-  SCENARIO_PEOPLE_COUNT: 2,
-  SCENARIO_PEOPLE_MIN: 0,
-  SCENARIO_PEOPLE_MAX: 50,
   SCENARIO_LIKELINESS: 9,
   SCENARIO_LIKELINESS_MIN: 1,
   SCENARIO_LIKELINESS_MAX: 10,

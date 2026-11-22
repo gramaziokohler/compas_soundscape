@@ -61,6 +61,7 @@ import { useUIStore } from './uiStore';
 import { useFileUploadStore } from './fileUploadStore';
 import { remapLinkedCardIndices } from './cardIndexLinks';
 import { captureGenerationSignature } from '@/utils/generationSignature';
+import { isScenarioSpeechDone } from '@/utils/scenarioSpeech';
 import { collectUnsharedSceneAudioUrls } from '@/utils/sceneAudioUrls';
 import {
   UNDO_HISTORY_LIMIT,
@@ -783,7 +784,8 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                   type: 'scenario',
                   numSounds: 5,
                   userContext: '',
-                  peopleCount: 5,
+                  // null = Auto: the scenarist infers the people from the prompt.
+                  peopleCount: null,
                   likeliness: 9,
                   timelineDurationMs: useAudioControlsStore.getState().timelineDurationMs,
                   useAnalysisResult: true,
@@ -1214,7 +1216,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
               return;
             } else if (config.type === 'scenario') {
               const sc = config as ScenarioConfig;
-              const speechDone = sc.includeSpeech === false || (sc.speechResult?.speeches?.length ?? 0) > 0;
+              const speechDone = isScenarioSpeechDone(sc);
               if (sc.foleyResult && speechDone) {
                 // Foley + speech done → (re-)send the incomplete cards to generation
                 get().handleSendToSoundGeneration(undefined, index);
@@ -2348,7 +2350,8 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             user_context: config.userContext || undefined,
             llm_model: config.llmModel ?? DEFAULT_LLM_MODEL,
             analysis_id: analysisId,
-            people_count: config.peopleCount,
+            // Omitted when null (Auto): the scenarist infers the people from the prompt.
+            people_count: config.peopleCount ?? undefined,
             likeliness: config.likeliness,
             duration: Math.round(scenarioDurationMs / 1000),
             bounding_box: getScenarioBounds(),
@@ -2367,12 +2370,15 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                 const items = Array.isArray(partial.items) ? partial.items : [];
                 for (const event of items as any[]) {
                   if (event?.type === 'scenario') {
-                    const { scenario_index, title, duration, peopleCount, likeliness } = event;
+                    const { scenario_index, title, duration, peopleCount, likeliness, peopleDescription, hasSpeech, roomDimensions } = event;
                     const next = [...workingScenarios];
                     next[scenario_index] = {
                       title,
                       duration,
                       peopleCount,
+                      peopleDescription,
+                      hasSpeech,
+                      roomDimensions,
                       likeliness,
                       events: next[scenario_index]?.events ?? [],
                     };
@@ -2437,8 +2443,8 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           // If speech already done and foley is missing, only run foley.
           // If both done, skip to step 2 (orchestrate).
           const hasFoley = !!config.foleyResult;
-          // `includeSpeech === false` (Simple-mode "Speech" chip off) skips the speech agent.
-          const hasSpeech = config.includeSpeech === false || (config.speechResult?.speeches?.length ?? 0) > 0;
+          // Speech off (Simple-mode chip) or a scenario without voices skips the speech agent.
+          const hasSpeech = isScenarioSpeechDone(config);
 
           if (!hasFoley || !hasSpeech) {
             const foleyBody = {

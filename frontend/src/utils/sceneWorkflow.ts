@@ -9,6 +9,7 @@ import type { SceneRun, SceneWorkflowStep } from '@/types/sceneWorkflow';
 import type { SettingsRow } from '@/components/ui/SettingsSummary';
 import { CARD_TYPE_LABELS } from '@/types/card';
 import { AUDIO_MODEL_NAMES, DEFAULT_LLM_MODEL, LLM_MODEL_NAMES, SIMPLE_MODE } from '@/utils/constants';
+import { formatScenarioPeople, isScenarioSpeechSkipped } from '@/utils/scenarioSpeech';
 
 export const MS_PER_SECOND = 1000;
 const SECONDS_PER_MINUTE = 60;
@@ -120,17 +121,18 @@ export function getSceneSettingsRows(
 ): SettingsRow[] {
   const rows: SettingsRow[] = [];
   const prompt = sc.userContext?.trim();
+  const fromImage = !!run?.options.image || !!sc.referenceImages?.length;
   rows.push(prompt
     ? { label: 'Prompt', value: prompt, expandable: true }
-    : { label: 'Prompt', value: 'None — from the model analysis' });
+    : { label: 'Prompt', value: fromImage ? 'None — from the image' : 'None — from the model analysis' });
   if (sc.timelineDurationMs) rows.push({ label: 'Duration', value: formatSceneDuration(sc.timelineDurationMs) });
-  const speech = sc.includeSpeech !== false;
+  const speech = !isScenarioSpeechSkipped(sc);
   rows.push({ label: 'Speech', value: speech ? 'Yes' : 'No' });
   if (speech) {
     const language = run?.options.speechLanguage || appSpeechLanguage;
     if (language) rows.push({ label: 'Speech language', value: language });
   }
-  rows.push({ label: 'People', value: String(sc.peopleCount) });
+  rows.push({ label: 'People', value: formatScenarioPeople(sc) });
   rows.push({ label: 'Plausibility', value: `${sc.likeliness}/${SIMPLE_MODE.SCENARIO_LIKELINESS_MAX}` });
   const llm = sc.llmModel ?? DEFAULT_LLM_MODEL;
   rows.push({ label: 'LLM', value: LLM_MODEL_NAMES[llm] ?? llm });

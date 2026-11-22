@@ -437,7 +437,7 @@ export interface SerializedAnalysisConfig {
   useAnalysisResult?: boolean;
   /** Text card: polygon area drawn in the viewer (serializable). */
   drawnArea?: DrawnArea | null;
-  peopleCount?: number;
+  peopleCount?: number | null;
   likeliness?: number;
   /** Scenario cards: foley sound detail level. */
   soundDetail?: FoleySoundDetail;

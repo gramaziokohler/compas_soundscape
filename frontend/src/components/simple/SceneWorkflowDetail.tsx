@@ -7,6 +7,7 @@ import { SceneSettingsSummary } from './SceneSettingsSummary';
 import { AnalysisGroupsControls, ScenarioHighlightControls } from './SceneStepHighlights';
 import { ThinkingDisclosure } from '@/components/ui/ThinkingDisclosure';
 import { SIMPLE_MODE } from '@/utils/constants';
+import { isScenarioSpeechDone, isScenarioSpeechSkipped } from '@/utils/scenarioSpeech';
 import {
   SCENE_WORKFLOW_STEPS,
   getSceneSoundIndices,
@@ -97,7 +98,7 @@ export function SceneWorkflowDetail({ scene, progress, onShowSounds }: SceneWork
     }
     if (step === 'scenario') return sc?.scenarioId ? 'done' : 'pending';
     if (step === 'foley') {
-      const speechOk = sc?.includeSpeech === false || (sc?.speechResult?.speeches?.length ?? 0) > 0;
+      const speechOk = isScenarioSpeechDone(sc);
       return sc?.foleyResult && speechOk ? 'done' : 'pending';
     }
     return scene.soundCount > 0 && scene.generatedCount === scene.soundCount ? 'done' : 'pending';
@@ -129,7 +130,7 @@ export function SceneWorkflowDetail({ scene, progress, onShowSounds }: SceneWork
       if (state === 'running') {
         return foley.slice(-PREVIEW_ITEMS).map((e) => e.soundName).join(', ');
       }
-      return `${foley.length} sounds${sc.includeSpeech === false ? '' : ` · ${speeches.length} voices`}`;
+      return `${foley.length} sounds${isScenarioSpeechSkipped(sc) ? '' : ` · ${speeches.length} voices`}`;
     }
     if (step === 'generate' && state === 'running' && progress.orchestrating) {
       return 'Scheduling the sounds on the timeline…';

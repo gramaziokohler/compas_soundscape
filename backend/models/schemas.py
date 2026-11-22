@@ -1183,7 +1183,17 @@ class ScenarioEvent(BaseModel):
 class Scenario(BaseModel):
     title: str
     duration: str
+    # Total number of people — given by the request or inferred by the scenarist
+    # from the prompt / image ("2 people and 3 children" -> 5).
     peopleCount: int
+    # Who they are, e.g. "2 adults, 3 children" ("" when nobody is present).
+    peopleDescription: str = ""
+    # False when the prompt asks for no voices or nobody would talk: the
+    # speech agent is then skipped.
+    hasSpeech: bool = True
+    # [width, depth, height] in metres when the prompt / image states or implies
+    # the room size; [] otherwise. Only used when no 3D model gives the extents.
+    roomDimensions: list[float] = []
     likeliness: int
     events: list[ScenarioEvent]
 
@@ -1287,7 +1297,8 @@ class ScenaristStreamRequest(BaseModel):
     user_context: str | None = None
     llm_model: str = DEFAULT_LLM_MODEL
     analysis_id: str | None = None
-    people_count: int = 5
+    # None = the scenarist infers the number of people from the prompt / image.
+    people_count: int | None = None
     likeliness: int = 9
     duration: int = 150
     # Optional {min:[x,y,z], max:[x,y,z]} spatial reference (model bounds) used
