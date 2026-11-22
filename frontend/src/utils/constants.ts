@@ -2824,6 +2824,8 @@ export const PFFDTD = {
   RUN_OVERHEAD_S: 30,
   /** Refresh of the available GPU memory while a wave card is open. */
   GPU_MEMORY_POLL_MS: 15000,
+  /** Label of the slider tick past which the grid no longer fits the available GPU memory. */
+  GPU_MAX_MARKER_LABEL: 'GPU max',
   PPW_MIN: 6,
   PPW_MAX: 80,
   /** Above this PPW the grid dispersion error is negligible ("phase accurate"). */

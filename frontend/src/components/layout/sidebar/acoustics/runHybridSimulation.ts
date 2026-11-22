@@ -15,7 +15,7 @@ import { importPffdtdIRFiles, buildPffdtdSimulationResultsText } from '@/utils/a
 import { captureGenerationSignature } from '@/utils/generationSignature';
 import { SIMULATION_STATUS_MISS_TOLERANCE, PFFDTD } from '@/utils/constants';
 import { simulationSourceSnapshot, type SimulationGeometryRequest } from '@/utils/simulationRequest';
-import { hybridResultLine } from '@/lib/acoustics/hybrid';
+import { hybridResultLine, type HybridRoom } from '@/lib/acoustics/hybrid';
 import { progressLanesFromPartial } from '@/utils/progressLanes';
 import type { GridListenerSnapshot, HybridSimulationConfig, SimulationConfig } from '@/types/acoustics';
 
@@ -27,6 +27,8 @@ export interface RunHybridSimulationDeps {
   pollIntervals: Map<number, ReturnType<typeof setInterval>>;
   receivers: Array<{ id: string; position: [number, number, number] }>;
   gridListenerSnapshot: GridListenerSnapshot[];
+  /** The room the Schroeder crossover is planned with, so both parts start at once (`hybridRoomForRun`) */
+  room: HybridRoom | null;
   onIRImported?: () => void;
 }
 
@@ -48,6 +50,7 @@ export async function runHybridSimulation(deps: RunHybridSimulationDeps): Promis
       config.settings,
       useUIStore.getState().globalSoundSpeed,
       useUIStore.getState().simulationMeshSettings,
+      deps.room,
     ));
   } catch (e) {
     update({ isRunning: false, error: e instanceof Error ? e.message : 'Failed' });

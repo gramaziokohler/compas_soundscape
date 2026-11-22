@@ -22,10 +22,10 @@ from config.constants import CA_PROGRESS_SPANS_MONO
 from config.constants import CA_PROGRESS_STAGE_LABELS
 from config.constants import CA_PROGRESS_STAGE_UNITS
 from config.constants import CA_PROGRESS_WRITE_S
+from config.constants import PROGRESS_LANES_PARTIAL_KEY
 from utils.atomic_json import write_progress_json
 
 LANE_QUEUED, LANE_RUNNING, LANE_DONE = "queued", "running", "done"
-PARTIAL_KEY = "ca_progress"
 
 
 def stage_spans(ambisonic: bool) -> dict:
@@ -157,6 +157,6 @@ def summary(lanes: list[Lane], pairs_total: int) -> tuple[float, str, dict]:
     fraction = sum(lane.fraction * lane.pairs for lane in lanes) / weight
     pairs_done = sum(lane.pairs for lane in lanes if lane.state == LANE_DONE)
     text = f"{phase(lanes)} · {pairs_done}/{pairs_total} pairs"
-    detail = {PARTIAL_KEY: {"pairs_done": pairs_done, "pairs_total": pairs_total,
+    detail = {PROGRESS_LANES_PARTIAL_KEY: {"pairs_done": pairs_done, "pairs_total": pairs_total,
                             "lanes": [lane.as_dict() for lane in lanes]}}
     return fraction, text, detail

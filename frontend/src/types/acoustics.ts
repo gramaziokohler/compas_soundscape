@@ -239,7 +239,11 @@ export interface HybridRunInfo {
   factor: number;
   limited_by: string | null;
   notes: string[];
+  /** Where `rt60` (the decay the crossover was planned with) came from */
   rt60_source?: string;
+  /** The decay measured on the run's geometric responses, and its Schroeder frequency: the next run plans with them */
+  measured_rt60?: number | null;
+  measured_schroeder_hz?: number | null;
   wave_duration_s?: number;
   /** Points per wavelength the wave part ran at (raised above the card's when the grid needed it). */
   wave_ppw?: number;

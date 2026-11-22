@@ -15,6 +15,7 @@ import { importPffdtdIRFiles, buildPffdtdSimulationResultsText } from '@/utils/a
 import { captureGenerationSignature } from '@/utils/generationSignature';
 import { SIMULATION_STATUS_MISS_TOLERANCE, PFFDTD } from '@/utils/constants';
 import { simulationSourceSnapshot, type SimulationGeometryRequest } from '@/utils/simulationRequest';
+import { progressLanesFromPartial } from '@/utils/progressLanes';
 import type { GridListenerSnapshot, PffdtdSimulationConfig, SimulationConfig } from '@/types/acoustics';
 
 export interface RunPffdtdSimulationDeps {
@@ -87,6 +88,7 @@ export async function runPffdtdSimulation(deps: RunPffdtdSimulationDeps): Promis
         runVoxelised: st.partial?.voxelised === true,
         // grid problems arrive with the voxelisation and stay with the result
         ...(st.partial?.problems ? { runProblems: st.partial.problems } : {}),
+        progressLanes: progressLanesFromPartial(st.partial),
       });
       if (!isLegacyJobTerminal(st)) return; // keep polling
 

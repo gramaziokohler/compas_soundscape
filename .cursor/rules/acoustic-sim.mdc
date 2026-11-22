@@ -174,16 +174,25 @@ Step 5 above is the **legacy** engine. Since the compas_acoustics migration
 One job on the PFFDTD queue (`JOB_TYPE_PFFDTD`, payload `variant: "hybrid"`,
 `services/hybrid_job.py`), enqueued by `POST /api/hybrid/run-simulation-speckle`:
 
-1. **Geometric part first** (compas_acoustics, mono or FOA; no HOA).
-2. **Crossover** (`utils/hybrid_crossover.plan_crossover`): `crossover_factor ×` the Schroeder
-   frequency `2000·√(T60/V)`, with T60 the median reliable T30 (500 Hz – 1 kHz) of the geometric IRs (Eyring's
-   prediction otherwise) and V the prepared air volume; or a manual frequency. The wave solver runs
-   to `HYBRID_WAVE_FMAX_MARGIN` (1.5) × the crossover (headroom; no user cap). Limits 40–2000 Hz,
-   fallback 200 Hz when the room is unknown. Before a run the card shows an Eyring estimate of the
-   Schroeder frequency from the acoustic layer box + assigned materials (`estimateSchroederEyring`).
-3. **Wave part** (`pffdtd_job._run_from_geometry` to that fmax), then each pair is joined with a
-   **4th-order Linkwitz-Riley** crossover (`combine`): causal (no pre-ringing before the direct
-   sound), branches in phase, flat sum for coherent parts.
+1. **Crossover, planned before either part runs** (`utils/hybrid_crossover.plan_crossover`):
+   `crossover_factor ×` the Schroeder frequency `2000·√(T60/V)` of the room the card sends
+   (`room_rt60` / `room_volume` / `room_estimate_source`, from `hybridRoomForRun`: the last run's
+   `measured_rt60`, else the Eyring estimate of the acoustic layer box + assigned materials,
+   `useHybridRoomEstimate`); without one, the Eyring prediction of the prepared mesh (`plan_room`).
+   Or a manual frequency. The wave solver runs to `HYBRID_WAVE_FMAX_MARGIN` (1.5) × the crossover
+   (headroom; no user cap), for `HYBRID_WAVE_DURATION_T60_FACTOR` × that T60 unless set. Limits
+   40–2000 Hz, fallback 200 Hz when the room is unknown.
+2. **Both parts at once:** the wave part (`pffdtd_job._run_from_geometry` to that fmax, GPU) runs on
+   a daemon thread while the geometric part (compas_acoustics, CPU processes, mono or FOA; no HOA)
+   runs on the job's thread. The geometric IRs' own T60 (median reliable T30, 500 Hz – 1 kHz) is
+   reported as `measured_rt60` / `measured_schroeder_hz` for the next run's plan.
+3. **Join:** each pair with a **4th-order Linkwitz-Riley** crossover (`combine`): causal (no
+   pre-ringing before the direct sound), branches in phase, flat sum for coherent parts.
+- **Progress** (`services/progress_lanes.HybridProgress`): collapsed line "Geometric 45% · Wave
+  20%", the bar at the parts' mean; the ▾ rows are the geometric part's (`CPU · …`, one per
+  compas_acoustics process) and the wave part's (`GPU · S1`, … one per source run, from the
+  pipeline's `COMPAS_RUN` lines: building the grid / preparing / GPU solve % · ETA /
+  post-processing / done). A plain wave card shows the same per-source rows.
 
 - **Preconditions the join relies on** (checked by `tests/test_hybrid_pipeline.py`): same sample
   rate, same time origin (both keep the propagation delay), same level (free field at 1 m).
@@ -469,6 +478,14 @@ Rules:
   `plan_grid(gpu_budget_bytes=...)` in the job, the geometry check and the voxel preview;
   `GET /api/pffdtd/gpu-memory` feeds `PffdtdGridEstimate` on the cards. Runtime estimate:
   `PFFDTD_RUN_OVERHEAD_S` + nodes x steps / `PFFDTD_NODE_UPDATES_PER_S[_SINGLE]` (RTX 2080 Ti fit).
+- **GPU max ticks on the sliders:** memory depends on fmax x PPW only (h = c / (fmax x PPW)), so
+  `usePffdtdGpuLimit(precision)` bisects the largest product that fits the live budget over the
+  acoustic region's box (`pffdtdMaxGridProduct`, same node count as `pffdtdGridEstimate`; the BRAS
+  `_plan_domain` cube-root PPW reduction solves the same fit by steps). Wave card: fmax tick = K / PPW,
+  PPW tick = K / fmax. Hybrid (`hybridGpuLimits`): PPW tick = K / wave fmax, crossover tick =
+  K / (1.5 x PPW) (x Schroeder Hz for the factor slider). Single precision lifts K by 2^(1/3).
+  Estimates: the backend may raise the hybrid PPW for seed clearance. One shared poll
+  (`usePffdtdGpuMemory`) serves every caller.
 - Wave-based cards' geometry check runs with engine `pffdtd` (grid, memory, runtime, clearance)
   and the card's fmax / ppw / duration / precision.
 - **Grid alignment:** cell faces start at the bbox minimum (CartGrid 3.5-cell offset); `plan_grid`

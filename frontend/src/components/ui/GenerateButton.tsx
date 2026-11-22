@@ -67,7 +67,7 @@ export interface GenerateButtonProps {
   onDoneAction?: () => void;
   /** Keyboard shortcut for the idle action — shown in a ShortcutTooltip instead of the native title. */
   shortcut?: ShortcutId;
-  /** Parallel parts of the run; with two or more, a chevron next to the status line shows one row each */
+  /** Parallel parts of the run; with two or more, clicking the status line (chevron after its text) shows one row each */
   lanes?: ProgressLane[] | null;
 }
 
@@ -147,25 +147,26 @@ export function GenerateButton({
     const hasLanes = !!lanes && lanes.length > 1;
     return (
       <div className="w-full">
-        {/* Status line + lanes toggle + stop square */}
+        {/* Status line (with parallel parts, the whole line toggles them; the chevron ends the text) + stop square */}
         <div className="gen-status">
-          <span className="gen-status-text">{statusText || 'Working…'}</span>
-          <span className="gen-status-actions">
-            {hasLanes && (
-              <button
-                className={`lanes-toggle${lanesOpen ? ' open' : ''}`}
-                onClick={() => setLanesOpen((open) => !open)}
-                aria-expanded={lanesOpen}
-                aria-label={lanesOpen ? 'Hide parallel parts' : 'Show parallel parts'}
-                title={lanesOpen ? 'Hide parallel parts' : `Show the ${lanes.length} parallel parts`}
-              >
-                <ChevronDown size={12} />
-              </button>
-            )}
-            {hasStop && (
+          {hasLanes ? (
+            <button
+              className={`gen-status-toggle${lanesOpen ? ' open' : ''}`}
+              onClick={() => setLanesOpen((open) => !open)}
+              aria-expanded={lanesOpen}
+              title={lanesOpen ? 'Hide parallel parts' : `Show the ${lanes.length} parallel parts`}
+            >
+              <span className="gen-status-text">{statusText || 'Working…'}</span>
+              <ChevronDown size={12} className="lanes-chevron" aria-hidden />
+            </button>
+          ) : (
+            <span className="gen-status-text">{statusText || 'Working…'}</span>
+          )}
+          {hasStop && (
+            <span className="gen-status-actions">
               <button className="stop" onClick={onStop} aria-label="Stop" title="Stop" />
-            )}
-          </span>
+            </span>
+          )}
         </div>
         {/* Progress track / fill */}
         <div className="progress-track">

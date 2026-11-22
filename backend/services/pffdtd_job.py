@@ -69,6 +69,7 @@ from services.simulation_preflight_service import (
     summarize,
 )
 from utils.acoustic_measurement import try_measure_ir
+from services.progress_lanes import WaveRuns, with_lanes
 from utils.atomic_json import write_json, write_progress_json
 from utils.geometry import seeds_from_pairs
 from utils.pffdtd_grid import oblique_area_fraction, pffdtd_precision, plan_grid
@@ -131,15 +132,27 @@ def _run_pipeline(job_path: Path, progress_file: str) -> None:
         span = PROGRESS_PIPELINE_END - PROGRESS_PIPELINE_START
         value, status = float(PROGRESS_PIPELINE_START), ""
         stages: dict = {}  # COMPAS_STAGE milestones, sticky for the rest of the run
+        job = json.loads(job_path.read_text())
+        runs = WaveRuns(len(job.get("sources") or []), bool(job.get("reciprocal")))
+
+        def partial() -> dict:  # the milestones + one row per run (shown when there are two or more)
+            return with_lanes(stages, runs.rows())
+
         for line in proc.stdout:
             if line.startswith("COMPAS_PROGRESS"):
                 _, pct, *msg = line.rstrip("\n").split(" ", 2)
                 value, status = PROGRESS_PIPELINE_START + span * float(pct) / 100.0, msg[0] if msg else ""
-                _write_progress(progress_file, value, status, stages)
+                _write_progress(progress_file, value, status, partial())
             elif line.startswith("COMPAS_STAGE"):
                 name, _, raw = line[len("COMPAS_STAGE"):].strip().partition(" ")
                 stages[name] = json.loads(raw) if raw else True
-                _write_progress(progress_file, value, status, stages)
+                _write_progress(progress_file, value, status, partial())
+            elif line.startswith("COMPAS_RUN"):
+                try:
+                    runs.update(json.loads(line[len("COMPAS_RUN"):].strip()))
+                except ValueError:
+                    continue
+                _write_progress(progress_file, value, status, partial())
             elif line.startswith("COMPAS_ERROR"):
                 error = line[len("COMPAS_ERROR"):].strip()
             else:

@@ -35,3 +35,46 @@ export function pffdtdGridEstimate(
     : PFFDTD.RUN_OVERHEAD_S + (nodes * Math.ceil(duration / ts)) / PFFDTD.NODE_UPDATES_PER_S[precision];
   return { nodes, bytes: nodes * PFFDTD.BYTES_PER_NODE[precision], runtimeS };
 }
+
+/** Bisection steps of pffdtdMaxGridProduct: the product is found to 2^-40 of its search range. */
+const MAX_PRODUCT_BISECTIONS = 40;
+
+/**
+ * The largest fmax · PPW whose grid over this box fits `availableBytes` of GPU memory. The grid
+ * spacing is h = c / (fmax · PPW), so memory depends on that product alone: one GPU limit links
+ * the max frequency (or the hybrid's crossover) and the points per wavelength. The node count only
+ * grows with the product, so it is found by bisection over the same estimate as pffdtdGridEstimate
+ * (the cube-root PPW reduction of the BRAS benchmark's _plan_domain solves the same fit by steps).
+ * Infinity when even the finest grid of the sliders fits; 0 when not even the padding fits.
+ */
+export function pffdtdMaxGridProduct(
+  extents: [number, number, number],
+  precision: PffdtdPrecision,
+  availableBytes: number,
+): number {
+  const fits = (product: number) =>
+    pffdtdGridEstimate(extents, PFFDTD.SPEED_OF_SOUND / product, precision, null).bytes <= availableBytes;
+  let hi = PFFDTD.FMAX_MAX * PFFDTD.PPW_MAX;
+  if (fits(hi)) return Infinity;
+  let lo = 0;
+  for (let i = 0; i < MAX_PRODUCT_BISECTIONS; i++) {
+    const mid = (lo + hi) / 2;
+    if (fits(mid)) lo = mid;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/**
+ * A "GPU max" tick for a slider at `value`, or none when the limit is beyond the slider's range
+ * (everything fits) or the limit is unknown. A limit below the range is drawn at the range's start:
+ * no setting fits, and the grid estimate says so.
+ */
+export function gpuMaxMarker(
+  value: number | null,
+  min: number,
+  max: number,
+): Array<{ value: number; label: string; tone: 'error' }> {
+  if (value === null || !Number.isFinite(value) || value >= max) return [];
+  return [{ value: Math.max(value, min), label: PFFDTD.GPU_MAX_MARKER_LABEL, tone: 'error' }];
+}

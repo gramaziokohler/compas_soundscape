@@ -27,9 +27,8 @@ import {
   PYROOMACOUSTICS_SIMULATION_MODE_MONO,
   PYROOMACOUSTICS_SIMULATION_MODE_NAMES,
 } from '@/utils/constants';
-import { useMemo } from 'react';
-import { useAcousticMaterialStore } from '@/store';
-import { useAcousticRegionBounds } from '@/hooks/useAcousticRegionBounds';
+import { useHybridRoomEstimate } from '@/hooks/useHybridRoomEstimate';
+import { usePffdtdGpuLimit } from '@/hooks/usePffdtdGpuLimit';
 import { CardSelect } from '@/components/ui/CardSelect';
 import { ModifiedMark, useIsFieldModified } from '@/components/ui/ModifiedMark';
 import { Notice } from '@/components/ui/Notice';
@@ -40,12 +39,12 @@ import { AcousticMaterialsSummary } from './AcousticMaterialsSummary';
 import { GeometricEngineSettings } from './GeometricEngineSettings';
 import { PffdtdPrecisionToggle } from './PffdtdPrecisionToggle';
 import { PffdtdGridEstimate } from './PffdtdGridEstimate';
-import { pffdtdGridSpacing } from '@/lib/acoustics/pffdtd-grid';
+import { gpuMaxMarker, pffdtdGridSpacing } from '@/lib/acoustics/pffdtd-grid';
 import {
   crossoverReadout,
-  estimateSchroederEyring,
+  hybridGpuLimits,
   hybridRunSummary,
-  lowFrequencyMeanAbsorption,
+  lastRunSchroederHz,
   mismatchWarning,
   planCrossover,
 } from '@/lib/acoustics/hybrid';
@@ -57,7 +56,7 @@ interface HybridSimulationSettingsProps {
 }
 
 const CROSSOVER_MODES = [
-  { value: 'schroeder', label: 'Schroeder frequency', title: 'From the room: 2000·√(T60 / V), measured when the simulation runs' },
+  { value: 'schroeder', label: 'Schroeder frequency', title: "From the room: 2000·√(T60 / V), with the last run's measured T60, else the Eyring estimate" },
   { value: 'manual', label: 'Manual', title: 'A crossover frequency you choose' },
 ];
 
@@ -74,21 +73,21 @@ export function HybridSimulationSettings({ config, onUpdateConfig }: HybridSimul
   const autoDuration = s.duration === null;
 
   // Eyring estimate of the Schroeder frequency until a run has measured the room.
-  const { bounds, isAcousticLayer } = useAcousticRegionBounds();
-  const materialAssignments = useAcousticMaterialStore((st) => st.materialAssignments);
-  const availableMaterials = useAcousticMaterialStore((st) => st.availableMaterials);
-  const meanAbsorption = useMemo(
-    () => lowFrequencyMeanAbsorption(materialAssignments.values(), availableMaterials),
-    [materialAssignments, availableMaterials]
-  );
-  const estimate = useMemo(() => estimateSchroederEyring(bounds, meanAbsorption), [bounds, meanAbsorption]);
+  const { estimate, isAcousticLayer, meanAbsorption } = useHybridRoomEstimate();
+  const lastRunHz = lastRunSchroederHz(info);
+  const schroederHz = lastRunHz ?? estimate?.schroederHz ?? null;
   // Wave-part grid spacing: the crossover plan (last run's room, else the Eyring estimate); the
   // backend may raise the PPW for seed clearance, which only makes the grid finer.
-  const wavePlan = planCrossover(s, info?.schroeder_hz ?? estimate?.schroederHz ?? null);
+  const wavePlan = planCrossover(s, schroederHz);
   const waveSpacing = wavePlan ? pffdtdGridSpacing(wavePlan.waveFmax, s.ppw) : null;
-  const recommendedHz = info?.schroeder_hz ?? estimate?.schroederHz ?? null;
-  const recommendedTitle = info?.schroeder_hz != null
-    ? `Recommended: the last run's Schroeder frequency, ${Math.round(info.schroeder_hz)} Hz`
+  const recommendedHz = schroederHz;
+  // GPU limits (live available memory, the toggle's precision): ticks past which the wave grid no longer fits.
+  const { maxProduct } = usePffdtdGpuLimit(s.precision);
+  const gpu = hybridGpuLimits(maxProduct, s.ppw, wavePlan?.waveFmax ?? null, schroederHz);
+  const gpuTitle = maxProduct === null ? undefined
+    : `GPU max: the wave grid (${s.precision} precision) stops fitting the GPU memory available now past this tick`;
+  const recommendedTitle = lastRunHz != null
+    ? `Recommended: the last run's Schroeder frequency, ${Math.round(lastRunHz)} Hz`
     : estimate
       ? `Recommended ≈ ${Math.round(estimate.schroederHz)} Hz: Schroeder frequency by Eyring (T60 ≈ ${estimate.rt60.toFixed(2)} s, `
         + `${Math.round(estimate.volume).toLocaleString()} m³ ${isAcousticLayer ? 'acoustic layer' : 'model'} box, ᾱ ≈ ${meanAbsorption.toFixed(2)})`
@@ -136,7 +135,11 @@ export function HybridSimulationSettings({ config, onUpdateConfig }: HybridSimul
             onChange={(v) => set('crossover_factor', v)}
             disabled={disabled}
             defaultValue={HYBRID.CROSSOVER_FACTOR_DEFAULT}
-            markers={[{ value: 1, label: 'rec', tone: 'primary' }]}
+            markers={[
+              { value: 1, label: 'rec', tone: 'primary' },
+              ...gpuMaxMarker(gpu.factorMax, HYBRID.CROSSOVER_FACTOR_MIN, HYBRID.CROSSOVER_FACTOR_MAX),
+            ]}
+            sliderTitle={gpuTitle}
             hoverText="1 = the Schroeder frequency. Up to 4 puts the join where the room's modes overlap strongly, at the cost of a longer wave run."
           />
         ) : (
@@ -151,8 +154,11 @@ export function HybridSimulationSettings({ config, onUpdateConfig }: HybridSimul
             onChange={(v) => set('crossover_hz', v)}
             disabled={disabled}
             defaultValue={HYBRID.CROSSOVER_HZ_DEFAULT}
-            markers={recommendedHz !== null ? [{ value: recommendedHz, label: 'rec', tone: 'primary' }] : undefined}
-            sliderTitle={recommendedTitle}
+            markers={[
+              ...(recommendedHz !== null ? [{ value: recommendedHz, label: 'rec', tone: 'primary' as const }] : []),
+              ...gpuMaxMarker(gpu.crossoverHzMax, HYBRID.CROSSOVER_HZ_MIN, HYBRID.CROSSOVER_HZ_MAX),
+            ]}
+            sliderTitle={[recommendedTitle, gpuTitle].filter(Boolean).join('\n') || undefined}
           />
         )}
         <p className="text-xxs text-secondary-hover">{crossoverReadout(s, info, estimate?.schroederHz ?? null)}</p>
@@ -184,6 +190,8 @@ export function HybridSimulationSettings({ config, onUpdateConfig }: HybridSimul
           onChange={(v) => set('ppw', v)}
           disabled={disabled}
           defaultValue={HYBRID.DEFAULT_PPW}
+          markers={gpuMaxMarker(gpu.ppwMax, PFFDTD.PPW_MIN, PFFDTD.PPW_MAX)}
+          sliderTitle={gpuTitle}
         />
         <PffdtdPrecisionToggle
           precision={s.precision}

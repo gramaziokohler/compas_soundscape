@@ -535,8 +535,12 @@ HYBRID_LEVEL_MATCH_MAX_DB = 6.0
 # the room's shape and for sources near a surface (the solver needs PFFDTD_SEED_CLEARANCE_CELLS).
 HYBRID_WAVE_MAX_CELL_M = 0.15
 HYBRID_WAVE_SEED_CLEARANCE_MARGIN = 1.15   # cells of clearance asked for = this x the solver's minimum
-HYBRID_PROGRESS_GA_END = 40.0
+# The geometric (CPU) and wave (GPU) parts run at once: the bar goes from PARTS_START to WAVE_END
+# at their weighted mean (services/progress_lanes.py HybridProgress), then the join.
+HYBRID_PROGRESS_PARTS_START = 10.0
 HYBRID_PROGRESS_WAVE_END = 94.0
+HYBRID_PROGRESS_GA_WEIGHT = 0.5
+HYBRID_ROOM_SOURCE_MAX_CHARS = 120   # the card's note on where its room estimate comes from
 
 # Sound paths for the 3D view (services/acoustic_paths_service.py)
 ACOUSTIC_PATHS_KINDS = ("reflections", "rays", "diffraction")
@@ -624,6 +628,10 @@ CA_PROGRESS_SPANS_MONO = {
     "diffraction": (0.6, 0.7),
     "responses": (0.7, 1.0),
 }
+# Key of a job's ``partial`` holding the rows of its parts that run side by side (services/progress_lanes.py)
+PROGRESS_LANES_PARTIAL_KEY = "progress_lanes"
+# A wave run's row: its bar at each pipeline step ("solve" spans the GPU solve's 0-100 %)
+WAVE_RUN_FRACTIONS = {"grid": 0.0, "prepare": 0.02, "solve": (0.05, 0.9), "post": 0.92}
 CA_PROGRESS_POLL_S = 0.5    # how often the job reads its rendering processes' progress
 CA_PROGRESS_WRITE_S = 0.25  # how often a rendering process writes its own (a stage change always writes)
 

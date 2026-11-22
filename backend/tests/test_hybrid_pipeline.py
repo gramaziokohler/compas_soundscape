@@ -101,6 +101,18 @@ def test_crossover_is_the_schroeder_frequency(mono):
     assert entry["engine"] == "hybrid" and entry["band_limited"] is False
     assert entry["hybrid"]["crossover_hz"] == hybrid["crossover_hz"]
     assert result["result"]["hybrid"]["crossover_hz"] == hybrid["crossover_hz"]
+    # planned before the parts ran (no estimate from the card: the mesh's Eyring prediction); the geometric
+    # responses' own decay is reported for the next run
+    assert hybrid["rt60_source"] == "Eyring prediction of the simulation mesh"
+    assert 0.15 < hybrid["measured_rt60"] < 1.5
+    assert hybrid["measured_schroeder_hz"] == pytest.approx(schroeder_frequency(hybrid["measured_rt60"], hybrid["volume_m3"]), rel=0.01)
+
+
+def test_the_crossover_follows_the_cards_room(tmp_path):
+    _, results, _, _ = _run(tmp_path, "mono", room_rt60=0.6, room_volume=VOLUME, room_estimate_source="the last run's room", duration=0.4)
+    hybrid = results["hybrid"]
+    assert hybrid["rt60"] == pytest.approx(0.6) and hybrid["rt60_source"] == "the last run's room"
+    assert hybrid["crossover_hz"] == pytest.approx(schroeder_frequency(0.6, VOLUME), rel=0.01)
 
 
 def test_engines_agree_where_they_overlap(mono):

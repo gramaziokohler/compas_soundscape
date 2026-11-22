@@ -33,7 +33,9 @@ import {
   defaultHybridSettings,
   estimateSchroederEyring,
   hybridFormFields,
+  hybridRoomForRun,
   hybridRunSummary,
+  lastRunSchroederHz,
   lowFrequencyMeanAbsorption,
   mismatchWarning,
   planCrossover,
@@ -289,6 +291,22 @@ describe('hybrid crossover', () => {
     expect(manual.duration).toBe('0.8');
   });
 
+  it('sends the room the Schroeder crossover is planned with, so both parts start at once', () => {
+    const room = { rt60: 0.5, volume: 120, source: 'Eyring estimate of the acoustic region' };
+    const fields = hybridFormFields(defaultHybridSettings(), 343, room);
+    expect([fields.room_rt60, fields.room_volume, fields.room_estimate_source]).toEqual(['0.5', '120', room.source]);
+    const manual = hybridFormFields({ ...defaultHybridSettings(), crossover_mode: 'manual', crossover_hz: 150 }, 343, room);
+    expect(manual.room_rt60).toBeUndefined(); // a manual crossover needs no room
+
+    const estimate = { schroederHz: 129, rt60: 0.5, volume: 120 };
+    expect(hybridRoomForRun(null, estimate)).toEqual(room);
+    expect(hybridRoomForRun(null, null)).toBeNull();
+    const ran = info({ rt60: 0.5, measured_rt60: 0.62, measured_schroeder_hz: 160 });
+    expect(hybridRoomForRun(ran, estimate)).toEqual({ rt60: 0.62, volume: 30, source: "the last run's room (measured)" });
+    expect(lastRunSchroederHz(ran)).toBe(160);
+    expect(lastRunSchroederHz(info())).toBe(234); // runs from before the measurement was reported
+  });
+
   it('restores saved settings, defaulting what is missing or out of range', () => {
     expect(restoreHybridSettings(undefined)).toEqual(defaultHybridSettings());
     const restored = restoreHybridSettings({
@@ -308,7 +326,7 @@ describe('hybrid crossover', () => {
 
   it('reads out the crossover before and after a run', () => {
     const s = defaultHybridSettings();
-    expect(crossoverReadout(s, null)).toContain('measured from the room');
+    expect(crossoverReadout(s, null)).toContain('predicted from the simulation mesh');
     expect(crossoverReadout(s, info())).toContain('crossover 234 Hz');
     expect(crossoverReadout({ ...s, crossover_mode: 'manual', crossover_hz: 150 }, null)).toContain('Wave below 150 Hz');
     expect(crossoverReadout(s, null, 180)).toContain('Estimated (Eyring');

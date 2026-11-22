@@ -24,6 +24,8 @@ stdout protocol (one line each, flushed):
     COMPAS_PROGRESS <0-100> <message>
     COMPAS_STAGE <name> [<json>]      (a milestone, value true unless given; "voxelised" = the
                                        job's grid is built, "problems" = grid warnings for the card)
+    COMPAS_RUN <json>                 (one source's run: {"run", "step", "pct", "eta"}; step is
+                                       grid, prepare, solve, post or done)
     COMPAS_ERROR <message>            (then exit code 2)
 If the parent process disappears (job cancelled / worker killed), the engine is killed
 and this process exits.
@@ -92,6 +94,12 @@ def emit(pct: float, msg: str) -> None:
 
 def emit_stage(name: str, value=None) -> None:
     print(f"COMPAS_STAGE {name}" + ("" if value is None else f" {json.dumps(value)}"), flush=True)
+
+
+def emit_run(run: int, step: str, pct: float | None = None, eta: float | None = None) -> None:
+    """Where one source's run is (the parent shows one progress row per run)."""
+    report = {"run": run, "step": step, "pct": None if pct is None else round(pct, 1), "eta": None if eta is None else round(eta)}
+    print(f"COMPAS_RUN {json.dumps(report)}", flush=True)
 
 
 def run_problems(prep) -> list[dict]:
@@ -192,6 +200,7 @@ def run_job(job: dict, watch: ParentWatch) -> dict:
         span = 100.0 / n_src
         if base is None:
             emit(pct0 + 1, f"Source {si + 1}/{n_src}: building the grid (voxelisation, cut cells)...")
+            emit_run(si, "grid")
             spec = SimSpec(
                 sim_dir=work_dir / f"src_{si}",
                 scene={"mats_hash": job["mats_hash"], "sources": [{"xyz": src}], "receivers": [{"xyz": p} for p in probes.tolist()]},
@@ -221,6 +230,7 @@ def run_job(job: dict, watch: ParentWatch) -> dict:
                 prep = _voxel_check(derive, base, work_dir / f"src_{si}_free", source_xyz=src, node_receivers=grid.probe_ixyz)
         else:
             emit(pct0 + 1, f"Source {si + 1}/{n_src}: preparing (voxelisation reused)...")
+            emit_run(si, "prepare")
             prep = _voxel_check(derive, base, work_dir / f"src_{si}", source_xyz=src,
                                 node_receivers=None if grid is None else grid.probe_ixyz)
 
@@ -228,6 +238,7 @@ def run_job(job: dict, watch: ParentWatch) -> dict:
 
         def on_progress(pct, elapsed, eta, e0=e0, si=si):
             emit(e0 + span * STAGE_SPLIT[1] * pct / 100.0, f"Source {si + 1}/{n_src}: GPU solve {pct:.0f}% (ETA {eta:.0f} s)")
+            emit_run(si, "solve", pct, eta)
 
         runtime = run_engine(prep.gpu_dir, job["precision"], on_progress=on_progress, should_stop=lambda: watch.dead)
         src_meta = {"index": si, "Ts": prep.Ts, "c": prep.c, "grid": list(prep.shape), "boundary_nodes": prep.Nb,
@@ -241,6 +252,7 @@ def run_job(job: dict, watch: ParentWatch) -> dict:
             store_runs.append({"file": run_file(si), "fixed_index": si, "channel": "P"})
 
         emit(pct0 + span * sum(STAGE_SPLIT[:2]), f"Source {si + 1}/{n_src}: post-processing...")
+        emit_run(si, "post")
         r_out, Ts = read_receivers(prep.gpu_dir)
         irs = []
         for ri in range(receivers.shape[0]):
@@ -268,6 +280,7 @@ def run_job(job: dict, watch: ParentWatch) -> dict:
         if prep is not base:
             shutil.rmtree(prep.gpu_dir, ignore_errors=True)  # derived runs: the setup links stay
         meta["sources"].append(src_meta)
+        emit_run(si, "done")
 
     if lattice is not None:
         meta["volume"], outside = _write_volume_outputs(work_dir, lattice, p2_maps, sos, float(job["spl_reference_m"]), base.Nt, meta)

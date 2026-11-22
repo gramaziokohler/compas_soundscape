@@ -183,7 +183,7 @@ describe('hybrid card settings', () => {
   it('explains the Schroeder crossover before a run', () => {
     const html = hybrid(hybridConfig());
     expect(html).toContain('× Schroeder frequency');
-    expect(html).toContain('measured from the room when the simulation runs');
+    expect(html).toContain('predicted from the simulation mesh when the run starts');
     expect(html).toContain('Wave part (below the crossover)');
     expect(html).toContain('Geometric part (above the crossover)');
     expect(html).toContain('Length from the room');

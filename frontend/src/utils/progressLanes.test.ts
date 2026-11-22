@@ -4,7 +4,7 @@ import { formatElapsed, progressLanesFromPartial } from './progressLanes';
 describe('progressLanesFromPartial', () => {
   it('reads the rows of a compas_acoustics job', () => {
     const partial = {
-      ca_progress: {
+      progress_lanes: {
         pairs_done: 3,
         pairs_total: 12,
         lanes: [
@@ -22,8 +22,8 @@ describe('progressLanesFromPartial', () => {
   it('is null for other partials and drops malformed rows', () => {
     expect(progressLanesFromPartial(null)).toBeNull();
     expect(progressLanesFromPartial({ voxelised: true })).toBeNull();
-    expect(progressLanesFromPartial({ ca_progress: { lanes: [{ label: 'x', state: 'odd' }] } })).toBeNull();
-    const clamped = progressLanesFromPartial({ ca_progress: { lanes: [{ label: 'a', text: 'b', fraction: 2, state: 'done' }] } });
+    expect(progressLanesFromPartial({ progress_lanes: { lanes: [{ label: 'x', state: 'odd' }] } })).toBeNull();
+    const clamped = progressLanesFromPartial({ progress_lanes: { lanes: [{ label: 'a', text: 'b', fraction: 2, state: 'done' }] } });
     expect(clamped?.[0].fraction).toBe(1);
   });
 });

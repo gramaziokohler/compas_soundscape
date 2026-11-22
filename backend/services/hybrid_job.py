@@ -35,7 +35,6 @@ from config.constants import (
     CA_DIFFRACTION_DEFAULT,
     CA_SEED_DEFAULT,
     HYBRID_CROSSOVER_FACTOR_DEFAULT,
-    HYBRID_PROGRESS_GA_END,
     HYBRID_PROGRESS_WAVE_END,
     HYBRID_WAVE_DURATION_T60_FACTOR,
     PFFDTD_DEFAULT_PPW,
@@ -49,6 +48,7 @@ from config.constants import (
 )
 from models.schemas import MeshPrepSettings
 from services.pffdtd_job import _atomic_write, _run_from_geometry, _write_progress, geometry_dict, pffdtd_available
+from services.progress_lanes import HybridProgress
 from services.pyroomacoustics_room_builder import room_offset
 from services.simulation_geometry_loader import load_speckle_simulation_geometry
 from services.simulation_mesh_service import MeshPrepOptions, SimulationMeshService
@@ -57,7 +57,7 @@ from utils.audio_processing import trim_ir
 from utils.geometry import seeds_from_pairs
 from utils.run_timing import solve_started, solve_time_s
 from utils.hybrid_crossover import (
-    CROSSOVER_SCHROEDER, CrossoverPlan, combine, plan_crossover, wave_ppw,
+    CROSSOVER_SCHROEDER, CrossoverPlan, combine, plan_crossover, schroeder_frequency, wave_ppw,
 )
 
 METHOD_NAME = "Hybrid (PFFDTD + compas_acoustics)"
@@ -117,16 +117,25 @@ def wave_duration(requested: Optional[float], rt60: Optional[float]) -> float:
     return float(np.clip(base, 0.3, PFFDTD_DURATION_MAX))
 
 
-def _mirror_progress(sub_file: str, progress_file: str, lo: float, hi: float, stop: threading.Event) -> None:
-    """Forward the wave run's progress file into the job's, scaled into [lo, hi]."""
+def _mirror_progress(sub_file: str, report, stop: threading.Event) -> None:
+    """Forward the wave run's progress file (value 0-100, status, partial) to ``report``."""
     while not stop.wait(0.5):
         try:
             with open(sub_file) as f:
                 sub = json.load(f)
-            value = lo + (hi - lo) * float(sub.get("value", 0.0)) / 100.0
-            _write_progress(progress_file, value, f"Wave part: {sub.get('status', '')}", sub.get("partial"))
+            report(float(sub.get("value", 0.0)), str(sub.get("status", "")), sub.get("partial"))
         except (OSError, ValueError):
             continue
+
+
+def plan_room(room_rt60: Optional[float], room_volume: Optional[float], room, source: Optional[str]) -> tuple:
+    """``(rt60, volume, source)`` the crossover and the wave run's length are planned with, before either part runs:
+    the card's (its last run's measurement, or its Eyring estimate of the acoustic region), else the Eyring
+    prediction of the prepared mesh."""
+    volume = float(room.volume) if room.has_volume else None
+    if room_rt60 and room_rt60 > 0:
+        return float(room_rt60), float(room_volume) if room_volume and room_volume > 0 else volume, source or "the card's estimate"
+    return predicted_rt60(room), volume, "Eyring prediction of the simulation mesh"
 
 
 def join_pairs(
@@ -242,8 +251,16 @@ def run_hybrid_from_geometry(
     air_humidity: float = 50.0,
     excluded_edges: Optional[list] = None,
     parallel: bool = True,
+    # the room the crossover is planned with (Schroeder mode), from the card; else predicted here
+    room_rt60: Optional[float] = None,
+    room_volume: Optional[float] = None,
+    room_estimate_source: Optional[str] = None,
     started: Optional[float] = None,
 ) -> None:
+    """The geometric part (compas_acoustics, CPU processes) and the wave part (PFFDTD, GPU) run at once, then join.
+
+    The crossover is planned before either runs, from the card's room (``room_rt60``, ``room_volume``) or a manual
+    frequency; the reverberation time measured on the geometric responses is reported for the next run."""
     started = solve_started(started)
     stop = threading.Event()
     try:
@@ -256,8 +273,8 @@ def run_hybrid_from_geometry(
 
         foa = simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_FOA
 
-        # ── 1. Geometric part ────────────────────────────────────────────────
-        _write_progress(progress_file, 9.0, "Geometric part: preparing the simulation mesh...")
+        # ── 1. Mesh, crossover and wave plan ─────────────────────────────────
+        _write_progress(progress_file, 9.0, "Preparing the simulation mesh...")
         seed_meta = seeds_from_pairs(pairs_data)
         mesh = SimulationMeshService.prepare(
             geometry["vertices"], geometry["faces"], geometry["object_face_ranges"], geometry["face_materials"],
@@ -274,23 +291,8 @@ def run_hybrid_from_geometry(
             reciprocity=PYROOMACOUSTICS_RECIPROCITY_ENABLED, seed=int(seed), tail=tail or "auto",
             n_slopes=int(n_slopes), scattering_split=bool(scattering_split), excluded_edges=list(excluded_edges or []),
         )
-        ga = simulate_pairs(
-            mesh, offset, pairs_data, settings,
-            lambda fraction, text, partial: _write_progress(
-                progress_file, 10.0 + (HYBRID_PROGRESS_GA_END - 10.0) * fraction, f"Geometric part: {text}", partial),
-        )
-        ga_by_pair = {
-            (str(pairs_data[r.pair_index]["source_id"]), str(pairs_data[r.pair_index]["receiver_id"])): r.rir
-            for r in ga.responses
-        }
-
-        # ── 2. Crossover ─────────────────────────────────────────────────────
         room = room_geometry(mesh, offset)
-        volume = float(room.volume) if room.has_volume else None
-        rt60 = measured_rt60(ga.responses)
-        rt60_source = "measured on the geometric responses"
-        if rt60 is None:
-            rt60, rt60_source = predicted_rt60(room), "Eyring prediction"
+        rt60, volume, rt60_source = plan_room(room_rt60, room_volume, room, room_estimate_source)
         plan = plan_crossover(crossover_mode, rt60, volume, manual_hz=crossover_hz, factor=crossover_factor,
                               wave_fmax_cap=wave_fmax_cap)
         run_duration = wave_duration(duration, rt60)
@@ -304,31 +306,54 @@ def run_hybrid_from_geometry(
         for note in plan.notes:
             print(f"  [note] {note}")
 
-        # ── 3. Wave part + join ──────────────────────────────────────────────
+        # ── 2. Wave part (GPU, a thread driving the PFFDTD pipeline) and geometric part (CPU) at once ──
+        progress = HybridProgress(lambda value, text, partial: _write_progress(progress_file, value, text, partial))
         sub_progress = progress_file + ".wave"
         sub_result = result_file + ".wave"
-        mirror = threading.Thread(
-            target=_mirror_progress, daemon=True,
-            args=(sub_progress, progress_file, HYBRID_PROGRESS_GA_END, HYBRID_PROGRESS_WAVE_END, stop),
-        )
+        mirror = threading.Thread(target=_mirror_progress, daemon=True, args=(sub_progress, progress.wave_part, stop))
+        wave_failure: list[BaseException] = []
+
+        def wave_part() -> None:
+            try:
+                _run_from_geometry(
+                    simulation_id, sub_progress, sub_result,
+                    {k: geometry[k] for k in ("vertices", "faces", "object_face_ranges", "face_materials")},
+                    pairs_data, simulation_mode,
+                    plan.wave_fmax, run_ppw, run_duration, air_absorption, simulation_name, rir_output_dir, temp_dir,
+                    mesh_settings,
+                    header_meta=header_meta,
+                    precision=precision,
+                )
+            except BaseException as exc:  # noqa: BLE001 - re-raised on the job's thread
+                wave_failure.append(exc)
+
+        # daemon: if the geometric part fails, the job's process ends and the pipeline, watching it, stops
+        wave = threading.Thread(target=wave_part, daemon=True, name=f"hybrid-wave-{simulation_id[:8]}")
         mirror.start()
+        wave.start()
         try:
-            _run_from_geometry(
-                simulation_id, sub_progress, sub_result,
-                {k: geometry[k] for k in ("vertices", "faces", "object_face_ranges", "face_materials")},
-                pairs_data, simulation_mode,
-                plan.wave_fmax, run_ppw, run_duration, air_absorption, simulation_name, rir_output_dir, temp_dir,
-                mesh_settings,
-                header_meta=header_meta,
-                precision=precision,
-            )
+            ga = simulate_pairs(mesh, offset, pairs_data, settings, progress.geometric)
+            progress.finish("geometric")
+            wave.join()
         finally:
             stop.set()
             mirror.join(timeout=2.0)
+        if wave_failure:
+            raise wave_failure[0]
+        progress.finish("wave")
         with open(sub_result) as f:
             wave_result = json.load(f)
         if wave_result.get("type") != "done":
             raise RuntimeError(wave_result.get("message") or "The wave part failed")
+        ga_by_pair = {
+            (str(pairs_data[r.pair_index]["source_id"]), str(pairs_data[r.pair_index]["receiver_id"])): r.rir
+            for r in ga.responses
+        }
+        # what the geometric responses measure: the card plans the next run's crossover with it
+        measured = measured_rt60(ga.responses)
+        measured_schroeder = schroeder_frequency(measured or 0.0, volume or 0.0)
+
+        # ── 3. Join ──────────────────────────────────────────────────────────
 
         _write_progress(progress_file, HYBRID_PROGRESS_WAVE_END, f"Joining at {plan.crossover_hz:.0f} Hz...")
         results_path = Path(temp_dir) / wave_result["result"]["results_file"]
@@ -341,6 +366,8 @@ def run_hybrid_from_geometry(
         results_json["hybrid"] = {
             **plan.as_dict(),
             "rt60_source": rt60_source,
+            "measured_rt60": None if measured is None else round(float(measured), 3),
+            "measured_schroeder_hz": None if measured_schroeder is None else round(float(measured_schroeder), 2),
             "wave_duration_s": round(run_duration, 3),
             "wave_ppw": round(run_ppw, 1),
             "level_match": bool(level_match),

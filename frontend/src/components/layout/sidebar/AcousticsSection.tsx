@@ -23,6 +23,8 @@
 
 import { GA_ENGINE } from '@/utils/constants';
 import { progressLanesFromPartial } from '@/utils/progressLanes';
+import { useHybridRoomEstimate } from '@/hooks/useHybridRoomEstimate';
+import { hybridRoomForRun } from '@/lib/acoustics/hybrid';
 import { resolveEngine, usesCompasAcoustics } from '@/lib/acoustics/geometric-engine';
 import { isEngineSimulation, isGeometricSimulation } from '@/types/acoustics';
 import { useAcousticPathsStore, type RunAcousticPathsArgs } from '@/store';
@@ -910,6 +912,9 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   /**
    * Start the engine run for the given config index (no geometry check).
    */
+  // the room a hybrid run plans its Schroeder crossover with, until a run has measured it
+  const { estimate: hybridRoomEstimate } = useHybridRoomEstimate();
+
   const dispatchSimulation = useCallback(async (index: number) => {
     const config = simulationConfigs[index];
     if (!config) return;
@@ -931,6 +936,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         pollIntervals: pollIntervalsRef.current,
         receivers: allReceivers,
         gridListenerSnapshot: buildGridListenerSnapshot(gridListeners),
+        room: hybridRoomForRun(config.hybridInfo ?? null, hybridRoomEstimate),
         onIRImported,
       });
     } else if (config.type === 'pffdtd') {
@@ -950,7 +956,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         onIRImported,
       });
     }
-  }, [simulationConfigs, runPyroomSimulation, buildCardRequest, handleUpdateConfig, allReceivers, gridListeners, onIRImported]);
+  }, [simulationConfigs, runPyroomSimulation, buildCardRequest, handleUpdateConfig, allReceivers, gridListeners, onIRImported, hybridRoomEstimate]);
 
   /**
    * Run simulation for the given config index.

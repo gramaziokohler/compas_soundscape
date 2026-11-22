@@ -30,6 +30,7 @@ from config.constants import (
     DEFAULT_SPEED_OF_SOUND,
     HYBRID_CROSSOVER_FACTOR_DEFAULT,
     HYBRID_CROSSOVER_FACTOR_MAX,
+    HYBRID_ROOM_SOURCE_MAX_CHARS,
     HYBRID_CROSSOVER_FACTOR_MIN,
     HYBRID_CROSSOVER_MAX_HZ,
     HYBRID_CROSSOVER_MIN_HZ,
@@ -125,6 +126,10 @@ async def run_simulation_speckle(
     crossover_hz: Optional[float] = Form(None),
     crossover_factor: float = Form(HYBRID_CROSSOVER_FACTOR_DEFAULT),
     level_match: bool = Form(False),
+    # Schroeder mode: the room the card plans with (its last run's measurement, or its Eyring estimate)
+    room_rt60: Optional[float] = Form(None),
+    room_volume: Optional[float] = Form(None),
+    room_estimate_source: Optional[str] = Form(None),
     # wave part
     ppw: float = Form(PFFDTD_DEFAULT_PPW),
     duration: Optional[float] = Form(None),          # default: from the room's decay time
@@ -158,6 +163,10 @@ async def run_simulation_speckle(
             raise HTTPException(status_code=400, detail="A manual crossover needs crossover_hz")
         _check_range("crossover_hz", crossover_hz, HYBRID_CROSSOVER_MIN_HZ, HYBRID_CROSSOVER_MAX_HZ)
     _check_range("crossover_factor", crossover_factor, HYBRID_CROSSOVER_FACTOR_MIN, HYBRID_CROSSOVER_FACTOR_MAX)
+    for name, value in (("room_rt60", room_rt60), ("room_volume", room_volume)):
+        if value is not None and not value > 0:
+            raise HTTPException(status_code=400, detail=f"{name} must be positive")
+    room_estimate_source = (room_estimate_source or "")[:HYBRID_ROOM_SOURCE_MAX_CHARS] or None
     _check_range("ppw", ppw, PFFDTD_PPW_MIN, PFFDTD_PPW_MAX)
     if precision not in PFFDTD_PRECISIONS:
         raise HTTPException(status_code=400, detail=f"precision must be one of {PFFDTD_PRECISIONS}")
@@ -206,6 +215,9 @@ async def run_simulation_speckle(
                 crossover_hz=crossover_hz,
                 crossover_factor=crossover_factor,
                 level_match=level_match,
+                room_rt60=room_rt60,
+                room_volume=room_volume,
+                room_estimate_source=room_estimate_source,
                 ppw=ppw,
                 duration=duration,
                 precision=precision,

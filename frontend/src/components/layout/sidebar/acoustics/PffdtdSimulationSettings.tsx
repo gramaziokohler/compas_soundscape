@@ -18,7 +18,7 @@ import {
   PYROOMACOUSTICS_SIMULATION_MODE_FOA,
   PYROOMACOUSTICS_SIMULATION_MODE_NAMES,
 } from '@/utils/constants';
-import { pffdtdGridSpacing, pffdtdSeedClearance } from '@/lib/acoustics/pffdtd-grid';
+import { gpuMaxMarker, pffdtdGridSpacing, pffdtdSeedClearance } from '@/lib/acoustics/pffdtd-grid';
 import type { PffdtdSimulationConfig } from '@/types/acoustics';
 import type { PffdtdSettings } from '@/types/pffdtd';
 import { ToggleField } from '@/components/ui/ToggleField';
@@ -31,6 +31,7 @@ import { PffdtdPrecisionToggle } from './PffdtdPrecisionToggle';
 import { PffdtdGridEstimate } from './PffdtdGridEstimate';
 import { ModifiedMark, useIsFieldModified } from '@/components/ui/ModifiedMark';
 import { useDirectionalSources } from '@/hooks/useDirectionalSources';
+import { usePffdtdGpuLimit } from '@/hooks/usePffdtdGpuLimit';
 
 interface PffdtdSimulationSettingsProps {
   config: PffdtdSimulationConfig;
@@ -52,6 +53,11 @@ export function PffdtdSimulationSettings({ config, onUpdateConfig }: PffdtdSimul
 
   const h = pffdtdGridSpacing(s.fmax, s.ppw);
   const clearance = pffdtdSeedClearance(s.fmax, s.ppw);
+  // GPU limit (live available memory, the toggle's precision): memory depends on fmax · PPW only, so
+  // each slider's tick is that product over the other slider's value.
+  const { maxProduct } = usePffdtdGpuLimit(s.precision);
+  const gpuTitle = maxProduct === null ? undefined
+    : `GPU max: the grid (${s.precision} precision) stops fitting the GPU memory available now past this tick`;
   // Directional sources: the solver runs reciprocally (one run per listener, x4 in FOA)
   // and composes a first-order pattern per octave band; no SPL map / animation then.
   const { directionalCount, listenerCount, runs } = useDirectionalSources();
@@ -104,6 +110,8 @@ export function PffdtdSimulationSettings({ config, onUpdateConfig }: PffdtdSimul
           onChange={(v) => handleSettingChange('fmax', v)}
           disabled={disabled}
           defaultValue={PFFDTD.DEFAULT_FMAX}
+          markers={gpuMaxMarker(maxProduct === null ? null : maxProduct / s.ppw, PFFDTD.FMAX_MIN, PFFDTD.FMAX_MAX)}
+          sliderTitle={gpuTitle}
         />
         <RangeSlider
           label="Points per wavelength"
@@ -115,8 +123,12 @@ export function PffdtdSimulationSettings({ config, onUpdateConfig }: PffdtdSimul
           onChange={(v) => handleSettingChange('ppw', v)}
           disabled={disabled}
           defaultValue={PFFDTD.DEFAULT_PPW}
-          markers={[{ value: PFFDTD.PHASE_ACCURATE_PPW, label: 'accurate', tone: 'primary' }]}
-          sliderTitle={`≥ ${PFFDTD.PHASE_ACCURATE_PPW} PPW keeps the grid's phase error negligible at the max frequency`}
+          markers={[
+            { value: PFFDTD.PHASE_ACCURATE_PPW, label: 'accurate', tone: 'primary' },
+            ...gpuMaxMarker(maxProduct === null ? null : maxProduct / s.fmax, PFFDTD.PPW_MIN, PFFDTD.PPW_MAX),
+          ]}
+          sliderTitle={[`≥ ${PFFDTD.PHASE_ACCURATE_PPW} PPW keeps the grid's phase error negligible at the max frequency`, gpuTitle]
+            .filter(Boolean).join('\n')}
         />
         <span className="text-xxs text-secondary-hover">
           grid h ≈ c / (fmax · PPW) = {cm(h)} · clearance {cm(clearance)}

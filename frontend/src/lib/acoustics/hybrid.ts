@@ -90,15 +90,46 @@ export function planCrossover(
 }
 
 /**
+ * GPU limits of the hybrid's wave part from the largest fmax · PPW that fits (pffdtdMaxGridProduct).
+ * The wave part runs to WAVE_FMAX_MARGIN × the crossover, so at the card's PPW the crossover can rise
+ * to maxProduct / (margin · PPW), and at the planned wave band the PPW to maxProduct / waveFmax. The
+ * wave band is capped at PFFDTD.FMAX_MAX: once that cap fits, any crossover does. Each limit is null
+ * when unknown (no GPU answer yet, no room for the Schroeder factor, no crossover plan for the PPW).
+ */
+export function hybridGpuLimits(
+  maxProduct: number | null,
+  ppw: number,
+  waveFmax: number | null,
+  schroederHz: number | null,
+): { ppwMax: number | null; crossoverHzMax: number | null; factorMax: number | null } {
+  if (maxProduct === null) return { ppwMax: null, crossoverHzMax: null, factorMax: null };
+  const waveFmaxMax = maxProduct / ppw;
+  const crossoverHzMax = waveFmaxMax >= PFFDTD.FMAX_MAX
+    ? Infinity
+    : waveFmaxMax < PFFDTD.FMAX_MIN ? 0 : waveFmaxMax / HYBRID.WAVE_FMAX_MARGIN;
+  return {
+    ppwMax: waveFmax === null ? null : maxProduct / waveFmax,
+    crossoverHzMax,
+    factorMax: schroederHz === null ? null : crossoverHzMax / schroederHz,
+  };
+}
+
+/**
  * Eyring estimate of the Schroeder frequency from the acoustic region's bounding box and the
  * low-frequency absorption of the assigned materials, before any run has measured the room.
  * T60 = 0.161·V / (−S·ln(1 − ᾱ)) with V and S the box's volume and surface; null when the box
  * is missing or degenerate.
  */
+export interface EyringRoomEstimate {
+  schroederHz: number;
+  rt60: number;
+  volume: number;
+}
+
 export function estimateSchroederEyring(
   bounds: { min: [number, number, number]; max: [number, number, number] } | null | undefined,
   meanAbsorption: number,
-): { schroederHz: number; rt60: number; volume: number } | null {
+): EyringRoomEstimate | null {
   if (!bounds) return null;
   const [dx, dy, dz] = [0, 1, 2].map((i) => bounds.max[i] - bounds.min[i]);
   const volume = dx * dy * dz;
@@ -132,8 +163,35 @@ export function lowFrequencyMeanAbsorption(
   return count > 0 ? sum / count : HYBRID.ESTIMATE_MEAN_ABSORPTION;
 }
 
+/** The room a run plans its Schroeder crossover with, sent with it (both parts then start at once). */
+export interface HybridRoom {
+  rt60: number;
+  volume: number;
+  /** Where it comes from, reported back as the run's `rt60_source` */
+  source: string;
+}
+
+/** The last run's Schroeder frequency as measured on its geometric responses (older runs: the one they joined with). */
+export function lastRunSchroederHz(info: HybridRunInfo | null | undefined): number | null {
+  return info?.measured_schroeder_hz ?? info?.schroeder_hz ?? null;
+}
+
+/**
+ * The room the next run plans with: the last run's measured decay, else the Eyring estimate of the
+ * acoustic region; null when neither is known (the backend then predicts it from the mesh).
+ */
+export function hybridRoomForRun(info: HybridRunInfo | null | undefined, estimate: EyringRoomEstimate | null): HybridRoom | null {
+  const rt60 = info?.measured_rt60 ?? info?.rt60 ?? null;
+  const volume = info?.volume_m3 ?? null;
+  if (rt60 !== null && rt60 > 0 && volume !== null && volume > 0) {
+    return { rt60, volume, source: "the last run's room (measured)" };
+  }
+  if (estimate) return { rt60: estimate.rt60, volume: estimate.volume, source: 'Eyring estimate of the acoustic region' };
+  return null;
+}
+
 /** Form fields of POST /api/hybrid/run-simulation-speckle for the card's settings. */
-export function hybridFormFields(settings: HybridSettings, soundSpeed: number): Record<string, string> {
+export function hybridFormFields(settings: HybridSettings, soundSpeed: number, room: HybridRoom | null = null): Record<string, string> {
   const fields: Record<string, string> = {
     simulation_mode: settings.simulation_mode,
     crossover_mode: settings.crossover_mode,
@@ -150,6 +208,11 @@ export function hybridFormFields(settings: HybridSettings, soundSpeed: number): 
     ...engineFormFields(settings),
   };
   if (settings.crossover_mode === 'manual') fields.crossover_hz = String(settings.crossover_hz);
+  else if (room) {
+    fields.room_rt60 = String(room.rt60);
+    fields.room_volume = String(room.volume);
+    fields.room_estimate_source = room.source;
+  }
   if (settings.duration !== null) fields.duration = String(settings.duration);
   // the hybrid always runs compas_acoustics, at first order at most
   delete fields.engine;
@@ -173,9 +236,9 @@ export function crossoverReadout(
     if (!plan) return '';
     return `Wave below ${hz(plan.crossoverHz)} (solved up to ${hz(plan.waveFmax)}), rays above.`;
   }
-  const measured = info?.schroeder_hz ?? null;
+  const measured = lastRunSchroederHz(info);
   const plan = planCrossover(settings, measured ?? estimatedSchroederHz);
-  if (!plan) return 'The Schroeder frequency, 2000·√(T60 / V), is measured from the room when the simulation runs.';
+  if (!plan) return 'The Schroeder frequency, 2000·√(T60 / V), is predicted from the simulation mesh when the run starts.';
   const source = measured !== null ? "With the last run's room" : 'Estimated (Eyring, acoustic layer box)';
   return `${source}: crossover ${hz(plan.crossoverHz)}${plan.limited ? ' (limited)' : ''}, wave solved up to ${hz(plan.waveFmax)}.`;
 }
@@ -183,8 +246,10 @@ export function crossoverReadout(
 /** What the last run measured and used. */
 export function hybridRunSummary(info: HybridRunInfo): string {
   const parts: string[] = [];
-  if (info.rt60 !== null && info.volume_m3 !== null && info.schroeder_hz !== null) {
-    parts.push(`Last run: T60 ${info.rt60.toFixed(2)} s, ${Math.round(info.volume_m3).toLocaleString()} m³ → Schroeder ${hz(info.schroeder_hz)}`);
+  const rt60 = info.measured_rt60 ?? info.rt60;
+  const schroeder = lastRunSchroederHz(info);
+  if (rt60 !== null && info.volume_m3 !== null && schroeder !== null) {
+    parts.push(`Last run: T60 ${rt60.toFixed(2)} s, ${Math.round(info.volume_m3).toLocaleString()} m³ → Schroeder ${hz(schroeder)}`);
   } else {
     parts.push('Last run');
   }

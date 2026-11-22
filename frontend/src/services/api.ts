@@ -1,6 +1,6 @@
 import { effectiveEngineSettings, engineFormFields, type EngineCapabilities } from '@/lib/acoustics/geometric-engine';
 import type { HybridSettings } from '@/types/acoustics';
-import { hybridFormFields } from '@/lib/acoustics/hybrid';
+import { hybridFormFields, type HybridRoom } from '@/lib/acoustics/hybrid';
 import type { GeometricEngineSettings } from '@/types/acoustics';
 import type { AcousticPathKind, AcousticPathsJobResult, AcousticPathsPayload } from '@/types/acousticPaths';
 import { API_BASE_URL, JOB_NOT_FOUND_ERROR, SHARE_VIEW, SPECKLE_DIRECT_UPLOAD, SPECKLE_INGESTION } from '@/utils/constants';
@@ -2171,11 +2171,12 @@ export const apiService = {
     settings: HybridSettings,
     soundSpeed: number,
     meshSettings?: SimulationMeshSettings,
+    room: HybridRoom | null = null,
   ): Promise<{ job_id: string; position: number; total: number }> {
     const formData = pffdtdGeometryForm(request, meshSettings);
     formData.append('simulation_name', simulationName);
     formData.append('object_scattering', JSON.stringify(request.objectScattering ?? {}));
-    for (const [key, value] of Object.entries(hybridFormFields(settings, soundSpeed))) formData.append(key, value);
+    for (const [key, value] of Object.entries(hybridFormFields(settings, soundSpeed, room))) formData.append(key, value);
 
     const response = await fetchWithErrorHandling(
       `${API_BASE_URL}/api/hybrid/run-simulation-speckle`,

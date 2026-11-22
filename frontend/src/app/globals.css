@@ -2886,16 +2886,18 @@ body:has(#scene-view-mode-toolbar:hover) .share-tutorial-tip[data-step='viewMode
 .progress-track { height: 3px; background: var(--color-border-strong); border-radius: 2px; overflow: hidden; }
 .progress-fill { height: 100%; background: var(--color-primary); border-radius: 2px; transition: width 0.3s; }
 
-/* Status line text + its actions (parallel-parts chevron, stop square) */
+/* Status line text + its stop square. With parallel parts the whole line is a button that toggles
+   them, its chevron right after the text. */
 .gen-status-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gen-status-actions { display: flex; align-items: flex-start; gap: 6px; flex-shrink: 0; padding-left: 6px; }
-.gen-status .lanes-toggle {
-  display: flex; align-items: center; justify-content: center;
-  width: 14px; height: 14px; margin-top: 2px; padding: 0; border: none; background: none;
-  color: inherit; cursor: pointer; transition: transform 0.15s;
+.gen-status-actions { display: flex; align-items: flex-start; flex-shrink: 0; padding-left: 6px; }
+.gen-status .gen-status-toggle {
+  display: flex; align-items: flex-start; gap: 4px; flex: 1; min-width: 0;
+  padding: 0; border: none; background: none; font: inherit; color: inherit;
+  text-align: left; cursor: pointer;
 }
-.gen-status .lanes-toggle.open { transform: rotate(180deg); }
-.gen-status .lanes-toggle:hover { color: var(--color-info); }
+.gen-status .lanes-chevron { flex-shrink: 0; margin-top: 2px; transition: transform 0.15s; }
+.gen-status .gen-status-toggle.open .lanes-chevron { transform: rotate(180deg); }
+.gen-status .gen-status-toggle:hover .lanes-chevron { color: var(--color-info); }
 
 /* One row per parallel part of a run (ProgressLanes), under the progress bar */
 .progress-lanes {

@@ -243,7 +243,7 @@ def test_parallel_rendering_gives_the_serial_responses():
     fractions = [f for f, _, _ in stages]
     assert fractions == sorted(fractions) and fractions[-1] <= 1.0
     # one row per process: its sources and listeners, its step, and the pairs done overall
-    rows = [d["ca_progress"] for _, _, d in stages if d]
+    rows = [d["progress_lanes"] for _, _, d in stages if d]
     assert rows and all(r["pairs_total"] == 4 and len(r["lanes"]) == 2 for r in rows)
     assert {lane["label"] for lane in rows[0]["lanes"]} == {"S1 → R1–2", "S2 → R1–2"}
     assert rows[-1]["pairs_done"] == 4 and all(lane["state"] == "done" for lane in rows[-1]["lanes"])
