@@ -261,6 +261,7 @@ def run_job(job: dict, watch: ParentWatch) -> dict:
                     air_absorption=bool(job["air_absorption"]),
                     Tc=float(job["Tc"]),
                     rh=float(job["rh"]),
+                    extra_highpass_hz=float(job.get("extra_highpass_hz", 0.0)),
                 )
             )
         np.savez(work_dir / f"src_{si}.npz", irs=np.asarray(irs, np.float32), fs=float(job["out_fs"]))

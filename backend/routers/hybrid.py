@@ -37,6 +37,8 @@ from config.constants import (
     HYBRID_WAVE_FMAX_MARGIN,
     JOB_TYPE_PFFDTD,
     PFFDTD_DEFAULT_PPW,
+    PFFDTD_PRECISION_DEFAULT,
+    PFFDTD_PRECISIONS,
     PFFDTD_DURATION_MAX,
     PFFDTD_DURATION_MIN,
     PFFDTD_PPW_MAX,
@@ -126,6 +128,7 @@ async def run_simulation_speckle(
     # wave part
     ppw: float = Form(PFFDTD_DEFAULT_PPW),
     duration: Optional[float] = Form(None),          # default: from the room's decay time
+    precision: str = Form(PFFDTD_PRECISION_DEFAULT),  # wave part: single | double
     # geometric part
     max_order: int = Form(PYROOMACOUSTICS_DEFAULT_MAX_ORDER),
     ray_tracing: bool = Form(PYROOMACOUSTICS_DEFAULT_RAY_TRACING),
@@ -156,6 +159,8 @@ async def run_simulation_speckle(
         _check_range("crossover_hz", crossover_hz, HYBRID_CROSSOVER_MIN_HZ, HYBRID_CROSSOVER_MAX_HZ)
     _check_range("crossover_factor", crossover_factor, HYBRID_CROSSOVER_FACTOR_MIN, HYBRID_CROSSOVER_FACTOR_MAX)
     _check_range("ppw", ppw, PFFDTD_PPW_MIN, PFFDTD_PPW_MAX)
+    if precision not in PFFDTD_PRECISIONS:
+        raise HTTPException(status_code=400, detail=f"precision must be one of {PFFDTD_PRECISIONS}")
     if duration is not None:
         _check_range("duration", duration, PFFDTD_DURATION_MIN, PFFDTD_DURATION_MAX)
     _check_range("max_order", max_order, PYROOMACOUSTICS_MAX_ORDER_MIN, PYROOMACOUSTICS_MAX_ORDER_MAX)
@@ -203,6 +208,7 @@ async def run_simulation_speckle(
                 level_match=level_match,
                 ppw=ppw,
                 duration=duration,
+                precision=precision,
                 max_order=max_order,
                 ray_tracing=ray_tracing,
                 n_rays=n_rays,

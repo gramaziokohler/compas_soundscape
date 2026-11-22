@@ -39,7 +39,7 @@ Client polls GET /api/jobs/{id}  (routers/jobs.py reads the Redis hash)
 
 | Job type | Redis queue | Runs on | Slots |
 | -------- | ----------- | ------- | ----- |
-| `sound` (TangoFlux) | `queue:gpu` | `worker_main --role gpu` (1 model per process, resident) | `GPU_WORKER_SLOTS` (2) |
+| `sound` (TangoFlux) | `queue:gpu` | `worker_main --role gpu` (1 model per process, loaded on demand) | `GPU_WORKER_SLOTS` (2) |
 | `sa3` (Stable Audio 3) | `queue:sa3` | `worker_main --role sa3` — **must run in the isolated `compas-sa3` env** (resident) | `SA3_WORKER_SLOTS` (1) |
 | card simulations (`pyroomacoustics` speckle/geometry variants) | `simq:<workspace>` (simulation scheduler) | `--role cpu` simulation slots — child process per job | `--slots` (production 2), at most `SIM_MAX_CONCURRENT` (2) on the host |
 | preflight, path views, voxel preview, `sed`, `loop`, directivity | `queue:cpu-light` | `--role cpu` light slots | `CPU_LIGHT_SLOTS` (2) |
@@ -109,10 +109,23 @@ pruned when the hash says the job ended), at most `SIM_MAX_CONCURRENT`, a furthe
 `SIM_START_MIN_FREE_GB` free. Then it drains jobs left in the old `queue:cpu`. The position shown is the fair
 order (`sim_scheduler.queue_position`). Benchmark behind the numbers: `docs/acoustic_job_scheduler_plan.md`.
 
-## GPU Worker — Resident Model, Clip-Level Yielding, Cooperative Cancel
+## GPU Worker — On-Demand Model, Clip-Level Yielding, Cooperative Cancel
 
-`gpu_runner.py` loads the TangoFlux model **once** at process start and warms it up
-(`TANGOFLUX_WARMUP_*`) so the first user pays nothing. A multi-clip job:
+`gpu_runner.py` loads TangoFlux (~4.3 GB of GPU memory, not the default model) on its **first job**
+(status "Loading TangoFlux model...") and frees it after `TANGOFLUX_IDLE_UNLOAD_S` (30 min) without
+a job, so the PFFDTD wave solver gets that memory. `TANGOFLUX_RESIDENT=true` restores load at start +
+warm-up (`TANGOFLUX_WARMUP_*`). Both generation workers (`gpu_runner.py`, `sa3_runner.py`) call
+`torch.cuda.empty_cache()` after every clip: Stable Audio 3 peaks ~0.7 GB above its idle 2.2 GB and
+the caching allocator would otherwise keep that reserved.
+
+**GPU sharing, wave solver vs Stable Audio 3** (`services/gpu_arbiter.py`): `pffdtd_job.run_pipeline_job`
+holds `WaveGpuClaim(job["gpu_bytes"])` (Redis `gpu:wave_claim`, TTL refreshed) around the compas-pffdtd
+pipeline. The SA3 worker moves its weights to system RAM (`utils/gpu_offload.move_model`, which also
+moves T5Gemma's encoder: it sits outside the module tree, so `model.to("cpu")` alone leaves it on the
+GPU) when the free memory no longer covers the grid + a 0.8 GB generation peak, and brings them back
+for a clip only when the free memory covers SA3 (3 GB) + the grid; meanwhile the job shows "Waiting for
+GPU memory: a wave simulation is running...". The grid is counted as unallocated even mid-solve: a
+multi-source solve frees and re-allocates between sources. A multi-clip job:
 
 - streams each completed clip via `set_progress(..., partial=completed_sounds)` (the `partial_sounds`
   shape consumed by the frontend);

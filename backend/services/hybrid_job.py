@@ -226,6 +226,7 @@ def run_hybrid_from_geometry(
     # wave part
     ppw: float = PFFDTD_DEFAULT_PPW,
     duration: Optional[float] = None,
+    precision: Optional[str] = None,
     # geometric part
     max_order: int = 3,
     ray_tracing: bool = True,
@@ -319,6 +320,7 @@ def run_hybrid_from_geometry(
                 plan.wave_fmax, run_ppw, run_duration, air_absorption, simulation_name, rir_output_dir, temp_dir,
                 mesh_settings,
                 header_meta=header_meta,
+                precision=precision,
             )
         finally:
             stop.set()

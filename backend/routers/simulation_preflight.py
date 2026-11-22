@@ -27,6 +27,7 @@ from config.constants import (
     PFFDTD_DEFAULT_DURATION,
     PFFDTD_DEFAULT_FMAX,
     PFFDTD_DEFAULT_PPW,
+    PFFDTD_PRECISION_DEFAULT,
     PREFLIGHT_PAYLOAD_DIR,
     PYROOMACOUSTICS_DEFAULT_MAX_ORDER,
     PYROOMACOUSTICS_DEFAULT_RAY_TRACING,
@@ -70,6 +71,7 @@ async def preflight_speckle(
     fmax: float = Form(PFFDTD_DEFAULT_FMAX),          # PFFDTD only
     ppw: float = Form(PFFDTD_DEFAULT_PPW),            # PFFDTD only
     duration: float = Form(PFFDTD_DEFAULT_DURATION),  # PFFDTD only
+    precision: str = Form(PFFDTD_PRECISION_DEFAULT),  # PFFDTD only: GPU memory per node
     simulation_mode: str = Form("mono"),              # PFFDTD only: run count of directional sources
     free_mode: str = Form("off"),                     # PFFDTD only
     model_id: Optional[str] = Form(None),             # resolves shared-soundscape directivity copies
@@ -117,6 +119,7 @@ async def preflight_speckle(
             pffdtd_settings=(
                 {
                     "fmax": fmax, "ppw": ppw, "duration": duration,
+                    "single": precision == "single",
                     # reciprocal runs of directional sources (services/directivity_service.py)
                     "runs": directional_run_count(pairs, simulation_mode) if directional else 0,
                     "directional_free_listener": directional and free_mode == "listener",

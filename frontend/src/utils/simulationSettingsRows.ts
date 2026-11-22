@@ -51,6 +51,7 @@ export function getSimulationSettingsRows(config: EngineSimulationConfig, solved
       { label: 'Max frequency', value: `${s.fmax} Hz` },
       { label: 'Points per wavelength', value: String(s.ppw) },
       { label: 'IR duration', value: `${s.duration} s` },
+      { label: 'Precision', value: s.precision === 'single' ? 'Single' : 'Double' },
       { label: 'Air absorption', value: yesNo(s.air_absorption) },
     );
   } else {
@@ -66,6 +67,7 @@ export function getSimulationSettingsRows(config: EngineSimulationConfig, solved
       },
       { label: 'Points per wavelength', value: String(s.ppw) },
       { label: 'Wave IR length', value: s.duration === null ? 'From the decay' : `${s.duration} s` },
+      { label: 'Wave precision', value: s.precision === 'single' ? 'Single' : 'Double' },
       ...geometricRows(s),
     );
   }

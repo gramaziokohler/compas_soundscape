@@ -74,7 +74,9 @@ def run_pffdtd_animation(
             "out_dir": str(out_dir),
             "sources": [positions[sid] for sid in source_ids],
             "fmax": float(field["band_hz"][1]),
-            "precision": pffdtd_precision(),
+            # the run's precision (its results entries carry it), else the app default
+            "precision": next((e.get("precision") for e in results.get("results", []) if e.get("precision")),
+                              None) or pffdtd_precision(),
             "plane_z": float(plane_z),
             "field_max_px": PFFDTD_FIELD_MAX_PX,
             "animation_s": float(animation_ms) / 1000.0,

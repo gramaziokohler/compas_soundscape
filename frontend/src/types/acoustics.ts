@@ -8,7 +8,7 @@ import type { ReceiverData, SoundEvent, CompasGeometry } from './index';
 import type { ImpulseResponseMetadata, SourceReceiverIRMapping, ResonanceRoomMaterial } from './audio';
 import type { AcousticMaterial } from './materials';
 import type { CardBaseConfig, CardType, CardExecutionState, SavedObjectVisibility } from './card';
-import type { PffdtdSettings, PffdtdVoxelProblem } from './pffdtd';
+import type { PffdtdPrecision, PffdtdSettings, PffdtdVoxelProblem } from './pffdtd';
 import type { SoundDirectivity } from './directivity';
 
 /**
@@ -218,6 +218,8 @@ export interface HybridSettings extends GeometricEngineSettings {
   ppw: number;
   /** Wave part: IR length in s; null = from the room's decay time. */
   duration: number | null;
+  /** Wave part: solver precision. */
+  precision: PffdtdPrecision;
   // Geometric part (same meaning as on the ray-tracing card)
   max_order: number;
   ray_tracing: boolean;

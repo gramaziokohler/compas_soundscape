@@ -34,6 +34,9 @@ from config.constants import (
     PFFDTD_FOA_OFFSET_CELLS,
     PFFDTD_FREE_GRID_SPACING_DEFAULT,
     PFFDTD_FREE_MODE_LISTENER,
+    PFFDTD_GPU_MEMORY_GB,
+    PFFDTD_SINGLE_HIGHPASS_HZ,
+    PFFDTD_GPU_MEMORY_USABLE_FRACTION,
     PFFDTD_IR_REFERENCE_GAIN,
     PFFDTD_LOWCUT_HZ,
     PFFDTD_LOWCUT_ORDER,
@@ -51,6 +54,7 @@ from config.constants import (
     PYROOMACOUSTICS_SIMULATION_MODE_FOA,
 )
 from models.schemas import MeshPrepSettings
+from services.gpu_arbiter import WaveGpuClaim, wave_gpu_budget_bytes
 from services.pffdtd_directivity import high_order_enabled, job_source_directivities
 from services.pffdtd_free import FreeOptions, job_block as free_job_block, reset_store as reset_free_store, results_block as free_results_block
 from services.pyroomacoustics_directivity import directivity_result_entry
@@ -167,6 +171,7 @@ def run_pffdtd_simulation(
     field_plane_z: Optional[float] = None,
     free_mode: str = PFFDTD_DEFAULT_FREE_MODE,
     free_grid_spacing: float = PFFDTD_FREE_GRID_SPACING_DEFAULT,
+    precision: Optional[str] = None,
 ) -> None:
     started = solve_started()
     try:
@@ -185,6 +190,7 @@ def run_pffdtd_simulation(
             header_meta={"speckle_source": {"project_id": speckle_project_id, "version_id": speckle_version_id, "layer_name": layer_name}},
             free=FreeOptions(free_mode, free_grid_spacing),
             started=started,
+            precision=precision,
         )
     except Exception as exc:
         tb = traceback.format_exc()
@@ -256,9 +262,17 @@ def resolve_domain_bounds(bmin, bmax, seeds: list, domain_bounds: Optional[tuple
 
 
 def run_pipeline_job(job: dict, work_dir: Path, progress_file: str) -> None:
+    """Runs the compas-pffdtd pipeline while holding the GPU claim (services/gpu_arbiter.py): a resident
+    Stable Audio 3 worker moves to system RAM first. ``job["gpu_bytes"]`` sizes the claim; jobs without
+    it (animation, voxel preview) claim the whole PFFDTD budget."""
     job_path = work_dir / "job.json"
     job_path.write_text(json.dumps(job))
-    _run_pipeline(job_path, progress_file)
+    if job.get("mode") == "voxel_preview":   # voxelisation only (CPU): leave the GPU to generations
+        _run_pipeline(job_path, progress_file)
+        return
+    grid_bytes = job.get("gpu_bytes") or int(PFFDTD_GPU_MEMORY_GB * 1e9 * PFFDTD_GPU_MEMORY_USABLE_FRACTION)
+    with WaveGpuClaim(grid_bytes, label=work_dir.name):
+        _run_pipeline(job_path, progress_file)
 
 
 def _run_from_geometry(
@@ -266,11 +280,12 @@ def _run_from_geometry(
     duration, air_absorption, simulation_name, rir_output_dir, temp_dir, mesh_settings,
     field: Optional[FieldOptions] = None, header_meta=None, free: Optional[FreeOptions] = None,
     domain_bounds: Optional[tuple] = None, grid_spacing: Optional[float] = None,
-    started: Optional[float] = None,
+    started: Optional[float] = None, precision: Optional[str] = None,
 ) -> None:
     """Shared by the Speckle entry point and tests (geometry given directly). ``started``
     (``time.monotonic()``, default now) is the start of the results' ``solve_time_s``."""
     started = solve_started(started)
+    precision = precision or pffdtd_precision()   # the card's choice; else the app default (double)
     field = field or FieldOptions()
     free = free or FreeOptions()
     _write_progress(progress_file, PROGRESS_GEOMETRY_END, "Preparing simulation mesh...")
@@ -279,7 +294,8 @@ def _run_from_geometry(
     bmin, bmax = bounding_box(mesh)
     domain = resolve_domain_bounds(bmin, bmax, [s["position"] for s in seed_meta], domain_bounds)
     plan = plan_grid(bmax - bmin, fmax, ppw, duration,
-                     domain_extents=None if domain is None else domain[1] - domain[0], h=grid_spacing)
+                     domain_extents=None if domain is None else domain[1] - domain[0], h=grid_spacing,
+                     precision=precision, gpu_budget_bytes=wave_gpu_budget_bytes())
     if domain is not None and not plan.fits_gpu:
         raise RuntimeError(
             f"Padded domain needs {plan.gpu_bytes / 1e9:.1f} GB of GPU memory "
@@ -297,6 +313,7 @@ def _run_from_geometry(
         seeds=[SeedMeta(**s) for s in seed_meta],
         pairs=[(str(p["source_id"]), str(p["receiver_id"])) for p in pairs_data],
         pffdtd_fmax=fmax, pffdtd_ppw=ppw, pffdtd_duration=duration,
+        pffdtd_single=1.0 if precision == "single" else 0.0,
         pffdtd_runs=float(directional_runs),
         pffdtd_directional_free_listener=float(reciprocal and free.mode == PFFDTD_FREE_MODE_LISTENER),
     )
@@ -329,9 +346,11 @@ def _run_from_geometry(
         "source_directivities": source_directivities,  # aligned with "sources"; None = omni
         "reciprocal": reciprocal,
         "h": plan.h,
+        "gpu_bytes": plan.gpu_bytes,   # sizes the GPU claim (services/gpu_arbiter.py)
         "fmax": fmax,
         "duration": duration,
-        "precision": pffdtd_precision(),
+        "precision": precision,
+        "extra_highpass_hz": PFFDTD_SINGLE_HIGHPASS_HZ if precision == "single" else 0.0,
         "foa": foa,
         "foa_offset_cells": PFFDTD_FOA_OFFSET_CELLS,
         "air_absorption": bool(air_absorption),
@@ -382,7 +401,7 @@ def _run_from_geometry(
         "oblique_area_fraction": oblique,
         "band_limited": True,
         "ir_reference": "free field at 1 m (direct path 1/r, as pyroomacoustics)",
-        "precision": pffdtd_precision(),
+        "precision": precision,
     }
     for p in pairs_data:
         sid, rid = str(p["source_id"]), str(p["receiver_id"])
@@ -536,6 +555,7 @@ def run_pffdtd_simulation_from_geometry(
     free_grid_spacing: float = PFFDTD_FREE_GRID_SPACING_DEFAULT,
     domain_bounds: Optional[tuple] = None,
     grid_spacing: Optional[float] = None,
+    precision: Optional[str] = None,
 ) -> None:
     """Direct-geometry entry point (vertices/faces/object_face_ranges/face_materials), used by tests.
 
@@ -551,7 +571,7 @@ def run_pffdtd_simulation_from_geometry(
             simulation_id, progress_file, result_file, geometry, pairs_data, simulation_mode, fmax, ppw,
             duration, air_absorption, simulation_name, rir_output_dir, temp_dir, mesh_settings,
             FieldOptions(field_plane_z), free=FreeOptions(free_mode, free_grid_spacing),
-            domain_bounds=domain_bounds, grid_spacing=grid_spacing,
+            domain_bounds=domain_bounds, grid_spacing=grid_spacing, precision=precision,
         )
     except Exception as exc:
         tb = traceback.format_exc()

@@ -455,7 +455,22 @@ Rules:
   launches `pipeline.py` with `PFFDTD_PYTHON`; the subprocess env must have the env's `Library/bin`
   on PATH (numpy/BLAS and hdf5 DLLs), see `_pipeline_env()`.
 - **Cartesian grid + double precision only.** The FCC grid is first-order at any wall (it always
-  staircases) and single precision fails the long rigid-room test (A3).
+  staircases) and single precision fails the long rigid-room test (A3). Benchmark
+  (`tests/benchmarks/precision_rt/`, 2026-11-22): single's error depends on the grid spacing, not the
+  RT; at h >= 20 mm (fmax x PPW <= ~17,000) it matches double in level/T30/EDT/C80/early waveform at any
+  RT incl. a rigid room (A3 fails on late-tail phase drift, energy-neutral), below 20 mm it does not.
+  Single also needs an extra 20 Hz high-pass (sub-10 Hz drift of the differentiated source).
+- **Precision per run:** the wave-based and hybrid cards send `precision` (default single,
+  `PffdtdPrecisionToggle` warns below 20 mm); `_run_from_geometry(precision=...)` sizes the grid
+  (8 / 16 B per node), sets `extra_highpass_hz` for single, and records it in the results entries
+  (animations reuse it). Saves without the field restore as double (what they ran with).
+- **GPU budget is live:** `gpu_arbiter.wave_gpu_budget()` = (free + Stable Audio 3's movable bytes
+  + a running solve's claim - 0.4 GB) x 0.9, static `PFFDTD_GPU_MEMORY_GB` without nvidia-smi.
+  `plan_grid(gpu_budget_bytes=...)` in the job, the geometry check and the voxel preview;
+  `GET /api/pffdtd/gpu-memory` feeds `PffdtdGridEstimate` on the cards. Runtime estimate:
+  `PFFDTD_RUN_OVERHEAD_S` + nodes x steps / `PFFDTD_NODE_UPDATES_PER_S[_SINGLE]` (RTX 2080 Ti fit).
+- Wave-based cards' geometry check runs with engine `pffdtd` (grid, memory, runtime, clearance)
+  and the card's fmax / ppw / duration / precision.
 - **Grid alignment:** cell faces start at the bbox minimum (CartGrid 3.5-cell offset); `plan_grid`
   picks h so the bbox extents are whole cells → axis-aligned walls exact (A3 passes from PPW ≈ 28).
 - **Open scenes (padded domain):** by default the domain is the geometry bbox + 3.5 cells and

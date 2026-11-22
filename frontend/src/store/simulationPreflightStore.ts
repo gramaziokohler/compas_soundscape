@@ -11,6 +11,7 @@ import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { apiService } from '@/services/api';
 import { SIMULATION_PREFLIGHT } from '@/utils/constants';
+import type { PffdtdPrecision } from '@/types/pffdtd';
 import type { SimulationGeometryRequest } from '@/utils/simulationRequest';
 import type {
   PreflightEntry,
@@ -62,6 +63,8 @@ export interface RunPreflightArgs {
   /** Geometric engine behind 'pyroomacoustics' and its diffraction model (engine-specific checks). */
   geometricEngine?: string;
   diffraction?: string;
+  /** PFFDTD: the card's grid and solver (GPU memory and runtime checks). */
+  pffdtd?: { fmax: number; ppw: number; duration: number; precision: PffdtdPrecision };
 }
 
 export interface SimulationPreflightStoreState {
@@ -118,7 +121,7 @@ export const useSimulationPreflightStore = create<SimulationPreflightStoreState>
         hoveredIssueId: null,
         focusSeq: 0,
 
-        runPreflight: async ({ configId, engine, request, meshSettings, signature, maxOrder, rayTracing, simulationMode, freeMode, geometricEngine, diffraction }) => {
+        runPreflight: async ({ configId, engine, request, meshSettings, signature, maxOrder, rayTracing, simulationMode, freeMode, geometricEngine, diffraction, pffdtd }) => {
           stopPoller(configId);
           patch(configId, {
             ...EMPTY_ENTRY,
@@ -146,6 +149,7 @@ export const useSimulationPreflightStore = create<SimulationPreflightStoreState>
               freeMode,
               geometricEngine,
               diffraction,
+              pffdtd,
             });
             patch(configId, { jobId: job_id, statusText: 'Queued...' }, 'preflight/queued');
 

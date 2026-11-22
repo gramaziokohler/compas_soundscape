@@ -62,6 +62,7 @@ function serializePffdtdSettings(s: PffdtdSettings): SoundscapeSimulationSetting
     fmax: s.fmax,
     ppw: s.ppw,
     duration: s.duration,
+    precision: s.precision,
     free_mode: s.free_mode,
     free_grid_spacing: s.free_grid_spacing,
   };
@@ -81,6 +82,8 @@ function restorePffdtdSettings(s: SoundscapeSimulationSettings | undefined): Pff
     fmax: s?.fmax ?? PFFDTD.DEFAULT_FMAX,
     ppw: s?.ppw ?? PFFDTD.DEFAULT_PPW,
     duration: s?.duration ?? PFFDTD.DEFAULT_DURATION,
+    // saves from before the setting ran in double
+    precision: s?.precision === 'single' ? 'single' : s ? 'double' : PFFDTD.DEFAULT_PRECISION,
     free_mode: isPffdtdFreeMode(s?.free_mode) ? s.free_mode : PFFDTD.DEFAULT_FREE_MODE,
     free_grid_spacing: s?.free_grid_spacing ?? PFFDTD.FREE_GRID_SPACING_DEFAULT,
   };

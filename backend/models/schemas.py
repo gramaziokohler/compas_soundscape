@@ -755,6 +755,7 @@ class SoundscapeSimulationSettings(BaseModel):
     field_plane_z: Optional[float] = None
     free_mode: Optional[str] = None            # "off" | "listener" | "source"
     free_grid_spacing: Optional[float] = None  # m
+    precision: Optional[str] = None            # PFFDTD / hybrid wave part: "single" | "double"
 
 
 class PffdtdFreeIRRequest(BaseModel):

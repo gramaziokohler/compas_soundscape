@@ -81,5 +81,6 @@ def to_wav_ir(channels: np.ndarray, Ts: float, post: dict) -> np.ndarray:
         world_to_listener_foa(channels), Ts, fmax=post["fmax"], out_fs=post["out_fs"], duration=post["duration"],
         lowcut_hz=post["lowcut_hz"], lowcut_order=post["lowcut_order"], lowpass_order=post["lowpass_order"],
         air_absorption=post["air_absorption"], Tc=post["Tc"], rh=post["rh"],
+        extra_highpass_hz=float(post.get("extra_highpass_hz", 0.0)),
     )
     return ir * float(post["gain"])

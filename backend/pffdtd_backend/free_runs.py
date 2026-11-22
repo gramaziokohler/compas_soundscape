@@ -45,6 +45,7 @@ def post_params(job: dict) -> dict:
         "lowcut_hz": float(job["lowcut_hz"]), "lowcut_order": int(job["lowcut_order"]),
         "lowpass_order": int(job["lowpass_order"]), "air_absorption": bool(job["air_absorption"]),
         "Tc": float(job["Tc"]), "rh": float(job["rh"]), "gain": float((job.get("free") or {}).get("ir_gain", 1.0)),
+        "extra_highpass_hz": float(job.get("extra_highpass_hz", 0.0)),
     }
 
 

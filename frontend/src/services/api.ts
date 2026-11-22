@@ -40,6 +40,8 @@ import type {
   PffdtdJobResult,
   PffdtdResultsJson,
   PffdtdSettings,
+  PffdtdGpuMemory,
+  PffdtdPrecision,
   PffdtdStatus,
   PffdtdVoxelPoints,
   PffdtdVoxelPreviewJobResult,
@@ -1901,6 +1903,8 @@ export const apiService = {
     /** Geometric engine behind 'pyroomacoustics' and its diffraction model (engine-specific checks). */
     geometricEngine?: string;
     diffraction?: string;
+    /** PFFDTD: the card's grid and solver (GPU memory and runtime checks). */
+    pffdtd?: { fmax: number; ppw: number; duration: number; precision: PffdtdPrecision };
   }): Promise<{ job_id: string }> {
     const formData = new FormData();
     formData.append('engine', params.engine);
@@ -1914,6 +1918,12 @@ export const apiService = {
     if (params.modelId) formData.append('model_id', params.modelId);
     if (params.simulationMode) formData.append('simulation_mode', params.simulationMode);
     if (params.freeMode) formData.append('free_mode', params.freeMode);
+    if (params.pffdtd) {
+      formData.append('fmax', String(params.pffdtd.fmax));
+      formData.append('ppw', String(params.pffdtd.ppw));
+      formData.append('duration', String(params.pffdtd.duration));
+      formData.append('precision', params.pffdtd.precision);
+    }
     if (params.geometryObjectIds?.length) {
       formData.append('geometry_object_ids', JSON.stringify(params.geometryObjectIds));
     }
@@ -2097,6 +2107,17 @@ export const apiService = {
   // ─── PFFDTD (wave-based GPU FDTD) API Methods ───────────────────────────
 
   /** Whether this deployment can run PFFDTD (env + built engine). */
+  /** GPU memory a wave solve can use now (free + what Stable Audio 3 would release). */
+  async getPffdtdGpuMemory(): Promise<PffdtdGpuMemory> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/pffdtd/gpu-memory`,
+      undefined,
+      'PFFDTD GPU memory'
+    );
+    if (!response.ok) throw new Error('Failed to get the available GPU memory');
+    return response.json();
+  },
+
   async getPffdtdStatus(): Promise<PffdtdStatus> {
     const response = await fetchWithErrorHandling(
       `${API_BASE_URL}/api/pffdtd/status`,
@@ -2124,6 +2145,7 @@ export const apiService = {
     formData.append('ppw', String(settings.ppw));
     formData.append('duration', String(settings.duration));
     formData.append('air_absorption', String(settings.air_absorption));
+    formData.append('precision', settings.precision);
     formData.append('free_mode', settings.free_mode);
     formData.append('free_grid_spacing', String(settings.free_grid_spacing));
 
@@ -2325,12 +2347,13 @@ export const apiService = {
    */
   async runPffdtdVoxelPreview(
     request: SimulationGeometryRequest,
-    grid: { fmax: number; ppw: number },
+    grid: { fmax: number; ppw: number; precision: PffdtdPrecision },
     meshSettings?: SimulationMeshSettings,
   ): Promise<{ job_id: string; position: number; total: number }> {
     const formData = pffdtdGeometryForm(request, meshSettings);
     formData.append('fmax', String(grid.fmax));
     formData.append('ppw', String(grid.ppw));
+    formData.append('precision', grid.precision);
     const response = await fetchWithErrorHandling(
       `${API_BASE_URL}/api/pffdtd/voxel-preview`,
       { method: 'POST', body: formData },

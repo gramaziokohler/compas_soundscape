@@ -26,6 +26,7 @@ import torch
 
 from config.constants import (
     STABLE_AUDIO_MODEL_NAME,
+    STABLE_AUDIO_MAX_DURATION_S,
     STABLE_AUDIO_DEFAULT_STEPS,
     STABLE_AUDIO_DEFAULT_GUIDANCE,
     STABLE_AUDIO_GUIDANCE_MIN,
@@ -83,6 +84,7 @@ class StableAudioService:
     def __init__(self):
         self.model = None
         self.sample_rate = AUDIO_SAMPLE_RATE
+        self._offloaded = False  # weights in system RAM (offload / restore)
 
     @staticmethod
     def get_service_version_info() -> dict:
@@ -105,6 +107,38 @@ class StableAudioService:
             self.sample_rate = int(self.model.model.sample_rate)
             print(f"[sa3] model ready in {time.time() - t0:.1f}s (sample_rate={self.sample_rate})")
         return self.model
+
+    @property
+    def on_gpu(self) -> bool:
+        return self.model is not None and not self._offloaded
+
+    def gpu_bytes(self) -> int:
+        """GPU memory this process's allocator holds (what an offload releases, the CUDA context aside)."""
+        return int(torch.cuda.memory_reserved()) if torch.cuda.is_available() else 0
+
+    def offload(self) -> None:
+        """Move the weights to system RAM (incl. T5Gemma's encoder, kept outside the module tree)."""
+        if self.model is None or self._offloaded:
+            return
+        from utils.gpu_offload import move_model
+
+        t0 = time.time()
+        free0 = torch.cuda.mem_get_info()[0]
+        n_hidden = move_model(self.model.model, "cpu")
+        self._offloaded = True
+        print(f"[sa3] weights moved to system RAM in {time.time() - t0:.1f}s ({n_hidden} hidden module(s)); "
+              f"GPU free {free0 / 1e9:.2f} -> {torch.cuda.mem_get_info()[0] / 1e9:.2f} GB")
+
+    def restore(self) -> None:
+        """Move the weights back to the GPU (before a generation)."""
+        if self.model is None or not self._offloaded:
+            return
+        from utils.gpu_offload import move_model
+
+        t0 = time.time()
+        move_model(self.model.model, self.model.device)
+        self._offloaded = False
+        print(f"[sa3] weights back on the GPU in {time.time() - t0:.1f}s")
 
     def warm_up(self) -> None:
         """Pay the first-inference cost once at process start (non-fatal)."""
@@ -165,6 +199,7 @@ class StableAudioService:
                              generate a longer clip.
         """
         model = self._ensure_model()
+        self.restore()  # no-op unless offloaded; the worker restores first when memory allows
 
         # stable-audio-3-small-sfx runs classifier-free guidance over a distilled
         # pingpong sampler. Feeding it a negative prompt while guidance is > ~3
@@ -173,6 +208,10 @@ class StableAudioService:
         # TangoFlux/AudioLDM2 concept, so Stable Audio 3 deliberately ignores it.
         if negative_prompt:
             print("[sa3] ignoring negative prompt (destabilizes the distilled small-sfx model)")
+
+        if float(duration) > STABLE_AUDIO_MAX_DURATION_S:
+            print(f"[sa3] duration {duration}s clamped to the model's {STABLE_AUDIO_MAX_DURATION_S:g}s window")
+            duration = STABLE_AUDIO_MAX_DURATION_S
 
         # Guidance (model CFG scale) is constrained to [0, 1].
         cfg_scale = max(STABLE_AUDIO_GUIDANCE_MIN, min(float(cfg_scale), STABLE_AUDIO_GUIDANCE_MAX))

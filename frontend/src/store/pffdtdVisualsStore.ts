@@ -26,6 +26,7 @@ import type {
   PffdtdFieldBlock,
   PffdtdLegendBounds,
   PffdtdOverlayKind,
+  PffdtdPrecision,
   PffdtdSlice,
   PffdtdVoxelPoints,
   PffdtdVoxelPreviewPayload,
@@ -93,6 +94,8 @@ export interface RunVoxelPreviewArgs {
   request: SimulationGeometryRequest;
   fmax: number;
   ppw: number;
+  /** Sizes the backend's GPU-memory check of the grid. */
+  precision: PffdtdPrecision;
   meshSettings: SimulationMeshSettings;
   signature: string;
 }
@@ -236,11 +239,11 @@ export const usePffdtdVisualsStore = create<PffdtdVisualsStoreState>()(
         focusSeq: 0,
         fieldViews: {},
 
-        runVoxelPreview: async ({ configId, request, fmax, ppw, meshSettings, signature }) => {
+        runVoxelPreview: async ({ configId, request, fmax, ppw, precision, meshSettings, signature }) => {
           stopPoller(configId);
           patchPreview(configId, { ...EMPTY_PREVIEW, status: 'running', statusText: 'Submitting voxel preview...' }, 'pffdtd/previewStart');
           try {
-            const { job_id } = await apiService.runPffdtdVoxelPreview(request, { fmax, ppw }, meshSettings);
+            const { job_id } = await apiService.runPffdtdVoxelPreview(request, { fmax, ppw, precision }, meshSettings);
             patchPreview(configId, { jobId: job_id, statusText: 'Queued...' }, 'pffdtd/previewQueued');
             await new Promise<void>((resolve) => {
               const finish = (update: Partial<PffdtdVoxelPreviewEntry>, action: string) => {

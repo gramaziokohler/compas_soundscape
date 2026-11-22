@@ -38,12 +38,16 @@ import { TextSelect } from '@/components/ui/TextSelect';
 import { ToggleField } from '@/components/ui/ToggleField';
 import { AcousticMaterialsSummary } from './AcousticMaterialsSummary';
 import { GeometricEngineSettings } from './GeometricEngineSettings';
+import { PffdtdPrecisionToggle } from './PffdtdPrecisionToggle';
+import { PffdtdGridEstimate } from './PffdtdGridEstimate';
+import { pffdtdGridSpacing } from '@/lib/acoustics/pffdtd-grid';
 import {
   crossoverReadout,
   estimateSchroederEyring,
   hybridRunSummary,
   lowFrequencyMeanAbsorption,
   mismatchWarning,
+  planCrossover,
 } from '@/lib/acoustics/hybrid';
 import type { GeometricEngineSettings as EngineSettings, HybridSettings, HybridSimulationConfig } from '@/types/acoustics';
 
@@ -78,6 +82,10 @@ export function HybridSimulationSettings({ config, onUpdateConfig }: HybridSimul
     [materialAssignments, availableMaterials]
   );
   const estimate = useMemo(() => estimateSchroederEyring(bounds, meanAbsorption), [bounds, meanAbsorption]);
+  // Wave-part grid spacing: the crossover plan (last run's room, else the Eyring estimate); the
+  // backend may raise the PPW for seed clearance, which only makes the grid finer.
+  const wavePlan = planCrossover(s, info?.schroeder_hz ?? estimate?.schroederHz ?? null);
+  const waveSpacing = wavePlan ? pffdtdGridSpacing(wavePlan.waveFmax, s.ppw) : null;
   const recommendedHz = info?.schroeder_hz ?? estimate?.schroederHz ?? null;
   const recommendedTitle = info?.schroeder_hz != null
     ? `Recommended: the last run's Schroeder frequency, ${Math.round(info.schroeder_hz)} Hz`
@@ -177,6 +185,14 @@ export function HybridSimulationSettings({ config, onUpdateConfig }: HybridSimul
           disabled={disabled}
           defaultValue={HYBRID.DEFAULT_PPW}
         />
+        <PffdtdPrecisionToggle
+          precision={s.precision}
+          gridSpacing={waveSpacing}
+          onChange={(v) => set('precision', v)}
+          disabled={disabled}
+          modified={isSettingModified('precision')}
+        />
+        <PffdtdGridEstimate gridSpacing={waveSpacing} precision={s.precision} duration={s.duration} />
         <ToggleField
           checked={autoDuration}
           onChange={(on) => set('duration', on ? null : PFFDTD.DEFAULT_DURATION)}

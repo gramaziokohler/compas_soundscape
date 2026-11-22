@@ -23,6 +23,8 @@ from config.constants import (
     PFFDTD_GPU_MEMORY_USABLE_FRACTION,
     PFFDTD_GRID_PADDING_CELLS,
     PFFDTD_NODE_UPDATES_PER_S,
+    PFFDTD_NODE_UPDATES_PER_S_SINGLE,
+    PFFDTD_RUN_OVERHEAD_S,
     PFFDTD_OBLIQUE_WALL_TOLERANCE_DEG,
     PFFDTD_PRECISION,
     PFFDTD_PRECISION_ENV,
@@ -37,9 +39,21 @@ def pffdtd_precision() -> str:
     return value if value in ("single", "double") else PFFDTD_PRECISION
 
 
-def bytes_per_node() -> int:
-    """GPU bytes per node: two pressure fields, float64 (double) or float32 (single)."""
-    return PFFDTD_BYTES_PER_NODE // 2 if pffdtd_precision() == "single" else PFFDTD_BYTES_PER_NODE
+def bytes_per_node(precision: Optional[str] = None) -> int:
+    """GPU bytes per node: two pressure fields, float64 (double) or float32 (single).
+    ``precision`` None = pffdtd_precision()."""
+    return PFFDTD_BYTES_PER_NODE // 2 if (precision or pffdtd_precision()) == "single" else PFFDTD_BYTES_PER_NODE
+
+
+def static_gpu_budget_bytes() -> int:
+    """The configured GPU budget (PFFDTD_GPU_MEMORY_GB x usable fraction); callers pass a live one."""
+    return int(PFFDTD_GPU_MEMORY_GB * 1e9 * PFFDTD_GPU_MEMORY_USABLE_FRACTION)
+
+
+def estimate_runtime_s(nodes: int, steps: int, precision: Optional[str] = None) -> float:
+    """GPU solve time of one run (s): overhead + node updates / the precision's rate."""
+    rate = PFFDTD_NODE_UPDATES_PER_S_SINGLE if (precision or pffdtd_precision()) == "single" else PFFDTD_NODE_UPDATES_PER_S
+    return PFFDTD_RUN_OVERHEAD_S + nodes * steps / rate
 
 
 @dataclass
@@ -97,7 +111,8 @@ def aligned_spacing(extents, h_target: float) -> tuple[float, list]:
 
 
 def plan_grid(extents, fmax: float, ppw: float, duration: float, domain_extents=None,
-              h: Optional[float] = None) -> GridPlan:
+              h: Optional[float] = None, precision: Optional[str] = None,
+              gpu_budget_bytes: Optional[int] = None) -> GridPlan:
     """Grid spacing aligned to the geometry ``extents``; cost from ``domain_extents`` if given.
 
     ``domain_extents`` is a padded simulation domain (open scenes: the source/receivers are
@@ -126,9 +141,9 @@ def plan_grid(extents, fmax: float, ppw: float, duration: float, domain_extents=
         shape=shape,
         nodes=nodes,
         steps=steps,
-        gpu_bytes=nodes * bytes_per_node(),
-        gpu_budget_bytes=int(PFFDTD_GPU_MEMORY_GB * 1e9 * PFFDTD_GPU_MEMORY_USABLE_FRACTION),
-        est_runtime_s=nodes * steps / PFFDTD_NODE_UPDATES_PER_S,
+        gpu_bytes=nodes * bytes_per_node(precision),
+        gpu_budget_bytes=static_gpu_budget_bytes() if gpu_budget_bytes is None else int(gpu_budget_bytes),
+        est_runtime_s=estimate_runtime_s(nodes, steps, precision),
         domain_extents=None if domain_extents is None else sized.tolist(),
     )
 

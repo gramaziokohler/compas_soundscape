@@ -38,6 +38,7 @@ from services.pffdtd_job import (
 )
 from services.pffdtd_scene_export import bounding_box, build_scene, scene_material_ids
 from services.simulation_geometry_loader import load_speckle_simulation_geometry
+from services.gpu_arbiter import wave_gpu_budget_bytes
 from utils.pffdtd_grid import plan_grid
 
 PROGRESS_GEOMETRY_END = 15
@@ -62,6 +63,7 @@ def run_pffdtd_voxel_preview(
     ppw: float,
     payload_dir: str,
     mesh_settings: Optional[dict] = None,
+    precision: Optional[str] = None,
 ) -> None:
     try:
         reason = pffdtd_available()
@@ -73,6 +75,7 @@ def run_pffdtd_voxel_preview(
         )
         run_voxel_preview_from_geometry(
             preview_id, progress_file, result_file, geometry_dict(inputs), pairs_data, fmax, ppw, payload_dir, mesh_settings,
+            precision=precision,
         )
     except Exception as exc:
         tb = traceback.format_exc()
@@ -90,12 +93,14 @@ def run_voxel_preview_from_geometry(
     ppw: float,
     payload_dir: str,
     mesh_settings: Optional[dict] = None,
+    precision: Optional[str] = None,
 ) -> None:
     """Direct-geometry entry point (also used by tests); raises on failure."""
     _write_progress(progress_file, PROGRESS_GEOMETRY_END, "Preparing simulation mesh...")
     mesh, _ = prepare_pffdtd_mesh(geometry, pairs_data, mesh_settings)
     bmin, bmax = bounding_box(mesh)
-    plan = plan_grid(bmax - bmin, fmax, ppw, PFFDTD_DEFAULT_DURATION)
+    plan = plan_grid(bmax - bmin, fmax, ppw, PFFDTD_DEFAULT_DURATION, precision=precision,
+                     gpu_budget_bytes=wave_gpu_budget_bytes())
     if not plan.fits_gpu:
         raise RuntimeError(
             f"Grid does not fit in GPU memory ({plan.nodes / 1e6:.0f} M nodes, {plan.gpu_bytes / 1e9:.1f} GB of "

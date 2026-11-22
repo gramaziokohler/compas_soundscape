@@ -27,6 +27,8 @@ import { CardSelect } from '@/components/ui/CardSelect';
 import { Notice } from '@/components/ui/Notice';
 import { AcousticMaterialsSummary } from './AcousticMaterialsSummary';
 import { PffdtdFreePositioningSettings } from './PffdtdFreePositioningSettings';
+import { PffdtdPrecisionToggle } from './PffdtdPrecisionToggle';
+import { PffdtdGridEstimate } from './PffdtdGridEstimate';
 import { ModifiedMark, useIsFieldModified } from '@/components/ui/ModifiedMark';
 import { useDirectionalSources } from '@/hooks/useDirectionalSources';
 
@@ -120,6 +122,15 @@ export function PffdtdSimulationSettings({ config, onUpdateConfig }: PffdtdSimul
           grid h ≈ c / (fmax · PPW) = {cm(h)} · clearance {cm(clearance)}
         </span>
       </div>
+
+      <PffdtdPrecisionToggle
+        precision={s.precision}
+        gridSpacing={h}
+        onChange={(v) => handleSettingChange('precision', v)}
+        disabled={disabled}
+        modified={isSettingModified('precision')}
+      />
+      <PffdtdGridEstimate gridSpacing={h} precision={s.precision} duration={s.duration} />
 
       <RangeSlider
         label="IR duration"

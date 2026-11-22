@@ -13,7 +13,7 @@ User clicks "Generate"
        └─ apiService.generateSounds({ sounds: configs[], ... })
             └─ POST /api/generate-sounds  →  routers/sounds.py builds the clip plan
                  └─ job_store.enqueue("sound", ...)  →  Redis queue:gpu
-                      └─ workers/gpu_runner.py  [resident TangoFlux model]
+                      └─ workers/gpu_runner.py  [TangoFlux, loaded on demand, freed after 30 min idle]
                            └─ AudioService.generate_sound_file()
                                 → WAV saved to temp/static/sounds/generated/<session_id>/
   └─ Poll GET /api/jobs/<job_id>  every 1500ms (via apiService.getSoundGenerationStatus)
@@ -25,7 +25,7 @@ User clicks "Generate"
 | File | Role |
 |------|------|
 | `backend/routers/sounds.py` | `POST /api/generate-sounds` — validates, builds the flat clip plan (`_build_clip_plan`), enqueues via `job_store.enqueue`, returns `{job_id, position, total}` |
-| `backend/workers/gpu_runner.py` | Resident-TangoFlux GPU worker — leases `queue:gpu`, warms the model once, cooperative cancel, clip-level yielding |
+| `backend/workers/gpu_runner.py` | TangoFlux GPU worker — leases `queue:gpu`, loads the model on the first job and frees it after `TANGOFLUX_IDLE_UNLOAD_S` idle (`TANGOFLUX_RESIDENT=true`: load at start + warm-up), `empty_cache` after each clip, cooperative cancel, clip-level yielding |
 | `backend/workers/worker_main.py` | `python -m workers.worker_main --role gpu --slots 1 --worker-id gpu-1` (×2 for two lanes) |
 | `backend/services/audio_service.py` | ML model wrappers — `TangoFluxInference` (AudioLDM2 is NOT loaded by workers), post-processing (RMS norm, denoise, SPL calibration) |
 | `backend/services/job_store.py` | Redis job store — `enqueue`/`set_progress`/`complete`/`requeue_tail`, per-session GPU cap (HTTP 429) |

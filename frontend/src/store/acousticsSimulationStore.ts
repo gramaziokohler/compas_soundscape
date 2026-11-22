@@ -269,6 +269,7 @@ export const useAcousticsSimulationStore = create<AcousticsSimulationStoreState>
                   ppw: PFFDTD.DEFAULT_PPW,
                   duration: PFFDTD.DEFAULT_DURATION,
                   air_absorption: PFFDTD.DEFAULT_AIR_ABSORPTION,
+                  precision: PFFDTD.DEFAULT_PRECISION,
                   free_mode: PFFDTD.DEFAULT_FREE_MODE,
                   free_grid_spacing: PFFDTD.FREE_GRID_SPACING_DEFAULT,
                 },

@@ -42,6 +42,8 @@ interface SimulationPreflightPanelProps extends PreflightPanelControl {
 const ENGINE_NOTE: Record<SimulationEngine, string> = {
   pyroomacoustics:
     'Open edges and thin surfaces are allowed; leaks, outside sources and blocked paths are flagged.',
+  pffdtd:
+    'Wave solver: grid size, GPU memory and solve time, source / listener clearance from surfaces, leaks.',
 };
 
 function statsLine(stats: PreflightStats): string {

@@ -754,7 +754,8 @@ export const STABLE_AUDIO_DEFAULT_SAMPLER = "pingpong";
 export const STABLE_AUDIO_SAMPLERS = ["pingpong", "euler", "rk4", "dpmpp"] as const;
 export const STABLE_AUDIO_MAX_INPAINT_REGIONS = 8;
 export const STABLE_AUDIO_EXTEND_DEFAULT_SECONDS = 10;
-export const STABLE_AUDIO_EXTEND_MAX_SECONDS = 380;
+// = backend STABLE_AUDIO_MAX_DURATION_S: small-sfx generates at most 120 s (its 5,292,032-sample window).
+export const STABLE_AUDIO_EXTEND_MAX_SECONDS = 120;
 
 // ElevenLabs Sound Effects
 // Duration is intentionally left to the model (duration_seconds = None): the
@@ -2802,6 +2803,27 @@ export const PFFDTD = {
   FMAX_MAX: 4000,
   FMAX_STEP: 50,
   DEFAULT_PPW: 20, // points per wavelength at fmax
+  /** Solver precision (mirrors PFFDTD_PRECISION_DEFAULT): single = half the GPU memory, ~1.5x faster. */
+  DEFAULT_PRECISION: 'single' as const,
+  /**
+   * Single precision matches double at any reverberation time down to this grid spacing (m);
+   * finer grids drift in the low bands (mirrors PFFDTD_SINGLE_MIN_SPACING_M; benchmark
+   * backend/tests/benchmarks/precision_rt).
+   */
+  SINGLE_MIN_SPACING_M: 0.02,
+  /** Grid estimate (mirrors backend utils/pffdtd_grid.py): halo cells per axis, Courant number. */
+  GRID_PADDING_CELLS: 8,
+  COURANT_CART: 0.999 / Math.sqrt(3),
+  /** GPU bytes per grid point: two pressure fields (float32 / float64). */
+  BYTES_PER_NODE: { single: 8, double: 16 } as const,
+  /**
+   * Runtime estimate per run: overhead + points × steps / rate (mirrors PFFDTD_NODE_UPDATES_PER_S*,
+   * PFFDTD_RUN_OVERHEAD_S; RTX 2080 Ti, measured 2026-11-22).
+   */
+  NODE_UPDATES_PER_S: { single: 1.7e10, double: 9e9 } as const,
+  RUN_OVERHEAD_S: 30,
+  /** Refresh of the available GPU memory while a wave card is open. */
+  GPU_MEMORY_POLL_MS: 15000,
   PPW_MIN: 6,
   PPW_MAX: 80,
   /** Above this PPW the grid dispersion error is negligible ("phase accurate"). */

@@ -17,6 +17,7 @@ walls use conformal cut cells (2nd order) -- see pffdtd_backend/validation/REPOR
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import traceback
@@ -38,6 +39,8 @@ from config.constants import (
     PFFDTD_DEFAULT_DURATION,
     PFFDTD_DEFAULT_FMAX,
     PFFDTD_DEFAULT_PPW,
+    PFFDTD_PRECISION_DEFAULT,
+    PFFDTD_PRECISIONS,
     PFFDTD_DURATION_MAX,
     PFFDTD_DURATION_MIN,
     PFFDTD_FIELD_DIR,
@@ -64,6 +67,7 @@ from routers.pyroomacoustics import get_materials as get_pyroomacoustics_materia
 from routers.simulation_preflight import _workspace_dir
 from services.custom_materials_service import inline_custom_materials
 from services.directivity_service import any_directional, attach_directivity_specs, directional_run_count
+from services.gpu_arbiter import wave_gpu_budget
 from services.job_store import job_store
 from services.pffdtd_job import pffdtd_available
 from services.pffdtd_preview_job import preview_paths
@@ -151,6 +155,14 @@ async def get_status():
     return {"available": reason is None, "reason": reason}
 
 
+@router.get("/pffdtd/gpu-memory")
+async def get_gpu_memory():
+    """GPU memory a wave solve can use now (bytes): free + what Stable Audio 3 would release by moving to
+    system RAM, minus the solver overhead (services/gpu_arbiter.wave_gpu_budget); a running solve counts as
+    available. ``source`` "static" = the configured budget (no nvidia-smi)."""
+    return await asyncio.to_thread(wave_gpu_budget)
+
+
 @router.get("/pffdtd/get-result-file/{simulation_id}/{file_type}")
 async def get_result_file(
     simulation_id: str, file_type: str, ir_filename: Optional[str] = None, name: Optional[str] = None,
@@ -206,6 +218,7 @@ async def run_simulation_speckle(
     mesh_settings: Optional[str] = Form(None),
     field_plane_z: Optional[float] = Form(None),      # default plane height; default = mean listener z
     free_mode: str = Form(PFFDTD_DEFAULT_FREE_MODE),  # off | listener | source (routers/pffdtd_free.py)
+    precision: str = Form(PFFDTD_PRECISION_DEFAULT),  # single | double (GPU memory and speed vs grid spacing)
     free_grid_spacing: float = Form(PFFDTD_FREE_GRID_SPACING_DEFAULT),
     model_id: Optional[str] = Form(None),             # resolves shared-soundscape directivity copies
 ):
@@ -215,6 +228,8 @@ async def run_simulation_speckle(
         raise HTTPException(status_code=400, detail=f"Invalid simulation mode: {simulation_mode}")
     _check_range("fmax", fmax, PFFDTD_FMAX_MIN, PFFDTD_FMAX_MAX)
     _check_range("ppw", ppw, PFFDTD_PPW_MIN, PFFDTD_PPW_MAX)
+    if precision not in PFFDTD_PRECISIONS:
+        raise HTTPException(status_code=400, detail=f"precision must be one of {PFFDTD_PRECISIONS}")
     _check_range("duration", duration, PFFDTD_DURATION_MIN, PFFDTD_DURATION_MAX)
     if free_mode not in PFFDTD_FREE_MODES:
         raise HTTPException(status_code=400, detail=f"Invalid free_mode: {free_mode}")
@@ -254,6 +269,7 @@ async def run_simulation_speckle(
                 field_plane_z=field_plane_z,
                 free_mode=free_mode,
                 free_grid_spacing=free_grid_spacing,
+                precision=precision,
             ),
         }
         job_id = await job_store.enqueue(JOB_TYPE_PFFDTD, session_id, payload)
@@ -308,6 +324,7 @@ async def voxel_preview(
     mesh_settings: Optional[str] = Form(None),
     fmax: float = Form(PFFDTD_DEFAULT_FMAX),
     ppw: float = Form(PFFDTD_DEFAULT_PPW),
+    precision: str = Form(PFFDTD_PRECISION_DEFAULT),  # only sizes the GPU-memory check
     model_id: Optional[str] = Form(None),
 ):
     """Enqueue a voxelise-only CPU job (same queue and contract as the geometry preflight)."""
@@ -333,6 +350,7 @@ async def voxel_preview(
             pairs_data=pairs_data,
             fmax=fmax,
             ppw=ppw,
+            precision=precision if precision in PFFDTD_PRECISIONS else None,
             payload_dir=str(_workspace_dir(req)),
             mesh_settings=parse_mesh_settings(mesh_settings).model_dump(),
         ),

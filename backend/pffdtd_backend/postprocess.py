@@ -49,11 +49,17 @@ def to_ir(
     air_absorption: bool,
     Tc: float,
     rh: float,
+    extra_highpass_hz: float = 0.0,
 ) -> np.ndarray:
-    """[C, Nt] at 1/Ts -> [C, round(duration*out_fs)] at out_fs, band-limited to fmax."""
+    """[C, Nt] at 1/Ts -> [C, round(duration*out_fs)] at out_fs, band-limited to fmax.
+
+    ``extra_highpass_hz`` > 0 adds a second high-pass (same order as the low-cut): single-precision
+    runs leave a sub-10 Hz drift (integrated rounding of the differentiated source)."""
     fs = 1.0 / Ts
     # the uniform-pressure mode never decays (admittances vanish at 0 Hz): low-cut it
     x = sosfilt(butter(lowcut_order, lowcut_hz, btype="high", fs=fs, output="sos"), signals, axis=-1)
+    if extra_highpass_hz > 0:
+        x = sosfilt(butter(lowcut_order, extra_highpass_hz, btype="high", fs=fs, output="sos"), x, axis=-1)
     # resampling keeps the continuous waveform; rescale to keep the unit-sample convention
     y = resampy.resample(x, fs, out_fs, axis=-1, filter="kaiser_best") * (fs / out_fs)
     y = sosfiltfilt(butter(lowpass_order, fmax, btype="low", fs=out_fs, output="sos"), y, axis=-1)

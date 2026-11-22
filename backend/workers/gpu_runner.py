@@ -1,9 +1,13 @@
 """
-GPU worker runner — resident TangoFlux model, one clip-generation lane per process.
+GPU worker runner — TangoFlux on demand, one clip-generation lane per process.
 
 Design (see .cursor/plans/multi-user_distributed_backend_a4752c5d.plan.md §4.2):
-  - The model is loaded once at process startup (paid once, not per-request) and
-    warmed up with a throwaway 1s generation so the first real user pays nothing.
+  - TangoFlux (~4.3 GB of GPU memory, not the default model) loads on the first job and is
+    freed after TANGOFLUX_IDLE_UNLOAD_S without a job, so the GPU memory goes to the PFFDTD
+    wave solver. TANGOFLUX_RESIDENT=true loads it at startup with a warm-up generation and
+    keeps it.
+  - The PyTorch cache is emptied after every clip (the peak activations otherwise stay
+    reserved by the caching allocator).
   - Cooperative cancel: should_stop() is polled once per diffusion step inside
     TangoFlux's inference_flow (see tangoflux/model.py GenerationCancelled).
   - Clip-level yielding: a multi-clip job re-queues its remaining clips under the
@@ -13,6 +17,7 @@ Design (see .cursor/plans/multi-user_distributed_backend_a4752c5d.plan.md §4.2)
 """
 from __future__ import annotations
 
+import gc
 import os
 import tempfile
 import threading
@@ -28,9 +33,23 @@ from config.constants import (
     DEFAULT_GUIDANCE_SCALE,
     JOB_TYPE_SOUND,
     JOB_TYPE_QUEUE,
+    TANGOFLUX_IDLE_UNLOAD_S,
+    TANGOFLUX_RESIDENT,
     TANGOFLUX_WARMUP_DURATION_SECONDS,
     TANGOFLUX_WARMUP_STEPS,
 )
+
+
+def _empty_gpu_cache() -> None:
+    """Hand the caching allocator's free blocks back to the driver (other processes can use them)."""
+    gc.collect()
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception as exc:  # never fail a job over cache housekeeping
+        print(f"[gpu] empty_cache failed (non-fatal): {exc}")
 
 
 class GpuRunner:
@@ -40,13 +59,18 @@ class GpuRunner:
         self.worker_id = worker_id
         self.audio_service: AudioService | None = None
         self._queue_key = JOB_TYPE_QUEUE[JOB_TYPE_SOUND]
+        self._last_used = time.time()
 
-    def _ensure_model_loaded(self) -> None:
+    def _ensure_model_loaded(self, warm_up: bool = True) -> None:
         if self.audio_service is not None:
             return
-        print(f"[gpu:{self.worker_id}] loading TangoFlux model (resident)...")
+        print(f"[gpu:{self.worker_id}] loading TangoFlux model...")
+        t_load = time.time()
         self.audio_service = AudioService()
         self.audio_service._init_tangoflux_model()
+        print(f"[gpu:{self.worker_id}] TangoFlux loaded in {time.time() - t_load:.1f}s")
+        if not warm_up:
+            return
 
         tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
         tmp.close()
@@ -71,9 +95,18 @@ class GpuRunner:
             except OSError:
                 pass
 
+    def _unload_model(self) -> None:
+        if self.audio_service is None:
+            return
+        self.audio_service = None
+        _empty_gpu_cache()
+        print(f"[gpu:{self.worker_id}] TangoFlux unloaded after {TANGOFLUX_IDLE_UNLOAD_S:.0f}s idle")
+
     def run_forever(self, shutdown: threading.Event) -> None:
-        self._ensure_model_loaded()
-        print(f"[gpu:{self.worker_id}] ready, leasing from {self._queue_key}")
+        if TANGOFLUX_RESIDENT:
+            self._ensure_model_loaded()
+        print(f"[gpu:{self.worker_id}] ready ({'resident' if TANGOFLUX_RESIDENT else 'TangoFlux on demand'}), "
+              f"leasing from {self._queue_key}")
         while not shutdown.is_set():
             try:
                 job = self.job_store.lease([self._queue_key], timeout=5)
@@ -82,9 +115,15 @@ class GpuRunner:
                 time.sleep(2)
                 continue
             if job is None:
+                if (not TANGOFLUX_RESIDENT and self.audio_service is not None
+                        and time.time() - self._last_used > TANGOFLUX_IDLE_UNLOAD_S):
+                    self._unload_model()
                 continue
             self.state.start_job(job.job_id)
             try:
+                if self.audio_service is None:
+                    self.job_store.set_progress(job.job_id, 0, "Loading TangoFlux model...")
+                    self._ensure_model_loaded(warm_up=False)
                 self._run_job(job)
             except Exception as exc:
                 print(f"[gpu:{self.worker_id}] job {job.job_id} failed: {exc}")
@@ -93,6 +132,7 @@ class GpuRunner:
                 except Exception:
                     pass
             finally:
+                self._last_used = time.time()
                 self.state.end_job(job.job_id)
 
     def _run_job(self, job: Job) -> None:
@@ -159,6 +199,8 @@ class GpuRunner:
                 except GenerationCancelled:
                     self.job_store.mark_cancelled(job.job_id)
                     return
+                finally:
+                    _empty_gpu_cache()
 
             sound_data = {
                 "id": clip["id"],

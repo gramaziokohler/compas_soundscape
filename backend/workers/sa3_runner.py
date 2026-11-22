@@ -5,17 +5,31 @@ Runs INSIDE the isolated `compas-sa3` conda env (see deploy/README.md and
 services/stable_audio_service.py) and leases `queue:sa3`. Mirrors GpuRunner:
   - the model is loaded once at startup (resident) and warmed up,
   - cooperative cancel via should_stop() polled once per sampler step,
-  - per-clip progress + partial results streamed to Redis.
+  - per-clip progress + partial results streamed to Redis,
+  - GPU sharing with the PFFDTD wave solver (services/gpu_arbiter.py): while a solve claims the GPU
+    and needs the room, the weights move to system RAM (~1 s each way) and come back for a clip only
+    when the free memory covers SA3 plus the solve's grid; meanwhile the job waits with a status,
+  - the PyTorch cache is emptied after every clip: generation peaks ~0.7 GB above the idle
+    2.2 GB, and the caching allocator would otherwise keep that reserved (GPU memory the
+    PFFDTD wave solver can use between generations).
 
 The FastAPI process must NOT import services.stable_audio_service; only this
 worker (launched with the compas-sa3 interpreter) does.
 """
 from __future__ import annotations
 
+import gc
 import os
 import threading
 import time
 
+from services.gpu_arbiter import (
+    SA3_OFFLOADED,
+    SA3_RESIDENT,
+    publish_sa3_state,
+    sa3_may_restore,
+    sa3_should_offload,
+)
 from services.job_store import Job, WorkerJobStore
 from services.stable_audio_service import StableAudioService, StableAudioCancelled
 from config.constants import (
@@ -27,7 +41,21 @@ from config.constants import (
     STABLE_AUDIO_DEFAULT_SAMPLER,
     STABLE_AUDIO_MODE_TEXT,
     DEFAULT_DBFS,
+    SA3_GPU_STATE_TTL_S,
+    SA3_GPU_WAIT_POLL_S,
 )
+
+
+def _empty_gpu_cache() -> None:
+    """Hand the caching allocator's free blocks back to the driver (other processes can use them)."""
+    gc.collect()
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception as exc:  # never fail a job over cache housekeeping
+        print(f"[sa3] empty_cache failed (non-fatal): {exc}")
 
 
 class Sa3Runner:
@@ -46,11 +74,51 @@ class Sa3Runner:
         self.service._ensure_model()
         print(f"[sa3:{self.worker_id}] warming up...")
         self.service.warm_up()
+        _empty_gpu_cache()
+
+    def _sync_gpu(self) -> None:
+        """Publish where the weights are; move them to system RAM if a wave solve needs the room."""
+        r = self.job_store.redis
+        try:
+            if self.service.on_gpu and sa3_should_offload(r):
+                self.service.offload()
+            publish_sa3_state(r, SA3_RESIDENT if self.service.on_gpu else SA3_OFFLOADED, SA3_GPU_STATE_TTL_S,
+                              self.service.gpu_bytes())
+        except Exception as exc:   # never stop the worker over GPU sharing
+            print(f"[sa3:{self.worker_id}] GPU sync failed (non-fatal): {exc}")
+
+    def _wait_for_gpu(self, job: Job) -> bool:
+        """Bring the weights back for this job, waiting while a wave solve needs the memory.
+        False if the job was cancelled while waiting."""
+        if self.service.on_gpu:
+            return True
+        r = self.job_store.redis
+        waiting = False
+        while True:
+            if self.job_store.is_cancel_requested(job.job_id) or self.state.should_stop(job.job_id):
+                self.job_store.mark_cancelled(job.job_id)
+                return False
+            try:
+                if sa3_may_restore(r):
+                    self.service.restore()
+                    publish_sa3_state(r, SA3_RESIDENT, SA3_GPU_STATE_TTL_S, self.service.gpu_bytes())
+                    return True
+                publish_sa3_state(r, SA3_OFFLOADED, SA3_GPU_STATE_TTL_S)
+            except Exception as exc:
+                print(f"[sa3:{self.worker_id}] GPU check failed, restoring anyway: {exc}")
+                self.service.restore()
+                return True
+            if not waiting:
+                print(f"[sa3:{self.worker_id}] job {job.job_id} waits for GPU memory (wave solve running)")
+                waiting = True
+            self.job_store.set_progress(job.job_id, 0, "Waiting for GPU memory: a wave simulation is running...")
+            time.sleep(SA3_GPU_WAIT_POLL_S)
 
     def run_forever(self, shutdown: threading.Event) -> None:
         self._ensure_model_loaded()
         print(f"[sa3:{self.worker_id}] ready, leasing from {self._queue_key}")
         while not shutdown.is_set():
+            self._sync_gpu()
             try:
                 job = self.job_store.lease([self._queue_key], timeout=5)
             except Exception as exc:
@@ -84,6 +152,9 @@ class Sa3Runner:
         while clips:
             if self.job_store.is_cancel_requested(job.job_id) or self.state.should_stop(job.job_id):
                 self.job_store.mark_cancelled(job.job_id)
+                return
+            self._sync_gpu()   # a wave solve may have claimed the GPU since the last clip
+            if not self._wait_for_gpu(job):
                 return
 
             clip = clips.pop(0)
@@ -138,6 +209,8 @@ class Sa3Runner:
                 except StableAudioCancelled:
                     self.job_store.mark_cancelled(job.job_id)
                     return
+                finally:
+                    _empty_gpu_cache()
 
             sound_data = {
                 "id": clip["id"],

@@ -224,9 +224,35 @@ TANGOFLUX_DTYPE = os.environ.get("TANGOFLUX_DTYPE") or None
 TANGOFLUX_LOCAL_DIR = os.environ.get("TANGOFLUX_LOCAL_DIR") or str(
     BACKEND_DIR / "data" / "models" / "TangoFlux"
 )
-# GPU worker warm-up generation (paid once at process startup, not per-request)
+# GPU worker warm-up generation (TangoFlux only stays resident when TANGOFLUX_RESIDENT is set)
 TANGOFLUX_WARMUP_DURATION_SECONDS = 1
 TANGOFLUX_WARMUP_STEPS = 2
+# TangoFlux is not the default model (Stable Audio 3 is) and holds ~4.3 GB of GPU memory, which the
+# PFFDTD wave solver needs: by default the GPU worker loads it on its first job and frees it after
+# TANGOFLUX_IDLE_UNLOAD_S without a job. TANGOFLUX_RESIDENT=true restores load-at-startup + warm-up.
+TANGOFLUX_RESIDENT = os.environ.get("TANGOFLUX_RESIDENT", "false").lower() == "true"
+TANGOFLUX_IDLE_UNLOAD_S = float(os.environ.get("TANGOFLUX_IDLE_UNLOAD_S", str(30 * 60)))
+
+# GPU sharing between the PFFDTD wave solver and Stable Audio 3 (services/gpu_arbiter.py). While a PFFDTD
+# pipeline runs it holds GPU_WAVE_CLAIM_KEY (TTL, refreshed). The SA3 worker moves its weights to system
+# RAM (~1 s each way) when the free memory does not cover the claim's grid plus a generation peak, and
+# only brings them back for a job when the free memory covers SA3 plus the grid, so a generation never
+# takes memory the solve needs.
+GPU_WAVE_CLAIM_KEY = "gpu:wave_claim"
+GPU_WAVE_CLAIM_TTL_S = 60
+GPU_WAVE_CLAIM_REFRESH_S = 20
+GPU_WAVE_CLAIM_WAIT_S = 30          # the solve waits at most this long for SA3 to leave the GPU
+GPU_WAVE_CLAIM_MARGIN_BYTES = int(0.4e9)   # CUDA context + engine buffers beyond the two pressure fields
+SA3_GPU_STATE_KEY = "gpu:sa3_state"       # "resident" | "offloaded" (TTL: absent = no SA3 worker)
+SA3_GPU_STATE_TTL_S = 30
+SA3_GPU_NEED_BYTES = int(3.0e9)     # SA3 weights (2.2 GB) + generation peak (0.7 GB), measured 2026-11-22
+SA3_GPU_PEAK_BYTES = int(0.8e9)     # what a generation adds above the resident weights
+SA3_GPU_MOVABLE_KEY = "gpu:sa3_movable_bytes"   # GPU bytes SA3 would release by moving to RAM (TTL)
+# Live wave-solve budget (services/gpu_arbiter.wave_gpu_budget): free GPU memory + what SA3 would release
+# - the claim margin, times this fraction (boundary arrays and engine buffers beyond the two pressure
+# fields). Falls back to PFFDTD_GPU_MEMORY_GB when nvidia-smi is not available.
+PFFDTD_LIVE_BUDGET_FRACTION = 0.9
+SA3_GPU_WAIT_POLL_S = 5.0
 
 # AudioLDM2 Model
 AUDIOLDM2_MODEL_NAME = "cvssp/audioldm2-large"
@@ -261,7 +287,10 @@ STABLE_AUDIO_DEFAULT_DURATION_PADDING_S = 6.0
 STABLE_AUDIO_DEFAULT_SAMPLER = "pingpong"
 STABLE_AUDIO_AVAILABLE_SAMPLERS = ("pingpong", "euler", "rk4", "dpmpp")
 STABLE_AUDIO_MIN_DURATION_S = 1.0
-STABLE_AUDIO_MAX_DURATION_S = 380.0
+# small-sfx generates at most its 5,292,032-sample window (StableAudioModel.generate sample_size): 120 s
+# at 44.1 kHz. Longer requests were silently clamped to 120 s (a 380 s request returned 120 s). Above
+# 114 s the duration padding is squeezed into what is left of the window.
+STABLE_AUDIO_MAX_DURATION_S = 120.0
 # Generation modes
 STABLE_AUDIO_MODE_TEXT = "text"
 STABLE_AUDIO_MODE_RESTYLE = "restyle"  # audio-to-audio (init_audio + init_noise_level)
@@ -1099,7 +1128,17 @@ PFFDTD_PHASE_ACCURATE_PPW = 28.0
 PFFDTD_DEFAULT_DURATION = 1.0        # s, IR length
 PFFDTD_DURATION_MIN = 0.05
 PFFDTD_DURATION_MAX = 5.0
-PFFDTD_PRECISION = "double"          # single precision fails A3 (long low-loss IRs)
+PFFDTD_PRECISION = "double"          # callers that pass no precision (tests, validation): A3 needs double
+# Wave-based / hybrid cards choose per run; single is the default (half the GPU memory, ~1.5x faster).
+# Benchmark (tests/benchmarks/precision_rt, 2026-11-22): single matches double in band level, T30/EDT,
+# C80 and the early waveform at any RT when h >= PFFDTD_SINGLE_MIN_SPACING_M; below it the 63 Hz band
+# drifts (early error -28 dB at 17 mm, -17 dB at 8 mm). The card warns below that spacing.
+PFFDTD_PRECISIONS = ("single", "double")
+PFFDTD_PRECISION_DEFAULT = "single"
+PFFDTD_SINGLE_MIN_SPACING_M = 0.020
+# Single precision only: extra 4th-order high-pass after the 10 Hz low-cut. The differentiated source
+# that single needs leaves a sub-10 Hz drift at -53 dB re the IR peak; this takes it to ~-100 dB.
+PFFDTD_SINGLE_HIGHPASS_HZ = 20.0
 # Benchmark only: this env variable set to "single" runs the single-precision engine (half the GPU
 # memory per node) for short anechoic IRs (tests/benchmarks/bras); unset, the app keeps PFFDTD_PRECISION.
 PFFDTD_PRECISION_ENV = "PFFDTD_PRECISION_OVERRIDE"
@@ -1137,7 +1176,12 @@ PFFDTD_GPU_MEMORY_GB = float(os.environ.get("PFFDTD_GPU_MEMORY_GB", "8"))
 PFFDTD_GPU_MEMORY_USABLE_FRACTION = 0.85
 PFFDTD_BYTES_PER_NODE = 16
 PFFDTD_GRID_PADDING_CELLS = 8        # halo cells added around the bounding box (CartGrid offset)
-PFFDTD_NODE_UPDATES_PER_S = float(os.environ.get("PFFDTD_NODE_UPDATES_PER_S", "5.8e9"))  # RTX 2000 Ada, double
+# Runtime estimate per source: PFFDTD_RUN_OVERHEAD_S + nodes x steps / rate. Measured on the RTX 2080 Ti
+# (2026-11-22, tests/benchmarks/precision_rt): 3.4 M nodes x 89 k steps 66 s double / 44 s single,
+# 7.4 M x 179 k 197 / 123 s, 31.7 M x 143 k 512 / 284 s; the fit is within ~10 %.
+PFFDTD_NODE_UPDATES_PER_S = float(os.environ.get("PFFDTD_NODE_UPDATES_PER_S", "9e9"))  # double
+PFFDTD_NODE_UPDATES_PER_S_SINGLE = float(os.environ.get("PFFDTD_NODE_UPDATES_PER_S_SINGLE", "1.7e10"))
+PFFDTD_RUN_OVERHEAD_S = 30.0         # engine start, data load and output per run
 PFFDTD_COURANT_CART = 0.999 / 3 ** 0.5
 PFFDTD_SPEED_OF_SOUND = 343.2
 

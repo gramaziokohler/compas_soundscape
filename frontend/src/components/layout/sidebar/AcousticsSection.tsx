@@ -641,16 +641,26 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     (config: SimulationConfig): { ok: true; args: RunPreflightArgs } | { ok: false; error: string } => {
       const built = buildCardRequest(config);
       if (!built.ok) return built;
-      const engine: SimulationEngine = 'pyroomacoustics';
+      // Wave-based cards get the wave solver's checks (grid size, GPU memory, runtime, clearance)
+      const wave = config.type === 'pffdtd' ? config.settings : null;
+      const engine: SimulationEngine = wave ? 'pffdtd' : 'pyroomacoustics';
       const pySettings = isGeometricSimulation(config) ? config.settings : null;
-      const extra = { maxOrder: pySettings?.max_order, rayTracing: pySettings?.ray_tracing };
+      const extra = wave
+        ? { fmax: wave.fmax, ppw: wave.ppw }
+        : { maxOrder: pySettings?.max_order, rayTracing: pySettings?.ray_tracing };
       // Engine-specific checks (ambisonic output in an open model, BTMS in mono, ...)
       const geometricEngine = !pySettings
         ? undefined
         : config.type === 'hybrid' ? GA_ENGINE.COMPAS_ACOUSTICS : resolveEngine(pySettings, engineCapabilities);
-      const engineExtra = pySettings
-        ? { geometricEngine, simulationMode: pySettings.simulation_mode, diffraction: pySettings.diffraction ?? GA_ENGINE.DIFFRACTION_OFF }
-        : {};
+      const engineExtra = wave
+        ? {
+          simulationMode: wave.simulation_mode,
+          freeMode: wave.free_mode,
+          pffdtd: { fmax: wave.fmax, ppw: wave.ppw, duration: wave.duration, precision: wave.precision },
+        }
+        : pySettings
+          ? { geometricEngine, simulationMode: pySettings.simulation_mode, diffraction: pySettings.diffraction ?? GA_ENGINE.DIFFRACTION_OFF }
+          : {};
       return {
         ok: true,
         args: {
@@ -735,6 +745,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       request: prepared.request,
       fmax: config.settings.fmax,
       ppw: config.settings.ppw,
+      precision: config.settings.precision,
       meshSettings: simulationMeshSettings,
       signature: prepared.signature,
     });

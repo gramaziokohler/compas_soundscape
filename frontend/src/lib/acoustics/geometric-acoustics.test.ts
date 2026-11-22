@@ -283,6 +283,7 @@ describe('hybrid crossover', () => {
     expect(fields.engine).toBeUndefined();       // always compas_acoustics
     expect(fields.ambisonic_order).toBeUndefined();
     expect(fields.sound_speed).toBe('343');
+    expect(fields.precision).toBe('single');     // new cards: single precision
     const manual = hybridFormFields({ ...defaultHybridSettings(), crossover_mode: 'manual', crossover_hz: 150, duration: 0.8 }, 343);
     expect(manual.crossover_hz).toBe('150');
     expect(manual.duration).toBe('0.8');
@@ -295,6 +296,8 @@ describe('hybrid crossover', () => {
       diffraction: 'udfa', excluded_edges: [[0, 0, 0, 1, 0, 0]],
     });
     expect(restored.simulation_mode).toBe('mono'); // the hybrid has no HOA
+    expect(restored.precision).toBe('double');     // saved before the setting existed: ran in double
+    expect(restoreHybridSettings({ precision: 'single' }).precision).toBe('single');
     expect(restored.crossover_mode).toBe('manual');
     expect(restored.crossover_hz).toBe(HYBRID.CROSSOVER_HZ_MAX);
     expect(restored.crossover_factor).toBe(HYBRID.CROSSOVER_FACTOR_MIN);

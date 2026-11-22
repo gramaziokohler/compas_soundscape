@@ -214,6 +214,8 @@ export interface SoundscapeSimulationSettings {
   duration?: number;
   free_mode?: string; // 'off' | 'listener' | 'source'
   free_grid_spacing?: number;
+  /** PFFDTD / hybrid wave part ('single' | 'double'); older saves: double. */
+  precision?: string;
 }
 
 /**

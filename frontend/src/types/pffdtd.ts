@@ -17,6 +17,21 @@ export interface PffdtdStatus {
   reason: string | null;
 }
 
+/** GET /api/pffdtd/gpu-memory: GPU memory a wave solve can use now (bytes). */
+export interface PffdtdGpuMemory {
+  /** 'live' = measured (free + what Stable Audio 3 releases); 'static' = the configured budget. */
+  source: 'live' | 'static';
+  available_bytes: number;
+  total_bytes: number | null;
+  free_bytes: number | null;
+  sa3_movable_bytes: number;
+  /** A wave solve is running: its memory counts as available (released before the next run). */
+  solve_running: boolean;
+}
+
+/** Solver precision of a wave-based run (single: half the GPU memory, accurate at grid h >= 20 mm). */
+export type PffdtdPrecision = 'single' | 'double';
+
 /** Wave-based card settings (sent as form fields to the run endpoint). */
 export interface PffdtdSettings {
   simulation_mode: string; // "mono" | "foa"
@@ -24,6 +39,7 @@ export interface PffdtdSettings {
   ppw: number;
   duration: number;
   air_absorption: boolean;
+  precision: PffdtdPrecision;
   /** Free positioning: after the run a moved listener / source gets its IR without re-running. */
   free_mode: PffdtdFreeMode;
   /** Candidate-grid spacing (m) of free positioning. */

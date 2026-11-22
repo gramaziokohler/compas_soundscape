@@ -67,6 +67,8 @@ class PreflightContext:
     pffdtd_fmax: float = PFFDTD_DEFAULT_FMAX
     pffdtd_ppw: float = PFFDTD_DEFAULT_PPW
     pffdtd_duration: float = PFFDTD_DEFAULT_DURATION
+    # 1.0 = single precision (8 B per node instead of 16)
+    pffdtd_single: float = 0.0
     # Directional sources: reciprocal GPU runs (listeners x 4 for FOA); 0 = forward runs per source.
     pffdtd_runs: float = 0.0
     # Free-listener mode cannot radiate directional sources (1.0 = requested anyway).
@@ -152,10 +154,18 @@ class SimulationPreflightService:
         )
 
 
+def _live_gpu_budget() -> int:
+    from services.gpu_arbiter import wave_gpu_budget_bytes   # Redis + nvidia-smi: only for PFFDTD checks
+
+    return wave_gpu_budget_bytes()
+
+
 def _pffdtd_checks(mesh: SimulationMesh, ctx: PreflightContext, out: Issues, dists: list[float]) -> None:
     """Grid cost, stencil clearance, staircasing and band limit for the PFFDTD engine."""
     pts = mesh.vertices[mesh.faces.ravel()]
-    plan = plan_grid(pts.max(axis=0) - pts.min(axis=0), ctx.pffdtd_fmax, ctx.pffdtd_ppw, ctx.pffdtd_duration)
+    plan = plan_grid(pts.max(axis=0) - pts.min(axis=0), ctx.pffdtd_fmax, ctx.pffdtd_ppw, ctx.pffdtd_duration,
+                     precision="single" if ctx.pffdtd_single else "double",
+                     gpu_budget_bytes=_live_gpu_budget())
     runs = int(round(ctx.pffdtd_runs))
     per_run = (f"~{plan.est_runtime_s:.0f} s per run, {runs} runs (~{plan.est_runtime_s * runs:.0f} s total)"
                if runs else f"~{plan.est_runtime_s:.0f} s per source")
