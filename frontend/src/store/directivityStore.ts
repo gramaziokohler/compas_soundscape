@@ -176,9 +176,14 @@ export function findDirectivity(id: string): DirectivityRecord | undefined {
   return presets.find((r) => r.id === id) ?? library.find((r) => r.id === id) ?? snapshot.find((r) => r.id === id);
 }
 
-/** True when `id` can be sent to the backend from this client (built-in, mine or shared). */
+/**
+ * True when `id` can be sent to the backend from this client (built-in, mine or shared).
+ * Until presets + library have loaded, a non-analytical id is not known to be missing:
+ * it is accepted and the backend resolves (or rejects) it.
+ */
 export function isResolvableDirectivityId(id: string): boolean {
-  return isAnalyticalDirectivityId(id) || findDirectivity(id) !== undefined;
+  if (isAnalyticalDirectivityId(id) || findDirectivity(id) !== undefined) return true;
+  return useDirectivityStore.getState().status !== 'ready';
 }
 
 /** Display label of a directivity id (falls back to the analytical preset table, then the id). */

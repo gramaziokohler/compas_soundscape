@@ -27,7 +27,7 @@ import { useHybridRoomEstimate } from '@/hooks/useHybridRoomEstimate';
 import { hybridRoomForRun } from '@/lib/acoustics/hybrid';
 import { resolveEngine, usesCompasAcoustics } from '@/lib/acoustics/geometric-engine';
 import { isEngineSimulation, isGeometricSimulation } from '@/types/acoustics';
-import { useAcousticPathsStore, type RunAcousticPathsArgs } from '@/store';
+import { useAcousticPathsStore, useDirectivityStore, type RunAcousticPathsArgs } from '@/store';
 import { runHybridSimulation } from './acoustics/runHybridSimulation';
 import { useCanEdit } from '@/hooks/useCanEdit';
 import { createMoveIndexMapper, remapIndexKeyedRecord, remapNullableIndex } from '@/utils/cardIndexRemap';
@@ -437,6 +437,9 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   // compas_acoustics engine capabilities (which engine runs, what it offers)
   const engineCapabilities = useAcousticPathsStore((s) => s.capabilities);
   useEffect(() => { void useAcousticPathsStore.getState().loadCapabilities(); }, []);
+  // Directivity presets + library: a run checks each source's directivity id against
+  // them, and they are otherwise only fetched when a sound card's picker mounts.
+  useEffect(() => { void useDirectivityStore.getState().load(); }, []);
   const compasAcousticsAvailable = engineCapabilities
     ? !!engineCapabilities.engines[GA_ENGINE.COMPAS_ACOUSTICS]?.available
     : true; // unknown (older backend): let the run decide
