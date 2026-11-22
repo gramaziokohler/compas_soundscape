@@ -299,6 +299,11 @@ export interface UIStoreState {
    * across refresh (zoom is model/duration-bound). */
   timelineView: { pxPerSecond: number | null; trackHeight: number | null };
   setTimelineView: (patch: Partial<{ pxPerSecond: number | null; trackHeight: number | null }>) => void;
+  /** DAW loop region (ms). Kept in the store (not the dock) so it survives collapsing the
+   * timeline and keeps looping playback while collapsed; only the user removes it.
+   * NOT persisted across refresh. */
+  timelineLoop: { startMs: number; endMs: number } | null;
+  setTimelineLoop: (region: { startMs: number; endMs: number } | null) => void;
 
   // ── Simulation cards expanded tab (survives refresh) ────────────────────────
   expandedSimulationTabIndex: number | null;
@@ -634,6 +639,8 @@ export const useUIStore = create<UIStoreState>()(
       timelineView: { pxPerSecond: null, trackHeight: null },
       setTimelineView: (patch) =>
         set((s) => ({ timelineView: { ...s.timelineView, ...patch } }), false, 'ui/setTimelineView'),
+      timelineLoop: null,
+      setTimelineLoop: (region) => set({ timelineLoop: region }, false, 'ui/setTimelineLoop'),
 
       // ── Simulation cards expanded tab ──────────────────────────────────────
       expandedSimulationTabIndex: null,
@@ -705,7 +712,7 @@ export const useUIStore = create<UIStoreState>()(
         // Transient: a settings-shortcut request must not replay after a refresh.
         advancedSettingsFocus,
         // Session-local: manual DAW zoom is duration-bound, so it must not outlive a refresh.
-        timelineView,
+        timelineView, timelineLoop,
         // Model-bound: a card index from a previous model must not decide which
         // scene gizmo attaches after a refresh (the sidebar re-expands card 0).
         expandedSoundCardIndex, soundEditorSoundId, shortcutsOpen,

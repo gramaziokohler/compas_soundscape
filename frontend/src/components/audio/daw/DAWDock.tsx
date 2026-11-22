@@ -3,7 +3,7 @@
 import { useCanEdit } from '@/hooks/useCanEdit';
 import { Fragment, useLayoutEffect, useRef, useState, useCallback, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { DAWRuler, computeTickStep, type LoopRegion } from './DAWRuler';
+import { DAWRuler, computeTickStep } from './DAWRuler';
 import { DAWTrackHead } from './DAWTrackHead';
 import { DAWLane, type DAWLaneClip } from './DAWLane';
 import { DAWBarControls } from './DAWBarControls';
@@ -462,13 +462,10 @@ export function DAWDock({
   }, [selection]);
 
   /* ---- Loop region ---- */
-  const [loopRegion, setLoopRegion] = useState<LoopRegion | null>(null);
-  useEffect(() => {
-    if (!loopRegion || !isPlaying) return;
-    const check = (ms: number) => { if (ms >= loopRegion.endMs) onSeek(loopRegion.startMs); };
-    check(useTransportTimeStore.getState().currentTimeMs);
-    return useTransportTimeStore.subscribe((s) => check(s.currentTimeMs));
-  }, [isPlaying, loopRegion, onSeek]);
+  // Lives in uiStore so it survives collapsing the dock; playback looping is enforced by
+  // SceneTimeline (always mounted), so it keeps looping while the dock is collapsed.
+  const loopRegion = useUIStore((s) => s.timelineLoop);
+  const setLoopRegion = useUIStore((s) => s.setTimelineLoop);
 
   /* ---- Duration edit (ruler pencil) ---- */
   const [isEditingDuration, setIsEditingDuration] = useState(false);

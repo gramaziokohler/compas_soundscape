@@ -3,6 +3,7 @@
 import { useState, useLayoutEffect, useEffect } from 'react';
 import { DAWDock } from '@/components/audio/daw/DAWDock';
 import { SCENE_BOTTOM_BAR } from '@/utils/constants';
+import { useTransportTimeStore, useUIStore } from '@/store';
 import type { TimelinePlaybackState } from '@/types/audio';
 import type { PlaybackSchedulerService } from '@/lib/audio/playback-scheduler-service';
 
@@ -88,6 +89,17 @@ export function SceneTimeline({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [collapsed]);
+
+  // DAW loop region: enforced here (not in the dock) so it keeps looping while the
+  // dock is collapsed. It only goes away when the user removes it in the ruler.
+  const loopRegion = useUIStore((s) => s.timelineLoop);
+  const isPlaying = playbackState.isPlaying;
+  useEffect(() => {
+    if (!loopRegion || !isPlaying) return;
+    const check = (ms: number) => { if (ms >= loopRegion.endMs) onSeek(loopRegion.startMs); };
+    check(useTransportTimeStore.getState().currentTimeMs);
+    return useTransportTimeStore.subscribe((s) => check(s.currentTimeMs));
+  }, [isPlaying, loopRegion, onSeek]);
 
   // Collapsed: the transport lives in the scene bottom bar (SceneBottomBar).
   if (collapsed) return null;
