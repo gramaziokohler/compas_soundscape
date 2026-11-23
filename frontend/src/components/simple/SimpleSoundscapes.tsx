@@ -35,7 +35,8 @@ import {
 import type { SidebarProps } from '@/types/components';
 import type { SceneProgress, SoundScene } from '@/types/sceneWorkflow';
 import { useHomeComposerStore } from '@/store/homeComposerStore';
-import { SIMPLE_MODE } from '@/utils/constants';
+import { SCENE_EDIT, SIMPLE_MODE } from '@/utils/constants';
+import { SceneEditChat } from '@/components/sceneEdit/SceneEditChat';
 import { selectSceneByIndex, deselectActiveScene } from '@/utils/sceneSelection';
 import { useCanEdit } from '@/hooks/useCanEdit';
 
@@ -43,6 +44,7 @@ type LeftPanel =
   | { kind: 'composer' }
   | { kind: 'scene'; usageIndex: number }
   | { kind: 'workflow'; usageIndex: number }
+  | { kind: 'chat'; usageIndex: number }
   | null;
 
 const COLUMN_TOP = SIMPLE_MODE.TOP_OFFSET + SIMPLE_MODE.HEADING_HEIGHT;
@@ -205,7 +207,10 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
   // Mirror the open scene panel so a switch to Detailed mode opens the same scene.
   useEffect(() => {
     useSceneWorkflowStore.getState().setOpenSimplePanel(
-      panel && panel.kind !== 'composer' ? { kind: panel.kind, usageIndex: panel.usageIndex } : null,
+      panel && panel.kind !== 'composer'
+        // The chat panel edits a finished scene: Detailed mode opens its sounds.
+        ? { kind: panel.kind === 'chat' ? 'scene' : panel.kind, usageIndex: panel.usageIndex }
+        : null,
     );
   }, [panel]);
 
@@ -438,6 +443,15 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
           footerNote={canEdit || panelFootnote
             ? <SceneFootnote usageIndex={panelScene.usageIndex} footnote={panelFootnote} />
             : undefined}
+          footerActions={canEdit && isPlayable(panelScene) ? (
+            <button
+              type="button"
+              className="bubble-chip"
+              onClick={() => setPanel({ kind: 'chat', usageIndex: panelScene.usageIndex })}
+            >
+              {SCENE_EDIT.TITLE}
+            </button>
+          ) : undefined}
           style={{ position: 'fixed', left: PANEL_LEFT, top: COLUMN_TOP }}
         >
           <div className="mb-2">
@@ -446,6 +460,31 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
           <SoundGenerationSection
             {...buildSoundGenerationSectionProps(sidebarProps, panelScene.usageIndex)}
           />
+        </BubblePanel>
+      )}
+
+      {panel?.kind === 'chat' && panelScene && (
+        <BubblePanel
+          ariaLabel={`${panelScene.title} edit chat`}
+          title={panelScene.title}
+          titleTooltip={panelScene.fullTitle}
+          subtitle={SCENE_EDIT.TITLE}
+          onReduce={closePanel}
+          onTogglePower={isPlayable(panelScene) ? () => toggleScenePower(panelScene) : undefined}
+          powered={isPowered(panelScene.usageIndex)}
+          powerTitle={powerTitle(isPowered(panelScene.usageIndex))}
+          footerActions={
+            <button
+              type="button"
+              className="bubble-chip"
+              onClick={() => setPanel({ kind: 'scene', usageIndex: panelScene.usageIndex })}
+            >
+              Show sounds
+            </button>
+          }
+          style={{ position: 'fixed', left: PANEL_LEFT, top: COLUMN_TOP }}
+        >
+          <SceneEditChat usageIndex={panelScene.usageIndex} autoFocus />
         </BubblePanel>
       )}
       </div>

@@ -3,7 +3,7 @@ import { useSoundscapeStore, useUIStore } from '@/store';
 import type { SoundScene } from '@/types/sceneWorkflow';
 
 /** The Simple-mode scene panel kinds a sound focus can move. */
-type ScenePanel = { kind: 'composer' } | { kind: 'scene' | 'workflow'; usageIndex: number } | null;
+type ScenePanel = { kind: 'composer' } | { kind: 'scene' | 'workflow' | 'chat'; usageIndex: number } | null;
 
 /**
  * Simple mode (and share view): follows the shared sound focus (`uiStore.soundFocus`)
@@ -45,6 +45,8 @@ export function useSoundFocusReveal(
       return;
     }
     if (!current || current.kind === 'composer') return;
+    // The scene's edit chat stays open while the user points at its sounds.
+    if (current.kind === 'chat' && current.usageIndex === scene.usageIndex) return;
     if (current.kind !== 'scene' || current.usageIndex !== scene.usageIndex) open(scene.usageIndex);
   }, [soundFocus?.version]); // eslint-disable-line react-hooks/exhaustive-deps
 }

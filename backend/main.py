@@ -41,6 +41,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from middleware.session import SessionMiddleware
 # Import services
 from services.llm_service import LLMService
+from services.scene_edit_service import SceneEditService
 from services.audio_service import AudioService
 from services.impulse_response_service import ImpulseResponseService
 from services.tts_service import TTSService
@@ -52,7 +53,7 @@ from services.study_log_store import study_log_store
 # from services.modal_analysis_service import ModalAnalysisService
 
 # Import routers
-from routers import upload, generation, sounds, stable_audio, sed_analysis, sed_extract, library_search, reprocess, impulse_responses, modal_analysis, pffdtd, pffdtd_free, pyroomacoustics, simulation_preflight, acoustic_paths, hybrid, speckle, soundscape, tokens, tts, tts_voices, loop_analysis, jobs, auth, workspaces, preferences, materials, directivities, bug_reports, study, share, client_diagnostics
+from routers import upload, generation, sounds, stable_audio, sed_analysis, sed_extract, library_search, reprocess, impulse_responses, modal_analysis, pffdtd, pffdtd_free, pyroomacoustics, simulation_preflight, acoustic_paths, hybrid, speckle, soundscape, tokens, tts, tts_voices, loop_analysis, jobs, auth, workspaces, preferences, materials, directivities, bug_reports, study, share, client_diagnostics, scene_edit
 
 # Import constants
 from config.constants import (
@@ -122,6 +123,7 @@ else:
 
 # Initialize services
 llm_service = LLMService(client)
+scene_edit_service = SceneEditService(llm_service)
 audio_service = AudioService()
 ir_service = ImpulseResponseService()
 tts_service_instance = TTSService()
@@ -129,6 +131,7 @@ tts_service_instance = TTSService()
 
 # Initialize routers with services
 generation.init_generation_router(llm_service)
+scene_edit.init_scene_edit_router(scene_edit_service)
 sounds.init_sounds_router(audio_service)
 reprocess.init_reprocess_router(audio_service)
 impulse_responses.init_impulse_response_router(ir_service)
@@ -326,6 +329,7 @@ app.include_router(workspaces.router)
 app.include_router(upload.router)
 # app.include_router(analysis.router)
 app.include_router(generation.router)
+app.include_router(scene_edit.router)
 app.include_router(sounds.router)
 app.include_router(stable_audio.router)
 app.include_router(sed_analysis.router)

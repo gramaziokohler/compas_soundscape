@@ -285,6 +285,8 @@ export interface GenerateSoundsOptions {
   force?: boolean;
   /** Text-to-audio model for this invocation only (defaults to the app-wide setting). */
   audioModel?: string;
+  /** Skip the post-generation orchestration (the caller re-orchestrates the scene itself). */
+  skipOrchestrate?: boolean;
 }
 
 /** Result of one sound-generation invocation. */
@@ -312,7 +314,8 @@ export interface JobRecord {
     configIndex?: number;
     kind?: string;
     scenarioId?: string;
-    /** pyroom: the simulation config id the job belongs to (stable across reorder/reload). */
+    /** pyroom: the simulation config id the job belongs to (stable across reorder/reload).
+     *  scene_edit: the scene's `scene_id`. */
     configId?: string;
     /** pyroom: which simulation instance card the job belongs to. */
     instanceId?: string;
@@ -453,6 +456,7 @@ export type {
   PffdtdOverlayKind,
 } from './pffdtd';
 export * from './share';
+export * from './sceneEdit';
 
 // Import and re-export diagnostics types
 import type {

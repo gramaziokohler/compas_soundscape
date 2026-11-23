@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import type { ScenarioConfig } from '@/types/analysis';
 import type { AnalyzeModelConfig } from '@/types/analysis';
 import { RangeSlider } from '@/components/ui/RangeSlider';
@@ -8,7 +9,9 @@ import { ToggleField } from '@/components/ui/ToggleField';
 import { useAnalysisStore, useCardFlowStore, useScenarioPreviewStore, useSpeckleStore } from '@/store';
 import { pauseStore, commitStore } from '@/store';
 import { ScenarioResultContent } from './ScenarioResultContent';
-import { AUDIO_PLAYBACK, SCENARIO_PEOPLE, SCENARIO_TIMELINE } from '@/utils/constants';
+import { AUDIO_PLAYBACK, SCENARIO_PEOPLE, SCENARIO_TIMELINE, SCENE_EDIT } from '@/utils/constants';
+import { SceneEditChat } from '@/components/sceneEdit/SceneEditChat';
+import { useCanEdit } from '@/hooks/useCanEdit';
 import {
   ID_HEX_DOT_RE,
   OBJECT_REF_RE,
@@ -150,6 +153,7 @@ export function ScenarioAfterView({ config, index }: { config: ScenarioConfig; i
   // Once this scenario has been sent to the Sounds step, its foley sound list is
   // no longer shown here — the sounds live in the Sounds step.
   const sentToSounds = useCardFlowStore((s) => s.usageAdvanced.has(index));
+  const canEdit = useCanEdit();
 
   // Always show scenario events — foley sounds are shown in the Sounds step, not here
   const scenarios = config.scenarioResult?.scenarios ?? [];
@@ -171,6 +175,7 @@ export function ScenarioAfterView({ config, index }: { config: ScenarioConfig; i
   useEffect(() => () => clearPreview(), [clearPreview]);
 
   return (
+    <div className="card-stack">
     <div className="card-stack leading-relaxed whitespace-pre-wrap max-h-[min(320px,50dvh)] overflow-y-auto">
       {scenarios.map((scenario, si) => (
         <div key={si} className="card-stack--tight">
@@ -201,6 +206,32 @@ export function ScenarioAfterView({ config, index }: { config: ScenarioConfig; i
             selectedKeys={config.selectedFoleyKeys ?? []}
             onToggle={(key) => useAnalysisStore.getState().handleToggleFoleySound(index, key)}
           />
+        </div>
+      )}
+    </div>
+    {/* Scene edit chat (same chat as Simple mode; it explains when there is nothing to edit yet). */}
+    {canEdit && <ScenarioEditChatSection index={index} />}
+    </div>
+  );
+}
+
+/** Collapsible "Edit with chat" section of a generated scenario card. */
+function ScenarioEditChatSection({ index }: { index: number }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div>
+      <button
+        type="button"
+        className="flex items-center gap-1 text-xs"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+      >
+        {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        {SCENE_EDIT.TITLE}
+      </button>
+      {open && (
+        <div className="scene-chat--inset card-collapse-body">
+          <SceneEditChat usageIndex={index} autoFocus />
         </div>
       )}
     </div>

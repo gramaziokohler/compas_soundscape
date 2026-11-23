@@ -15,6 +15,7 @@ import {
 } from '@/store/soundscapeStore';
 import { useSEDStore } from '@/store/sedStore';
 import { applyRecoveredLlmResult, resumeLlmJob } from '@/store/analysisStore';
+import { recoverSceneEditJob, SCENE_EDIT_JOB_KIND } from '@/store/sceneEditStore';
 import { useAcousticsSimulationStore } from '@/store/acousticsSimulationStore';
 import { useReceiversStore } from '@/store/receiversStore';
 import { useGridListenersStore } from '@/store/gridListenersStore';
@@ -313,6 +314,12 @@ function recoverLlmJob(record: JobRecord, status: Awaited<ReturnType<typeof apiS
   // and other recovered jobs may already run — no store state to reset.
   if (status.cancelled || status.error) {
     removeInflightJob(jobId);
+    return;
+  }
+
+  // Scene edit chat: the turn (apply + generate + re-orchestrate) finishes here.
+  if (kind === SCENE_EDIT_JOB_KIND) {
+    recoverSceneEditJob(jobId, record.meta?.configId, status.completed ? status.result : undefined);
     return;
   }
 

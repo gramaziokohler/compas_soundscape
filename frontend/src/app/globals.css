@@ -1062,6 +1062,27 @@ canvas {
   text-align: right;
   -moz-appearance: textfield;
 }
+/* Chip split into a main click area and a trailing × (composer image chip):
+   the buttons carry the padding so the whole chip surface is clickable. */
+.bubble-chip--split {
+  padding: 0;
+  gap: 0;
+}
+.bubble-chip__main {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px 2px 8px;
+  border-radius: 999px 0 0 999px;
+  cursor: zoom-in;
+}
+.bubble-chip__remove {
+  padding: 2px 8px 2px 4px;
+  border-radius: 0 999px 999px 0;
+}
+.bubble-chip__remove:hover {
+  color: var(--foreground);
+}
 /* Free-text input of an EditableTextChip (e.g. the speech language). */
 .bubble-chip__input--text {
   width: 12ch;
@@ -1096,6 +1117,75 @@ canvas {
 .bubble-send:disabled {
   opacity: 0.35;
   cursor: not-allowed;
+}
+
+/* Scene edit chat (components/sceneEdit/SceneEditChat.tsx) */
+.scene-chat {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.scene-chat__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: min(420px, 50dvh);
+  overflow-y: auto;
+}
+.scene-chat__msg {
+  max-width: 88%;
+  padding: 6px 9px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.scene-chat__msg--user {
+  align-self: flex-end;
+  color: var(--color-on-blue);
+  background: var(--color-primary);
+  border-bottom-right-radius: 3px;
+}
+.scene-chat__msg--assistant {
+  align-self: flex-start;
+  color: var(--foreground);
+  background: var(--color-border);
+  border: 1px solid var(--color-overlay-border);
+  border-bottom-left-radius: 3px;
+}
+.scene-chat__changes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 5px;
+}
+.scene-chat__meta {
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--color-secondary-hover);
+}
+.scene-chat__meta--error {
+  color: var(--color-error);
+}
+.scene-chat__composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border);
+}
+.scene-chat__examples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+/* The chat inside a generated (blue) Expert scenario card gets its own surface. */
+.scene-chat--inset {
+  padding: 8px;
+  border-radius: 8px;
+  color: var(--foreground);
+  background: var(--color-surface);
 }
 
 /* Workflow step list (SceneWorkflowDetail) */

@@ -295,6 +295,8 @@ export interface ScenarioConfig extends AnalysisBaseConfig {
   referenceImageName?: string;
   /** Server filename of the reference image once saved with the project (model media dir). */
   referenceImageFilename?: string;
+  /** Scene edit chat thread (saved with the scene, never an undo step — see analysisStore.setSceneChat). */
+  editChat?: import('./sceneEdit').SceneChatMessage[];
   /** Runtime URL of the saved reference image (audio base URL + filename), set on load. Not saved. */
   referenceImageUrl?: string;
 }

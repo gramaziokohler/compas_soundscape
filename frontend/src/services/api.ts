@@ -3,9 +3,9 @@ import type { HybridSettings } from '@/types/acoustics';
 import { hybridFormFields, type HybridRoom } from '@/lib/acoustics/hybrid';
 import type { GeometricEngineSettings } from '@/types/acoustics';
 import type { AcousticPathKind, AcousticPathsJobResult, AcousticPathsPayload } from '@/types/acousticPaths';
-import { API_BASE_URL, JOB_NOT_FOUND_ERROR, SHARE_VIEW, SPECKLE_DIRECT_UPLOAD, SPECKLE_INGESTION } from '@/utils/constants';
+import { API_BASE_URL, JOB_NOT_FOUND_ERROR, SCENE_EDIT, SHARE_VIEW, SPECKLE_DIRECT_UPLOAD, SPECKLE_INGESTION } from '@/utils/constants';
 import { isShareViewActive, useShareViewStore } from '@/store/shareViewStore';
-import type { CompasGeometry, SoundEvent, SoundGenerationConfig, FileUploadResponse, JobType, JobRecord, FinishedSimulation, UserPreferences, BugReportPayload, BugReportCreated, ClientDiagnosticEvent } from '@/types';
+import type { CompasGeometry, SoundEvent, SoundGenerationConfig, FileUploadResponse, JobType, JobRecord, FinishedSimulation, UserPreferences, BugReportPayload, BugReportCreated, ClientDiagnosticEvent, SceneEditRequestBody } from '@/types';
 import { recordFailedRequest } from '@/lib/diagnostics/diagnosticsBuffer';
 import type { TtsCustomVoice, TtsCustomVoiceCreateRequest, TtsDialectsResponse, TtsLanguageMatch } from '@/types/ttsLanguage';
 import type { ImpulseResponseMetadata, IRMetricBlocks } from '@/types/audio';
@@ -2932,6 +2932,11 @@ export const apiService = {
    * Enqueue an LLM agent IO job (analyze-3dmodel / scenarist / foley / speech / orchestrate).
    * Poll GET /api/jobs/{job_id} for thought-summary progress.
    */
+  /** Scene edit chat: enqueue the edit agent (poll with getJobStatus('llm', id)). */
+  async enqueueSceneEdit(body: SceneEditRequestBody): Promise<{ job_id: string }> {
+    return this.enqueueLlmJob(SCENE_EDIT.ENDPOINT, body);
+  },
+
   async enqueueLlmJob(path: string, body: object): Promise<{ job_id: string }> {
     const response = await fetchWithErrorHandling(
       `${API_BASE_URL}${path}`,

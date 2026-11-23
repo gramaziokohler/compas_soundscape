@@ -32,7 +32,7 @@ import type { GridListenerData } from '@/types/receiver';
 import type { ImpulseResponseMetadata, SourceReceiverIRMapping, ResonanceAudioConfig } from '@/types/audio';
 import { defaultResonanceMaterials } from '@/lib/audio/utils/resonance-rooms';
 import type { AnalysisConfig, AnalysisResult, TextPromptResult } from '@/types/analysis';
-import { API_BASE_URL, AUDIO_PLAYBACK, PFFDTD, PYROOMACOUSTICS_DEFAULT_MAX_ORDER, PYROOMACOUSTICS_DEFAULT_PARALLEL, PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE } from '@/utils/constants';
+import { API_BASE_URL, AUDIO_PLAYBACK, PFFDTD, SCENE_EDIT, PYROOMACOUSTICS_DEFAULT_MAX_ORDER, PYROOMACOUSTICS_DEFAULT_PARALLEL, PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE } from '@/utils/constants';
 import type { PffdtdFreeMode, PffdtdSettings } from '@/types/pffdtd';
 import { newConfigId } from '@/utils/config-id';
 import { pickGeometricEngineSettings } from '@/lib/acoustics/geometric-engine';
@@ -1320,6 +1320,8 @@ if (mc.analysisResult?.architecturalObjects) {
       if (sc.scenarioId) base.scenarioId = sc.scenarioId;
       if (sc.foleyResult) base.foleyResult = sc.foleyResult;
       if (sc.selectedFoleyKeys?.length) base.selectedFoleyKeys = [...sc.selectedFoleyKeys];
+      // Scene edit chat thread (a turn still running is saved as its last state).
+      if (sc.editChat?.length) base.editChat = sc.editChat.slice(-SCENE_EDIT.HISTORY_SAVE_MAX);
     }
 
     // Hierarchical: link child sound configs by matching parentUsageOriginalIndex
@@ -1502,6 +1504,7 @@ export function restoreAnalysisState(analysisState: AnalysisState): {
       config.foleyResult = saved.foleyResult || null;
       config.selectedFoleyKeys = saved.selectedFoleyKeys || [];
       config.timelineDurationMs = saved.timelineDurationMs ?? AUDIO_PLAYBACK.TIMELINE_FIXED_DURATION_MS;
+      if (saved.editChat?.length) config.editChat = saved.editChat;
     }
 
     if (saved.prompts && saved.prompts.length > 0) {

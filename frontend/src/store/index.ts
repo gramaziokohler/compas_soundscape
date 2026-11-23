@@ -98,6 +98,14 @@ export {
 } from './sceneWorkflowStore';
 export type { SceneWorkflowStoreState } from './sceneWorkflowStore';
 
+export {
+  useSceneEditStore,
+  recoverSceneEditJob,
+  sceneIndexById,
+  SCENE_EDIT_JOB_KIND,
+} from './sceneEditStore';
+export type { SceneEditStoreState } from './sceneEditStore';
+
 export { useFileUploadStore } from './fileUploadStore';
 export type { FileUploadStoreState } from './fileUploadStore';
 
@@ -146,6 +154,7 @@ export {
   applyRecoveredOrchestrateResult,
   resumeOrchestrateJob,
 };
+export { promptMatchesCard } from './soundscapeStore';
 export type { SoundscapeStoreState } from './soundscapeStore';
 
 export { useTextGenerationStore };

@@ -610,6 +610,32 @@ Sound Scene Duplicate (scene bubble right-click → Duplicate; utils/duplicateSo
   (`savedObjectVisibility`); powering the scene or simulation on restores it (`useApplySavedObjectVisibility`,
   see .cursor/rules/object-explorer.mdc § Saved Object Visibility).
 
+Scene Edit Chat (Simple: scene panel → "Edit with chat" panel; Expert: scenario card → "Edit with chat")
+  components/sceneEdit/SceneEditChat (hooks/useSceneEditChat) → sceneEditStore.sendTurn(usageIndex, text)
+  1. utils/sceneEdit/snapshot.buildSceneEditSnapshot → compact scene JSON: sound cards as refs S1…
+     (kind, prompt / lines, character, times, level, mute/solo, variants, position, anchors),
+     model-analysis object groups as O1… (centre, extent), room, duration, scenario narrative.
+  2. POST /api/scene-edit (routers/scene_edit.py → io_jobs LLM task → services/scene_edit_service.py)
+     → SceneEditPlan {reply, ops[]}; normalise_plan drops unknown refs, clamps levels / times /
+     positions, gives new speakers a free TTS character. Result kind "scene_edit"; recovered after a
+     refresh by useJobRecovery → recoverSceneEditJob (meta.configId = scene_id).
+  3. utils/sceneEdit/apply.applySceneEditOps — ONE undo step (begin/endUndoInteraction):
+       mix    (applyMix)     set_level / mute / solo / loop / trim → audioControlsStore overrides
+       timing (applyTiming)  set_times / shift / density / remove_occurrences pin the orchestrate trigger
+                             to absolute MM:SS (bake places them); scene duration → scenario card
+       space  (applySpace)   move (objects / near a sound / xyz) / directivity
+       content(applyContent) add_sound / add_speaker (appendSoundConfigs, scenarioSource), remove,
+                             change_sound, regenerate, set_variants, edit_lines, change_voice
+     then re-sync + re-bake. Audio work is only queued (ctx.regen, keyed by config_id).
+  4. sceneEditStore generates it: new cards → handleGenerateFiltered({skipOrchestrate}); new
+     prompt / voice / line count → handleGenerateInternal({force, skipOrchestrate}); extra
+     variants → handleRegenerateSingle × n; edited lines → regenerateVariantInPlace.
+  5. Content or timing changed → reorchestrateTimeline(scenarioId, {instruction}) — the request
+     reaches the orchestrate agent as edit_instruction (absolute entries are kept).
+  The thread lives on the scenario card (ScenarioConfig.editChat, saved in soundscape.json) and is
+  written with analysisStore.setSceneChat: outside undo history and re-based into every snapshot,
+  so Ctrl+Z undoes a message's edits but keeps the conversation. Hidden in the share view.
+
 SpeckleScene
   └── SceneBottomBar (full width, both modes): home · undo/redo · save
         | transport (play/stop/time/timeline) | volume · view · explorer · shortcuts · notifications · settings

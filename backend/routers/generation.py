@@ -698,6 +698,8 @@ class OrchestrateRequest(BaseModel):
     # "initial" for the first orchestration of a scenario, "reorchestrate" for a
     # re-run on the user's edited scene (adds re-orchestration prompt guidance).
     mode: str = "initial"
+    # Scene edit chat: the user's latest request, honoured by a "reorchestrate" run.
+    edit_instruction: str | None = None
 
 
 @router.post("/api/orchestrate", response_model=JobEnqueueResponse)
@@ -731,6 +733,7 @@ async def orchestrate(request: OrchestrateRequest, req: Request):
                 llm_model=llm_model,
                 on_progress=on_progress,
                 mode=request.mode,
+                edit_instruction=request.edit_instruction,
             )
             async for event in stream:
                 if await job_store.is_cancel_requested(job_id):

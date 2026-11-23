@@ -86,6 +86,18 @@ DBFS_MIN = -60.0
 DBFS_MAX = 0.0
 DBFS_RANGE = (DBFS_MIN, DBFS_MAX)
 
+# Background beds (continuous room tone / HVAC / ambience). Every file is calibrated
+# to the same loudness, but a bed plays continuously, everywhere, with no distance
+# falloff, while an event is sparse and loses ~10-15 dB to its distance from the
+# listener. At the same dB value a bed therefore sounds ~15 dB louder than an
+# event, so beds get their own, lower band: the LLM prompts quote it and the
+# parsed levels are clamped to it (a café bed proposed at -24 had to go to -40).
+BACKGROUND_BED_DBFS_MIN = -50.0
+BACKGROUND_BED_DBFS_MAX = -34.0
+BACKGROUND_BED_DBFS_DEFAULT = -42.0   # used when the LLM gives no level for a bed
+BACKGROUND_BED_QUIET_DBFS = (-48.0, -42.0)  # prompt band: quiet room tone, HVAC hum
+BACKGROUND_BED_BUSY_DBFS = (-42.0, -36.0)   # prompt band: lively ambience (café chatter, street)
+
 # Speed of sound (shared by all simulation methods)
 DEFAULT_SPEED_OF_SOUND = 343.0  # m/s
 SPEED_OF_SOUND_MIN = 300.0
@@ -440,6 +452,20 @@ TTS_VOICE_CHARACTERS = {
 }
 # Allowed character names the speech agent may assign (the TTS voice labels).
 TTS_CHARACTER_NAMES = list(TTS_VOICE_CHARACTERS.keys())
+# Scene edit chat (routers/scene_edit.py, services/scene_edit_service.py).
+# Mirrored in frontend/src/utils/constants.ts SCENE_EDIT.
+SCENE_EDIT_INSTRUCTION_MAX_CHARS = 2000      # user message length sent to the agents
+SCENE_EDIT_HISTORY_MAX_MESSAGES = 12         # earlier chat turns given to the edit agent
+SCENE_EDIT_HISTORY_MESSAGE_MAX_CHARS = 600   # each earlier turn is cut to this length
+SCENE_EDIT_MAX_OPS = 40                      # ops kept per turn (the rest are dropped with a warning)
+SCENE_EDIT_MAX_NEW_SOUNDS = 8                # add_sound + add_speaker per turn
+SCENE_EDIT_LEVEL_DELTA_MAX_DB = 24.0         # |delta_db| of one set_level op
+SCENE_EDIT_MAX_VARIANTS = 5                  # set_variants upper bound (MAX_SEED_COPIES on the frontend)
+SCENE_EDIT_MAX_TIMES = 40                    # occurrences per sound in one op
+SCENE_EDIT_MAX_LINES = 12                    # speech lines per speaker card
+SCENE_EDIT_SOUND_DURATION_RANGE_S = (0.5, 30.0)
+SCENE_EDIT_SCENE_DURATION_RANGE_S = (5.0, 600.0)
+SCENE_EDIT_TEMPERATURE = 0.2
 TTS_OUTPUT_DIR = "./temp/static/sounds/generated/tts"
 TTS_OUTPUT_URL_PREFIX = "/static/sounds/generated/tts"
 TTS_TASK_CLEANUP_DELAY_SECONDS = 600

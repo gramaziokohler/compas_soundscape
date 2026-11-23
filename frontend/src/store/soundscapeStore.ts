@@ -88,6 +88,16 @@ import {
   type RegisterTemporalStoreOptions,
 } from './undoRedoRegistry';
 import { scheduleUndoSafeDeletion } from '@/lib/undo-safe-deletion';
+import { useReceiversStore } from './receiversStore';
+import {
+  activeSeconds,
+  bedAutoLevelDb,
+  distanceBetween,
+  type AutoLevelEvent,
+} from '@/lib/audio/utils/bed-auto-level';
+import { isConfigGlobal } from '@/lib/audio/utils/global-source';
+import { cardIndexOfPrompt } from '@/lib/audio/utils/mute-solo';
+import { parseAuthoredSeconds } from '@/lib/audio/utils/timeline-utils';
 
 // ─── Module-level concurrency state ──────────────────────────────────────────
 // Multiple generations may run at once (e.g. TTA on the GPU pool while a
@@ -616,6 +626,7 @@ async function runOrchestrationForSources(
   timings?: Map<string, EntryTimings>,
   mode: 'initial' | 'reorchestrate' = 'initial',
   onThinking?: (thinking: string) => void,
+  editInstruction?: string,
 ): Promise<{ entryById: Map<string, OrchestrateDynamics>; orchestrateIdByScenario: Map<string, string> }> {
   const entryById = new Map<string, OrchestrateDynamics>();
   const orchestrateIdByScenario = new Map<string, string>();
@@ -634,6 +645,7 @@ async function runOrchestrationForSources(
         speech_data: { speeches },
         llm_model: DEFAULT_LLM_MODEL,
         mode,
+        ...(editInstruction ? { edit_instruction: editInstruction } : {}),
       });
       recordInflightJob(job_id, 'llm', { kind: 'orchestrate', scenarioId });
       _activeOrchestrateJobIds.add(job_id);
@@ -784,6 +796,105 @@ function applyOrchestrateDynamics(
   });
 }
 
+/**
+ * Last step after a scene is generated or (re-)orchestrated: give each background
+ * bed a level derived from the scene's events (see lib/audio/utils/bed-auto-level.ts),
+ * so a bed sits under the foreground however busy or sparse the scene is.
+ *
+ * Scope: the scenes (parentUsageOriginalIndex) of `cardIndices` (all scenes when
+ * omitted). A bed whose fader the user moved (`soundVolumes` entry) is left alone —
+ * that value wins at playback anyway. Writes the bed card's `dbfs` and its events'
+ * `volume_dbfs`, the same fields the orchestrator SPL writes.
+ */
+export function applyBackgroundAutoLevels(cardIndices?: Iterable<number>): void {
+  const state = useSoundscapeStore.getState();
+  const audio = useAudioControlsStore.getState();
+  const configs = state.soundConfigs;
+  const events: any[] = state.generatedSounds ?? [];
+  if (configs.length === 0 || events.length === 0) return;
+
+  const sceneKey = (cardIdx: number): string => String(configs[cardIdx]?.parentUsageOriginalIndex ?? 'none');
+  const scopedScenes = cardIndices
+    ? new Set([...cardIndices].filter((i) => configs[i]).map(sceneKey))
+    : null;
+  const sceneSec = audio.timelineDurationMs / 1000;
+
+  const { receivers, selectedReceiverId } = useReceiversStore.getState();
+  const listener = (receivers.find((r) => r.id === selectedReceiverId) ?? receivers[0])?.position ?? null;
+
+  // One primary event per track (prompt index): the one carrying the baked schedule,
+  // else the lowest copy — variants of a track never play at the same time.
+  const tracks = new Map<number, any>();
+  for (const e of events) {
+    const pi = e.prompt_index;
+    if (typeof pi !== 'number') continue;
+    const prev = tracks.get(pi);
+    const hasSchedule = (ev: any) => audio.soundTimestamps[ev.id] !== undefined;
+    if (!prev || (hasSchedule(e) && !hasSchedule(prev))
+      || (hasSchedule(e) === hasSchedule(prev) && (e.copy_index ?? 0) < (prev.copy_index ?? 0))) {
+      tracks.set(pi, e);
+    }
+  }
+
+  const eventsByScene = new Map<string, AutoLevelEvent[]>();
+  const bedCards: number[] = [];
+  tracks.forEach((e, pi) => {
+    const cardIdx = cardIndexOfPrompt(pi);
+    const config = configs[cardIdx];
+    if (!config) return;
+    const key = sceneKey(cardIdx);
+    if (scopedScenes && !scopedScenes.has(key)) return;
+    if (normalizeSoundCategory(config.category) === 'background') {
+      bedCards.push(cardIdx);
+      return;
+    }
+    if (audio.mutedSounds.has(e.id)) return;
+    const durationSec = audio.soundBufferDurations[e.id] ?? e.duration ?? config.duration ?? DEFAULT_DURATION_SECONDS;
+    const authored = Array.isArray(e.timestamps) && e.timestamps.length
+      ? (e.timestamps as unknown[]).map(parseAuthoredSeconds)
+      : undefined;
+    const list = eventsByScene.get(key) ?? [];
+    list.push({
+      levelDb: audio.soundVolumes[e.id] ?? e.volume_dbfs ?? config.dbfs ?? DEFAULT_DBFS,
+      distanceM: distanceBetween(e.position, listener),
+      activeSec: activeSeconds(
+        sceneSec,
+        durationSec,
+        audio.soundTimestamps[e.id] ?? authored,
+        audio.soundIterationDurations[e.id],
+        e.current_interval_seconds ?? e.interval_seconds ?? config.interval_seconds ?? 0,
+      ),
+    });
+    eventsByScene.set(key, list);
+  });
+
+  const levelByCard = new Map<number, number>();
+  for (const cardIdx of bedCards) {
+    const bedEvents = events.filter((e) => e.prompt_index === cardIdx);
+    if (bedEvents.some((e) => audio.soundVolumes[e.id] !== undefined)) continue; // user's fader wins
+    const config = configs[cardIdx];
+    const level = bedAutoLevelDb(eventsByScene.get(sceneKey(cardIdx)) ?? [], sceneSec, {
+      isGlobal: isConfigGlobal(config),
+      distanceM: distanceBetween(bedEvents[0]?.position, listener),
+    });
+    console.log(`[bed-level] card ${cardIdx} "${config.display_name ?? config.prompt ?? ''}" → ${level} dB`);
+    levelByCard.set(cardIdx, level);
+  }
+  if (levelByCard.size === 0) return;
+
+  const withLevel = (list: any[] | null): any[] | null =>
+    list?.map((e) => (levelByCard.has(e.prompt_index) ? { ...e, volume_dbfs: levelByCard.get(e.prompt_index) } : e)) ?? null;
+  useSoundscapeStore.setState(
+    {
+      soundConfigs: configs.map((c, i) => (levelByCard.has(i) ? { ...c, dbfs: levelByCard.get(i) } : c)),
+      generatedSounds: withLevel(state.generatedSounds) ?? state.generatedSounds,
+      soundscapeData: withLevel(state.soundscapeData),
+    },
+    false,
+    'soundscape/backgroundAutoLevel',
+  );
+}
+
 // ─── Undo ─────────────────────────────────────────────────────────────────────
 //
 // History holds the cards, the generated events and the global generation
@@ -931,7 +1042,10 @@ export interface SoundscapeStoreState {
   handleGlobalStepsChange: (steps: number) => void;
   handleGenerate: () => Promise<void>;
   handleGenerateSingle: (targetIndex: number) => Promise<void>;
-  handleGenerateFiltered: (targetIndices: number[], options?: Pick<GenerateSoundsOptions, 'audioModel'>) => Promise<GenerateSoundsOutcome>;
+  handleGenerateFiltered: (
+    targetIndices: number[],
+    options?: Pick<GenerateSoundsOptions, 'audioModel' | 'skipOrchestrate'>,
+  ) => Promise<GenerateSoundsOutcome>;
   /**
    * Generate the targeted configs. With `force`, already-generated targets are
    * regenerated too: their events are replaced (same deterministic ids, so
@@ -955,6 +1069,8 @@ export interface SoundscapeStoreState {
   handleReprocessSounds: (applyDenoising: boolean) => Promise<void>;
   setActiveSoundConfigTab: (tab: number) => void;
   setSoundConfigsFromPrompts: (prompts: any[]) => void;
+  /** Append fully built cards (scene edit chat) as-is; returns the first new index. */
+  appendSoundConfigs: (configs: SoundGenerationConfig[]) => number;
   setSoundscapeData: (data: any[] | null) => void;
   setGlobalNegativePrompt: (val: string) => void;
   setApplyDenoising: (val: boolean) => void;
@@ -985,7 +1101,8 @@ export interface SoundscapeStoreState {
    * triggers/variants/SPL and re-bake the timeline. Used by the "Re-orchestrate
    * timeline" button. Falls back to a pure re-bake when no scenario sources exist.
    */
-  reorchestrateTimeline: (scenarioId?: string) => Promise<void>;
+  /** Re-run the orchestrate agent on the edited cards. `instruction` = scene edit chat request to honour. */
+  reorchestrateTimeline: (scenarioId?: string, options?: { instruction?: string }) => Promise<void>;
   /** Ctrl+drag duplicate — deep-clones the config at `from` (and soundscape data) and inserts at `toInsertion`. */
   duplicateConfigAt: (from: number, toInsertion: number) => void;
   /**
@@ -1421,7 +1538,10 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
         },
 
         handleGenerateFiltered: (targetIndices, options) =>
-          get().handleGenerateInternal(targetIndices, { audioModel: options?.audioModel }),
+          get().handleGenerateInternal(targetIndices, {
+            audioModel: options?.audioModel,
+            skipOrchestrate: options?.skipOrchestrate,
+          }),
 
         handleGenerate: async () => {
           await get().handleGenerateInternal();
@@ -1771,7 +1891,8 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
 
           // ── Orchestrate runs AFTER generation (see finalize below) so the agent
           // receives the measured clip durations rather than authored estimates. ──
-          const orchestrateEnabled = get().orchestrateSoundsEnabled;
+          // The scene edit chat re-orchestrates the whole scene itself once its audio is done.
+          const orchestrateEnabled = get().orchestrateSoundsEnabled && !options?.skipOrchestrate;
           const scenarioGroups = new Map<string, SoundGenerationConfig[]>();
           if (orchestrateEnabled) {
             // Only the configs being generated now. Re-orchestrating every
@@ -2537,9 +2658,15 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 // `notify: true` — this is the authoritative orchestrator-job bake, the
                 // only place orchestrate warnings (exclusions / authored fallbacks /
                 // self-overlap) may surface as toasts.
+                const scope = liveIndices(generatedTargets);
                 audioStore.bakeOrchestrateSchedule(() => {
                   useAudioControlsStore.getState().saveOrchestrateResult();
+                  // Last step: bed levels from the baked schedule.
+                  applyBackgroundAutoLevels(scope);
                 }, { notify: true });
+              } else {
+                // No orchestrated schedule: auto tracks loop from their intervals.
+                applyBackgroundAutoLevels(liveIndices(generatedTargets));
               }
               // Baseline for the "Re-orchestrate timeline" button: the agent inputs
               // as they are right now (post-generation, pre-user-edit).
@@ -3166,6 +3293,13 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
         setActiveSoundConfigTab: (tab) =>
           set({ activeSoundConfigTab: tab }, false, 'soundscape/setTab'),
 
+        appendSoundConfigs: (configs) => {
+          const start = get().soundConfigs.length;
+          const stamped = configs.map((c) => ({ ...c, config_id: c.config_id || newConfigId() }));
+          set((s) => ({ soundConfigs: [...s.soundConfigs, ...stamped] }), false, 'soundscape/appendConfigs');
+          return start;
+        },
+
         setSoundConfigsFromPrompts: (prompts) => {
           const { soundConfigs, globalSteps, generatedSounds } = get();
           // The Advanced Settings "Diffusion Steps" value is the single source of
@@ -3311,7 +3445,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
         setOrchestrateSoundsEnabled: (val) =>
           set({ orchestrateSoundsEnabled: val }, false, 'soundscape/setOrchestrateSoundsEnabled'),
 
-        reorchestrateTimeline: async (scenarioId) => {
+        reorchestrateTimeline: async (scenarioId, options) => {
           const { soundConfigs } = get();
 
           // Group the current (edited) scenario-source cards by scenario id.
@@ -3336,8 +3470,14 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             audioStore.setOrchestrateIterationLinks(finalConfigs);
             // Capture the orchestrator result for "Reset track" once the bake applies.
             // `notify: true` — re-orchestrate is an authoritative orchestrator-job bake.
+            // Cards of the re-orchestrated scenarios (by id: the config objects were replaced).
+            const scope = finalConfigs
+              .map((c, i) => (c.scenarioSource && scenarioGroups.has(c.scenarioSource.scenarioId) ? i : -1))
+              .filter((i) => i >= 0);
             audioStore.bakeOrchestrateSchedule(() => {
               useAudioControlsStore.getState().saveOrchestrateResult();
+              // Last step: bed levels from the re-baked schedule.
+              applyBackgroundAutoLevels(scope.length ? scope : undefined);
             }, { notify: true });
             if (advanceBaseline) {
               set(
@@ -3385,6 +3525,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               timings,
               'reorchestrate',
               (thinking) => set({ orchestrateThinking: thinking }, false, 'soundscape/reorchestrateThinking'),
+              options?.instruction,
             );
             if (entryById.size > 0) {
               applyOrchestrateDynamics(entryById, orchestrateIdByScenario);

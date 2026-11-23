@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { ModalShell } from '@/components/ui/ModalShell';
 import { IMAGE_PREVIEW, UI_BORDER_RADIUS } from '@/utils/constants';
 
@@ -13,6 +13,10 @@ export interface ImagePreviewButtonProps {
   size: number;
   /** Crop the thumbnail to a square (compact chips). */
   square?: boolean;
+  /** Content after the thumbnail inside the clickable area (e.g. a chip's file name). */
+  children?: ReactNode;
+  /** Classes of the clickable area (defaults to a bare thumbnail button). */
+  className?: string;
 }
 
 /**
@@ -27,7 +31,7 @@ export interface ImagePreviewButtonProps {
  * <ImagePreviewButton src={image.dataUrl} name={image.name} size={48} />
  * ```
  */
-export function ImagePreviewButton({ src, name, size, square }: ImagePreviewButtonProps) {
+export function ImagePreviewButton({ src, name, size, square, children, className }: ImagePreviewButtonProps) {
   const [open, setOpen] = useState(false);
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const label = name || 'Reference image';
@@ -37,7 +41,7 @@ export function ImagePreviewButton({ src, name, size, square }: ImagePreviewButt
     <>
       <button
         type="button"
-        className="inline-flex shrink-0 cursor-zoom-in"
+        className={className ?? 'inline-flex shrink-0 cursor-zoom-in'}
         onClick={(e) => {
           // Keep the click from reaching chips / rows that react to it.
           e.stopPropagation();
@@ -61,6 +65,7 @@ export function ImagePreviewButton({ src, name, size, square }: ImagePreviewButt
             borderRadius: UI_BORDER_RADIUS.SM,
           }}
         />
+        {children}
       </button>
       {open && (
         <ModalShell title={label} onClose={() => setOpen(false)} width={IMAGE_PREVIEW.MODAL_WIDTH}>

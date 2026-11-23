@@ -446,6 +446,8 @@ export interface SerializedAnalysisConfig {
   soundDetail?: FoleySoundDetail;
   /** Per-scenario DAW sound-scene length in ms (scenario cards only). */
   timelineDurationMs?: number;
+  /** Scenario cards: scene edit chat thread. */
+  editChat?: import('./sceneEdit').SceneChatMessage[];
   analysisOptions?: Record<string, boolean>;
   applyNoiseReduction?: boolean;
   /** Audio context card: basename of the source audio persisted under the session's

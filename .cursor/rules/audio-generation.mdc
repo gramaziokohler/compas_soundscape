@@ -78,6 +78,22 @@ both: `dbfs` (returned as `volume_dbfs`) and `calibration_dbfs` (= `base_dbfs`, 
 calibrates to). Every `generateSounds` call passes `base_dbfs`; TTS items and SED extraction send
 `globalBaseDbfs` as their calibration level.
 
+**Background beds get a lower level band.** A bed plays continuously and everywhere without distance
+falloff, so at the same dB value it sounds ~15 dB louder than an event. `BACKGROUND_BED_DBFS_*`
+(`config/constants.py`) is the band (−50..−34, default −42). Both level-estimating prompts quote it via
+`_bed_level_guidance()` (`llm_service.py`), and code clamps the result: orchestrator bed entries
+(`_bed_spl`, which also fills a missing level) and sound-list sounds with raw `INTERVAL: 0` and no entity.
+
+**Final bed level is derived from the scene (frontend, last step).** `applyBackgroundAutoLevels(cardIndices)`
+(`soundscapeStore.ts`, maths in `lib/audio/utils/bed-auto-level.ts`, constants `BACKGROUND_AUTO_LEVEL`) runs
+after a generation finalizes (inside the bake callback when the scene is orchestrated, directly otherwise) and
+after a re-orchestration's bake. Per scene (`parentUsageOriginalIndex`): each non-muted event track's level
+minus its distance loss to the selected receiver (1/r, fallback distance without a receiver), weighted by the
+share of the timeline it plays (baked `soundTimestamps` + durations, else its interval loop), energy-summed;
+each bed = that − `MARGIN_DB`, clamped to the bed band (positioned beds add back their own distance loss).
+It overwrites the LLM's bed level (the backend clamp stays as a safety net), writes the card `dbfs` + events'
+`volume_dbfs`, and skips a bed whose fader the user moved (`soundVolumes`). It is NOT run on later DAW edits.
+
 The live master limiter (`AUDIO_CONTROL.LIMITER`, also the export's post-render ceiling) is a −1 dBFS
 safety net for the summed mix, so per-sound levels stay linear dB offsets.
 `orchestrator.getLimiterReductionDb()` / `OutputDiagnostics.limiterReductionDb` report it.

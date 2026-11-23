@@ -1449,6 +1449,22 @@ export const GLOBAL_SOURCE = {
   RESONANCE_POINT_SOURCE_WIDTH_DEG: 0,
 } as const;
 
+/**
+ * Background-bed auto level (lib/audio/utils/bed-auto-level.ts). After a scene is
+ * generated or (re-)orchestrated, each background bed is set MARGIN_DB below the
+ * time-averaged level the scene's events reach at the listener (distance loss and
+ * how often each event plays included), within the bed band. The band mirrors
+ * BACKGROUND_BED_DBFS_* in backend/config/constants.py (which the LLM prompts quote).
+ */
+export const BACKGROUND_AUTO_LEVEL = {
+  MARGIN_DB: 8,              // Bed sits this far below the events' time-averaged level
+  MIN_DBFS: -50,             // Bed band (= backend BACKGROUND_BED_DBFS_MIN / _MAX / _DEFAULT)
+  MAX_DBFS: -34,
+  DEFAULT_DBFS: -42,         // Scene without any event
+  REFERENCE_DISTANCE_M: 1,   // Point-source falloff reference (1/r beyond it, as AnechoicMode)
+  FALLBACK_LISTENER_DISTANCE_M: 3, // Event distance used when the scene has no listener/receiver
+} as const;
+
 
 
 // ============================================================================
@@ -3114,6 +3130,47 @@ export const SIMPLE_MODE = {
   WAVEFORM_MAX_RATIO: 0.40,     // max bar length as a fraction of the bubble radius
   /** Click-vs-drag threshold for click-outside dismissal (px). */
   DISMISS_DRAG_TOLERANCE: 4,
+} as const;
+
+// Scene edit chat (store/sceneEditStore.ts, components/sceneEdit/). Limits mirror
+// backend/config/constants.py SCENE_EDIT_*.
+export const SCENE_EDIT = {
+  ENDPOINT: '/api/scene-edit',
+  /** Earlier messages sent to the agent as context (backend keeps the last 12). */
+  HISTORY_SEND_MAX: 12,
+  /** Messages kept on the scene card (and in soundscape.json). */
+  HISTORY_SAVE_MAX: 60,
+  /** Max characters of one user message. */
+  MESSAGE_MAX_CHARS: 2000,
+  /** Characters of the scenario narrative sent with the snapshot. */
+  SCENARIO_TEXT_MAX_CHARS: 3000,
+  /** Model-analysis object groups sent with the snapshot. */
+  MAX_OBJECTS: 80,
+  /** Distance (m) between a sound added "near" another one and that sound. */
+  NEAR_OFFSET_M: 0.8,
+  /** Default length (s) of an added foley sound when the agent gives none. */
+  DEFAULT_SOUND_DURATION_S: 4,
+  /** set_density with an interval: first occurrence starts after this fraction of the interval. */
+  DENSITY_START_FRACTION: 0.25,
+  /** Delay (ms) before the chat list scrolls to a new message (lets it render). */
+  SCROLL_DELAY_MS: 30,
+  COMPOSER_PLACEHOLDER: 'Ask for a change… e.g. “the background is too loud”',
+  EMPTY_HINT: 'Describe a change and it is applied to this scene. Ctrl+Z undoes it.',
+  EXAMPLES: [
+    'The background is too loud',
+    'Add 3 different variants for the footsteps',
+    'Add more sounds at the entrance',
+  ],
+  PHASE_LABELS: {
+    planning: 'Planning the edit…',
+    applying: 'Applying changes…',
+    generating: 'Generating sounds…',
+    orchestrating: 'Re-orchestrating the timeline…',
+  },
+  TITLE: 'Edit with chat',
+  NOT_READY: 'Generate the scene first, then edit it here.',
+  FAILED: 'The edit could not be planned',
+  NO_CHANGES: 'No changes applied.',
 } as const;
 
 // Full-width bottom control bar (components/scene/SceneBottomBar.tsx)

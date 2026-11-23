@@ -27,6 +27,7 @@ import type {
   FreeformConfig,
   CardAnalysisStatus,
 } from '@/types/analysis';
+import type { SceneChatMessage } from '@/types/sceneEdit';
 import type { CardType } from '@/types/card';
 import { withSceneIds } from '@/utils/scene-id';
 import {
@@ -384,7 +385,8 @@ async function pollLlmJob(
 // never create a step; the finished result does (as one step — consecutive
 // streamed writes collapse). The active tab is navigation, not history.
 
-const ANALYSIS_RUNTIME_KEYS = ['error', 'liveScreenshots', 'liveScreenshotFilenames', 'scenarioRawText'] as const;
+// `editChat` is written outside undo history (setSceneChat), so it never makes a step either.
+const ANALYSIS_RUNTIME_KEYS = ['error', 'liveScreenshots', 'liveScreenshotFilenames', 'scenarioRawText', 'editChat'] as const;
 
 function analysisConfigProjection(config: AnalysisConfig): Record<string, unknown> {
   const out: Record<string, unknown> = { ...config };
@@ -687,6 +689,11 @@ export interface AnalysisStoreState {
   handleAddConfig: (type: CardType, initialSpeckleData?: any) => void;
   handleRemoveConfig: (index: number) => void;
   handleUpdateConfig: (index: number, updates: Partial<AnalysisConfig>) => void;
+  /**
+   * Replace a scene's edit-chat thread. Never an undo step, and written into every
+   * history snapshot so undoing the edits a message made keeps the conversation.
+   */
+  setSceneChat: (usageIndex: number, messages: SceneChatMessage[]) => void;
   setActiveAnalysisTab: (index: number) => void;
   /** Find an existing freeform usage card linked to a context, or create one (idempotent). Returns its index.
    *  `displayName`, when provided, seeds the new card's title (ignored if a card already exists). */
@@ -943,6 +950,27 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             false,
             'analysis/updateConfig',
           ),
+
+        setSceneChat: (usageIndex, messages) => {
+          const target = get().analysisConfigs[usageIndex];
+          if (target?.type !== 'scenario') return;
+          const sceneId = target.scene_id;
+          const withChat = (configs: AnalysisConfig[]): AnalysisConfig[] =>
+            configs.map((config, i) => {
+              const same = sceneId ? config.scene_id === sceneId : i === usageIndex;
+              return same && config.type === 'scenario' ? { ...config, editChat: messages } : config;
+            });
+          runWithoutUndo(() =>
+            set((s) => ({ analysisConfigs: withChat(s.analysisConfigs) }), false, 'analysis/setSceneChat'),
+          );
+          // A scene id is needed to find the card in older snapshots (indices move).
+          if (sceneId) {
+            rebaseUndoHistory<AnalysisSnapshot>('analysis', (snap) => ({
+              ...snap,
+              analysisConfigs: withChat(snap.analysisConfigs),
+            }));
+          }
+        },
 
         handleReorderConfigs: (from, to) => {
           if (from === to) return;

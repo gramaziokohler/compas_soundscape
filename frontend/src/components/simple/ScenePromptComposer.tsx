@@ -322,10 +322,26 @@ export function ScenePromptComposer({ onSubmit, onClose }: ScenePromptComposerPr
           </svg>
         </button>
         {options.image && (
-          <span className="bubble-chip bubble-chip--on" title={options.image.name}>
-            <ImagePreviewButton src={options.image.dataUrl} name={options.image.name} size={IMAGE_PREVIEW.CHIP_THUMB_PX} square />
-            <span className="max-w-[80px] truncate">{options.image.name}</span>
-            <button type="button" onClick={() => patch({ image: null })} aria-label="Remove image">×</button>
+          // The whole chip enlarges the image; only the × removes it.
+          <span className="bubble-chip bubble-chip--on bubble-chip--split">
+            <ImagePreviewButton
+              src={options.image.dataUrl}
+              name={options.image.name}
+              size={IMAGE_PREVIEW.CHIP_THUMB_PX}
+              square
+              className="bubble-chip__main"
+            >
+              <span className="max-w-[80px] truncate">{options.image.name}</span>
+            </ImagePreviewButton>
+            <button
+              type="button"
+              className="bubble-chip__remove"
+              onClick={() => patch({ image: null })}
+              aria-label="Remove image"
+              title="Remove image"
+            >
+              ×
+            </button>
           </span>
         )}
         <button

@@ -34,6 +34,7 @@ except ImportError:
     ANTHROPIC_AVAILABLE = False
 
 from config.constants import (
+    SCENE_EDIT_INSTRUCTION_MAX_CHARS,
     LLM_MODEL_OPENAI,
     LLM_MODEL_ANTHROPIC,
     DEFAULT_LLM_MODEL,
@@ -45,6 +46,11 @@ from config.constants import (
     DEFAULT_DURATION_SECONDS,
     DBFS_MIN,
     DBFS_MAX,
+    BACKGROUND_BED_DBFS_MIN,
+    BACKGROUND_BED_DBFS_MAX,
+    BACKGROUND_BED_DBFS_DEFAULT,
+    BACKGROUND_BED_QUIET_DBFS,
+    BACKGROUND_BED_BUSY_DBFS,
     INTERVAL_MIN,
     INTERVAL_MAX,
     DURATION_MIN,
@@ -124,6 +130,36 @@ def _normalized_category(category) -> str:
 def _is_background_entry(entry: dict) -> bool:
     """True for continuous background beds (never scheduled, never referenced)."""
     return _normalized_category(entry.get("category")) in _BACKGROUND_CATEGORIES
+
+
+def _bed_dbfs(value: float | None) -> float:
+    """Level of a background bed: the LLM's value clamped to the bed band, or the default.
+
+    Beds play continuously and everywhere without distance falloff, so they need a
+    lower band than events (see BACKGROUND_BED_* in config/constants.py).
+    """
+    if value is None:
+        return BACKGROUND_BED_DBFS_DEFAULT
+    return max(BACKGROUND_BED_DBFS_MIN, min(BACKGROUND_BED_DBFS_MAX, value))
+
+
+def _bed_spl(spl: str) -> str:
+    """Orchestrator 'spl' string of a background bed, clamped to the bed band."""
+    match = re.search(r"-?\d+(?:\.\d+)?", spl or "")
+    return f"{_bed_dbfs(float(match.group(0)) if match else None):g} dBFS"
+
+
+def _bed_level_guidance() -> str:
+    """Prompt text for bed levels — one place, quoted by every level-estimating prompt."""
+    quiet_lo, quiet_hi = BACKGROUND_BED_QUIET_DBFS
+    busy_lo, busy_hi = BACKGROUND_BED_BUSY_DBFS
+    return (
+        f"continuous background beds (room tone, HVAC, ambience): {BACKGROUND_BED_DBFS_MIN:g} to "
+        f"{BACKGROUND_BED_DBFS_MAX:g} dBFS — quiet room tone / HVAC hum {quiet_lo:g} to {quiet_hi:g}, "
+        f"lively ambience (café chatter, street) {busy_lo:g} to {busy_hi:g}. A bed plays continuously "
+        "and everywhere at full level, while events are short and quieter with distance, so at the same "
+        "number a bed sounds about 15 dB louder than an event: keep beds well below the events"
+    )
 
 
 def _reference_base_id(arg: str) -> str:
@@ -852,6 +888,14 @@ class LLMService:
                 except ValueError:
                     pass
 
+            # Continuous context sounds (INTERVAL 0, no entity) are background beds:
+            # keep them in the bed band so they do not drown the events. Checked on the
+            # raw LLM value: the clamp above lifts 0 to INTERVAL_MIN.
+            is_continuous = bool(interval_match) and float(interval_match.group(1)) == 0
+            is_bed = is_continuous and not (entity_match and entity_match.group(1).strip().lower() != 'none')
+            if is_bed:
+                dbfs = _bed_dbfs(dbfs if spl_match else None)
+
             # Extract duration value
             duration_seconds = DEFAULT_DURATION_SECONDS
             if duration_match:
@@ -1069,7 +1113,8 @@ For the display names:
 For the loudness estimation (in dBFS):
     *   Consider how loud this sound should be IN THE MIX OF: {context}
     *   dBFS is relative to digital full scale: 0 dBFS is the clipping ceiling, so use NEGATIVE values.
-    *   Reference examples: subtle background texture (-45 dBFS), quiet ambience (-36 dBFS), normal foreground sound (-24 dBFS), prominent sound event (-18 dBFS), loud impact (-12 dBFS), near-clipping foreground (-6 dBFS)
+    *   Events: subtle event (-30 dBFS), normal foreground sound (-24 dBFS), prominent sound event (-18 dBFS), loud impact (-12 dBFS), near-clipping foreground (-6 dBFS)
+    *   Sounds with INTERVAL 0 and no entity are {_bed_level_guidance()}.
     *   Provide a single number between -60 and 0 dBFS representing the target playback level
     *   The level should fit realistically in the mix for: {context}
 
@@ -2688,6 +2733,7 @@ For the duration estimation (in seconds with 0.1 precision):
             speech_json: str,
             mode: str = "initial",
             backgrounds_json: str = "{\"backgrounds\": []}",
+            edit_instruction: str | None = None,
         ) -> tuple[str, str]:
             """Build system and user prompts for the orchestrate agent.
 
@@ -2803,7 +2849,7 @@ For the duration estimation (in seconds with 0.1 precision):
                 "never in the -10..0 range. Quiet or distant lines belong nearer -22.\n"
                 "   - close discrete impacts (door, chair, dropped object): -18 to -12 dBFS.\n"
                 "   - subtle events (typing, paper, cup, cloth): -26 to -18 dBFS.\n"
-                "   - background beds (if they were present): -34 to -26 dBFS.\n"
+                f"   - {_bed_level_guidance()}.\n"
                 "Re-read the whole set before responding and pull any outlier back toward the scene's average.\n\n"
                 "Output Format — respond ONLY with a JSON array (timeline dynamics + levels only):\n"
                 "[\n"
@@ -2843,6 +2889,19 @@ For the duration estimation (in seconds with 0.1 precision):
                 "If any item fails, fix it and re-check before responding."
             )
             return system_prompt, user_prompt
+
+    @staticmethod
+    def _edit_instruction_block(edit_instruction: str) -> str:
+        """Re-orchestration guidance for a scene-edit chat turn (routers/scene_edit.py)."""
+        text = edit_instruction.strip()[:SCENE_EDIT_INSTRUCTION_MAX_CHARS]
+        return (
+            "LATEST USER EDIT REQUEST (scene edit chat)\n"
+            f"The user just asked: \"{text}\"\n"
+            "The requested changes were already applied to the entries above. Re-time the scene so it "
+            "honours this request (e.g. an interruption overlaps or cuts in where asked, added sounds fit "
+            "the action) while keeping everything else as it is. Entries whose 'currentTrigger' uses "
+            "absolute MM:SS timestamps were placed there by the user: keep those times exactly.\n\n"
+        )
 
     @staticmethod
     def _build_orchestrate_passthrough(foley_result: dict, speech_result: dict) -> dict[str, dict]:
@@ -2934,7 +2993,7 @@ For the duration estimation (in seconds with 0.1 precision):
             if entry_id in background_ids:
                 _append(
                     entry_id, base, _forced_background_trigger(base),
-                    [1] * max(1, len(base["timestamps"])), entry.get("spl", ""),
+                    [1] * max(1, len(base["timestamps"])), _bed_spl(entry.get("spl", "")),
                 )
                 continue
             trigger = entry.get("trigger") or {"type": "absolute", "expression": [], "delay": [0.0]}
@@ -2950,7 +3009,8 @@ For the duration estimation (in seconds with 0.1 precision):
         for sid, base in passthrough.items():
             if sid in seen_ids or sid not in background_ids:
                 continue
-            _append(sid, base, _forced_background_trigger(base), [1] * max(1, len(base["timestamps"])), "")
+            # No LLM level: the bed default (an empty spl fell back to -18 dBFS in the UI).
+            _append(sid, base, _forced_background_trigger(base), [1] * max(1, len(base["timestamps"])), _bed_spl(""))
 
         return {"playlist": playlist}
 
@@ -2963,6 +3023,7 @@ For the duration estimation (in seconds with 0.1 precision):
         temperature: float = 0.1,
         on_progress=None,
         mode: str = "initial",
+        edit_instruction: str | None = None,
     ) -> dict:
         """Compile the final parametric audio playlist from foley + speech + scenario.
 
@@ -3016,7 +3077,8 @@ For the duration estimation (in seconds with 0.1 precision):
         speech_json = json.dumps(speech_result, indent=2)
 
         system_prompt, user_prompt = self._build_orchestrate_prompts(
-            scenarios_json, foley_json, speech_json, mode=mode, backgrounds_json=backgrounds_json
+            scenarios_json, foley_json, speech_json, mode=mode, backgrounds_json=backgrounds_json,
+            edit_instruction=edit_instruction,
         )
 
         llm_result = await self._call_llm(
@@ -3043,6 +3105,7 @@ For the duration estimation (in seconds with 0.1 precision):
         temperature: float = 0.1,
         on_progress=None,
         mode: str = "initial",
+        edit_instruction: str | None = None,
     ):
         """Async generator yielding orchestrated playlist entries one by one.
 
@@ -3060,6 +3123,7 @@ For the duration estimation (in seconds with 0.1 precision):
                 temperature=temperature,
                 on_progress=on_progress,
                 mode=mode,
+                edit_instruction=edit_instruction,
             )
         except LLMCancelled:
             raise

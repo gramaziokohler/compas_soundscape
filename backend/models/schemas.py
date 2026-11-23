@@ -1291,6 +1291,133 @@ class OrchestrateLLMOutput(BaseModel):
     playlist: list[OrchestrateLLMEntry]
 
 
+# ── Scene edit chat (routers/scene_edit.py) ───────────────────────────────────
+# Mirrored in frontend/src/types/sceneEdit.ts.
+
+SceneEditOpName = Literal[
+    # mix
+    "set_level", "mute", "unmute", "solo", "unsolo", "set_loopable", "trim",
+    # timing
+    "set_times", "shift", "set_density", "remove_occurrences", "set_scene_duration",
+    # space
+    "move", "set_directivity",
+    # content
+    "add_sound", "remove", "change_sound", "regenerate", "set_variants",
+    # speech
+    "add_speaker", "edit_lines", "change_voice",
+    # scene
+    "rename_scene",
+]
+
+
+class SceneEditOp(BaseModel):
+    """One edit operation of a scene-edit plan.
+
+    Flat on purpose (one object, ``op`` + the fields that op uses) — the LLM
+    structured-output path does not handle discriminated unions. Fields an op
+    does not use keep their defaults. Sound cards are addressed by snapshot
+    refs ("S1"), sounds added earlier in the same plan by their ``new_ref``
+    ("N1"), analysis objects by "O1" refs.
+    """
+    op: SceneEditOpName
+    targets: list[str] = []          # sound refs the op applies to
+    new_ref: str = ""                # add_sound / add_speaker: ref later ops may use
+    db: float | None = None          # set_level: absolute level (dBFS)
+    delta_db: float | None = None    # set_level: relative change (dB)
+    on: bool | None = None           # set_loopable
+    start: float | None = None       # trim: kept start, fraction 0-1
+    end: float | None = None         # trim: kept end, fraction 0-1
+    times_s: list[float] = []        # set_times / remove_occurrences / add_*: seconds from scene start
+    delta_s: float | None = None     # shift
+    count: int | None = None         # set_density (occurrences) / set_variants (copies)
+    interval_s: float | None = None  # set_density
+    seconds: float | None = None     # set_scene_duration
+    anchor_objects: list[str] = []   # move / add_*: object refs ("O3") the sound sits on
+    near: str = ""                   # move / add_*: sound ref to place it next to
+    position: list[float] = []       # move / add_*: explicit [x, y, z] (m)
+    preset: str = ""                 # set_directivity: preset id from the snapshot
+    yaw_deg: float | None = None     # set_directivity
+    name: str = ""                   # add_sound: short sound name
+    prompt: str = ""                 # add_sound / change_sound: text-to-audio prompt
+    category: str = ""               # add_sound: "sound event" | "background sound"
+    duration_s: float | None = None  # add_sound / change_sound: clip length
+    character: str = ""              # add_speaker / change_voice: TTS character name
+    lines: list[str] = []            # add_speaker / edit_lines: one entry per spoken line
+    title: str = ""                  # rename_scene
+
+
+class SceneEditPlan(BaseModel):
+    """Edit-agent output: a reply for the chat plus the ops to apply."""
+    reply: str
+    ops: list[SceneEditOp] = []
+
+
+class SceneEditSnapshotCard(BaseModel):
+    """A sound card of the scene as the edit agent sees it."""
+    ref: str
+    kind: Literal["foley", "speech"]
+    name: str
+    category: str = ""
+    prompt: str = ""
+    lines: list[str] = []
+    character: str = ""
+    times_s: list[float] = []
+    level_db: float | None = None
+    muted: bool = False
+    soloed: bool = False
+    loopable: bool = False
+    variants: int = 1
+    duration_s: float | None = None
+    position: list[float] = []
+    anchors: list[str] = []          # object refs
+    directivity: str = ""
+    generated: bool = True
+
+
+class SceneEditSnapshotObject(BaseModel):
+    """A model-analysis object group the agent may anchor sounds to."""
+    ref: str
+    name: str
+    description: str = ""
+    center: list[float] = []
+    extent: list[float] = []
+
+
+class SceneEditSnapshot(BaseModel):
+    """Compact scene state built by the frontend (utils/sceneEditSnapshot.ts)."""
+    title: str = ""
+    prompt: str = ""
+    scenario: str = ""               # scenario narrative (events with timestamps)
+    duration_s: float
+    people: str = ""
+    language: str = ""
+    room: dict | None = None         # {"min": [x,y,z], "max": [x,y,z]}
+    space_title: str = ""
+    cards: list[SceneEditSnapshotCard] = []
+    objects: list[SceneEditSnapshotObject] = []
+    directivity_presets: list[str] = []
+
+
+class SceneEditHistoryMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    text: str
+
+
+class SceneEditRequest(BaseModel):
+    instruction: str
+    snapshot: SceneEditSnapshot
+    history: list[SceneEditHistoryMessage] = []
+    llm_model: str = DEFAULT_LLM_MODEL
+
+
+class SceneEditResult(BaseModel):
+    """Job result of POST /api/scene-edit (``kind`` = "scene_edit")."""
+    kind: Literal["scene_edit"] = "scene_edit"
+    reply: str
+    ops: list[SceneEditOp] = []
+    warnings: list[str] = []
+
+
 # ── Scenarist / Foley request schemas ─────────────────────────────────────────
 
 class ScenaristStreamRequest(BaseModel):
