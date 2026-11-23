@@ -7,8 +7,7 @@ import torchaudio
 from tangoflux import TangoFluxInference
 from contextlib import contextmanager
 from utils.audio_processing import (
-    normalize_audio_rms,
-    apply_dbfs_calibration,
+    calibrate_audio_loudness,
     apply_denoising as denoise_audio,
     trim_to_noise_region,
     ensure_mono,
@@ -34,7 +33,6 @@ from config.constants import (
     PARAM_HASH_LENGTH,
     DISPLAY_NAME_WORD_COUNT,
     WINDOWS_ILLEGAL_FILENAME_CHARS,
-    TARGET_RMS,
     AUDIO_SAMPLE_RATE,
     DEFAULT_DBFS,
     DENOISING_REDUCTION_STRENGTH,
@@ -249,24 +247,22 @@ class AudioService:
             # Resample from TangoFlux's native rate to the master output rate
             audio = resample_tensor_to(audio, TANGOFLUX_NATIVE_SAMPLE_RATE)
 
-            # Step 1: Normalize to base RMS level
-            audio = normalize_audio_rms(audio, target_rms=TARGET_RMS)
+            # Mono first: loudness is measured and limited on the written signal
+            if audio.shape[0] > 1:
+                audio = audio.mean(dim=0, keepdim=True)
 
-            # Step 2: Apply denoising if requested
+            # Step 1 + 2: denoise at a normalized level (gain only), if requested
             if apply_denoising:
                 if stage_callback:
                     stage_callback("Applying noise reduction...")
                 print("Applying noise reduction...")
+                audio = calibrate_audio_loudness(audio, AUDIO_SAMPLE_RATE, limit=False)
                 audio = denoise_audio(audio, sample_rate=AUDIO_SAMPLE_RATE)
 
-            # Step 3: Apply dBFS calibration
+            # Step 3: loudness calibration + true-peak limiter
             if stage_callback:
                 stage_callback(f"Calibrating to {dbfs} dBFS...")
-            audio = apply_dbfs_calibration(audio, target_dbfs=dbfs)
-
-            # Safety: ensure mono before writing
-            if audio.shape[0] > 1:
-                audio = audio.mean(dim=0, keepdim=True)
+            audio = calibrate_audio_loudness(audio, AUDIO_SAMPLE_RATE, target_dbfs=dbfs, label=os.path.basename(output_path))
 
             torchaudio.save(output_path, audio.cpu(), AUDIO_SAMPLE_RATE)
             print(f"Saved to: {output_path} (calibrated to {dbfs} dBFS{denoise_suffix})")
@@ -318,7 +314,7 @@ class AudioService:
         target_dbfs: float = DEFAULT_DBFS,
         apply_denoising: bool = False,
     ):
-        """Normalize RMS, optionally denoise, then apply dBFS calibration to any audio file.
+        """Loudness-calibrate any audio file (optional denoise, gated LUFS, true-peak limiter).
 
         Mirrors the post-processing pipeline used by TangoFlux/AudioLDM2 so that
         uploaded, library, catalog, sample, and ElevenLabs audio are treated
@@ -340,16 +336,16 @@ class AudioService:
         # (samples,) → (1, samples)
         audio_tensor = torch.from_numpy(audio_np).float().unsqueeze(0)
 
-        # Step 1: Normalize to base RMS level
-        audio_tensor = normalize_audio_rms(audio_tensor, target_rms=TARGET_RMS)
-
-        # Step 2: Apply denoising if requested
+        # Step 1 + 2: denoise at a normalized level (gain only), if requested
         if apply_denoising:
             print("Applying denoising during calibration...")
+            audio_tensor = calibrate_audio_loudness(audio_tensor, sample_rate, limit=False)
             audio_tensor = denoise_audio(audio_tensor, sample_rate=sample_rate)
 
-        # Step 3: Apply dBFS calibration
-        audio_tensor = apply_dbfs_calibration(audio_tensor, target_dbfs=target_dbfs)
+        # Step 3: loudness calibration + true-peak limiter
+        audio_tensor = calibrate_audio_loudness(
+            audio_tensor, sample_rate, target_dbfs=target_dbfs, label=os.path.basename(input_path),
+        )
 
         torchaudio.save(output_path, audio_tensor.cpu(), sample_rate)
         print(f"Calibrated: {output_path} -> {target_dbfs} dBFS")

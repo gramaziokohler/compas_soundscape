@@ -9,14 +9,12 @@
 # was imported *before* the .env files were loaded — e.g. importing
 # ``utils.console`` pulled in ``config.constants`` and broke Cloudflare Access.
 #
-# Re-exports are lazy (PEP 562) so ``from utils import calculate_rms`` still
-# works without importing ``audio_processing`` at package-import time.
+# Re-exports are lazy (PEP 562) so ``from utils import calibrate_audio_loudness``
+# still works without importing ``audio_processing`` at package-import time.
 
 _LAZY_AUDIO = frozenset(
     {
-        "calculate_rms",
-        "normalize_audio_rms",
-        "apply_dbfs_calibration",
+        "calibrate_audio_loudness",
         "apply_denoising",
     }
 )

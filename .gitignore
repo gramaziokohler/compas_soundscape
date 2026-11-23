@@ -182,3 +182,11 @@ src/compas_acoustics_gh_components/obj/
 
 # PFFDTD engine binaries (built per machine by backend/pffdtd_backend/c_cuda/build_engine.ps1)
 backend/pffdtd_backend/c_cuda/bin/
+
+# Demo video (demo/): recorder output, HyperFrames renders and caches
+demo/node_modules/
+demo/record/out/
+demo/video/assets/capture*.mp4
+demo/video/assets/events*.json
+demo/video/renders/
+demo/video/.hyperframes/

@@ -1158,7 +1158,7 @@ export const apiService = {
     }
   },
 
-  // Calibrate Audio (normalize RMS + dBFS calibration for non-ML audio modes)
+  // Calibrate Audio (gated-LUFS loudness + true-peak limiter for non-ML audio modes)
   async calibrateAudio(
     audioBlob: Blob,
     dbfs: number,
@@ -2736,6 +2736,32 @@ export const apiService = {
       return response.json();
     } catch (error) {
       handleApiError(error, 'Upload soundscape audio');
+    }
+  },
+
+  /**
+   * Save a sound scene's reference image with the project (model media dir).
+   *
+   * @param modelId - Speckle model ID (or the sandbox id)
+   * @param image - PNG / JPEG / WebP image
+   * @returns The saved filename, resolved later against the load's `audio_base_url`
+   */
+  async uploadSceneImage(modelId: string, image: Blob): Promise<{ filename: string }> {
+    try {
+      const formData = new FormData();
+      formData.append('image', image, 'scene-image');
+      const response = await fetchWithErrorHandling(
+        `${API_BASE_URL}/api/speckle/soundscape/${encodeURIComponent(modelId)}/upload-image`,
+        { method: 'POST', body: formData },
+        'Upload scene image',
+      );
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Failed to upload image' }));
+        throw new Error(error.detail || 'Failed to upload image');
+      }
+      return response.json();
+    } catch (error) {
+      handleApiError(error, 'Upload scene image');
     }
   },
 

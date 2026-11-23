@@ -496,6 +496,7 @@ export const useSceneWorkflowStore = create<SceneWorkflowStoreState>()(
             // The reference image also grounds the scenario directly — the only
             // way it is used when no model is loaded (no analysis to re-run).
             referenceImages: options.image ? [options.image.dataUrl] : undefined,
+            referenceImageName: options.image?.name,
           } as Partial<ScenarioConfig>);
 
           launch({ usageIndex, contextIndex, options, step: null });

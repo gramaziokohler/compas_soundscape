@@ -565,6 +565,12 @@ sceneWorkflowStore (scenes run concurrently + independently, no frontend queue; 
   /api/scenarist `screenshots` (always), plus a fresh model-analysis card when a model is loaded
   and "Re-run model analysis" is on. An empty composer prompt is allowed when a model is loaded
   or an image is attached (scenario built from the analysis / the image alone).
+  The image is saved with the project: page.persistSceneReferenceImages (on save) →
+  POST /api/speckle/soundscape/{model}/upload-image → model media dir (…/<model>/audio/
+  scene-image_*.png) → ScenarioConfig.referenceImageFilename (soundscape.json). On load,
+  analysisStore.rehydrateSceneImages(audioBaseUrl) sets referenceImageUrl (Scene settings
+  thumbnail; a regenerate re-sends it to the scenarist). Not copied by "Send scenes" and not
+  served to the share view (the thumbnail hides itself when the file cannot load).
 
 Scenario agent room (routers/generation._load_furniture_list → meta.total_bounds + room_source)
   model analysis bounds > request bounding_box (live model / uploaded geometry) > the

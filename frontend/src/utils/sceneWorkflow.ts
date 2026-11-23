@@ -121,7 +121,7 @@ export function getSceneSettingsRows(
 ): SettingsRow[] {
   const rows: SettingsRow[] = [];
   const prompt = sc.userContext?.trim();
-  const fromImage = !!run?.options.image || !!sc.referenceImages?.length;
+  const fromImage = !!run?.options.image || !!sc.referenceImages?.length || !!sc.referenceImageFilename;
   rows.push(prompt
     ? { label: 'Prompt', value: prompt, expandable: true }
     : { label: 'Prompt', value: fromImage ? 'None — from the image' : 'None — from the model analysis' });
@@ -137,12 +137,15 @@ export function getSceneSettingsRows(
   const llm = sc.llmModel ?? DEFAULT_LLM_MODEL;
   rows.push({ label: 'LLM', value: LLM_MODEL_NAMES[llm] ?? llm });
   if (run) {
-    const { audioModel, image, reanalyze } = run.options;
+    const { audioModel, reanalyze } = run.options;
     rows.push({ label: 'Text-to-audio', value: AUDIO_MODEL_NAMES[audioModel] ?? audioModel });
-    if (image) rows.push({ label: 'Reference image', value: image.name, expandable: true });
     if (reanalyze) rows.push({ label: 'Model re-analysed', value: 'Yes' });
-  } else if (sc.referenceImages?.length) {
-    rows.push({ label: 'Reference image', value: 'Yes' });
+  }
+  // The image stays on the card once the run is over, so the preview outlives the run.
+  const imageSrc = run?.options.image?.dataUrl ?? sc.referenceImages?.[0] ?? sc.referenceImageUrl;
+  if (imageSrc) {
+    const name = run?.options.image?.name ?? sc.referenceImageName ?? 'Reference image';
+    rows.push({ label: 'Reference image', value: name, imageSrc });
   }
   return rows;
 }

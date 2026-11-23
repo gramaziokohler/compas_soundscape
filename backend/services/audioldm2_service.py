@@ -11,12 +11,10 @@ from config.constants import (
     AUDIOLDM2_SAMPLE_RATE,
     AUDIO_SAMPLE_RATE,
     DEFAULT_DURATION_SECONDS,
-    TARGET_RMS,
     DEFAULT_DBFS
 )
 from utils.audio_processing import (
-    normalize_audio_rms,
-    apply_dbfs_calibration,
+    calibrate_audio_loudness,
     apply_denoising as denoise_audio
 )
 from utils.resampling import resample_tensor_to
@@ -114,24 +112,22 @@ class AudioLDM2Service:
         # Resample from AudioLDM2's native rate to the master output rate
         audio = resample_tensor_to(audio, AUDIOLDM2_SAMPLE_RATE)
 
-        # Step 1: Normalize to base RMS level
-        audio = normalize_audio_rms(audio, target_rms=TARGET_RMS)
+        # Mono first: loudness is measured and limited on the written signal
+        if audio.shape[0] > 1:
+            audio = audio.mean(dim=0, keepdim=True)
 
-        # Step 2: Apply denoising if requested
+        # Step 1 + 2: denoise at a normalized level (gain only), if requested
         if apply_denoising:
             if stage_callback:
                 stage_callback("Applying noise reduction...")
             print("Applying noise reduction...")
+            audio = calibrate_audio_loudness(audio, AUDIO_SAMPLE_RATE, limit=False)
             audio = denoise_audio(audio, sample_rate=AUDIO_SAMPLE_RATE)
 
-        # Step 3: Apply dBFS calibration
+        # Step 3: loudness calibration + true-peak limiter
         if stage_callback:
             stage_callback(f"Calibrating to {dbfs} dBFS...")
-        audio = apply_dbfs_calibration(audio, target_dbfs=dbfs)
-
-        # Safety: ensure mono before writing
-        if audio.shape[0] > 1:
-            audio = audio.mean(dim=0, keepdim=True)
+        audio = calibrate_audio_loudness(audio, AUDIO_SAMPLE_RATE, target_dbfs=dbfs, label=output_path)
 
         torchaudio.save(output_path, audio.cpu(), AUDIO_SAMPLE_RATE)
         print(f"Saved to: {output_path} (calibrated to {dbfs} dBFS{denoise_suffix})")

@@ -195,7 +195,8 @@ class Sa3Runner:
                         steps=clip.get("steps") or STABLE_AUDIO_DEFAULT_STEPS,
                         cfg_scale=clip.get("cfg_scale", clip.get("guidance_scale", STABLE_AUDIO_DEFAULT_GUIDANCE)),
                         seed=clip.get("seed", -1),
-                        dbfs=clip.get("dbfs", DEFAULT_DBFS),
+                        # File level = the base anchor; clip["dbfs"] is the playback level.
+                        dbfs=clip.get("calibration_dbfs", clip.get("dbfs", DEFAULT_DBFS)),
                         init_audio_path=clip.get("init_audio_path"),
                         init_noise_level=clip.get("init_noise_level", 0.9),
                         inpaint_audio_path=clip.get("inpaint_audio_path"),

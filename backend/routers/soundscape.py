@@ -49,6 +49,9 @@ from config.constants import (
     BACKEND_DIR,
     SANDBOX_MODEL_ID,
     SOUNDSCAPE_JSON_FILENAME,
+    SCENE_IMAGE_TYPES,
+    SCENE_IMAGE_MAX_BYTES,
+    SCENE_IMAGE_FILENAME_PREFIX,
 )
 
 
@@ -774,6 +777,42 @@ async def upload_soundscape_audio(
         raise HTTPException(status_code=500, detail=f"Failed to save audio: {e}")
 
     return {"filename": filename, "sound_id": sound_id}
+
+
+@router.post("/{model_id}/upload-image")
+async def upload_scene_image(model_id: str, req: Request, image: UploadFile = File(...)):
+    """
+    Save a sound scene's reference image (the composer image) with the project.
+
+    Stored in the model's media dir next to the saved audio, so it is served
+    from the load response's ``audio_base_url``. Returns the saved filename,
+    which the scenario card keeps (``referenceImageFilename``).
+    """
+    if not model_id:
+        raise HTTPException(status_code=400, detail="model_id is required")
+    ext = SCENE_IMAGE_TYPES.get((image.content_type or "").lower())
+    if not ext:
+        raise HTTPException(
+            status_code=415,
+            detail=f"Unsupported image type; use one of {', '.join(SCENE_IMAGE_TYPES)}",
+        )
+
+    session_id = _get_session_id(req)
+    _require_role(req, session_id, (ROLE_OWNER,))
+    content = await image.read(SCENE_IMAGE_MAX_BYTES + 1)
+    if len(content) > SCENE_IMAGE_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="Image too large")
+
+    dest_dir = user_audio_dir(session_id, model_id)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    filename = f"{SCENE_IMAGE_FILENAME_PREFIX}_{uuid.uuid4().hex}{ext}"
+    try:
+        with open(dest_dir / filename, "wb") as f:
+            f.write(content)
+    except Exception as e:
+        logger.error(f"Failed to save scene image for model {model_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to save image: {e}")
+    return {"filename": filename}
 
 
 @router.post("/{model_id}/send-scenes", response_model=SendScenesResponse)

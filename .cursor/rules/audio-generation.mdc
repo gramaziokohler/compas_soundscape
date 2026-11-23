@@ -27,7 +27,7 @@ User clicks "Generate"
 | `backend/routers/sounds.py` | `POST /api/generate-sounds` — validates, builds the flat clip plan (`_build_clip_plan`), enqueues via `job_store.enqueue`, returns `{job_id, position, total}` |
 | `backend/workers/gpu_runner.py` | TangoFlux GPU worker — leases `queue:gpu`, loads the model on the first job and frees it after `TANGOFLUX_IDLE_UNLOAD_S` idle (`TANGOFLUX_RESIDENT=true`: load at start + warm-up), `empty_cache` after each clip, cooperative cancel, clip-level yielding |
 | `backend/workers/worker_main.py` | `python -m workers.worker_main --role gpu --slots 1 --worker-id gpu-1` (×2 for two lanes) |
-| `backend/services/audio_service.py` | ML model wrappers — `TangoFluxInference` (AudioLDM2 is NOT loaded by workers), post-processing (RMS norm, denoise, SPL calibration) |
+| `backend/services/audio_service.py` | ML model wrappers — `TangoFluxInference` (AudioLDM2 is NOT loaded by workers), post-processing (denoise, loudness calibration via `utils/loudness.py`) |
 | `backend/services/job_store.py` | Redis job store — `enqueue`/`set_progress`/`complete`/`requeue_tail`, per-session GPU cap (HTTP 429) |
 | `frontend/src/store/soundscapeStore.ts` | `handleGenerateInternal`, `handleGenerateSingle`, `handleRegenerateSingle`, `handleDeleteVariant` |
 | `frontend/src/services/api.ts` | `generateSounds()`, `getSoundGenerationStatus()` (wraps unified `GET /api/jobs/{id}`) |
@@ -54,6 +54,33 @@ The store exposes three generation entry points, all routing into `handleGenerat
 3. For ML: submits via `apiService.generateSounds()`, polls via `getSoundGenerationStatus()` (wraps the unified `GET /api/jobs/{job_id}`), streams `partial_sounds` into `generatedSounds` as each sound completes
 4. `mapBackendSound()` remaps batch-relative IDs to config-absolute IDs to avoid collision
 5. Merges results into `soundscapeData` and `generatedSounds`
+
+## Level Calibration — One Anchor, Levels Applied at Playback
+
+Every sound file the backend writes goes through `utils/loudness.py::calibrate_loudness`: TangoFlux,
+AudioLDM2, Stable Audio 3, TTS, and `/api/calibrate-audio` (upload, sample, library, catalog,
+ElevenLabs, FX-editor Save) plus SED extraction (`calibrate_audio_file`).
+
+1. **Measure** ITU-R BS.1770 gated integrated loudness (K-weighting, 400 ms blocks, −70 LUFS
+   absolute + −10 LU relative gates). The gates skip silence and quiet tails, so a sparse event is
+   measured on its active part. One vectorized pass: no loop/segment search.
+2. **Gain** to `TARGET_LOUDNESS_LUFS + (target_dbfs − DEFAULT_DBFS)` (boost capped at
+   `LOUDNESS_MAX_GAIN_DB`; a file entirely below the absolute gate is left untouched).
+3. **True-peak limiter** at `TRUE_PEAK_CEILING_DBTP`: only the overs are reduced. Never scale the
+   whole file down to fit its peak (that made punchy sounds quieter than steady beds).
+
+Denoising runs between a gain-only normalization (`limit=False`) and the final calibration.
+
+**Files are calibrated to the global base anchor (`globalBaseDbfs`), never to a sound's own level.**
+A card's `dbfs` / orchestrator SPL travels as the event's `volume_dbfs` and is applied at playback as
+`volume_dbfs − globalBaseDbfs`. Baking it into the file too applies it twice. The clip plans keep
+both: `dbfs` (returned as `volume_dbfs`) and `calibration_dbfs` (= `base_dbfs`, what the worker
+calibrates to). Every `generateSounds` call passes `base_dbfs`; TTS items and SED extraction send
+`globalBaseDbfs` as their calibration level.
+
+The live master limiter (`AUDIO_CONTROL.LIMITER`, also the export's post-render ceiling) is a −1 dBFS
+safety net for the summed mix, so per-sound levels stay linear dB offsets.
+`orchestrator.getLimiterReductionDb()` / `OutputDiagnostics.limiterReductionDb` report it.
 
 ## Backend — Hash-Based Deduplication
 

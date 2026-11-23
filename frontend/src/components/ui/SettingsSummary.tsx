@@ -2,7 +2,7 @@
 
 import type { HybridSimulationConfig } from '@/types/acoustics';
 import { engineSummaryRows, outputChoice } from '@/lib/acoustics/geometric-engine';
-import { PYROOMACOUSTICS_SIMULATION_MODE_NAMES } from '@/utils/constants';
+import { IMAGE_PREVIEW, PYROOMACOUSTICS_SIMULATION_MODE_NAMES } from '@/utils/constants';
 import { useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight, RotateCcw } from 'lucide-react';
 import type { CardBaseConfig, CardType } from '@/types/card';
@@ -16,6 +16,7 @@ import type { SoundGenerationConfig } from '@/types';
 import { useAudioControlsStore } from '@/store';
 import { ModifiedFieldsProvider } from '@/components/ui/ModifiedMark';
 import { formatScenarioPeople } from '@/utils/scenarioSpeech';
+import { ImagePreviewButton } from '@/components/ui/ImagePreviewButton';
 
 /**
  * SettingsSummary Component
@@ -57,6 +58,8 @@ export interface SettingsRow {
   expandable?: boolean;
   /** Max characters before truncating an expandable value (default 48). */
   truncateAt?: number;
+  /** Image shown as a thumbnail instead of the value; a click enlarges it in a window. */
+  imageSrc?: string;
 }
 
 /** Text palette: `on-blue` for blue cards, `neutral` for frosted / theme surfaces (light + dark). */
@@ -183,7 +186,9 @@ export function SettingsSummary({
               <div key={row.label} className="flex items-baseline justify-between gap-3">
                 <span className="shrink-0" style={{ color: colors.muted }}>{row.label}</span>
                 <span className="text-right break-words max-w-[70%]" style={{ color: colors.value }}>
-                  {row.expandable && isLong ? (
+                  {row.imageSrc ? (
+                    <ImagePreviewButton src={row.imageSrc} name={row.value} size={IMAGE_PREVIEW.SUMMARY_THUMB_PX} />
+                  ) : row.expandable && isLong ? (
                     <>
                       {isRowExpanded ? row.value : row.value.slice(0, truncateAt)}
                       <button

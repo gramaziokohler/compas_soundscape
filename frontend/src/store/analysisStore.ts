@@ -62,6 +62,7 @@ import { useFileUploadStore } from './fileUploadStore';
 import { remapLinkedCardIndices } from './cardIndexLinks';
 import { captureGenerationSignature } from '@/utils/generationSignature';
 import { isScenarioSpeechDone } from '@/utils/scenarioSpeech';
+import { urlToDataUrl } from '@/utils/dataUrl';
 import { collectUnsharedSceneAudioUrls } from '@/utils/sceneAudioUrls';
 import {
   UNDO_HISTORY_LIMIT,
@@ -618,6 +619,21 @@ function getScenarioBounds():
   return useFileUploadStore.getState().geometryBounds ?? undefined;
 }
 
+/**
+ * Reference images for the scenarist: the composer's data URI, else the image
+ * saved with the project (after a reload only its URL is known), else none.
+ */
+async function sceneReferenceScreenshots(config: ScenarioConfig): Promise<string[] | undefined> {
+  if (config.referenceImages?.length) return config.referenceImages;
+  if (!config.referenceImageUrl) return undefined;
+  try {
+    return [await urlToDataUrl(config.referenceImageUrl)];
+  } catch (err) {
+    console.warn('[analysisStore] Saved reference image unavailable:', err);
+    return undefined;
+  }
+}
+
 /** Remap the per-card-index bookkeeping held in this store. */
 function remapConfigIndexState(
   state: Pick<
@@ -680,6 +696,9 @@ export interface AnalysisStoreState {
   /** Re-fetch + rebuild the File/buffer of audio context cards that were persisted with a
    *  `persistedAudioFilename`, so the SED waveform + detected-sounds results survive refresh. */
   rehydrateAudioContextSources: (audioBaseUrl: string) => Promise<void>;
+  /** Point scenario cards' saved reference image (`referenceImageFilename`) at the
+   *  loaded project's media URL (`referenceImageUrl`), for the Scene settings preview. */
+  rehydrateSceneImages: (audioBaseUrl: string) => void;
 
   handleAnalyze: (index: number) => Promise<void>;
   /** Stop every running analysis. */
@@ -1094,6 +1113,17 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
               'analysis/audioLoadError',
             );
           }
+        },
+
+        rehydrateSceneImages: (audioBaseUrl) => {
+          const base = audioBaseUrl.replace(/\/$/, '');
+          const { analysisConfigs, handleUpdateConfig } = get();
+          analysisConfigs.forEach((c, idx) => {
+            if (c?.type !== 'scenario' || !c.referenceImageFilename) return;
+            const url = `${base}/${encodeURIComponent(c.referenceImageFilename)}`;
+            if (c.referenceImageUrl === url) return;
+            runWithoutUndo(() => handleUpdateConfig(idx, { referenceImageUrl: url } as Partial<ScenarioConfig>));
+          });
         },
 
         rehydrateAudioContextSources: async (audioBaseUrl) => {
@@ -2355,7 +2385,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             likeliness: config.likeliness,
             duration: Math.round(scenarioDurationMs / 1000),
             bounding_box: getScenarioBounds(),
-            screenshots: config.referenceImages?.length ? config.referenceImages : undefined,
+            screenshots: await sceneReferenceScreenshots(config),
           };
 
           let workingScenarios: ScenarioResult['scenarios'] = [];

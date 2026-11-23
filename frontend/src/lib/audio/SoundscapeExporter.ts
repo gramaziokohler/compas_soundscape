@@ -31,7 +31,8 @@ import { resolveVariantSoundIdByPrompt } from './utils/variant-sound-id';
 import { resolveIterationTrim } from './utils/iteration-trim';
 import { computeMuteSolo } from './utils/mute-solo';
 import { applyOmniToEncoder, toOmniFilter } from './utils/global-source';
-import { GLOBAL_SOURCE } from '@/utils/constants';
+import { AUDIO_CONTROL, GLOBAL_SOURCE } from '@/utils/constants';
+import { dbfsToLinear } from '@/utils/utils';
 import { assignSourceRooms, isolateResonanceDirectPath } from './utils/resonance-rooms';
 import type { ResonanceExportRoom } from '@/types/audio';
 
@@ -713,10 +714,12 @@ interface LimiterEnvelope {
   threshold: number;
 }
 
+// Same ceiling as the live master limiter, so an export sounds like playback:
+// only the summed mix's overs are caught; per-sound levels stay linear offsets.
 const DEFAULT_LIMITER: LimiterEnvelope = {
   attackTime: 0.000001,
-  releaseTime: 0.100,
-  threshold: 0.501,
+  releaseTime: AUDIO_CONTROL.LIMITER.EXPORT_RELEASE_SEC,
+  threshold: dbfsToLinear(AUDIO_CONTROL.LIMITER.THRESHOLD_DB),
 };
 
 /**

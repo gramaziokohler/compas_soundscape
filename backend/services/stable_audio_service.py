@@ -12,8 +12,8 @@ process running inside the isolated env (workers/sa3_runner.py, --role sa3) —
 never by the FastAPI process.
 
 It intentionally avoids importing `utils.audio_processing` (which pulls librosa
-/ noisereduce, not installed in the isolated env) and implements RMS
-normalization / dBFS calibration inline with torch only.
+/ noisereduce, not installed in the isolated env) and calibrates loudness with
+`utils.loudness` (numpy + scipy only), the same step every other input uses.
 """
 from __future__ import annotations
 
@@ -37,12 +37,10 @@ from config.constants import (
     STABLE_AUDIO_MODE_INPAINT,
     STABLE_AUDIO_MODE_EXTEND,
     DEFAULT_DURATION_SECONDS,
-    TARGET_RMS,
-    CLIPPING_THRESHOLD,
-    DBFS_CLIPPING_THRESHOLD,
     DEFAULT_DBFS,
     AUDIO_SAMPLE_RATE,
 )
+from utils.loudness import calibrate_loudness
 from utils.resampling import resample_to
 
 
@@ -56,26 +54,6 @@ def _to_mono_np(audio: torch.Tensor) -> np.ndarray:
     if arr.ndim == 1:
         return np.ascontiguousarray(arr)
     return np.ascontiguousarray(arr.mean(axis=0))
-
-
-def _normalize_rms(audio: torch.Tensor, target_rms: float = TARGET_RMS) -> torch.Tensor:
-    current_rms = torch.sqrt(torch.mean(audio ** 2) + 1e-12)
-    if float(current_rms) < 1e-8:
-        return audio
-    out = audio * (target_rms / current_rms)
-    max_val = torch.max(torch.abs(out))
-    if float(max_val) > CLIPPING_THRESHOLD:
-        out = out * (CLIPPING_THRESHOLD / max_val)
-    return out
-
-
-def _apply_dbfs(audio: torch.Tensor, target_dbfs: float, base_dbfs: float = DEFAULT_DBFS) -> torch.Tensor:
-    scale = 10.0 ** ((target_dbfs - base_dbfs) / 20.0)
-    out = audio * scale
-    max_val = torch.max(torch.abs(out))
-    if float(max_val) > DBFS_CLIPPING_THRESHOLD:
-        out = out * (DBFS_CLIPPING_THRESHOLD / max_val)
-    return out
 
 
 class StableAudioService:
@@ -267,10 +245,9 @@ class StableAudioService:
         if stage_callback:
             stage_callback("Post-processing...")
         # Model-native rate -> master output rate, then (1, samples)
-        mono = torch.from_numpy(resample_to(_to_mono_np(audio), self.sample_rate)).float().unsqueeze(0)
-        mono = _normalize_rms(mono)
-        mono = _apply_dbfs(mono, dbfs)
+        mono = resample_to(_to_mono_np(audio), self.sample_rate)
+        mono, loudness = calibrate_loudness(mono, AUDIO_SAMPLE_RATE, target_dbfs=dbfs)
 
         os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
-        sf.write(output_path, mono.squeeze(0).numpy(), AUDIO_SAMPLE_RATE)
-        print(f"[sa3] wrote {output_path} ({AUDIO_SAMPLE_RATE} Hz, {duration}s target)")
+        sf.write(output_path, mono, AUDIO_SAMPLE_RATE)
+        print(f"[sa3] wrote {output_path} ({AUDIO_SAMPLE_RATE} Hz, {duration}s target; {loudness.describe()})")

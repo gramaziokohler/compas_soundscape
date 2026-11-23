@@ -487,6 +487,11 @@ export interface OutputDiagnostics {
   contextState: AudioContextState;
   /** Averaged post-limiter output level, RMS dBFS. */
   outputDbfs: number;
+  /**
+   * Current gain reduction of the master safety limiter, dB (0 = untouched, positive =
+   * reducing). Sustained values mean the summed mix is too hot and sliders stop scaling.
+   */
+  limiterReductionDb: number;
   masterVolume: number;
   mode: AudioMode;
   /** Only sources with in-flight voices. */

@@ -2006,6 +2006,15 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     }
   }
 
+  /**
+   * Master safety limiter's current gain reduction in dB (0 = untouched). It only
+   * catches the overs of the summed mix; a sustained reduction means the mix is too
+   * hot, so raising a sound's level no longer makes it louder.
+   */
+  getLimiterReductionDb(): number {
+    return this.limiter ? Math.max(0, -this.limiter.reduction) : 0;
+  }
+
   /** Forget the averaged output level (call when playback starts). */
   resetOutputLevel(): void {
     this.outputMeter?.reset();
@@ -2047,6 +2056,8 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     return {
       contextState: this.audioContext.state,
       outputDbfs: this.outputMeter.sample(),
+      // DynamicsCompressorNode.reduction is ≤ 0 dB; report it as a positive reduction.
+      limiterReductionDb: this.getLimiterReductionDb(),
       masterVolume: this.pendingMasterVolume,
       mode,
       sources,

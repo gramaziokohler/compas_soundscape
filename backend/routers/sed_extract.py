@@ -136,7 +136,7 @@ async def extract_sed_segments(
                 )
                 sf.write(temp_seg_path, segment_audio, sample_rate)
 
-                # Calibrate (normalize RMS + optional denoise + dBFS calibration)
+                # Calibrate (optional denoise + gated loudness + true-peak limiter)
                 out_filename = f"sed_{safe_name}_{seg_idx}_{run_token}.wav"
                 out_path = os.path.join(str(seg_out_dir), out_filename)
                 try:

@@ -439,6 +439,9 @@ export interface SerializedAnalysisConfig {
   drawnArea?: DrawnArea | null;
   peopleCount?: number | null;
   likeliness?: number;
+  /** Scenario cards: saved reference image (filename in the model media dir) and its display name. */
+  referenceImageFilename?: string;
+  referenceImageName?: string;
   /** Scenario cards: foley sound detail level. */
   soundDetail?: FoleySoundDetail;
   /** Per-scenario DAW sound-scene length in ms (scenario cards only). */

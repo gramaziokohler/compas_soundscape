@@ -11,6 +11,7 @@ import {
 } from 'react';
 import { EditableCycleChip } from '@/components/ui/EditableCycleChip';
 import { EditableTextChip } from '@/components/ui/EditableTextChip';
+import { ImagePreviewButton } from '@/components/ui/ImagePreviewButton';
 import { NestedMenu, type NestedMenuItem } from '@/components/ui/NestedMenu';
 import { TtsLanguageStatus } from '@/components/ui/TtsLanguageStatus';
 import { useTtsLanguageResolver } from '@/hooks/useTtsLanguageResolver';
@@ -20,11 +21,13 @@ import {
   AUDIO_MODEL_NAMES,
   FOLEY_SOUND_DETAIL_HINT,
   FOLEY_SOUND_DETAIL_OPTIONS,
+  IMAGE_PREVIEW,
   LLM_MODEL_NAMES,
   SCENARIO_TIMELINE,
   SIMPLE_MODE,
 } from '@/utils/constants';
 import { isModEnter } from '@/lib/shortcuts/keyboard-utils';
+import { blobToDataUrl } from '@/utils/dataUrl';
 import { formatSceneDuration, MS_PER_SECOND } from '@/utils/sceneWorkflow';
 
 const DURATION_OPTIONS_S = SIMPLE_MODE.DURATION_OPTIONS_MS.map((ms) => ms / MS_PER_SECOND);
@@ -34,15 +37,6 @@ const formatDuration = (s: number) => formatSceneDuration(s * MS_PER_SECOND);
 const IMAGE_TYPES = SIMPLE_MODE.IMAGE_ACCEPT.split(',');
 const isImageFile = (file: File) => IMAGE_TYPES.includes(file.type);
 const hasDraggedFiles = (e: DragEvent) => Array.from(e.dataTransfer.types).includes('Files');
-
-function readAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
-}
 
 export interface ScenePromptComposerProps {
   onSubmit: (prompt: string, options: SceneWorkflowOptions) => void;
@@ -123,7 +117,7 @@ export function ScenePromptComposer({ onSubmit, onClose }: ScenePromptComposerPr
 
   const attachImage = async (file: File) => {
     if (!isImageFile(file)) return;
-    const dataUrl = await readAsDataUrl(file);
+    const dataUrl = await blobToDataUrl(file);
     // With a model, the image helps through a fresh model analysis — on by default.
     patch({ image: { name: file.name, dataUrl }, reanalyze: true });
     inputRef.current?.focus();
@@ -295,7 +289,6 @@ export function ScenePromptComposer({ onSubmit, onClose }: ScenePromptComposerPr
         </button>
         <EditableTextChip
           value={speechLanguage}
-          options={SIMPLE_MODE.SPEECH_LANGUAGE_OPTIONS}
           placeholder={SIMPLE_MODE.SPEECH_LANGUAGE_PLACEHOLDER}
           title="Language of the voices (any language or dialect)"
           disabled={!speechOn}
@@ -330,8 +323,7 @@ export function ScenePromptComposer({ onSubmit, onClose }: ScenePromptComposerPr
         </button>
         {options.image && (
           <span className="bubble-chip bubble-chip--on" title={options.image.name}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={options.image.dataUrl} alt="" width={14} height={14} style={{ borderRadius: 3, objectFit: 'cover' }} />
+            <ImagePreviewButton src={options.image.dataUrl} name={options.image.name} size={IMAGE_PREVIEW.CHIP_THUMB_PX} square />
             <span className="max-w-[80px] truncate">{options.image.name}</span>
             <button type="button" onClick={() => patch({ image: null })} aria-label="Remove image">×</button>
           </span>

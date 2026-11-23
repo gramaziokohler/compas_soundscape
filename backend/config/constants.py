@@ -184,10 +184,34 @@ SOUND_POSITION_WALL_MARGIN_M = 0.2
 # Audio Processing Configuration
 # ============================================================================
 
-# Audio Normalization
-TARGET_RMS = 0.1  # Target RMS level for normalization
-CLIPPING_THRESHOLD = 0.99  # Threshold to prevent clipping
-DBFS_CLIPPING_THRESHOLD = 0.99  # Threshold for dBFS calibration clipping prevention
+# Loudness calibration (utils/loudness.py) — every sound file the backend writes
+# (generated, TTS, uploaded, library, catalog, ElevenLabs, SED extract, FX save)
+# is normalized to one perceived-loudness anchor, so the per-sound dB sliders are
+# pure offsets from that anchor.
+# Loudness = ITU-R BS.1770 gated integrated loudness: K-weighting + 400 ms blocks
+# + absolute / relative gates. The gates drop silence and quiet tails, so a sparse
+# event (bark, door) is measured on its active part, not diluted by the gaps.
+TARGET_LOUDNESS_LUFS = -20.0       # Loudness of a file calibrated to DEFAULT_DBFS (the anchor)
+LOUDNESS_BLOCK_S = 0.4             # BS.1770 gating block
+LOUDNESS_BLOCK_OVERLAP = 0.75      # BS.1770 block overlap
+LOUDNESS_ABSOLUTE_GATE_LUFS = -70.0  # Blocks below this are silence; a file entirely below is left as is
+LOUDNESS_RELATIVE_GATE_LU = -10.0  # Blocks this far below the ungated mean are ignored
+LOUDNESS_MAX_GAIN_DB = 40.0        # Cap on the normalization boost (a near-silent file stays quiet)
+# K-weighting filters (BS.1770 stage 1 high shelf + stage 2 high-pass), designed per
+# sample rate with De Man's analog parameters (reproduce the BS.1770 48 kHz coefficients)
+K_WEIGHT_SHELF_HZ = 1681.974450955533
+K_WEIGHT_SHELF_GAIN_DB = 3.999843853973347
+K_WEIGHT_SHELF_Q = 0.7071752369554196
+K_WEIGHT_SHELF_VB_EXPONENT = 0.4996667741545416  # band gain Vb = Vh ** exponent
+K_WEIGHT_HIGHPASS_HZ = 38.13547087602444
+K_WEIGHT_HIGHPASS_Q = 0.5003270373238773
+# True-peak limiter: keeps the calibrated loudness and only catches the overs,
+# instead of turning the whole file down (which made punchy sounds quieter than beds).
+TRUE_PEAK_CEILING_DBTP = -1.0      # Max true peak of a calibrated file
+TRUE_PEAK_OVERSAMPLE = 4           # Oversampling used to measure inter-sample peaks
+TRUE_PEAK_CHUNK_SAMPLES = 1 << 20  # Oversample in chunks so long uploads stay small in memory
+TRUE_PEAK_CHUNK_PAD = 64           # Input samples of context on each side of a chunk
+LIMITER_WINDOW_MS = 10.0           # Look-ahead hold + smoothing window of the gain envelope
 
 # Sample Rate
 AUDIO_SAMPLE_RATE = 48000  # MASTER output sample rate (Hz) for every file the backend writes.
@@ -196,7 +220,6 @@ AUDIO_SAMPLE_RATE = 48000  # MASTER output sample rate (Hz) for every file the b
 RESAMPLE_MAX_DENOMINATOR = 1000  # Max up/down factor when approximating a non-integer rate ratio (resample_poly)
 
 # Audio Processing Thresholds
-AUDIO_RMS_EPSILON = 1e-8  # Epsilon threshold for RMS calculation
 DENOISING_REDUCTION_STRENGTH = 0.8  # Noise reduction strength (prop_decrease)
 
 # Denoising – onset-based noise-profile detection
@@ -1304,6 +1327,12 @@ SOUNDSCAPE_DATA_URL_PREFIX = "/soundscapes"
 SOUNDSCAPE_JSON_FILENAME = "soundscape.json"
 # Reserved model id of the unsaved Home sandbox (frontend utils/constants.ts SANDBOX_MODEL_ID)
 SANDBOX_MODEL_ID = "local"
+
+# Scene reference images (composer image of a sound scene), saved with the project
+# in the model's media dir (data/soundscapes/<ws>/<model>/audio/, served with the audio).
+SCENE_IMAGE_TYPES = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
+SCENE_IMAGE_MAX_BYTES = 15 * 1024 * 1024
+SCENE_IMAGE_FILENAME_PREFIX = "scene-image"
 
 # Scene transfer (in-app "Send scenes to another model" + scripts/transfer_scenes.py)
 # Older saves kept audio per workspace (data/soundscapes/<ws>/audio/), not per model.

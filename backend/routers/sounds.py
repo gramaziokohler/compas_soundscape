@@ -65,6 +65,17 @@ def init_sounds_router(service: AudioService):
     audio_service = service
 
 
+def _calibration_dbfs(base_dbfs: float | None) -> float:
+    """Level every generated file is calibrated to: the global base anchor.
+
+    A clip's own `dbfs` (card level / orchestrator SPL) is NOT baked into the
+    file — it is returned as `volume_dbfs` and applied at playback as
+    (volume_dbfs - base). Baking it in too applied that offset twice, unlike
+    uploaded / library / catalog files, which are calibrated to the anchor.
+    """
+    return base_dbfs if base_dbfs is not None else DEFAULT_DBFS
+
+
 def _build_clip_plan(sound_configs: list[dict], apply_denoising: bool, audio_model: str, base_dbfs: float | None) -> list[dict]:
     """Flatten sound_configs (one entry per prompt, seed_copies>=1) into one
     descriptor per individual audio file ("clip") to generate.
@@ -78,6 +89,7 @@ def _build_clip_plan(sound_configs: list[dict], apply_denoising: bool, audio_mod
     clips: list[dict] = []
     # One token per plan → unique filenames for every clip in this request.
     run_token = uuid.uuid4().hex[:8]
+    calibration_dbfs = _calibration_dbfs(base_dbfs)
     for idx, cfg in enumerate(sound_configs):
         prompt = cfg.get("prompt", "")
         if not prompt:
@@ -86,7 +98,7 @@ def _build_clip_plan(sound_configs: list[dict], apply_denoising: bool, audio_mod
         guidance_scale = cfg.get("guidance_scale", DEFAULT_GUIDANCE_SCALE)
         seed_copies = cfg.get("seed_copies", DEFAULT_SEED_COPIES)
         steps = cfg.get("steps", DEFAULT_DIFFUSION_STEPS)
-        dbfs = cfg.get("dbfs") if cfg.get("dbfs") is not None else (base_dbfs if base_dbfs is not None else DEFAULT_DBFS)
+        dbfs = cfg.get("dbfs") if cfg.get("dbfs") is not None else calibration_dbfs
         interval_seconds = cfg.get("interval_seconds", DEFAULT_INTERVAL_BETWEEN_SOUNDS)
         negative_prompt = cfg.get("negative_prompt", "")
         display_name = cfg.get("display_name") or prompt
@@ -120,6 +132,7 @@ def _build_clip_plan(sound_configs: list[dict], apply_denoising: bool, audio_mod
                 "guidance_scale": guidance_scale,
                 "steps": steps,
                 "dbfs": dbfs,
+                "calibration_dbfs": calibration_dbfs,
                 "copy_index": copy_idx,
                 "total_copies": seed_copies,
                 "position": position,
@@ -140,6 +153,7 @@ def _build_sa3_clip_plan(sound_configs: list[dict], base_dbfs: float | None) -> 
     """
     clips: list[dict] = []
     run_token = uuid.uuid4().hex[:8]
+    calibration_dbfs = _calibration_dbfs(base_dbfs)
     for idx, cfg in enumerate(sound_configs):
         prompt = cfg.get("prompt", "")
         if not prompt:
@@ -151,7 +165,7 @@ def _build_sa3_clip_plan(sound_configs: list[dict], base_dbfs: float | None) -> 
         cfg_scale = cfg.get("guidance_scale", STABLE_AUDIO_DEFAULT_GUIDANCE)
         seed_copies = cfg.get("seed_copies", DEFAULT_SEED_COPIES)
         steps = cfg.get("steps", STABLE_AUDIO_DEFAULT_STEPS)
-        dbfs = cfg.get("dbfs") if cfg.get("dbfs") is not None else (base_dbfs if base_dbfs is not None else DEFAULT_DBFS)
+        dbfs = cfg.get("dbfs") if cfg.get("dbfs") is not None else calibration_dbfs
         interval_seconds = cfg.get("interval_seconds", DEFAULT_INTERVAL_BETWEEN_SOUNDS)
         negative_prompt = cfg.get("negative_prompt", "")
         display_name = cfg.get("display_name") or prompt
@@ -187,6 +201,7 @@ def _build_sa3_clip_plan(sound_configs: list[dict], base_dbfs: float | None) -> 
                 "steps": steps,
                 "cfg_scale": cfg_scale,
                 "dbfs": dbfs,
+                "calibration_dbfs": calibration_dbfs,
                 "copy_index": copy_idx,
                 "total_copies": seed_copies,
                 "position": position,
@@ -319,7 +334,7 @@ async def calibrate_audio(
     req: Request = None,
 ):
     """
-    Normalize RMS + apply dBFS calibration to any uploaded audio file.
+    Loudness-calibrate any uploaded audio file (gated LUFS + true-peak limiter).
     Returns a static URL to the calibrated WAV file.
     """
     tmp_input = None
@@ -375,7 +390,7 @@ async def post_process_audio(
     Apply FX-panel post-effects (noise reduction and/or trim silence) to an
     uploaded audio file, returning a static URL to the processed WAV.
 
-    Deliberately does NOT normalize RMS / calibrate dBFS — the FX editor's Save
+    Deliberately does NOT calibrate loudness — the FX editor's Save
     path calibrates the final bounced result, so a post-effect placed mid-chain
     must not alter the level. Reuses the same DSP as generation-time denoising
     and trim-silence detection.

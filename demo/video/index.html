@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en" data-resolution="landscape"
+  data-composition-variables='[{"id":"caption1","type":"string","label":"Caption 1","default":"Describe a place"},{"id":"caption2","type":"string","label":"Caption 2","default":"…and the soundscape builds itself"}]'>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.15.0/dist/gsap.min.js"></script>
+    <style>
+      :root {
+        --ground-a: #2b39ff;
+        --ground-b: #070b5c;
+        --ink: #ffffff;
+        --pill: rgba(8, 10, 40, 0.72);
+        --font-display: "Inter", sans-serif;
+        --frame-scale: 0.86;
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body {
+        width: 1920px; height: 1080px; overflow: hidden;
+        background: var(--ground-b);
+      }
+      #root { position: relative; width: 100%; height: 100%; font-family: var(--font-display); }
+      #ground {
+        position: absolute; inset: 0;
+        background: radial-gradient(120% 90% at 30% 20%, var(--ground-a) 0%, var(--ground-b) 70%);
+      }
+      /* The camera: scale + x/y with origin 0 0, driven by focus() below. */
+      #camera { position: absolute; inset: 0; transform-origin: 0 0; }
+      #frame {
+        position: absolute; left: 50%; top: 50%;
+        width: 1920px; height: 1080px; margin: -540px 0 0 -960px;
+        scale: var(--frame-scale);
+        border-radius: 18px; overflow: hidden;
+        box-shadow: 0 40px 120px rgba(0, 0, 20, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.12);
+      }
+      #frame video { position: absolute; inset: 0; width: 100%; height: 100%; }
+      .caption {
+        position: absolute; left: 0; right: 0; display: flex; justify-content: center;
+      }
+      .caption span {
+        display: inline-block; padding: 18px 34px; border-radius: 999px;
+        background: var(--pill); color: var(--ink);
+        font-size: 46px; font-weight: 700; letter-spacing: -0.02em;
+        backdrop-filter: blur(10px);
+      }
+      #cap-describe { top: 70px; }
+      #cap-build { bottom: 70px; }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="10" data-width="1920" data-height="1080">
+      <div id="ground"></div>
+      <div id="camera">
+        <div id="frame">
+          <!-- Typing + click, played 1.6x (source 0.8 s → 10.56 s) -->
+          <video id="take-type" class="clip" src="assets/capture.mp4" muted
+            data-start="0" data-duration="6.1" data-media-start="0.8" data-playback-rate="1.6"
+            data-track-index="0"></video>
+          <!-- Scene building, played 2.2x (source 10.56 s → 19.14 s) -->
+          <video id="take-build" class="clip" src="assets/capture.mp4" muted
+            data-start="6.1" data-duration="3.9" data-media-start="10.56" data-playback-rate="2.2"
+            data-track-index="0"></video>
+        </div>
+      </div>
+      <div id="cap-describe" class="caption clip" data-start="1.3" data-duration="3.4" data-track-index="1">
+        <span data-var-text="caption1">Describe a place</span>
+      </div>
+      <div id="cap-build" class="caption clip" data-start="7.3" data-duration="2.7" data-track-index="1">
+        <span data-var-text="caption2">…and the soundscape builds itself</span>
+      </div>
+    </div>
+    <script>
+      // Capture-space (1920×1080 video px) → camera transform that centres the point at
+      // zoom S, clamped so the frame edge never shows inside the stage when zoomed.
+      const W = 1920, H = 1080, FS = 0.86;
+      const stage = (p) => ({ x: W / 2 + (p.x - W / 2) * FS, y: H / 2 + (p.y - H / 2) * FS });
+      function focus(px, py, S) {
+        if (S <= 1) return { scale: S, x: (W - W * S) / 2, y: (H - H * S) / 2 };
+        const s = stage({ x: px, y: py });
+        const left = W / 2 - (W / 2) * FS, right = W / 2 + (W / 2) * FS;
+        const top = H / 2 - (H / 2) * FS, bottom = H / 2 + (H / 2) * FS;
+        const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+        return {
+          scale: S,
+          x: clamp(W / 2 - S * s.x, W - S * right, -S * left),
+          y: clamp(H / 2 - S * s.y, H - S * bottom, -S * top),
+        };
+      }
+
+      // Targets from assets/events.json (capture px).
+      const COMPOSER = { x: 960, y: 936 };
+      const GENERATE = { x: 1115, y: 987 };
+      const CARD = { x: 245, y: 160 };
+
+      const tl = gsap.timeline({ paused: true });
+      tl.fromTo("#camera", { ...focus(0, 0, 1), filter: "blur(6px)" },
+        { ...focus(0, 0, 1), filter: "blur(0px)", duration: 0.5, ease: "expo.out" }, 0);
+      tl.fromTo("#frame", { y: 40 }, { y: 0, duration: 0.9, ease: "expo.out" }, 0);
+      // Punch into the composer as the cursor lands on it (click at ~1.23 s).
+      tl.to("#camera", { ...focus(COMPOSER.x, COMPOSER.y, 2.0), duration: 0.75, ease: "power2.inOut" }, 0.7);
+      // Follow the cursor to Generate (click at ~5.86 s).
+      tl.to("#camera", { ...focus(GENERATE.x, GENERATE.y, 2.25), duration: 0.9, ease: "power2.inOut" }, 4.75);
+      // Pull back to reveal the scene starting, then punch into the progress card.
+      tl.to("#camera", { ...focus(0, 0, 1), duration: 0.7, ease: "power3.inOut" }, 6.05);
+      tl.to("#camera", { ...focus(CARD.x, CARD.y, 2.1), duration: 0.9, ease: "power2.inOut" }, 6.95);
+
+      // Captions: arrive on a long tail, hold still, leave quicker.
+      tl.fromTo("#cap-describe span", { opacity: 0, y: -16, filter: "blur(6px)" },
+        { opacity: 1, y: 0, filter: "blur(0px)", duration: 0.45, ease: "expo.out" }, 1.3);
+      tl.to("#cap-describe span", { opacity: 0, y: -10, duration: 0.25, ease: "power2.in" }, 4.4);
+      tl.fromTo("#cap-build span", { opacity: 0, y: 16, filter: "blur(6px)" },
+        { opacity: 1, y: 0, filter: "blur(0px)", duration: 0.45, ease: "expo.out" }, 7.3);
+
+      window.__timelines["main"] = tl;
+      tl.seek(0);
+    </script>
+  </body>
+</html>

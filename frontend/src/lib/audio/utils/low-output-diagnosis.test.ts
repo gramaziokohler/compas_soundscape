@@ -17,6 +17,7 @@ const src = (over: Partial<OutputSourceDiagnostics> = {}): OutputSourceDiagnosti
 const diag = (over: Partial<OutputDiagnostics> = {}): OutputDiagnostics => ({
   contextState: 'running',
   outputDbfs: -60,
+  limiterReductionDb: 0,
   masterVolume: 1,
   mode: AudioMode.ANECHOIC,
   sources: [src()],

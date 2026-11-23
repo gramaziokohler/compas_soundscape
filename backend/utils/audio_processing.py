@@ -4,11 +4,9 @@
 import torch
 import numpy as np
 import librosa
+from utils.loudness import calibrate_loudness
 from config.constants import (
-    AUDIO_RMS_EPSILON,
     AUDIO_SAMPLE_RATE,
-    CLIPPING_THRESHOLD,
-    DBFS_CLIPPING_THRESHOLD,
     DEFAULT_DBFS,
     DENOISING_REDUCTION_STRENGTH,
     DENOISING_NOISE_PROFILE_DURATION,
@@ -92,84 +90,34 @@ def trim_ir(
     return out
 
 
-def calculate_rms(audio_tensor: torch.Tensor) -> float:
-    """Calculate RMS (Root Mean Square) level of audio signal
+def calibrate_audio_loudness(
+    audio_tensor: torch.Tensor,
+    sample_rate: int,
+    target_dbfs: float = DEFAULT_DBFS,
+    limit: bool = True,
+    label: str = "",
+) -> torch.Tensor:
+    """Loudness-calibrate a mono tensor (see `utils.loudness.calibrate_loudness`).
+
+    Gated BS.1770 loudness → gain to the anchor (shifted by target_dbfs - DEFAULT_DBFS)
+    → true-peak limiter. `limit=False` gives a gain-only normalization, used before
+    denoising so the denoiser sees a consistent level; the final call re-measures.
 
     Args:
-        audio_tensor: Audio tensor of shape (channels, samples) or (samples,)
+        audio_tensor: Mono audio, shape (1, samples) or (samples,)
+        sample_rate: Sample rate of the tensor
+        target_dbfs: Calibration level (normally the global base anchor)
+        limit: Apply the true-peak limiter (final step)
+        label: Name printed with the loudness report
 
     Returns:
-        RMS level as a float
+        Calibrated tensor, same shape and device as the input
     """
-    # Convert to numpy for easier calculation
-    audio_np = audio_tensor.cpu().numpy()
-
-    # If stereo, average the channels
-    if audio_np.ndim > 1:
-        audio_np = np.mean(audio_np, axis=0)
-
-    # Calculate RMS
-    rms = np.sqrt(np.mean(audio_np ** 2))
-    return float(rms)
-
-
-def normalize_audio_rms(audio_tensor: torch.Tensor, target_rms: float = 0.1) -> torch.Tensor:
-    """Normalize audio to a target RMS level
-
-    Args:
-        audio_tensor: Audio tensor of shape (channels, samples) or (samples,)
-        target_rms: Target RMS level (default 0.1 for reasonable headroom)
-
-    Returns:
-        Normalized audio tensor
-    """
-    current_rms = calculate_rms(audio_tensor)
-
-    # Avoid division by zero
-    if current_rms < AUDIO_RMS_EPSILON:
-        return audio_tensor
-
-    # Calculate scaling factor
-    scale_factor = target_rms / current_rms
-
-    # Apply scaling
-    normalized_audio = audio_tensor * scale_factor
-
-    # Prevent clipping
-    max_val = torch.max(torch.abs(normalized_audio))
-    if max_val > CLIPPING_THRESHOLD:
-        normalized_audio = normalized_audio * (CLIPPING_THRESHOLD / max_val)
-
-    return normalized_audio
-
-
-def apply_dbfs_calibration(audio_tensor: torch.Tensor, target_dbfs: float, base_dbfs: float = DEFAULT_DBFS) -> torch.Tensor:
-    """Apply dBFS calibration to audio based on desired level.
-
-    Args:
-        audio_tensor: Normalized audio tensor
-        target_dbfs: Target volume level in dBFS (e.g., -12 for loud, -24 for quiet)
-        base_dbfs: Base reference level in dBFS (default -18)
-
-    Returns:
-        Calibrated audio tensor
-    """
-    # Calculate dB difference from base
-    db_diff = target_dbfs - base_dbfs
-
-    # Convert dB to linear scale
-    # 20*log10(x) = db_diff => x = 10^(db_diff/20)
-    scale_factor = 10.0 ** (db_diff / 20.0)
-
-    # Apply scaling
-    calibrated_audio = audio_tensor * scale_factor
-
-    # Prevent clipping
-    max_val = torch.max(torch.abs(calibrated_audio))
-    if max_val > DBFS_CLIPPING_THRESHOLD:
-        calibrated_audio = calibrated_audio * (DBFS_CLIPPING_THRESHOLD / max_val)
-
-    return calibrated_audio
+    audio_np = audio_tensor.detach().cpu().numpy()
+    calibrated, report = calibrate_loudness(audio_np, sample_rate, target_dbfs=target_dbfs, limit=limit)
+    if limit:
+        print(f"[loudness] {label or 'audio'}: {report.describe()}")
+    return torch.from_numpy(calibrated).to(audio_tensor.device)
 
 
 def _try_extract_noise_from_gap(

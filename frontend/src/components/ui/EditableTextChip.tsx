@@ -1,20 +1,11 @@
 'use client';
 
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { SIMPLE_MODE } from '@/utils/constants';
-
-/** Option after `current` (case-insensitive), wrapping; the first one for a custom value off the list. */
-function nextOption(options: readonly string[], current: string): string {
-  const i = options.findIndex((o) => o.toLowerCase() === current.trim().toLowerCase());
-  return options[(i + 1) % options.length];
-}
+import { useState, type KeyboardEvent } from 'react';
 
 export interface EditableTextChipProps {
   /** Current value shown on the chip. */
   value: string;
-  /** Values cycled through on single click. */
-  options: readonly string[];
-  /** Placeholder of the free-text input shown after a double click. */
+  /** Placeholder of the text input. */
   placeholder?: string;
   title: string;
   disabled?: boolean;
@@ -24,39 +15,16 @@ export interface EditableTextChipProps {
 /**
  * EditableTextChip Component
  *
- * The string counterpart of `EditableCycleChip`: a `bubble-chip` that cycles
- * through preset values on single click and turns into a text input on double
- * click for any value. Enter / blur commits a non-empty value, Escape cancels.
+ * A `bubble-chip` showing a free-text value; a click turns it into a text input.
+ * Enter / blur commits a non-empty value, Escape cancels.
  *
  * Usage:
  * ```tsx
- * <EditableTextChip value={lang} options={['English', 'French']}
- *   title="Speech language" onChange={setLang} />
+ * <EditableTextChip value={lang} title="Speech language" onChange={setLang} />
  * ```
  */
-export function EditableTextChip({ value, options, placeholder, title, disabled, onChange }: EditableTextChipProps) {
+export function EditableTextChip({ value, placeholder, title, disabled, onChange }: EditableTextChipProps) {
   const [draft, setDraft] = useState<string | null>(null);
-  const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const clearClickTimer = () => {
-    if (clickTimer.current) clearTimeout(clickTimer.current);
-    clickTimer.current = null;
-  };
-  useEffect(() => clearClickTimer, []);
-
-  const handleClick = () => {
-    clearClickTimer();
-    // Deferred so the first click of a double click doesn't also cycle.
-    clickTimer.current = setTimeout(() => {
-      clickTimer.current = null;
-      if (options.length > 0) onChange(nextOption(options, value));
-    }, SIMPLE_MODE.CHIP_DOUBLE_CLICK_MS);
-  };
-
-  const handleDoubleClick = () => {
-    clearClickTimer();
-    setDraft(value);
-  };
 
   const commit = () => {
     if (draft === null) return;
@@ -100,10 +68,9 @@ export function EditableTextChip({ value, options, placeholder, title, disabled,
     <button
       type="button"
       className="bubble-chip"
-      onClick={handleClick}
-      onDoubleClick={handleDoubleClick}
+      onClick={() => setDraft(value)}
       disabled={disabled}
-      title={`${title} — double-click to type any value`}
+      title={`${title} — click to change`}
     >
       {value}
     </button>

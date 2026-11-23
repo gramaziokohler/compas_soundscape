@@ -1,6 +1,6 @@
 """
 Per-item TTS generation helper — synchronous (blocking) Gemini TTS calls with
-retry/backoff and dBFS calibration.
+retry/backoff and loudness calibration.
 
 Called via services.io_jobs.run_blocking() (starlette run_in_threadpool) from
 routers/tts.py's in-process asyncio job, so a slow or rate-limited TTS call
@@ -11,13 +11,12 @@ from __future__ import annotations
 import time
 
 from services.tts_service import TTSService
-from utils.audio_processing import apply_dbfs_calibration, normalize_audio_rms
+from utils.audio_processing import calibrate_audio_loudness
 from utils.resampling import resample_to
 from config.constants import (
     DEFAULT_TTS_MODEL,
     FILENAME_MAX_LENGTH,
     WINDOWS_ILLEGAL_FILENAME_CHARS,
-    TARGET_RMS,
     AUDIO_SAMPLE_RATE,
 )
 
@@ -29,10 +28,10 @@ TTS_RETRY_DELAYS_S = [3, 6, 12, 24]
 
 
 def _calibrate_wav_to_dbfs(input_path: str, target_dbfs: float) -> None:
-    """Resample to AUDIO_SAMPLE_RATE, normalize RMS, then apply dBFS calibration
-    to a WAV in place — mirrors
-    the TangoFlux/AudioLDM2 and /api/calibrate-audio post-processing so TTS
-    speech sits at the same dBFS anchor as every other sound mode."""
+    """Resample to AUDIO_SAMPLE_RATE, then loudness-calibrate a WAV in place —
+    the same post-processing as TangoFlux/AudioLDM2/SA3 and /api/calibrate-audio,
+    so TTS speech sits at the same loudness anchor as every other sound mode."""
+    import os
     import soundfile as sf
     import torch
     import torchaudio
@@ -42,8 +41,9 @@ def _calibrate_wav_to_dbfs(input_path: str, target_dbfs: float) -> None:
         audio_np = audio_np.mean(axis=1)
     audio_np = resample_to(audio_np, sample_rate)
     audio_tensor = torch.from_numpy(audio_np).float().unsqueeze(0)
-    audio_tensor = normalize_audio_rms(audio_tensor, target_rms=TARGET_RMS)
-    audio_tensor = apply_dbfs_calibration(audio_tensor, target_dbfs=target_dbfs)
+    audio_tensor = calibrate_audio_loudness(
+        audio_tensor, AUDIO_SAMPLE_RATE, target_dbfs=target_dbfs, label=os.path.basename(input_path),
+    )
     torchaudio.save(input_path, audio_tensor.cpu(), AUDIO_SAMPLE_RATE)
 
 

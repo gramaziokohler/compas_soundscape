@@ -188,7 +188,9 @@ class GpuRunner:
                         duration=clip["duration"],
                         guidance_scale=clip["guidance_scale"],
                         steps=clip["steps"],
-                        dbfs=clip["dbfs"],
+                        # File level = the base anchor; clip["dbfs"] is the playback level
+                        # (returned as volume_dbfs). Old queued clips have no calibration_dbfs.
+                        dbfs=clip.get("calibration_dbfs", clip["dbfs"]),
                         apply_denoising=apply_denoising,
                         audio_model=audio_model,
                         negative_prompt=clip.get("negative_prompt", ""),

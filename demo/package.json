@@ -1,0 +1,22 @@
+﻿{
+    "name":  "compas-demo-video",
+    "version":  "1.0.0",
+    "description":  "",
+    "main":  "index.js",
+    "scripts":  {
+                    "record:test":  "cd record \u0026\u0026 node scenes/test.mjs",
+                    "preview":  "cd video \u0026\u0026 npx hyperframes preview",
+                    "check":  "cd video \u0026\u0026 npx hyperframes check",
+                    "render":  "cd video \u0026\u0026 npx hyperframes render"
+                },
+    "keywords":  [
+
+                 ],
+    "author":  "",
+    "license":  "ISC",
+    "devDependencies":  {
+                            "hyperframes":  "^0.9.84",
+                            "playwright":  "^1.57.0"
+                        },
+    "type":  "module"
+}

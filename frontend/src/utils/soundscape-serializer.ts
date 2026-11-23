@@ -1274,6 +1274,10 @@ export function buildAnalysisStateSave(
     if ('peopleCount' in config) base.peopleCount = (config as any).peopleCount;
     if ('likeliness' in config) base.likeliness = (config as any).likeliness;
     if (config.type === 'scenario' && config.soundDetail) base.soundDetail = config.soundDetail;
+    if (config.type === 'scenario' && config.referenceImageFilename) {
+      base.referenceImageFilename = config.referenceImageFilename;
+      base.referenceImageName = config.referenceImageName;
+    }
     if ('timelineDurationMs' in config) base.timelineDurationMs = (config as any).timelineDurationMs;
     if ('analysisOptions' in config) base.analysisOptions = (config as any).analysisOptions;
     if ('applyNoiseReduction' in config) base.applyNoiseReduction = (config as any).applyNoiseReduction;
@@ -1462,6 +1466,11 @@ export function restoreAnalysisState(analysisState: AnalysisState): {
     if (saved.peopleCount !== undefined) config.peopleCount = saved.peopleCount;
     if (saved.likeliness !== undefined) config.likeliness = saved.likeliness;
     if (saved.soundDetail !== undefined) config.soundDetail = saved.soundDetail;
+    // URL resolved after load (analysisStore.rehydrateSceneImages), against the audio base URL.
+    if (saved.referenceImageFilename) {
+      config.referenceImageFilename = saved.referenceImageFilename;
+      config.referenceImageName = saved.referenceImageName;
+    }
     if (saved.timelineDurationMs !== undefined) config.timelineDurationMs = saved.timelineDurationMs;
     if (saved.analysisOptions) config.analysisOptions = saved.analysisOptions;
     if (saved.applyNoiseReduction !== undefined) config.applyNoiseReduction = saved.applyNoiseReduction;

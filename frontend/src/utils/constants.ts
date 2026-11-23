@@ -369,6 +369,18 @@ export const MODAL_SHELL = {
   Z_INDEX: 99990, // below CardSelect menus (99999) / histograms (100000) so pickers inside a dialog open on top
 } as const;
 
+/** Reference-image thumbnail that opens the full image in a window (ImagePreviewButton). */
+export const IMAGE_PREVIEW = {
+  /** Window width (ModalShell caps it at 92vw). */
+  MODAL_WIDTH: '60rem',
+  /** Max image height inside the window (leaves room for the title row). */
+  IMAGE_MAX_HEIGHT: '76vh',
+  /** Thumbnail edge in the composer's image chip (px). */
+  CHIP_THUMB_PX: 14,
+  /** Thumbnail height in the Scene settings summary (px). */
+  SUMMARY_THUMB_PX: 48,
+} as const;
+
 /** Text input / textarea look shared by dialog forms. */
 export const FORM_FIELD_CLASS =
   'w-full px-2 py-1 text-xs bg-secondary-lighter text-foreground border border-secondary-light focus:outline-none focus:border-primary transition-colors';
@@ -727,7 +739,7 @@ export const AUDIO_MODEL_AUDIOLDM2 = "audioldm2";
 export const AUDIO_MODEL_ELEVENLABS = "elevenlabs";
 export const AUDIO_MODEL_SA3 = "stable-audio-3";
 export const AUDIO_MODEL_TTS = "gemini-tts";
-export const DEFAULT_AUDIO_MODEL = AUDIO_MODEL_ELEVENLABS;
+export const DEFAULT_AUDIO_MODEL = AUDIO_MODEL_SA3;
 
 // Stable Audio 3 (small-sfx) — text-to-audio plus the FX restyle/inpaint effect.
 export const STABLE_AUDIO_MODES = {
@@ -1497,13 +1509,19 @@ export const AUDIO_CONTROL = {
     RESET: 0.8, // Value restored by "unmute" / slider double-click
   },
   
-  // Limiter settings (DynamicsCompressorNode)
+  // Master-bus safety limiter (DynamicsCompressorNode, live playback) — also the
+  // ceiling of the export's post-render limiter. Every file is loudness-calibrated
+  // to one anchor (backend utils/loudness.py) and each sound's dB slider is a pure
+  // offset from it; the limiter only catches the overs of the summed mix, so it
+  // sits just under full scale instead of compressing everything above -6 dB
+  // (which flattened the mix and made raising a slider barely audible).
   LIMITER: {
-    THRESHOLD_DB: -6.0,    // Start limiting at -6dB (provides headroom)
+    THRESHOLD_DB: -1.0,    // Ceiling: only peaks of the summed mix are touched
     KNEE_DB: 0.0,          // Hard knee for brick-wall limiting
     RATIO: 20.0,           // High compression ratio for limiting effect
     ATTACK_SEC: 0.0,       // Instant attack (0ms)
     RELEASE_SEC: 0.1,      // Moderate release (100ms) to avoid pumping
+    EXPORT_RELEASE_SEC: 0.1, // Post-render limiter release (exporter)
   },
   
   // Default gain values
@@ -3062,8 +3080,6 @@ export const SIMPLE_MODE = {
   LLM_MODEL_OPTIONS: [LLM_MODEL_GEMINI_FLASH, LLM_MODEL_GEMINI_PRO],
   /** Example shown while typing a free-text speech language in the language chip. */
   SPEECH_LANGUAGE_PLACEHOLDER: 'Swiss German',
-  /** Language-chip click-to-cycle values (double-click types any language or dialect). */
-  SPEECH_LANGUAGE_OPTIONS: ['English', 'French', 'German', 'Swiss German', 'Italian', 'Spanish'],
   /** Scenario card defaults / bounds for composer-created scenes. */
   SCENARIO_LIKELINESS: 9,
   SCENARIO_LIKELINESS_MIN: 1,

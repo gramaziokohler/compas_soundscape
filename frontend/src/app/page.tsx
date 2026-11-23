@@ -102,6 +102,7 @@ import { CARD_TYPE_LABELS } from "@/types/card";
 import type { SelectedGeometry, AcousticMaterial } from "@/types/materials";
 import type { AudioRenderingMode } from "@/components/audio/AudioRenderingModeSelector";
 import { buildSoundscapeSavePayload, restoreSoundscapeState, getBlobUrlSounds, buildAnalysisStateSave, restoreAnalysisState } from "@/utils/soundscape-serializer";
+import { urlToBlob } from "@/utils/dataUrl";
 import { getStoredJobs, recordInflightJob } from "@/lib/job-tracker";
 import { ImportSandboxModal } from "@/components/scene/ImportSandboxModal";
 import { SendScenesModal } from "@/components/scene/SendScenesModal";
@@ -207,6 +208,28 @@ function applySavedSpeckleModel(data: SoundscapeData, setModelName: (name: strin
   if (speckleData.display_name) setModelName(speckleData.display_name);
 }
 
+/** Upload scenario cards' reference images not saved yet and record their server filename. */
+async function persistSceneReferenceImages(modelId: string): Promise<void> {
+  const configs = useAnalysisStore.getState().analysisConfigs;
+  for (let i = 0; i < configs.length; i++) {
+    const cfg = configs[i];
+    const dataUrl = cfg?.type === 'scenario' ? cfg.referenceImages?.[0] : undefined;
+    if (!dataUrl || cfg.type !== 'scenario' || cfg.referenceImageFilename) continue;
+    try {
+      const { filename } = await apiService.uploadSceneImage(modelId, await urlToBlob(dataUrl));
+      // Match the card by its image: indices may shift while the upload runs.
+      const live = useAnalysisStore.getState().analysisConfigs;
+      const idx = live.findIndex((c) => c.type === 'scenario' && c.referenceImages?.[0] === dataUrl);
+      if (idx < 0) continue;
+      runWithoutUndo(() =>
+        useAnalysisStore.getState().handleUpdateConfig(idx, { referenceImageFilename: filename } as Partial<AnalysisConfig>),
+      );
+    } catch (err) {
+      console.warn(`[page:save] Failed to save the reference image of scene ${i}:`, err);
+    }
+  }
+}
+
 function applyRestoredSoundscapePayload(
   data: SoundscapeData,
   audioBaseUrl: string,
@@ -274,6 +297,7 @@ function applyRestoredSoundscapePayload(
     });
     useAreaDrawingStore.getState().hydrateFromConfigs(analysisRestored.analysisConfigs);
     useAnalysisStore.getState().rehydrateAudioContextSources(audioBaseUrl);
+    useAnalysisStore.getState().rehydrateSceneImages(audioBaseUrl);
     if (analysisRestored.soundConfigParentIndices.size > 0) {
       const storeState = useSoundscapeStore.getState();
       const configs = storeState.soundConfigs.map((c, i) => {
@@ -1723,7 +1747,9 @@ function HomeContent() {
     formData.append('file', config.audioFile);
     formData.append('segments_json', JSON.stringify(segmentsList));
     formData.append('apply_noise_reduction', String(config.applyNoiseReduction ?? false));
-    formData.append('target_dbfs', String(selectedPrompts[0]?.metadata?.dbfs ?? DEFAULT_DBFS));
+    // Calibrate the segments to the global anchor; each sound's own level (dbfs
+    // below) is applied at playback, so baking it in would apply it twice.
+    formData.append('target_dbfs', String(useAudioControlsStore.getState().globalBaseDbfs));
 
     const res = await fetch(`${API_BASE_URL}/api/extract-sed-segments`, { method: 'POST', body: formData });
     if (!res.ok) {
@@ -2397,6 +2423,7 @@ function HomeContent() {
           // Rebuild persisted audio-context source Files so the SED waveform/results
           // render after a model reload (the original File object is not JSON-serializable).
           analysis.rehydrateAudioContextSources(audioBaseUrl);
+          analysis.rehydrateSceneImages(audioBaseUrl);
           // Rebuild parentUsageOriginalIndex on sound configs from hierarchical save data
           if (analysisRestored.soundConfigParentIndices.size > 0) {
             const storeState = useSoundscapeStore.getState();
@@ -2736,6 +2763,10 @@ function HomeContent() {
           console.warn(`[page:save] Failed to persist audio context source for config ${i}:`, err);
         }
       }
+
+      // 2b. Save each scene's composer reference image once (data URI → model media dir),
+      // so the Scene settings preview and a regenerated scenario survive a reload.
+      await persistSceneReferenceImages(modelId);
 
       // 3. Build save payload (with server filenames for blob sounds + simulation state).
       // Reads live store state, so the freshly-persisted analysis audio filenames

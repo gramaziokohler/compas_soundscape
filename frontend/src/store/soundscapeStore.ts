@@ -2704,6 +2704,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               apply_denoising: applyNoiseReduction,
               trim_silence: trimSilence,
               audio_model: audioModel,
+              base_dbfs: useAudioControlsStore.getState().globalBaseDbfs,
             });
             if (!result) throw new Error('Failed to submit regeneration');
             const { generation_id } = result;
@@ -2900,7 +2901,9 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                   voice_name: config.voice_name,
                   display_name: config.display_name || prompt,
                   position: target.position ?? config.position,
-                  dbfs: config.dbfs ?? globalBaseDbfs,
+                  // Calibrate the WAV to the global anchor; config.dbfs is applied at
+                  // playback (volume_dbfs below), so baking it in would apply it twice.
+                  dbfs: globalBaseDbfs,
                   prompt_index: target.prompt_index ?? targetIndex,
                   copy_index: target.copy_index ?? variantIdx,
                   total_copies: speechLines?.length ?? target.total_copies ?? 1,
@@ -2972,6 +2975,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 apply_denoising: applyNoiseReduction,
                 trim_silence: trimSilence,
                 audio_model: audioModel,
+                base_dbfs: useAudioControlsStore.getState().globalBaseDbfs,
               });
               if (!result) throw new Error('Failed to submit regeneration');
               const { generation_id } = result;

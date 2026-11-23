@@ -291,6 +291,12 @@ export interface ScenarioConfig extends AnalysisBaseConfig {
   soundDetail?: FoleySoundDetail;
   /** Reference images (data URIs) sent to the scenarist. Transient — not saved or kept in undo history. */
   referenceImages?: string[];
+  /** File name of the composer's reference image (Scene settings preview). Saved with the project. */
+  referenceImageName?: string;
+  /** Server filename of the reference image once saved with the project (model media dir). */
+  referenceImageFilename?: string;
+  /** Runtime URL of the saved reference image (audio base URL + filename), set on load. Not saved. */
+  referenceImageUrl?: string;
 }
 
 // ============================================================================
