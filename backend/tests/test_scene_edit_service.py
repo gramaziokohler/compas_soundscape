@@ -83,13 +83,13 @@ def test_speech_ops_only_target_speech_cards():
 
 def test_new_sounds_get_refs_and_later_ops_may_use_them():
     ops, warnings = _normalise(
-        SceneEditOp(op="add_sound", prompt="door creak", anchor_objects=["O1", "O7"], count=9),
+        SceneEditOp(op="add_sound", prompt="door creak", position=[1, 2, 0.9], count=9),
         SceneEditOp(op="set_level", targets=["N1"], delta_db=-3),
     )
     assert [o.op for o in ops] == ["add_sound", "set_level"]
     added = ops[0]
     assert added.new_ref == "N1"
-    assert added.anchor_objects == ["O1"]
+    assert added.position == [1, 2, 0.9]
     assert added.count == SCENE_EDIT_MAX_VARIANTS
     assert added.category == "sound event"
     assert ops[1].targets == ["N1"]
@@ -98,20 +98,20 @@ def test_new_sounds_get_refs_and_later_ops_may_use_them():
 
 def test_new_speaker_gets_a_free_valid_voice():
     ops, warnings = _normalise(
-        SceneEditOp(op="add_speaker", character="Sofia", lines=["Sorry to interrupt"], times_s=[25], near="S3"),
-        SceneEditOp(op="add_speaker", character="Nobody", lines=["Hi"]),
-        SceneEditOp(op="add_speaker", character=TTS_CHARACTER_NAMES[0], lines=[]),
+        SceneEditOp(op="add_speaker", character="Sofia", lines=["Sorry to interrupt"], times_s=[25], position=[3, 3, 1.6]),
+        SceneEditOp(op="add_speaker", character="Nobody", lines=["Hi"], position=[5, 4, 1.25]),
+        SceneEditOp(op="add_speaker", character=TTS_CHARACTER_NAMES[0], lines=[], position=[5, 4, 1.25]),
     )
     assert len(ops) == 2
     chars = [o.character for o in ops]
     assert all(c in TTS_CHARACTER_NAMES for c in chars)
     assert "Sofia" not in chars and len(set(chars)) == 2
-    assert ops[0].near == "S3" and ops[0].times_s == [25]
+    assert ops[0].times_s == [25]
     assert any("no lines" in w for w in warnings)
 
 
 def test_new_sound_cap():
-    many = [SceneEditOp(op="add_sound", prompt=f"sound {i}") for i in range(SCENE_EDIT_MAX_NEW_SOUNDS + 2)]
+    many = [SceneEditOp(op="add_sound", prompt=f"sound {i}", position=[1, 1, 1]) for i in range(SCENE_EDIT_MAX_NEW_SOUNDS + 2)]
     ops, warnings = _normalise(*many)
     assert len(ops) == SCENE_EDIT_MAX_NEW_SOUNDS
     assert len(warnings) == 2
@@ -120,7 +120,7 @@ def test_new_sound_cap():
 def test_positions_are_clamped_and_invalid_moves_dropped():
     ops, warnings = _normalise(
         SceneEditOp(op="move", targets=["S2"], position=[50, -3, 9]),
-        SceneEditOp(op="move", targets=["S2"], anchor_objects=["O9"]),
+        SceneEditOp(op="move", targets=["S2"]),
     )
     assert len(ops) == 1
     x, y, z = ops[0].position
@@ -174,3 +174,16 @@ def test_plan_schema_is_flat_for_structured_output():
     op = schema["$defs"]["SceneEditOp"]
     assert op["additionalProperties"] is False
     assert "discriminator" not in str(schema)
+
+
+def test_new_sound_without_position_is_dropped():
+    ops, warnings = _normalise(
+        SceneEditOp(op="add_speaker", character="Felix", lines=["Hi"]),
+        SceneEditOp(op="add_sound", prompt="door creak", position=[1, 2]),
+    )
+    assert ops == []
+    assert len(warnings) == 2 and all("no position" in w for w in warnings)
+
+
+def test_plan_schema_lists_ops_before_reply():
+    assert list(SceneEditPlan.model_json_schema()["properties"]) == ["ops", "reply"]

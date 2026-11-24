@@ -3146,8 +3146,6 @@ export const SCENE_EDIT = {
   SCENARIO_TEXT_MAX_CHARS: 3000,
   /** Model-analysis object groups sent with the snapshot. */
   MAX_OBJECTS: 80,
-  /** Distance (m) between a sound added "near" another one and that sound. */
-  NEAR_OFFSET_M: 0.8,
   /** Default length (s) of an added foley sound when the agent gives none. */
   DEFAULT_SOUND_DURATION_S: 4,
   /** set_density with an interval: first occurrence starts after this fraction of the interval. */

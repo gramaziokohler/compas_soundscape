@@ -25,8 +25,6 @@ import {
   formatMmSs,
   isBackgroundCategory,
   isSpeechCard,
-  sceneObjectGroups,
-  sceneRoomBounds,
   sceneScenarioAt,
   type Vec3,
 } from './sceneCards';
@@ -52,14 +50,9 @@ function sceneEntryIds(usageIndex: number): Set<string> {
   );
 }
 
-/** Place for a new card: the op's placement, else the room centre. */
-function newCardPosition(ctx: SceneEditApplyContext, op: SceneEditOp): Vec3 | undefined {
-  const placed = resolvePlacement(ctx, op);
-  if (placed) return placed;
-  const sc = sceneScenarioAt(ctx.usageIndex);
-  const room = sc ? sceneRoomBounds(sceneObjectGroups(sc)) : null;
-  if (!room) return undefined;
-  return [(room.min[0] + room.max[0]) / 2, (room.min[1] + room.max[1]) / 2, room.min[2]];
+/** Place for a new card: the agent's position (the backend drops add ops without one). */
+function newCardPosition(op: SceneEditOp): Vec3 | undefined {
+  return resolvePlacement(op) ?? undefined;
 }
 
 /** Append a scenario-derived card to the scene and register its ref. */
@@ -102,7 +95,7 @@ function addSound(ctx: SceneEditApplyContext, op: SceneEditOp): boolean {
     : op.duration_s ?? SCENE_EDIT.DEFAULT_SOUND_DURATION_S;
   const copies = background ? 1 : Math.max(1, op.count ?? 1);
   const timestamps = background ? [] : op.times_s.map(formatMmSs);
-  const position = newCardPosition(ctx, op);
+  const position = newCardPosition(op);
   const base = baseSource(ctx, entryIdFor(op.name, sceneEntryIds(ctx.usageIndex)));
   const config: SoundGenerationConfig = {
     config_id: newConfigId(),
@@ -139,7 +132,7 @@ function addSound(ctx: SceneEditApplyContext, op: SceneEditOp): boolean {
 function addSpeaker(ctx: SceneEditApplyContext, op: SceneEditOp): boolean {
   const voiceName = resolveVoiceForCharacter(op.character) ?? TTS_VOICES[0].value;
   const timestamps = op.times_s.map(formatMmSs);
-  const position = newCardPosition(ctx, op);
+  const position = newCardPosition(op);
   const base = baseSource(ctx, entryIdFor(op.character, sceneEntryIds(ctx.usageIndex)));
   const config: SoundGenerationConfig = {
     config_id: newConfigId(),

@@ -70,12 +70,10 @@ TIMING (instant)
 - remove_occurrences {targets, times_s}: drop the occurrences starting nearest those times.
 - set_scene_duration {seconds}
 SPACE (instant)
-- move {targets, anchor_objects | near | position}: place on model objects ("O3"), next to another
-  sound ref, or at [x, y, z] metres.
+- move {targets, position}: the new [x, y, z] in metres (see PLACEMENT).
 - set_directivity {targets, preset, yaw_deg}: preset from the snapshot's directivity_presets.
 CONTENT (regenerates audio)
-- add_sound {new_ref, name, prompt, category, duration_s, times_s, count, anchor_objects | near |
-  position}: a new foley sound. prompt = a concrete text-to-audio description of the sound only
+- add_sound {new_ref, name, prompt, category, duration_s, times_s, count, position}: a new foley sound. prompt = a concrete text-to-audio description of the sound only
   (source, action, material, acoustic character; no room or reverb words). category "sound event" or
   "background sound". count = distinct audio variants (1-5).
 - remove {targets}
@@ -83,13 +81,18 @@ CONTENT (regenerates audio)
 - regenerate {targets}: new takes with the same prompt ("make it different").
 - set_variants {targets, count}: number of distinct audio copies (1-5); only new copies are generated.
 SPEECH (regenerates voices)
-- add_speaker {new_ref, character, lines, times_s, near | position | anchor_objects}: a new person
-  talking. lines = what they say, one entry per spoken turn; times_s = when each turn starts.
+- add_speaker {new_ref, character, lines, times_s, position}: ONE new person talking. lines = only
+  what THIS person says, one entry per spoken turn; times_s = when each turn starts. A new
+  conversation between two new people = two add_speaker ops, one per person.
 - edit_lines {targets, lines}: rewrite a speaker's turns (e.g. cut a line short where someone
   interrupts, translate, change tone). Give ALL lines of that speaker, edited ones included.
 - change_voice {targets, character}
 SCENE
 - rename_scene {title}
+PLACEMENT
+- Every add_sound, add_speaker and move op MUST have position = [x, y, z] in metres, chosen from the
+  room extents, the objects' centre / extent and the positions of the existing cards, following the
+  SPATIAL PLACEMENT rules. An op without a position is dropped.
 """
 
 
@@ -130,9 +133,9 @@ class SceneEditService:
             "- Times are seconds from the scene start and must lie inside the scene duration.\n"
             "- When the user names a sound loosely (\"the background\", \"footsteps\"), match it to every "
             "card that fits by name, category or prompt.\n"
-            "- When the user asks for something in a place (\"at the entrance\", \"near the window\"), anchor "
-            "new or moved sounds to the matching objects (doors, entrance, window…) or, when no object fits, "
-            "give positions inside the room.\n"
+            "- When the user asks for something in a place (\"at the entrance\", \"near the window\"), give "
+            "new or moved sounds a position at the matching objects (doors, entrance, window…), at the right "
+            "height for the source, or a plausible position inside the room when no object fits.\n"
             f"- Speakers use a character name from this list (it sets the voice): {', '.join(TTS_CHARACTER_NAMES)}. "
             "Pick one that is not already used in the scene for a new person.\n"
             f"- Speech lines may use these inline vocal tags only: {' '.join(TTS_INLINE_VOCAL_TAGS)}.\n"
@@ -142,7 +145,9 @@ class SceneEditService:
             "the user's request, so give approximate times.\n"
             "- If the request is ambiguous or impossible with these ops, return no ops and ask a short "
             "question or explain in the reply.\n"
-            "- The reply is one or two short sentences, in the user's language, saying what you changed.\n"
+            "- Write the ops first, then the reply. The reply is one or two short sentences, in the user's "
+            "language, describing exactly the ops you wrote: every sound or person it mentions as added, "
+            "changed or removed has its own op.\n"
             "- Spoken lines are in the scene language when one is given.\n"
         )
         room = room_extents_text(snapshot.room)
@@ -214,14 +219,13 @@ def _lines(lines: list[str]) -> list[str]:
     return [line.strip() for line in lines if line and line.strip()][:SCENE_EDIT_MAX_LINES]
 
 
-def _placement(op: SceneEditOp, object_refs: set[str], sound_refs: set[str], room: dict | None) -> bool:
-    """Keep only valid placement fields on ``op`` (in place). True when one remains."""
-    op.anchor_objects = [r for r in op.anchor_objects if r in object_refs]
-    if op.near not in sound_refs:
-        op.near = ""
-    if op.position:
-        op.position = clamp_position(op.position, room, SOUND_POSITION_WALL_MARGIN_M)
-    return bool(op.anchor_objects or op.near or op.position)
+def _placement(op: SceneEditOp, room: dict | None) -> bool:
+    """Clamp the agent's ``position`` inside the room (in place). True when it is usable.
+
+    The agent picks the position itself (like the scenarist); there is no fallback place.
+    """
+    op.position = clamp_position(op.position, room, SOUND_POSITION_WALL_MARGIN_M) if op.position else []
+    return bool(op.position)
 
 
 def normalise_plan(plan: SceneEditPlan, snapshot: SceneEditSnapshot) -> tuple[list[SceneEditOp], list[str]]:
@@ -232,7 +236,6 @@ def normalise_plan(plan: SceneEditPlan, snapshot: SceneEditSnapshot) -> tuple[li
     duration = snapshot.duration_s
     cards = {c.ref: c for c in snapshot.cards}
     speech_refs = {ref for ref, c in cards.items() if c.kind == "speech"}
-    object_refs = {o.ref for o in snapshot.objects}
     used_characters = {c.character for c in snapshot.cards if c.character}
     new_refs: set[str] = set()
     new_speech_refs: set[str] = set()
@@ -304,8 +307,8 @@ def normalise_plan(plan: SceneEditPlan, snapshot: SceneEditSnapshot) -> tuple[li
                 continue
             op.seconds = _clamp(op.seconds, *SCENE_EDIT_SCENE_DURATION_RANGE_S)
         elif op.op == "move":
-            if not _placement(op, object_refs, sound_refs, snapshot.room):
-                skip(op, "no valid place given")
+            if not _placement(op, snapshot.room):
+                skip(op, "no position given")
                 continue
         elif op.op == "set_directivity":
             presets = set(snapshot.directivity_presets) | {_OMNI_PRESET}
@@ -351,8 +354,9 @@ def normalise_plan(plan: SceneEditPlan, snapshot: SceneEditSnapshot) -> tuple[li
                     ref = f"N{int(ref[1:]) + 1}"
             op.new_ref = ref
             op.times_s = _times(op.times_s, duration)
-            if not _placement(op, object_refs, sound_refs, snapshot.room):
-                op.position = []
+            if not _placement(op, snapshot.room):
+                skip(op, f"no position given for {op.name or op.character or ref}")
+                continue
             if op.op == "add_sound":
                 op.prompt = op.prompt.strip() or op.name.strip()
                 if not op.prompt:

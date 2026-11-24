@@ -48,7 +48,7 @@ const event = (id: string, configId: string, promptIndex: number, extra: Partial
 
 const op = (partial: Partial<SceneEditOp> & Pick<SceneEditOp, 'op'>): SceneEditOp => ({
   targets: [], new_ref: '', db: null, delta_db: null, on: null, start: null, end: null, times_s: [],
-  delta_s: null, count: null, interval_s: null, seconds: null, anchor_objects: [], near: '', position: [],
+  delta_s: null, count: null, interval_s: null, seconds: null, position: [],
   preset: '', yaw_deg: null, name: '', prompt: '', category: '', duration_s: null, character: '', lines: [],
   title: '', ...partial,
 });
@@ -155,7 +155,7 @@ describe('applySceneEditOps', () => {
 
   it('adds a speaker card that later ops can address by its new ref', () => {
     const ctx = apply(
-      op({ op: 'add_speaker', new_ref: 'N1', character: 'Marc', lines: ['Sorry, quick question'], times_s: [25], near: 'S3' }),
+      op({ op: 'add_speaker', new_ref: 'N1', character: 'Marc', lines: ['Sorry, quick question'], times_s: [25], position: [2, 3, 1.6] }),
       op({ op: 'set_level', targets: ['N1'], db: -24 }),
     );
     const configs = useSoundscapeStore.getState().soundConfigs;
@@ -164,6 +164,7 @@ describe('applySceneEditOps', () => {
     expect(added.parentUsageOriginalIndex).toBe(0);
     expect(added.scenarioSource?.speechLines).toEqual(['Sorry, quick question']);
     expect(added.timestamps).toEqual(['00:25']);
+    expect(added.position).toEqual([2, 3, 1.6]);
     expect(added.dbfs).toBe(-24);
     expect(ctx.regen.generateNew.has(added.config_id as string)).toBe(true);
     expect(ctx.needsOrchestrate).toBe(true);
