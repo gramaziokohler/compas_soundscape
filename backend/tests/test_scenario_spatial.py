@@ -6,7 +6,8 @@
 * LLM-guessed positions are clamped inside the room (horizontal margin, floor to ceiling);
 * without a people count the scenarist infers the people, and with the virtual room it may
   replace it by a size the prompt states;
-* the foley and speech prompts carry the readable extents and the placement rules.
+* the foley and speech prompts carry the readable extents and the placement rules;
+* a background bed with a location (window, vent…) keeps its `spatial` flag through orchestration.
 """
 
 from models.schemas import Scenario, ScenaristStreamRequest
@@ -84,3 +85,23 @@ def test_schema_defaults():
     scenario = Scenario(title="t", duration="1:00", peopleCount=5, likeliness=9, events=[])
     assert scenario.hasSpeech and scenario.roomDimensions == [] and scenario.peopleDescription == ""
     assert ScenaristStreamRequest().people_count is None
+
+
+def test_spatial_background_flag_survives_orchestration():
+    svc = _service()
+    _, prompt = svc._build_foley_prompts("{}", "{}", "balanced")
+    assert '"spatial"' in prompt
+    foley = {"sounds": [
+        {"id": "traffic_1", "soundName": "traffic", "category": "background sound", "spatial": True,
+         "position": [3.8, 0, 1.5], "timestamps": ["00:00"]},
+        {"id": "room_tone_1", "soundName": "room tone", "category": "background sound",
+         "position": [0, 0, 1.5], "timestamps": ["00:00"]},
+    ]}
+    llm = {"playlist": [
+        {"id": sid, "trigger": {"type": "absolute", "expression": ["00:00"], "delay": [0]},
+         "variants": [1], "spl": "50 dB"}
+        for sid in ("traffic_1", "room_tone_1")
+    ]}
+    playlist = svc._merge_orchestrate_playlist(llm, foley, {"speeches": []})["playlist"]
+    spatial = {e["id"]: e["spatial"] for e in playlist}
+    assert spatial == {"traffic_1": True, "room_tone_1": False}

@@ -1698,6 +1698,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                       ? entry.trigger.expression.filter((e) => /^\d/.test(e))
                       : undefined,
                     category: entry.category,
+                    spatial: entry.spatial,
                     orchestrateMeta: {
                       orchestrateId: sc.orchestrateResult!.orchestrateId,
                       entryId: entry.id,
@@ -1779,6 +1780,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                     interval_seconds: LLM_SUGGESTED_INTERVAL_SECONDS,
                     timestamps: isBgFoley ? undefined : (sound.timestamps?.length ? sound.timestamps : undefined),
                     category: sound.category,
+                    spatial: sound.spatial,
                     scenarioSource: {
                       scenarioId,
                       foleyId,

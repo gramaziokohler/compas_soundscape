@@ -1934,6 +1934,9 @@ function HomeContent() {
           ...(p.position && !resolvedEntities?.length ? { position: p.position } : {}),
           ...(!isBackground && p.metadata?.timestamps?.length ? { timestamps: p.metadata.timestamps } : {}),
           ...(p.metadata?.category ? { category: p.metadata.category } : {}),
+          // A background bed with a location (window, wall, vent…) stays background but plays
+          // positioned: its Global toggle starts off.
+          ...(isBackground && p.metadata?.spatial ? { global_playback: false } : {}),
           ...(parentUsageIndex !== undefined ? { parentUsageOriginalIndex: parentUsageIndex } : {}),
           ...(orchestrateMeta ? {
             orchestrateMeta: {

@@ -164,6 +164,8 @@ export interface FoleySoundEvent {
   objectsInvolved: string[];
   position: number[];
   spl: string;
+  /** Background bed coming from a place / direction (window, wall, vent…): plays positioned, not global. */
+  spatial?: boolean;
   /** Distinct audio variants to generate for this sound type (1-5). */
   copyCount?: number;
 }
@@ -202,6 +204,8 @@ export interface OrchestrateEntry {
   soundName: string;
   description: string;
   category: string;
+  /** Background bed with a location (passed through from the foley entry). */
+  spatial?: boolean;
   duration: string;
   trigger: OrchestrateTrigger;
   /** Original foley/speech timestamps (MM:SS), one per trigger expression slot. */
@@ -329,6 +333,8 @@ export interface TextPromptResult {
     timestamps?: string[];
     /** Sound category from foley analysis (e.g. "background", "sound_event", "speech") */
     category?: string;
+    /** Background bed with a location (window, wall, vent…): its card starts with Global off. */
+    spatial?: boolean;
     /** Orchestration metadata from the full pipeline (foley+speech → orchestrate) */
     orchestrateMeta?: {
       orchestrateId: string;

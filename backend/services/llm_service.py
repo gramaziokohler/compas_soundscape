@@ -1926,7 +1926,7 @@ For the duration estimation (in seconds with 0.1 precision):
             f"{room_line}"
             "- Use the WHOLE room. Put each source where its action happens in the scenario, and keep "
             "different sources and different people apart. Do NOT cluster sources around the room centre: "
-            "only background beds go at the centre.\n"
+            "only diffuse background beds go at the centre.\n"
             "- Doors, windows and wall-mounted devices sit on a wall plane (x or y at its min or max extent). "
             "Outdoor sounds (traffic, rain on glass, birds) sit at a window / facade wall.\n"
             "- Heights (z above the floor): footsteps and floor impacts ~0.05 m; chairs ~0.45 m; table, desk "
@@ -2023,13 +2023,19 @@ For the duration estimation (in seconds with 0.1 precision):
             "The position will be derived from the linked objects by the audio engine.\n"
             '   - "position": when objectsInvolved is empty (e.g. footsteps, ambient hum, HVAC), '
             "provide the [x, y, z] where the sound happens, following the SPATIAL PLACEMENT rules below and "
-            "using the room extents and nearby object bounds as reference. Ambient/background beds go at the "
-            "room centroid; discrete events go where their action happens, NOT at the centre.\n"
+            "using the room extents and nearby object bounds as reference. Diffuse background beds go at the "
+            "room centroid; spatial background beds (rule 9) and discrete events go where their source is, "
+            "NOT at the centre.\n"
             "8. Always add at least one background sound that matches the space.\n"
             '9. Classify each entry with a "category": use "background" for continuous/ambient '
             'beds (HVAC, room tone, distant traffic) and "sound event" for discrete, punctual actions '
             "(footsteps, door, object placement). Describe background beds as a single seamless looping "
             "texture suitable for repeat playback.\n"
+            '   Set "spatial" for every background bed: true when the bed comes from a place or a direction '
+            "(e.g. traffic or rain through a window, distant construction on one side, a fountain outside, "
+            "music through a wall, an HVAC vent, a fridge hum in the kitchen corner) — place it at that source "
+            "(the window, the wall, the vent); false for a diffuse texture heard equally everywhere (room tone, "
+            'general murmur, ambient air). Discrete sound events always get "spatial": false.\n'
             '10. Estimate a realistic "duration" (MM:SS) for a SINGLE occurrence of the sound: short for '
             "impacts (e.g. 00:02), longer for continuous beds (e.g. 00:20).\n"
             '11. Estimate "copyCount" (integer 1 to 5): how many DISTINCT audio variants are worth '
@@ -2050,6 +2056,7 @@ For the duration estimation (in seconds with 0.1 precision):
             '    "description": "clear 2 to 10 word Text-to-Audio prompt naming the sound source and '
             'action/material; use then for multi-part sequences. Do NOT include scenario character names.",\n'
             '    "category": "\\"background sound\\" | \\"sound event\\"",\n'
+            '    "spatial": false,\n'
             '    "duration": "MM:SS duration of a single sound occurrence",\n'
             '    "timestamps": ["MM:SS", ...],\n'
             '    "copyCount": 1,\n'
@@ -2922,6 +2929,7 @@ For the duration estimation (in seconds with 0.1 precision):
                 "soundName": sound.get("soundName", ""),
                 "description": sound.get("description", ""),
                 "category": sound.get("category", "sound event"),
+                "spatial": bool(sound.get("spatial", False)),
                 "duration": sound.get("duration", ""),
                 "timestamps": sound.get("timestamps", []) or [],
                 "character": "",
@@ -2939,6 +2947,7 @@ For the duration estimation (in seconds with 0.1 precision):
                 "soundName": character,
                 "description": speech.get("script", ""),
                 "category": "speech",
+                "spatial": False,
                 "duration": "",
                 "timestamps": speech.get("timestamps", []) or [],
                 "character": character,
@@ -2970,6 +2979,7 @@ For the duration estimation (in seconds with 0.1 precision):
                 "soundName": base["soundName"],
                 "description": base["description"],
                 "category": base["category"],
+                "spatial": base.get("spatial", False),
                 "duration": base["duration"],
                 "trigger": trigger,
                 "timestamps": base["timestamps"],

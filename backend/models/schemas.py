@@ -1208,6 +1208,10 @@ class FoleySoundEvent(BaseModel):
     soundName: str
     description: str
     category: str = "sound event"  # "background sound" | "sound event"
+    # Background beds only: True when the bed comes from a place / direction
+    # (window, wall, vent…) — the frontend then plays it as a positioned source
+    # (Global toggle off) instead of a non-spatial global bed.
+    spatial: bool = False
     duration: str = ""           # MM:SS duration of a single sound occurrence
     timestamps: list[str]        # starting positions in MM:SS format
     objectsInvolved: list[str]   # hex IDs chronologically ordered
@@ -1258,6 +1262,7 @@ class OrchestrateEntry(BaseModel):
     soundName: str
     description: str
     category: str    # "background sound" | "sound event" | "speech"
+    spatial: bool = False  # passed through from the foley entry (see FoleySoundEvent.spatial)
     duration: str    # MM:SS; empty string for speech
     trigger: OrchestrateTrigger
     timestamps: list[str] = []   # starting positions in MM:SS (passed through from foley/speech)
