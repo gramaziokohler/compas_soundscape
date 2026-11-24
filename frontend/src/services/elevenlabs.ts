@@ -18,7 +18,7 @@
  * Requires: NEXT_PUBLIC_ELEVENLABS_API_KEY set in .env.local
  */
 
-import { ElevenLabsClient, ElevenLabsError } from "@elevenlabs/elevenlabs-js";
+import { ElevenLabs, ElevenLabsClient, ElevenLabsError } from "@elevenlabs/elevenlabs-js";
 import { pcm16ToWavBlob } from "@/lib/audio/utils/wav-encode";
 import {
   AUDIO_SAMPLE_RATE,
@@ -131,7 +131,9 @@ export async function generateSoundEffect(
   const request = {
     text,
     // Pinned explicitly — the API's implicit default may lag the latest model.
-    modelId: ELEVENLABS_MODEL_ID,
+    // Assertion: the SDK's SfxModelId union (2.68) only lists v2, but the API
+    // accepts v3. Drop the cast once the SDK typings include the pinned model.
+    modelId: ELEVENLABS_MODEL_ID as ElevenLabs.SfxModelId,
     // Only pass duration_seconds when it is within the accepted range —
     // otherwise omit it so ElevenLabs guesses the optimal duration (None).
     durationSeconds:
