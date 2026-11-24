@@ -21,6 +21,7 @@ import type { ClipTrimCopy } from '@/store/audioControlsStore';
 import { parseTriggerExpression } from '@/lib/audio/utils/trigger-ref';
 import { trackVariants } from '@/lib/audio/utils/variant-sound-id';
 import { clipVariation, formatClipVariation, isVariedCategory } from '@/lib/audio/utils/clip-variation';
+import { recurrenceGaps, recurrenceIntervalSeed, withRecurrenceGaps } from '@/lib/audio/utils/recurrence-interval';
 import { useMuteSolo } from '@/hooks/useMuteSolo';
 import { useAudioControlsStore } from '@/store/audioControlsStore';
 import { useSoundscapeStore } from '@/store/soundscapeStore';
@@ -31,6 +32,7 @@ import { useSceneWorkflowStore } from '@/store/sceneWorkflowStore';
 import { clearPreferredPlaybackTarget, setPreferredPlaybackTarget } from '@/lib/shortcuts/shortcut-targets';
 import { DAW, DEFAULT_DBFS, SCENE_BOTTOM_BAR, UI_SIDEBAR_RESIZE, UI_SIDEBAR_TOGGLE } from '@/utils/constants';
 import type { TimelineSound, IterationLink } from '@/types/audio';
+import type { SoundGenerationConfig } from '@/types';
 import type { PlaybackSchedulerService } from '@/lib/audio/playback-scheduler-service';
 
 const GROUP_ORDER = ['background', 'sound_event', 'speech'];
@@ -364,12 +366,61 @@ export function DAWDock({
     durationSecPerIteration: number[];
     fallbackDurationSec: number;
     anchor: { x: number; y: number };
+    /** Recurring activity: the panel edits its trigger-chain gaps (snapshot for Cancel). */
+    recurring?: {
+      cardIndex: number;
+      seedJitterSeconds: number;
+      initial: Pick<SoundGenerationConfig, 'orchestrateMeta' | 'scenarioSource'>;
+    };
   } | null>(null);
+
+  const recurringPanel = distributeFor?.recurring;
+
+  /** Write a recurring card's chain fields, re-sync the audio store and re-bake. */
+  const writeRecurringFields = useCallback((
+    cardIndex: number,
+    fields: Pick<SoundGenerationConfig, 'orchestrateMeta' | 'scenarioSource'>,
+  ) => {
+    const soundStore = useSoundscapeStore.getState();
+    soundStore.handleUpdateConfig(cardIndex, 'orchestrateMeta', fields.orchestrateMeta);
+    soundStore.handleUpdateConfig(cardIndex, 'scenarioSource', fields.scenarioSource);
+    useAudioControlsStore.getState().syncSoundConfigs(useSoundscapeStore.getState().soundConfigs);
+    scheduleBakeOrchestrate();
+  }, [scheduleBakeOrchestrate]);
+
+  const applyRecurringInterval = useCallback((soundId: string, cardIndex: number, intervalSec: number, jitterSec: number) => {
+    const config = useSoundscapeStore.getState().soundConfigs[cardIndex];
+    if (!config?.orchestrateMeta) return;
+    const gaps = recurrenceGaps(soundId, config.orchestrateMeta.trigger.expression.length, intervalSec, jitterSec);
+    const fields = withRecurrenceGaps(config, gaps);
+    if (fields) writeRecurringFields(cardIndex, fields);
+  }, [writeRecurringFields]);
 
   const distributePanelRef = useRef<HTMLDivElement>(null);
 
   const openDistributeFor = useCallback((sound: TimelineSound, anchor: { x: number; y: number }) => {
     const store = useAudioControlsStore.getState();
+    // Recurring activity: edit its chain gaps, opening on the LLM's own rhythm.
+    const cardIndex = sound.cardIndex ?? sound.promptIndex;
+    const recurringConfig = cardIndex !== undefined ? soundConfigs[cardIndex] : undefined;
+    const recurrence = recurringConfig?.orchestrateMeta ? recurringConfig.scenarioSource?.recurrence : undefined;
+    if (cardIndex !== undefined && recurringConfig && recurrence) {
+      const seed = recurrenceIntervalSeed(recurrence);
+      setDistributeFor({
+        soundId: sound.id,
+        seedIntervalSeconds: seed.intervalSec,
+        initialSchedule: store.soundTimestamps[sound.id],
+        durationSecPerIteration: (sound.iterationDurationsMs ?? []).map((ms) => ms / 1000),
+        fallbackDurationSec: sound.soundDurationMs / 1000,
+        anchor,
+        recurring: {
+          cardIndex,
+          seedJitterSeconds: seed.jitterSec,
+          initial: { orchestrateMeta: recurringConfig.orchestrateMeta, scenarioSource: recurringConfig.scenarioSource },
+        },
+      });
+      return;
+    }
     const initialSchedule = store.soundTimestamps[sound.id];
     // If the track is still "auto" (no stored schedule), freeze its currently
     // displayed positions so the panel edits a concrete schedule from the start.
@@ -387,7 +438,7 @@ export function DAWDock({
       fallbackDurationSec: sound.soundDurationMs / 1000,
       anchor,
     });
-  }, [intervalBySoundId]);
+  }, [intervalBySoundId, soundConfigs]);
 
   const closeDistribute = useCallback(() => setDistributeFor(null), []);
 
@@ -397,6 +448,11 @@ export function DAWDock({
     if (!distributeFor) return;
     const onPointerDown = (e: PointerEvent) => {
       if (distributePanelRef.current?.contains(e.target as Node)) return;
+      if (distributeFor.recurring) {
+        writeRecurringFields(distributeFor.recurring.cardIndex, distributeFor.recurring.initial);
+        setDistributeFor(null);
+        return;
+      }
       const store = useAudioControlsStore.getState();
       if (distributeFor.initialSchedule !== undefined) {
         store.handleTimestampsChange(distributeFor.soundId, distributeFor.initialSchedule);
@@ -407,7 +463,7 @@ export function DAWDock({
     };
     window.addEventListener('pointerdown', onPointerDown);
     return () => window.removeEventListener('pointerdown', onPointerDown);
-  }, [distributeFor]);
+  }, [distributeFor, writeRecurringFields]);
 
   const handleClearClips = useCallback((sound: TimelineSound) => {
     handleTimestampsChange(sound.id, []);
@@ -839,6 +895,8 @@ export function DAWDock({
                   onOpenSoundCard={configIdx !== undefined && onRevealSoundCard ? () => onRevealSoundCard(configIdx) : undefined}
                   isFocused={configIdx !== undefined && configIdx === focusedIndex}
                   onRequestDistribute={(anchor) => openDistributeFor(sound, anchor)}
+                  isRecurring={!!(configIdx !== undefined && soundConfigs[configIdx]?.orchestrateMeta
+                    && soundConfigs[configIdx]?.scenarioSource?.recurrence)}
                   onSelectAllClips={() => selection.replace(clips.map((c) => c.clipKey))}
                   onClearClips={() => handleClearClips(sound)}
                   onResetTrack={() => handleResetTrack(sound)}
@@ -1013,6 +1071,13 @@ export function DAWDock({
             fallbackDurationSec={distributeFor.fallbackDurationSec}
             seedIntervalSeconds={distributeFor.seedIntervalSeconds}
             initialSchedule={distributeFor.initialSchedule}
+            seedJitterSeconds={distributeFor.recurring?.seedJitterSeconds}
+            onApply={recurringPanel
+              ? (interval, jitter) => applyRecurringInterval(distributeFor.soundId, recurringPanel.cardIndex, interval, jitter)
+              : undefined}
+            onCancel={recurringPanel
+              ? () => writeRecurringFields(recurringPanel.cardIndex, recurringPanel.initial)
+              : undefined}
             timelineDurationMs={timelineDurationMs}
             onClose={closeDistribute}
           />

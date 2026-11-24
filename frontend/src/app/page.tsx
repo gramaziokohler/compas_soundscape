@@ -1869,6 +1869,7 @@ function HomeContent() {
         const variantCount = orchestrateMeta?.variants?.length
           ? Math.max(...orchestrateMeta.variants, 1)
           : (scenarioSource?.copyCount ?? 1);
+        const catalogSound = p.metadata?.catalogSound;
 
         // Resolve entities: orchestrateMeta.allObjectIds, or scenarioSource.objectsInvolved,
         // or the prompt's resolved analysis group(s) — each group expands to ALL its object ids.
@@ -1930,7 +1931,12 @@ function HomeContent() {
           display_name: p.displayName || (p.text.length > 50 ? p.text.substring(0, 47) + '...' : p.text),
           entities: resolvedEntities,
           entity: resolvedEntities?.[0], // backward compat
-          type: isSpeech ? 'text-to-speech' : undefined,
+          type: isSpeech ? 'text-to-speech' : catalogSound ? 'catalog' : undefined,
+          // Crowd bed picked from the catalogue: plays the recording, no generation.
+          ...(catalogSound && !isSpeech ? {
+            selectedCatalogSound: catalogSound,
+            catalogSelectedCategory: { id: catalogSound.category, name: catalogSound.category },
+          } : {}),
           voice_name: isSpeech ? (orchestrateMeta?.voiceName || scenarioSource?.voiceName || 'Kore') : undefined,
           ...(isSpeech && (orchestrateMeta?.voiceStyle || scenarioSource?.voiceStyle)
             ? { voice_style: orchestrateMeta?.voiceStyle || scenarioSource?.voiceStyle }

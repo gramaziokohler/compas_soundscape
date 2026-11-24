@@ -4,14 +4,21 @@
  *
  * The speech agent voices the conversations the scenario shows; the rest of the
  * room (other tables, people waiting, a group further away) would still be heard
- * as indistinct voices. When a scene with speech has enough such silent people,
- * a non-spatial "crowd murmur" background bed is appended to the foley result,
- * so it becomes a normal background card (generated, levelled and orchestrated
- * like any other bed). The threshold and level follow the scene atmosphere.
+ * as indistinct voices. The foley agent picks that sound (foley rule 15): a
+ * recording from the catalogue's "crowds" category when one fits (e.g. "Crowd
+ * Talking", "Voices Murmur", "Voices On Street Accent"), else a Text-to-Audio
+ * prompt. When a scene with speech has enough silent people for its atmosphere,
+ * a non-spatial background entry is appended to the foley result: a catalog
+ * card for a recording, a generated card for a prompt.
  */
 
-import type { FoleyResult, FoleySoundEvent, ScenarioItem, SceneLiveliness, SpeechResult } from '@/types/analysis';
-import { CROWD_BED, DEFAULT_SCENE_LIVELINESS, SCENE_LIVELINESS_OPTIONS } from '@/utils/constants';
+import type {
+  FoleyCrowdChoice, FoleyResult, FoleySoundEvent, ScenarioItem, SceneLiveliness, SpeechResult,
+} from '@/types/analysis';
+import type { CatalogSoundSelection } from '@/types';
+import {
+  CROWD_BED, CROWD_CATALOG_SOUNDS, DEFAULT_SCENE_LIVELINESS, SCENE_LIVELINESS_OPTIONS,
+} from '@/utils/constants';
 
 export interface CrowdBedInput {
   scenario: ScenarioItem | undefined;
@@ -20,6 +27,13 @@ export interface CrowdBedInput {
   liveliness?: SceneLiveliness;
   /** False when the user turned speech off for this scene. */
   includeSpeech?: boolean;
+  /** The crowd recordings the foley agent chose from. Default: the baked CROWD_CATALOG_SOUNDS. */
+  catalog?: readonly CatalogSoundSelection[];
+}
+
+/** Names sent to the foley agent as `crowd_catalog` (it picks the crowd voices from them). */
+export function crowdCatalogNames(): string[] {
+  return CROWD_CATALOG_SOUNDS.map((s) => s.name);
 }
 
 /** People present who have no speaking part (never negative). */
@@ -43,12 +57,25 @@ function crowdPosition(speech: SpeechResult | null | undefined): number[] {
   return [0, 1, 2].map((axis) => points.reduce((sum, p) => sum + p[axis], 0) / points.length);
 }
 
+/** The catalogue recording the agent named (case / spacing insensitive), if any. */
+export function matchCatalogSound(
+  choice: FoleyCrowdChoice | null | undefined,
+  catalog: readonly CatalogSoundSelection[] | undefined,
+): CatalogSoundSelection | undefined {
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const wanted = norm(choice?.catalogName ?? '');
+  if (!wanted) return undefined;
+  return (catalog ?? []).find((s) => norm(s.name) === wanted);
+}
+
 /**
  * The crowd murmur bed to add to this scene, or `null` when none is needed:
  * no speech in the scene, too few silent people for the atmosphere, or the foley
  * agent already added a murmur / chatter bed.
  */
-export function buildCrowdBed({ scenario, foley, speech, liveliness, includeSpeech }: CrowdBedInput): FoleySoundEvent | null {
+export function buildCrowdBed({
+  scenario, foley, speech, liveliness, includeSpeech, catalog = CROWD_CATALOG_SOUNDS,
+}: CrowdBedInput): FoleySoundEvent | null {
   if (!scenario || scenario.hasSpeech === false || includeSpeech === false) return null;
   const level = SCENE_LIVELINESS_OPTIONS.find((o) => o.value === (liveliness ?? DEFAULT_SCENE_LIVELINESS))
     ?? SCENE_LIVELINESS_OPTIONS[1];
@@ -59,10 +86,14 @@ export function buildCrowdBed({ scenario, foley, speech, liveliness, includeSpee
   const covered = sounds.some((s) => isBed(s) && CROWD_BED.EXISTING_BED_PATTERN.test(`${s.soundName} ${s.description}`));
   if (covered || sounds.some((s) => s.id === CROWD_BED.ENTRY_ID)) return null;
 
+  const recording = matchCatalogSound(foley?.crowd, catalog);
+  const prompt = foley?.crowd?.prompt?.trim()
+    || (silent >= CROWD_BED.LARGE_GROUP_SIZE ? CROWD_BED.LARGE_DESCRIPTION : CROWD_BED.SMALL_DESCRIPTION);
+
   return {
     id: CROWD_BED.ENTRY_ID,
-    soundName: CROWD_BED.SOUND_NAME,
-    description: silent >= CROWD_BED.LARGE_GROUP_SIZE ? CROWD_BED.LARGE_DESCRIPTION : CROWD_BED.SMALL_DESCRIPTION,
+    soundName: recording ? recording.name : CROWD_BED.SOUND_NAME,
+    description: recording ? recording.name : prompt,
     duration: CROWD_BED.DURATION,
     timestamps: ['00:00'],
     category: 'background sound',
@@ -71,6 +102,7 @@ export function buildCrowdBed({ scenario, foley, speech, liveliness, includeSpee
     spl: `${level.crowdBedDbfs} dBFS`,
     spatial: false,
     copyCount: 1,
+    ...(recording ? { catalogSound: recording } : {}),
   };
 }
 

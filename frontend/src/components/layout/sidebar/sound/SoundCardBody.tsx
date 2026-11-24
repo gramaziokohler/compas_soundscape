@@ -57,6 +57,8 @@ export interface SoundCardBodyProps {
   storeContext: string;
   /** When true, recolors icons/labels for legibility on a solid-blue generated card. */
   onBlueBackground?: boolean;
+  /** Extra rows at the end of the left column (e.g. occurrence variation chips). */
+  extraContent?: ReactNode;
 }
 
 export function SoundCardBody({
@@ -74,6 +76,7 @@ export function SoundCardBody({
   onUnlinkEntity,
   storeContext,
   onBlueBackground = false,
+  extraContent,
 }: SoundCardBodyProps) {
   // Share view: position / directivity / volume are edits — hidden.
   const canEdit = useCanEdit();
@@ -135,6 +138,9 @@ export function SoundCardBody({
             onBlueBackground={onBlueBackground}
           />
         )}
+
+        {/* 4. Extra rows (variation chips…) */}
+        {canEdit && extraContent}
       </div>
 
       {/* ── Right column: volume slider ── */}

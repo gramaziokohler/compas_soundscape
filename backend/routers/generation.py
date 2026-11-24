@@ -574,6 +574,7 @@ async def foley_artist(request: FoleyArtistRequest, req: Request):
     furniture_list = _load_furniture_list(request.analysis_id, request.bounding_box, scenario_data)
     sound_detail = request.sound_detail
     liveliness = request.liveliness
+    crowd_catalog = list(request.crowd_catalog)
     llm_model = request.llm_model
 
     async def _run(job_id: str) -> None:
@@ -587,6 +588,7 @@ async def foley_artist(request: FoleyArtistRequest, req: Request):
                 furniture_list=furniture_list,
                 sound_detail=sound_detail,
                 liveliness=liveliness,
+                crowd_catalog=crowd_catalog,
                 llm_model=llm_model,
                 on_progress=on_progress,
             )
@@ -621,6 +623,8 @@ async def foley_artist(request: FoleyArtistRequest, req: Request):
             "foley_id": done.get("foley_id"),
             "sounds": sounds,
             "scenarios": [{"scenario_title": title, "sound_events": sounds}],
+            # Crowd voices choice (catalogue name or prompt); used by the frontend crowd bed.
+            "crowd": (done.get("result") or {}).get("crowd"),
         }
         await job_store.complete(job_id, payload)
 

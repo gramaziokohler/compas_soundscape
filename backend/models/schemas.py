@@ -28,6 +28,7 @@ from config.constants import DEFAULT_FOLEY_SOUND_DETAIL
 from config.constants import DEFAULT_SCENE_LIVELINESS
 from config.constants import SCENE_LIVELINESS_LEVELS
 from config.constants import SCENARIO_DEFAULT_DURATION_S
+from config.constants import CROWD_CATALOG_MAX_NAMES
 from config.constants import DEFAULT_LLM_MODEL
 from config.constants import DEFAULT_TTS_MODEL
 from config.constants import FOLEY_SOUND_DETAIL_LEVELS
@@ -1222,6 +1223,8 @@ class FoleyRecurrence(BaseModel):
     end: str = ""                    # "MM:SS"; "" = until the scene ends
     # Filled by code: end-to-start gap (s) before occurrences 2..n.
     gaps: list[float] = []
+    # Filled by code: an irregular activity's first occurrence lags its start / cause by this (s).
+    firstDelay: float = 0.0
 
 
 class FoleySoundEvent(BaseModel):
@@ -1249,9 +1252,17 @@ class FoleySoundEvent(BaseModel):
     recurrence: FoleyRecurrence | None = None
 
 
+class FoleyCrowdChoice(BaseModel):
+    """Crowd voices for people present but not talking (foley rule 15)."""
+    catalogName: str = ""   # exact name from the catalogue "crowds" category; "" = use `prompt`
+    prompt: str = ""        # Text-to-Audio fallback when no catalogue sound fits
+
+
 class FoleyOutput(BaseModel):
     """Flat list of deduplicated sound types from the foley agent."""
     sounds: list[FoleySoundEvent]
+    # The frontend adds it as a background card only when more people are present than speak.
+    crowd: FoleyCrowdChoice | None = None
 
 
 # Keep legacy alias so existing imports (FoleyResponse) still resolve
@@ -1502,6 +1513,9 @@ class FoleyArtistRequest(BaseModel):
     bounding_box: dict | None = None
     # Scene atmosphere: off-screen venue sources and recurrence rates.
     liveliness: str = DEFAULT_SCENE_LIVELINESS
+    # Sound names of the catalogue's "crowds" category — the agent picks the crowd
+    # voices from them (foley rule 15). Empty = it writes a Text-to-Audio prompt.
+    crowd_catalog: list[str] = Field(default_factory=list, max_length=CROWD_CATALOG_MAX_NAMES)
 
     @field_validator("sound_detail")
     @classmethod

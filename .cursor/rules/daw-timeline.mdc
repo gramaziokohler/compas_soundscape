@@ -94,9 +94,21 @@ Repeated sound events vary slightly per occurrence so they do not sound like one
   replaced by a hand-set `iterationVariations[clipKey]` (clip menu sliders; `seed` = re-roll).
   Speech and background beds are never varied. Used by the DAW label (`DAWClip` `variationLabel`),
   live playback (`build-score` → `ScoreClip.detuneCents/gainDb` → `applyFadeInOut`) and WAV export.
-- **Length:** a detuned clip plays `2^(cents/1200)` faster; the bake divides that iteration's
-  duration so `after()` chains follow the played length (`Transport` maps time into the buffer too).
-  The DAW clip width stays the unshifted buffer length (≤3 % at Subtle).
+- **Never moves clips:** variation is pitch + level at playback only. It is not part of the schedule
+  bake and changing it never re-bakes, so clip positions stay put. A detuned clip plays
+  `2^(cents/1200)` faster (`Transport` maps time into the buffer), so its audio ends a few % before or
+  after the drawn clip edge (≤3 % at Subtle).
+- **UI:** card chips use `CardChipGroup` (card-sized, white-on-blue on generated cards); the clip menu
+  uses compact menu-sized sliders (`DAWClipVariationSection`).
+
+## Recurring Tracks — Interval Settings
+
+A recurring activity (`scenarioSource.recurrence` + `orchestrateMeta`) is a trigger chain
+(`after(<self>#k-1)` + gap). Its track-head menu shows **Interval settings** instead of "Distribute
+evenly": `IntervalSettingsPanel` opens on the LLM's rhythm (`recurrenceIntervalSeed`: mean gap,
+largest deviation) without touching the schedule, and the sliders rewrite the chain's delays and
+`recurrence.gaps` (`withRecurrenceGaps`, `lib/audio/utils/recurrence-interval.ts`) then re-bake, so
+the chain still follows its cause sound and a re-orchestration keeps the rhythm. Cancel restores both fields.
 - **Keys move with clips** like `iterationTrims` (remapped on insert/remove, dropped on reset to auto).
 - Persisted: undo history, localStorage, `soundscape.json` (`iteration_variations`,
   `sound_variation_modes`), and scene transfer (`scene_transfer_core.py`).

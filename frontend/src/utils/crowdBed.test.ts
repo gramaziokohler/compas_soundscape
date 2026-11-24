@@ -49,6 +49,24 @@ describe('crowd murmur bed', () => {
     expect(buildCrowdBed({ ...base, foley: foley(['distant chatter']) })).toBeNull();
   });
 
+  it('plays the catalogue recording the foley agent picked', () => {
+    const catalog = [
+      { name: 'Crowd Talking', url: 'https://x/crowd_talking.ogg', category: 'crowds' },
+      { name: 'Voices Murmur', url: 'https://x/voices_murmur.ogg', category: 'crowds' },
+    ];
+    const picked = { ...foley(), crowd: { catalogName: 'voices murmur', prompt: '' } };
+    const bed = buildCrowdBed({ scenario: scenario(10), foley: picked, speech: speech('A'), catalog });
+    expect(bed?.catalogSound?.url).toBe('https://x/voices_murmur.ogg');
+    expect(bed?.soundName).toBe('Voices Murmur');
+  });
+
+  it('falls back to the agent prompt when no recording fits', () => {
+    const prompted = { ...foley(), crowd: { catalogName: '', prompt: 'hushed voices in a library' } };
+    const bed = buildCrowdBed({ scenario: scenario(10), foley: prompted, speech: speech('A'), catalog: [] });
+    expect(bed?.catalogSound).toBeUndefined();
+    expect(bed?.description).toBe('hushed voices in a library');
+  });
+
   it('appends the bed to the first foley scenario with its selection key', () => {
     const added = withCrowdBed({ scenario: scenario(10), foley: foley(['room tone']), speech: speech('A') });
     expect(added?.key).toBe(`Café__${CROWD_BED.SOUND_NAME}`);

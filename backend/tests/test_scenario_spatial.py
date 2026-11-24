@@ -10,7 +10,7 @@
 * a background bed with a location (window, vent…) keeps its `spatial` flag through orchestration.
 """
 
-from models.schemas import Scenario, ScenaristStreamRequest
+from models.schemas import FoleyArtistRequest, Scenario, ScenaristStreamRequest
 from routers.generation import _load_furniture_list
 from services.llm_service import LLMService
 from utils.spatial import clamp_position, scenario_room_bounds
@@ -90,6 +90,20 @@ def test_scenario_and_foley_prompts_carry_the_realism_rules():
     for rule in ("LISTEN BETWEEN THE LINES", "RECURRING ACTIVITIES", "VENUE SOURCES", '"recurrence"'):
         assert rule in foley
     assert "at most one off-screen venue source" in foley
+    # Backgrounds are specific noise sources, never a generic "room tone".
+    assert "SPECIFIC, nameable noise sources" in foley and "distant motorcycle" in foley
+
+
+def test_foley_prompt_picks_crowd_voices_from_the_catalogue():
+    svc = _service()
+    _, with_list = svc._build_foley_prompts(
+        "{}", "{}", "balanced", crowd_catalog=["Crowd Talking", "Voices Murmur", "Team Cheer"],
+    )
+    assert "CROWD VOICES" in with_list and '"Voices Murmur"' in with_list and '"Team Cheer"' in with_list
+    assert "Voices On Street Accent" in with_list  # outdoor preference
+    _, without = svc._build_foley_prompts("{}", "{}", "balanced")
+    assert "(none available)" in without
+    assert FoleyArtistRequest(scenario_id="s", crowd_catalog=["Crowd Talking"]).crowd_catalog == ["Crowd Talking"]
 
 
 def test_speech_prompt_scales_social_density():

@@ -27,8 +27,10 @@ import re
 from config.constants import (
     MAX_SEED_COPIES,
     RECURRENCE_DEFAULT_DURATION_S,
-    RECURRENCE_JITTER_IRREGULAR,
-    RECURRENCE_JITTER_STEADY,
+    RECURRENCE_FIRST_OFFSET_FACTOR,
+    RECURRENCE_GAP_MAX_FACTOR,
+    RECURRENCE_GAP_SIGMA_IRREGULAR,
+    RECURRENCE_GAP_SIGMA_STEADY,
     RECURRENCE_MAX_OCCURRENCES,
     RECURRENCE_MIN_GAP_S,
     RECURRENCE_OCCURRENCES_PER_COPY,
@@ -135,13 +137,20 @@ def expand_recurrence(
     period = 60.0 / per_minute
     mean_gap = max(RECURRENCE_MIN_GAP_S, period - duration)
     steady = str(rec.get("regularity", "irregular")).lower() == "steady"
-    spread = RECURRENCE_JITTER_STEADY if steady else RECURRENCE_JITTER_IRREGULAR
+    sigma = RECURRENCE_GAP_SIGMA_STEADY if steady else RECURRENCE_GAP_SIGMA_IRREGULAR
     rng = random.Random(_seed(seed_key, str(out.get("id", ""))))
 
-    times = [start]
+    # An irregular activity does not start exactly on its cue.
+    first_delay = 0.0 if steady else rng.uniform(0.0, RECURRENCE_FIRST_OFFSET_FACTOR * mean_gap)
+    first_delay = round(min(first_delay, max(end - duration - start, 0.0)), 2)
+
+    times = [start + first_delay]
     gaps: list[float] = []
     while len(times) < RECURRENCE_MAX_OCCURRENCES:
-        gap = max(RECURRENCE_MIN_GAP_S, mean_gap * (1.0 + spread * rng.uniform(-1.0, 1.0)))
+        # Log-normal around the mean (mu = -sigma²/2 keeps the mean): mostly
+        # short gaps, some long pauses — clamped to a sane range.
+        factor = rng.lognormvariate(-0.5 * sigma * sigma, sigma)
+        gap = min(mean_gap * RECURRENCE_GAP_MAX_FACTOR, max(RECURRENCE_MIN_GAP_S, mean_gap * factor))
         nxt = times[-1] + duration + gap
         if nxt + duration > end:
             break
@@ -156,6 +165,7 @@ def expand_recurrence(
         "start": rec.get("start") if isinstance(rec.get("start"), str) else format_mmss(start),
         "end": format_mmss(end),
         "gaps": gaps,
+        "firstDelay": first_delay,
     }
     return out
 
@@ -181,6 +191,7 @@ def recurrence_trigger(
 
     start = recurrence.get("start")
     cause = parse_cause(start)
+    first_delay = 0.0
     if cause is not None:
         ref_id = reference_entry_id(cause[1])
         if ref_id == entry_id or ref_id not in known_ids or ref_id in background_ids:
@@ -191,13 +202,14 @@ def recurrence_trigger(
             first = str(first_hint)
         else:
             first = f"{cause[0]}({cause[1]})"
-    elif parse_mmss(start) is not None:
-        first = format_mmss(parse_mmss(start))
+            # The irregular "not exactly on cue" offset rides on the cause link.
+            first_delay = float(recurrence.get("firstDelay") or 0.0)
     else:
+        # Absolute start: the first written time already includes that offset.
         first = str(first_hint)
 
     expression = [first]
-    delay = [0.0]
+    delay = [first_delay]
     for k in range(1, n):
         expression.append(f"after({entry_id}#{k})")
         delay.append(float(gaps[k - 1]) if k - 1 < len(gaps) else RECURRENCE_MIN_GAP_S)

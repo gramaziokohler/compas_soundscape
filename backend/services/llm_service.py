@@ -78,6 +78,8 @@ from config.constants import (
     SCENE_LIVELINESS_LEVELS,
     DEFAULT_SCENE_LIVELINESS,
     SCENARIO_DEFAULT_DURATION_S,
+    CROWD_CATALOG_PREFERENCES,
+    CROWD_CATALOG_MAX_NAMES,
 )
 from utils.spatial import clamp_position, room_extents_text
 from utils.speech_style import clean_style, speech_dbfs_band, style_level_guidance
@@ -2081,10 +2083,11 @@ For the duration estimation (in seconds with 0.1 precision):
             'begins after another sound, that sound as "after(<id>#<k>)" or "overlap(<id>#<k>)" using '
             'its exact id and 1-based occurrence (e.g. typing "start": "after(chair_sit_1#1)"), "end": '
             '"MM:SS" when it stops (or "" for the end of the scene)}. Give "timestamps" with just the '
-            "first occurrence. Code spreads the occurrences and their copies. Typical rates per person: "
-            "page turns 1-2/min, pen writing bursts 6-10/min, typing bursts 8-15/min, cup or glass set "
-            "down 1-3/min, fork on plate 6-10/min while eating, a pacing person's footsteps as one walk "
-            "every 10-20 s. Sum several people doing the same thing into one entry with the combined rate. "
+            "first occurrence. Code spreads the occurrences irregularly and makes their copies. Typical "
+            "rates per person (real people pause, get distracted and drift — stay at the low end): page "
+            "turns 0.5-1/min, pen writing bursts 3-5/min, typing bursts 4-8/min, cup or glass set down "
+            "0.5-1.5/min, fork on plate 3-6/min while eating, a pacing person's walk every 20-40 s. Sum "
+            "several people doing the same thing into one entry with the combined rate. "
             'One-off actions (a door, sitting down once) keep "recurrence": null and their timestamps.\n'
             f"14. VENUE SOURCES: Infer the type of place and add its typical sounds from out of view as "
             f"background beds or recurring events — {level['venue_sources']} — e.g. counter and espresso "
@@ -2095,6 +2098,29 @@ For the duration estimation (in seconds with 0.1 precision):
             "to this atmosphere.\n\n"
         )
 
+    @staticmethod
+    def _foley_crowd_rules(crowd_catalog: list[str] | None) -> str:
+        """Rule 15 of the foley prompt: pick the crowd-voices sound for this scene.
+
+        The frontend adds it as a background card only when more people are present
+        than speak (utils/crowdBed.ts); a catalogue recording is preferred over a
+        generated one, so the agent picks from the catalogue's crowd names first.
+        """
+        names = [n for n in (crowd_catalog or []) if isinstance(n, str) and n.strip()][:CROWD_CATALOG_MAX_NAMES]
+        prefs = CROWD_CATALOG_PREFERENCES
+        listing = ", ".join(f'"{n}"' for n in names) if names else "(none available)"
+        return (
+            "15. CROWD VOICES: Never add people talking, chatter, murmur or walla as a sound entry. Instead "
+            "fill \"crowd\" with the indistinct voices of the people present who are not part of a "
+            "conversation; code adds it only when such people exist. Pick \"catalogName\" from this "
+            f"recorded crowd list, using its exact spelling: {listing}. Prefer \"{prefs['lively']}\" for "
+            f"lively indoor scenes, \"{prefs['quiet']}\" for calmer ones and \"{prefs['outdoor']}\" for "
+            "people outdoors; the other names are very specific (battles, cheering, moaning) and only fit "
+            "when the scenario is exactly that. Only when nothing in the list fits, set \"catalogName\" to "
+            "\"\" and write \"prompt\" as a 4 to 12 word Text-to-Audio prompt of indistinct voices with "
+            "no clear words (e.g. \"distant hushed voices in a library reading room\").\n"
+        )
+
     def _build_foley_prompts(
         self,
         scenarios_json: str,
@@ -2102,6 +2128,7 @@ For the duration estimation (in seconds with 0.1 precision):
         sound_detail: str = DEFAULT_FOLEY_SOUND_DETAIL,
         room_extents: str | None = None,
         liveliness: str = DEFAULT_SCENE_LIVELINESS,
+        crowd_catalog: list[str] | None = None,
     ) -> tuple[str, str]:
         """Build system and user prompts for the foley artist agent.
 
@@ -2160,16 +2187,23 @@ For the duration estimation (in seconds with 0.1 precision):
             "using the room extents and nearby object bounds as reference. Diffuse background beds go at the "
             "room centroid; spatial background beds (rule 9) and discrete events go where their source is, "
             "NOT at the centre.\n"
-            "8. Always add at least one background sound that matches the space.\n"
+            "8. Always add at least one background sound that matches the space. A background is built from "
+            "SPECIFIC, nameable noise sources, never a generic mood: NOT \"cafe room tone\", \"office "
+            "ambience\" or \"quiet room atmosphere\", but e.g. \"low HVAC air handler hum\", \"fridge "
+            "compressor hum\", \"rain on a window pane\", \"distant city traffic through a closed window\", "
+            "\"a distant motorcycle accelerating through traffic\" (as a recurring event), \"fluorescent "
+            "light buzz\". Split a rich background into its separate sources (one entry each, placed at its "
+            "source) rather than one vague bed. People talking or murmuring are NEVER a foley entry (see "
+            "rule 15).\n"
             '9. Classify each entry with a "category": use "background" for continuous/ambient '
-            'beds (HVAC, room tone, distant traffic) and "sound event" for discrete, punctual actions '
+            'beds (HVAC, a fridge hum, distant traffic) and "sound event" for discrete, punctual actions '
             "(footsteps, door, object placement). Describe background beds as a single seamless looping "
             "texture suitable for repeat playback.\n"
             '   Set "spatial" for every background bed: true when the bed comes from a place or a direction '
             "(e.g. traffic or rain through a window, distant construction on one side, a fountain outside, "
             "music through a wall, an HVAC vent, a fridge hum in the kitchen corner) — place it at that source "
-            "(the window, the wall, the vent); false for a diffuse texture heard equally everywhere (room tone, "
-            'general murmur, ambient air). Discrete sound events always get "spatial": false.\n'
+            "(the window, the wall, the vent); false for a diffuse texture heard equally everywhere (air "
+            'handling throughout the room). Discrete sound events always get "spatial": false.\n'
             '10. Estimate a realistic "duration" (MM:SS) for a SINGLE occurrence of the sound: short for '
             "impacts (e.g. 00:02), longer for continuous beds (e.g. 00:20).\n"
             '11. Estimate "copyCount" (integer 1 to 5): how many DISTINCT audio variants are worth '
@@ -2180,9 +2214,11 @@ For the duration estimation (in seconds with 0.1 precision):
             "gets 4 to 5. Background beds always get 1. Never exceed 5. (For an entry with a "
             '"recurrence" the copy count is recomputed by code.)\n'
             f"{self._foley_inference_rules(liveliness)}"
+            f"{self._foley_crowd_rules(crowd_catalog)}"
             f"{self._foley_detail_rules(sound_detail)}"
             f"{self._spatial_placement_rules(room_extents)}"
-            "Output Format — respond ONLY with a JSON array:\n"
+            'Output Format — respond ONLY with a JSON object {"sounds": [...], "crowd": {...}}, where each '
+            "sound is:\n"
             "[\n"
             "  {\n"
             '    "id": "string — snake_case ROOT describing the sound itself plus a numeric '
@@ -2201,7 +2237,9 @@ For the duration estimation (in seconds with 0.1 precision):
             '    "objectsInvolved": ["hex IDs chronologically, or empty list []"],\n'
             '    "position": [x, y, z or empty list []]\n'
             "  }\n"
-            "]\n\n"
+            "]\n"
+            'and "crowd" is {"catalogName": "exact name from the crowd list, or \\"\\"", "prompt": '
+            '"Text-to-Audio prompt, only when catalogName is \\"\\""} (rule 15).\n\n'
             f"Scenarios:\n{scenarios_json}\n\n"
             f"Architectural space information:\n{furniture_json}"
         )
@@ -2537,6 +2575,7 @@ For the duration estimation (in seconds with 0.1 precision):
         sound_detail: str = DEFAULT_FOLEY_SOUND_DETAIL,
         llm_model: str = DEFAULT_LLM_MODEL,
         liveliness: str = DEFAULT_SCENE_LIVELINESS,
+        crowd_catalog: list[str] | None = None,
     ) -> dict:
         """
         Generate detailed foley sound events for scenarios from scenarist_agent.
@@ -2579,6 +2618,7 @@ For the duration estimation (in seconds with 0.1 precision):
             scenarios_json, furniture_json, sound_detail,
             room_extents=self._room_extents(furniture_list),
             liveliness=liveliness,
+            crowd_catalog=crowd_catalog,
         )
 
         # ── Call LLM with structured output ───────────────────────────────────
@@ -2617,6 +2657,7 @@ For the duration estimation (in seconds with 0.1 precision):
         llm_model: str = DEFAULT_LLM_MODEL,
         on_progress=None,
         liveliness: str = DEFAULT_SCENE_LIVELINESS,
+        crowd_catalog: list[str] | None = None,
     ) -> dict:
         """Async version of foley_artist — awaits _call_llm directly.
 
@@ -2635,6 +2676,7 @@ For the duration estimation (in seconds with 0.1 precision):
             scenarios_json, furniture_json, sound_detail,
             room_extents=self._room_extents(furniture_list),
             liveliness=liveliness,
+            crowd_catalog=crowd_catalog,
         )
 
         result = await self._call_llm(
@@ -2656,6 +2698,7 @@ For the duration estimation (in seconds with 0.1 precision):
         llm_model: str = DEFAULT_LLM_MODEL,
         on_progress=None,
         liveliness: str = DEFAULT_SCENE_LIVELINESS,
+        crowd_catalog: list[str] | None = None,
     ):
         """Async generator yielding foley sound events one by one.
 
@@ -2675,6 +2718,7 @@ For the duration estimation (in seconds with 0.1 precision):
                 llm_model=llm_model,
                 on_progress=on_progress,
                 liveliness=liveliness,
+                crowd_catalog=crowd_catalog,
             )
         except LLMCancelled:
             raise

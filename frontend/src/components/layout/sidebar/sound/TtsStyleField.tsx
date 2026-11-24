@@ -1,7 +1,7 @@
 'use client';
 
 import { pauseStore, commitStore } from '@/store';
-import { ChipToggleGroup } from '@/components/ui/ChipToggleGroup';
+import { CardChipGroup } from '@/components/ui/CardChipGroup';
 import { ModifiedMark } from '@/components/ui/ModifiedMark';
 import { TTS_STYLE } from '@/utils/constants';
 import { activeStylePresetLabels, applyStylePresetLabels } from '@/utils/ttsStyle';
@@ -48,7 +48,7 @@ export function TtsStyleField({ value, onChange, modified = false }: TtsStyleFie
         placeholder={TTS_STYLE.PLACEHOLDER}
         className="w-full p-2 text-xs rounded-lg bg-secondary-lighter text-foreground border border-secondary-light focus:border-primary focus:ring-1 focus:ring-primary outline-none"
       />
-      <ChipToggleGroup
+      <CardChipGroup
         options={PRESET_LABELS}
         selected={activeStylePresetLabels(value)}
         onChange={(labels) => emit(applyStylePresetLabels(value, labels))}

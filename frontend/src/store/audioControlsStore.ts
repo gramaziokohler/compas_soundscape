@@ -36,7 +36,6 @@ import {
 } from '@/lib/audio/orchestrate-schedule';
 import { serializeTrackOverlaps } from '@/lib/audio/utils/serialize-track-overlaps';
 import { parseAuthoredSeconds, formatReanchorReason } from '@/lib/audio/utils/timeline-utils';
-import { clipVariation, detuneRate, variationKey } from '@/lib/audio/utils/clip-variation';
 import { computeTimelineOverrun } from '@/components/audio/daw/daw-overrun';
 import { pausePreviewInstance, pauseAllPreviewInstances } from '@/lib/audio/previewRegistry';
 import { AMBISONIC_SEND, AUDIO_CONTROL, AUDIO_PLAYBACK, AUDIO_TIMELINE, AUDIO_OUTPUT, DEFAULT_DBFS, TTS_DEFAULT_LANGUAGE } from '@/utils/constants';
@@ -1151,7 +1150,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
 
           const {
             _soundConfigs, _generatedSounds, soundTrims, iterationTrims, soundTimestamps, soundBufferDurations,
-            soundIterationDurations, iterationVariations, soundVariationModes,
+            soundIterationDurations,
           } = get();
 
           if (!_soundConfigs.some(c => c.orchestrateMeta)) {
@@ -1264,23 +1263,14 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             const authoredTimestamps = (meta.timestamps ?? []).map((t) => parseAuthoredSeconds(t));
             // A DAW clip trim gives that one iteration its own length, so after() /
             // alignEnd() dependents and same-track serialization follow the trim.
-            // A per-occurrence detune (clip-variation.ts) plays the clip faster /
-            // slower, so it also shortens / lengthens that iteration.
+            // Per-occurrence variation (clip-variation.ts) only changes pitch and
+            // level at playback — it never moves clips, so it is not part of the bake.
             const iterationDurations = expressions.map((_, i): number | null => {
               const clipTrim = soundId && !isBackground ? iterationTrims[iterationKey(soundId, i)] : undefined;
+              if (!clipTrim) return null;
               const variantIdx = (meta.variants[i] ?? 1) - 1;
               const raw = rawVariantDurations[variantIdx] ?? rawVariantDurations[0];
-              const base = clipTrim
-                ? (raw ? trimmedDuration(raw, clipTrim) : null)
-                : (variantDurations[variantIdx] ?? variantDurations[0] ?? null);
-              const detune = soundId && !isBackground
-                ? clipVariation(
-                    soundId, i, config.category, soundVariationModes[soundId],
-                    iterationVariations[variationKey(soundId, i)],
-                  ).detuneCents
-                : 0;
-              if (detune === 0) return clipTrim ? base : null;
-              return base === null ? null : base / detuneRate(detune);
+              return raw ? trimmedDuration(raw, clipTrim) : null;
             });
             entryMap.set(scheduleEntryKey(meta.orchestrateId, meta.entryId), {
               configIndex,
@@ -1875,6 +1865,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             'audio/clearIterationReanchor',
           ),
 
+        // Variation changes pitch / level only: no re-bake, clips keep their place.
         setIterationVariation: (soundId, iterationIndex, override) => {
           set(
             (state) => {
@@ -1887,8 +1878,6 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             false,
             'audio/setIterationVariation',
           );
-          // A detuned clip plays shorter / longer: after() dependents follow it.
-          if (get()._soundConfigs.some(c => c.orchestrateMeta)) get().bakeOrchestrateSchedule();
         },
 
         setSoundVariationMode: (soundId, mode) => {
@@ -1897,7 +1886,6 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             false,
             'audio/setSoundVariationMode',
           );
-          if (get()._soundConfigs.some(c => c.orchestrateMeta)) get().bakeOrchestrateSchedule();
         },
 
         restoreVariations: (iterationVariations, modes) =>

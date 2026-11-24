@@ -58,6 +58,25 @@ def test_steady_rhythm_varies_less_than_irregular():
     assert statistics.pstdev(steady) < statistics.pstdev(irregular)
 
 
+def test_irregular_gaps_include_long_pauses_and_a_late_first_occurrence():
+    entry = expand_recurrence(_page_turns("irregular", 6, start="00:10"), 600, "pauses")
+    gaps = _occurrence_gaps(entry)
+    mean = statistics.mean(gaps)
+    # Log-normal spread: some gaps well above and some well below the mean.
+    assert max(gaps) > 1.6 * mean and min(gaps) < 0.6 * mean
+    # Not exactly on its cue: the first occurrence lags the start by firstDelay.
+    assert entry["recurrence"]["firstDelay"] > 0
+    assert parse_mmss(entry["timestamps"][0]) >= 10
+
+
+def test_cause_chain_carries_the_first_delay():
+    entry = expand_recurrence(_page_turns(start="after(chair_sit_1#1)", per_minute=6), 60, "x")
+    trigger, _ = recurrence_trigger(
+        "page_turn_1", entry["recurrence"], entry["timestamps"], {"chair_sit_1", "page_turn_1"}, set(),
+    )
+    assert trigger["delay"][0] == entry["recurrence"]["firstDelay"]
+
+
 def test_occurrences_are_capped_and_never_overlap():
     entry = expand_recurrence(_page_turns(per_minute=600), 600, "busy")
     assert len(entry["timestamps"]) == RECURRENCE_MAX_OCCURRENCES

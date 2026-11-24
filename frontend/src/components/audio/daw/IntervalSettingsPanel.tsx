@@ -20,6 +20,15 @@ interface IntervalSettingsPanelProps {
   initialSchedule?: number[];
   timelineDurationMs: number;
   onClose: () => void;
+  /** Variability the panel opens with (a recurring activity's LLM spread). Default 0. */
+  seedJitterSeconds?: number;
+  /**
+   * Recurring activity: apply interval / variability to its trigger chain instead
+   * of writing timestamps (the panel then leaves the schedule untouched on open).
+   */
+  onApply?: (intervalSec: number, jitterSec: number) => void;
+  /** Restore whatever `onApply` changed (Cancel). */
+  onCancel?: () => void;
 }
 
 /**
@@ -40,11 +49,21 @@ export function IntervalSettingsPanel({
   initialSchedule,
   timelineDurationMs,
   onClose,
+  seedJitterSeconds = 0,
+  onApply,
+  onCancel,
 }: IntervalSettingsPanelProps) {
   const [intervalSec, setIntervalSec] = useState(seedIntervalSeconds);
-  const [jitterSec, setJitterSec] = useState(0);
+  const [jitterSec, setJitterSec] = useState(seedJitterSeconds);
+  // A recurring activity's chain lives on the sound card (soundscape store);
+  // a plain track's schedule in the audio store — group the drag's undo there.
+  const undoStoreId = onApply ? 'soundscape' : 'audioControls';
 
   const recompute = (interval: number, jitter: number) => {
+    if (onApply) {
+      onApply(interval, jitter);
+      return;
+    }
     const ts = generateLoopTimestamps({
       soundId,
       durationSecPerIteration: durationSecPerIteration.length > 0 ? durationSecPerIteration : undefined,
@@ -58,17 +77,20 @@ export function IntervalSettingsPanel({
 
   // Apply the seeded distribution as soon as the panel opens — otherwise the
   // timeline only updates once a slider is dragged.
+  // A recurring activity opens on its own (LLM) rhythm and only changes once a
+  // slider moves.
   const didInitRef = useRef(false);
   useEffect(() => {
     if (didInitRef.current) return;
     didInitRef.current = true;
-    recompute(seedIntervalSeconds, 0);
+    if (onApply) return;
+    recompute(seedIntervalSeconds, seedJitterSeconds);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Live-update on every drag step; one undo entry per drag (pause/commit).
   const intervalSlider = useBatchedSlider<number>(
-    'audioControls',
+    undoStoreId,
     (v) => {
       const rounded = Math.round(v * 10) / 10;
       setIntervalSec(rounded);
@@ -77,7 +99,7 @@ export function IntervalSettingsPanel({
   );
 
   const jitterSlider = useBatchedSlider<number>(
-    'audioControls',
+    undoStoreId,
     (v) => {
       const rounded = Math.round(v * 10) / 10;
       setJitterSec(rounded);
@@ -86,6 +108,11 @@ export function IntervalSettingsPanel({
   );
 
   const handleCancel = () => {
+    if (onCancel) {
+      onCancel();
+      onClose();
+      return;
+    }
     const store = useAudioControlsStore.getState();
     if (initialSchedule !== undefined) {
       store.handleTimestampsChange(soundId, initialSchedule);

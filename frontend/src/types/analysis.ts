@@ -167,6 +167,8 @@ export interface FoleyRecurrence {
   end: string;
   /** End-to-start gap (s) before occurrences 2..n. */
   gaps: number[];
+  /** Irregular activities: the first occurrence lags its start / cause by this (s). */
+  firstDelay?: number;
 }
 
 export interface FoleySoundEvent {
@@ -185,6 +187,14 @@ export interface FoleySoundEvent {
   copyCount?: number;
   /** Set for an ongoing activity: its occurrences are spread and chained by code. */
   recurrence?: FoleyRecurrence | null;
+  /** Play a catalogue recording instead of generating (crowd bed). */
+  catalogSound?: import('./index').CatalogSoundSelection;
+}
+
+/** Foley agent's crowd-voices pick (catalogue name, or a Text-to-Audio prompt). */
+export interface FoleyCrowdChoice {
+  catalogName: string;
+  prompt: string;
 }
 
 export interface FoleyScenario {
@@ -195,6 +205,8 @@ export interface FoleyScenario {
 export interface FoleyResult {
   scenarios: FoleyScenario[];
   foleyId: string;
+  /** Crowd voices for the people present who are not talking (utils/crowdBed.ts). */
+  crowd?: FoleyCrowdChoice | null;
 }
 
 export interface SpeechEntry {
@@ -367,6 +379,8 @@ export interface TextPromptResult {
     category?: string;
     /** Background bed with a location (window, wall, vent…): its card starts with Global off. */
     spatial?: boolean;
+    /** Catalogue recording to play instead of generating (crowd bed): the card becomes a catalog card. */
+    catalogSound?: import('./index').CatalogSoundSelection;
     /** Orchestration metadata from the full pipeline (foley+speech → orchestrate) */
     orchestrateMeta?: {
       orchestrateId: string;

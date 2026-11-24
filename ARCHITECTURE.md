@@ -535,7 +535,7 @@ Sound focus — 3D sphere ↔ DAW track ↔ sound card (edit + share, Simple + E
       `reveal` powers + opens it
     daw/useDawTrackFocus — highlights the track head, scrolls the row below the sticky ruler
       (also once when the dock mounts with a focus)
-    scene/hooks/useFaceFocusedSound — share view + FPS: a 'card'/'daw' focus eases the
+    scene/hooks/useFaceFocusedSound — FPS (edit + share): a 'card'/'daw' focus eases the
       listener view toward lib/three/sound-live-position (camera faceFirstPersonToward)
   hooks/useDismissOnSceneClick(…, keepOnTypes=['sound']) — a press on a visible sound sphere
     (coordinator.getVisibleCustomObjectTypeAt) never reduces the panel; other 3D clicks do.
@@ -602,16 +602,23 @@ Scene realism (living scenes, not one-off stage directions)
               travels in scenarioSource so a re-orchestration rebuilds the chain.
   Speech      "SOCIAL SCENES": continuous group conversation, reactions as lines, groups overlap;
               lines per speaker and max group silence from the atmosphere + peopleCount.
-  Crowd bed   analysisStore.handleFoleyArtist, after foley + speech: utils/crowdBed.withCrowdBed adds a
-              non-spatial "crowd murmur" background card when peopleCount − speakers ≥ the atmosphere's
-              threshold (scene has speech, no murmur bed yet).
+  Crowd bed   handleFoleyArtist loads the catalogue's "crowds" sounds (utils/crowdBed.loadCrowdCatalog →
+              /api/catalog?category=crowds) and sends their names as `crowd_catalog`; foley rule 15
+              returns `crowd` {catalogName | prompt} (never a murmur sound entry; prefers Crowd Talking /
+              Voices Murmur / Voices On Street Accent). After foley + speech, withCrowdBed adds a
+              non-spatial background card when peopleCount − speakers ≥ the atmosphere's threshold: a
+              catalog card (metadata.catalogSound → type 'catalog') for a recording, else a TTA card.
+  Background  foley rule 8: specific, nameable noise sources (HVAC hum, fridge, a distant motorcycle
+              through traffic), split into separate entries — never a generic "room tone".
   Variation   lib/audio/utils/clip-variation.clipVariation(soundId, iterIdx, category, mode, override):
               hash-seeded ±cents / ±dB per occurrence (sound events only), scaled by the per-sound mode
               (audioControlsStore.soundVariationModes; SoundVariationChips on the card) or replaced by
               a hand-set override (iterationVariations; DAW clip menu sliders / re-roll / reset). Applied
               in applyFadeInOut (detune + envelope plateau) for live playback (build-score → Transport)
-              and export; the bake shortens / lengthens detuned iterations for after() chains. Saved as
+              and export; never part of the bake, so clips never move. Saved as
               iteration_variations / sound_variation_modes in soundscape.json.
+  Interval    a recurring track's menu shows "Interval settings": sliders seeded from recurrence.gaps
+              rewrite the chain delays (lib/audio/utils/recurrence-interval.ts), keeping the cause link.
   Re-anchors  bake: manualTimestamps merge DAW edits and written times per slot
               (orchestrate-schedule.resolveManualTimestamps), so an unresolved slot falls back to its
               written time; such slots (solver fallbacks + write-time safety net) are listed in

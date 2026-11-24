@@ -64,7 +64,7 @@ import { useFileUploadStore } from './fileUploadStore';
 import { remapLinkedCardIndices } from './cardIndexLinks';
 import { captureGenerationSignature } from '@/utils/generationSignature';
 import { isScenarioSpeechDone } from '@/utils/scenarioSpeech';
-import { withCrowdBed } from '@/utils/crowdBed';
+import { crowdCatalogNames, withCrowdBed } from '@/utils/crowdBed';
 import { urlToDataUrl } from '@/utils/dataUrl';
 import { collectUnsharedSceneAudioUrls } from '@/utils/sceneAudioUrls';
 import {
@@ -1784,6 +1784,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                     timestamps: isBgFoley ? undefined : (sound.timestamps?.length ? sound.timestamps : undefined),
                     category: sound.category,
                     spatial: sound.spatial,
+                    ...(sound.catalogSound ? { catalogSound: sound.catalogSound } : {}),
                     scenarioSource: {
                       scenarioId,
                       foleyId,
@@ -2519,6 +2520,8 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
               llm_model: config.llmModel ?? DEFAULT_LLM_MODEL,
               sound_detail: config.soundDetail ?? DEFAULT_FOLEY_SOUND_DETAIL,
               liveliness: config.liveliness ?? DEFAULT_SCENE_LIVELINESS,
+              // Baked catalogue crowd names: the agent picks the crowd voices from them.
+              crowd_catalog: crowdCatalogNames(),
               bounding_box: getScenarioBounds(),
             };
             const speechBody = {
@@ -2559,6 +2562,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                 const finalResult: FoleyResult = {
                   scenarios,
                   foleyId: result?.foley_id ?? '',
+                  crowd: result?.crowd ?? null,
                 };
                 const selectedFoleyKeys = finalResult.scenarios.flatMap((s) =>
                   s.sound_events.map((e) => `${s.scenario_title}__${e.soundName}`),

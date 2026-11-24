@@ -445,7 +445,7 @@ export const FOCUS_SCROLL = {
   OFFSET_PX: 8,               // px — gap kept above a card / track scrolled into view
   SETTLE_DELAY_MS: 120,       // ms — wait for a card's expand layout before scrolling to it
 } as const;
-/** ms — share-view FPS turn toward a focused sound source. */
+/** ms — FPS turn toward a focused sound source. */
 export const FPS_FACE_SOURCE_DURATION_MS = 400;
 
 // Card info ("i") popover — click-to-open explanation panel on every card
@@ -769,7 +769,35 @@ export const CROWD_BED = {
   SMALL_DESCRIPTION: 'soft indistinct conversation of a few people nearby, no clear words',
   LARGE_DESCRIPTION: 'busy room walla of many indistinct voices, no clear words',
   SOUND_NAME: 'crowd murmur',
+  /** Catalogue category the foley agent picks the crowd recording from (Google Sound Library). */
+  CATALOG_CATEGORY: 'crowds',
 } as const;
+
+/**
+ * The catalogue's "crowds" category (Google Sound Library), baked in so the
+ * crowd pick needs no scrape at scene time. The foley agent chooses from these
+ * names (foley rule 15). Checked 2026-11-24: every URL answers 200 audio/ogg.
+ * Source: https://developers.google.com/assistant/tools/sound-library/crowds
+ */
+const CROWD_SOUND_BASE = 'https://actions.google.com/sounds/v1/crowds';
+export const CROWD_CATALOG_SOUNDS: ReadonlyArray<{ name: string; url: string; category: string }> = [
+  ['Battle Agony Moans', 'battle_agony_moans'],
+  ['Battle Crowd Celebrate Stutter', 'battle_crowd_celebrate_stutter'],
+  ['Battle Crowd Celebration', 'battle_crowd_celebration'],
+  ['Battle Cry - High Pitch', 'battle_cry_high_pitch'],
+  ['Battle Intimidation Forest', 'battle_intimidation_forest'],
+  ['Crowd Talking', 'crowd_talking'],
+  ['Female Crowd Celebration', 'female_crowd_celebration'],
+  ['Human Group Cry Out', 'human_group_cry_out'],
+  ['Murmuring And Talking Men', 'murmuring_and_talking_men'],
+  ['Quiet Breathing', 'quiet_breathing'],
+  ['Team Cheer', 'team_cheer'],
+  ['Voices Angry', 'voices_angry'],
+  ['Voices Moaning', 'voices_moaning'],
+  ['Voices Murmur', 'voices_murmur'],
+  ['Voices On Street Accent', 'voices_on_street_accent'],
+  ['Wild Battle Crowd Approach', 'wild_battle_crowd_approach'],
+].map(([name, file]) => ({ name, url: `${CROWD_SOUND_BASE}/${file}.ogg`, category: CROWD_BED.CATALOG_CATEGORY }));
 
 // Position Generation (for sound sphere spacing)
 // These values match the backend's position calculation logic

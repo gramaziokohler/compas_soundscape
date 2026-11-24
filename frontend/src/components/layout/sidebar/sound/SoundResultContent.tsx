@@ -174,8 +174,14 @@ export function SoundResultContent({
       } : undefined}
       storeContext="audioControls"
       onBlueBackground
+      extraContent={
+        <SoundVariationChips
+          trackId={volumeKey}
+          category={(primaryVariant ?? generatedSound).category}
+          onBlueBackground
+        />
+      }
     />
-    <SoundVariationChips trackId={volumeKey} category={(primaryVariant ?? generatedSound).category} />
     </>
   );
 }

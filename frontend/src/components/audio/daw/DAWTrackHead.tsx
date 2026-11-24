@@ -30,6 +30,8 @@ interface DAWTrackHeadProps {
   /** Open the transient "Interval settings" popover, anchored so its bottom-left
    * corner touches the kebab button's top-right corner (anchor = kebab top-right). */
   onRequestDistribute: (anchor: { x: number; y: number }) => void;
+  /** Recurring activity (LLM rhythm): the menu item reads "Interval settings". */
+  isRecurring?: boolean;
   onSelectAllClips: () => void;
   onClearClips: () => void;
   onResetTrack: () => void;
@@ -61,6 +63,7 @@ function DAWTrackHeadImpl({
   onOpenSoundCard,
   isFocused = false,
   onRequestDistribute,
+  isRecurring = false,
   onSelectAllClips,
   onClearClips,
   onResetTrack,
@@ -124,7 +127,7 @@ function DAWTrackHeadImpl({
   }, [onZoomToEntity, isFirstPersonMode]);
 
   const menuItems: Array<[string, () => void]> = [
-    ['Distribute evenly', () => onRequestDistribute(kebabAnchorRef.current)],
+    [isRecurring ? 'Interval settings' : 'Distribute evenly', () => onRequestDistribute(kebabAnchorRef.current)],
     ['Select all clips on track', onSelectAllClips],
     ['Clear clips', onClearClips],
     ['Reset track', onResetTrack],

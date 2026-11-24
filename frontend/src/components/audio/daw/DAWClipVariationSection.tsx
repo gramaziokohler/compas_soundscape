@@ -1,7 +1,6 @@
 'use client';
 
 import { useState } from 'react';
-import { RangeSlider } from '@/components/ui/RangeSlider';
 import type { ClipVariation } from '@/types/audio';
 import { CLIP_VARIATION } from '@/utils/constants';
 
@@ -18,13 +17,50 @@ export interface DAWClipVariationSectionProps {
   onReset: () => void;
 }
 
-const rowStyle = { padding: '4px 12px' } as const;
 const actionStyle = { padding: '5px 12px', cursor: 'pointer', color: 'var(--foreground)', whiteSpace: 'nowrap' } as const;
+const mutedText = { color: 'var(--color-secondary-hover)', fontSize: '10px' } as const;
+
+interface CompactSliderProps {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  format: (v: number) => string;
+  onChange: (v: number) => void;
+  onCommit: (v: number) => void;
+}
+
+/** One menu-sized slider row: label · range · value (commits on release). */
+function CompactSlider({ label, value, min, max, step, format, onChange, onCommit }: CompactSliderProps) {
+  return (
+    <div style={{ padding: '3px 12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+      <span style={{ ...mutedText, width: 28, flexShrink: 0 }}>{label}</span>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        onPointerUp={(e) => onCommit(Number(e.currentTarget.value))}
+        onKeyUp={(e) => onCommit(Number(e.currentTarget.value))}
+        onDoubleClick={() => { onChange(0); onCommit(0); }}
+        style={{ flex: 1, minWidth: 0, height: 12, accentColor: 'var(--color-primary)' }}
+        aria-label={label}
+        title="Double-click to reset to 0"
+      />
+      <span style={{ ...mutedText, width: 40, flexShrink: 0, textAlign: 'right', fontFamily: 'monospace' }}>
+        {format(value)}
+      </span>
+    </div>
+  );
+}
 
 /**
  * "Variation" block of the DAW clip menu: pitch / level offset of this one
- * occurrence (lib/audio/utils/clip-variation.ts). Sliders commit on release so a
- * drag does not re-bake the schedule on every tick.
+ * occurrence (lib/audio/utils/clip-variation.ts). Only the sound changes — the
+ * clip keeps its place on the timeline.
  */
 export function DAWClipVariationSection({ variation, isOverridden, onSet, onReroll, onReset }: DAWClipVariationSectionProps) {
   const [cents, setCents] = useState(variation.detuneCents);
@@ -36,36 +72,29 @@ export function DAWClipVariationSection({ variation, isOverridden, onSet, onRero
 
   return (
     <div style={{ borderTop: '1px solid var(--color-border)', marginTop: '4px', paddingTop: '4px' }}>
-      <div style={{ ...rowStyle, color: 'var(--color-text-3)', fontSize: '10px' }}>
-        Variation {isOverridden ? '(set by hand)' : '(auto)'}
+      <div style={{ padding: '2px 12px', ...mutedText }}>
+        Variation {isOverridden ? '· set by hand' : '· auto'}
       </div>
-      <div style={rowStyle}>
-        <RangeSlider
-          label="Pitch"
-          value={cents}
-          min={-CLIP_VARIATION.MAX_DETUNE_CENTS}
-          max={CLIP_VARIATION.MAX_DETUNE_CENTS}
-          step={5}
-          unit="ct"
-          defaultValue={0}
-          onChange={setCents}
-          onChangeCommitted={(v) => onSet(v, db)}
-        />
-      </div>
-      <div style={rowStyle}>
-        <RangeSlider
-          label="Level"
-          value={db}
-          min={-CLIP_VARIATION.MAX_GAIN_DB}
-          max={CLIP_VARIATION.MAX_GAIN_DB}
-          step={0.1}
-          precision={1}
-          unit="dB"
-          defaultValue={0}
-          onChange={setDb}
-          onChangeCommitted={(v) => onSet(cents, v)}
-        />
-      </div>
+      <CompactSlider
+        label="Pitch"
+        value={cents}
+        min={-CLIP_VARIATION.MAX_DETUNE_CENTS}
+        max={CLIP_VARIATION.MAX_DETUNE_CENTS}
+        step={5}
+        format={(v) => `${v > 0 ? '+' : ''}${v} ct`}
+        onChange={setCents}
+        onCommit={(v) => onSet(v, db)}
+      />
+      <CompactSlider
+        label="Level"
+        value={db}
+        min={-CLIP_VARIATION.MAX_GAIN_DB}
+        max={CLIP_VARIATION.MAX_GAIN_DB}
+        step={0.1}
+        format={(v) => `${v > 0 ? '+' : ''}${v.toFixed(1)} dB`}
+        onChange={setDb}
+        onCommit={(v) => onSet(cents, v)}
+      />
       <div
         style={actionStyle}
         onMouseEnter={(e) => hover(e, true)}

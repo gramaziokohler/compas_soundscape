@@ -191,7 +191,7 @@ SCENE_LIVELINESS_LEVELS = {
         "activity": (
             "Calm: people are unhurried and mostly quiet; activities are slow and rarely overlap."
         ),
-        "rate_multiplier": 0.6,
+        "rate_multiplier": 0.45,
         "venue_sources": "at most one off-screen venue source",
         "speech_lines_per_speaker_per_30s": 2,
         "speech_max_group_gap_s": 12,
@@ -200,7 +200,7 @@ SCENE_LIVELINESS_LEVELS = {
         "activity": (
             "Normal: an ordinary, believable level of activity for this kind of place and time."
         ),
-        "rate_multiplier": 1.0,
+        "rate_multiplier": 0.7,
         "venue_sources": "one or two off-screen venue sources",
         "speech_lines_per_speaker_per_30s": 3,
         "speech_max_group_gap_s": 8,
@@ -210,7 +210,7 @@ SCENE_LIVELINESS_LEVELS = {
             "Lively: the place is busy; people move, handle things and talk a lot, and several "
             "activities overlap at any moment."
         ),
-        "rate_multiplier": 1.5,
+        "rate_multiplier": 1.0,
         "venue_sources": "two or three off-screen venue sources",
         "speech_lines_per_speaker_per_30s": 5,
         "speech_max_group_gap_s": 4,
@@ -224,10 +224,24 @@ DEFAULT_SCENE_LIVELINESS = "normal"
 RECURRENCE_MIN_GAP_S = 0.4           # shortest end-to-start gap between two occurrences
 RECURRENCE_MAX_OCCURRENCES = 24      # cap per entry (keeps the DAW and solver light)
 RECURRENCE_OCCURRENCES_PER_COPY = 3  # one distinct audio copy per this many occurrences
-RECURRENCE_JITTER_STEADY = 0.15      # relative gap spread of a steady rhythm (walking)
-RECURRENCE_JITTER_IRREGULAR = 0.6    # relative gap spread of an irregular one (page turns)
+# Gaps are drawn log-normally around the mean (mean kept), so an irregular
+# activity has many short gaps, some long pauses and the odd burst.
+RECURRENCE_GAP_SIGMA_STEADY = 0.2      # log-spread of a steady rhythm (walking)
+RECURRENCE_GAP_SIGMA_IRREGULAR = 0.85  # log-spread of an irregular one (page turns, sips)
+RECURRENCE_GAP_MAX_FACTOR = 4.0        # longest pause = this × the mean gap
+RECURRENCE_FIRST_OFFSET_FACTOR = 0.6   # irregular: first occurrence up to this × mean gap after start
 RECURRENCE_DEFAULT_DURATION_S = 2.0  # one occurrence's length when the entry gives none
 SCENARIO_DEFAULT_DURATION_S = 150    # scene length when a request / scenario gives none
+
+# Crowd voices (foley rule 15): the agent picks a recording from the sound
+# catalogue's "crowds" category (names sent by the frontend) before falling back
+# to a generated prompt. Preferred names per kind of scene:
+CROWD_CATALOG_PREFERENCES = {
+    "lively": "Crowd Talking",
+    "quiet": "Voices Murmur",
+    "outdoor": "Voices On Street Accent",
+}
+CROWD_CATALOG_MAX_NAMES = 40          # names quoted in the prompt (and accepted per request)
 
 # Virtual room extents used to anchor scenario sound positions when no context
 # model (3D layout analysis) is available. Speckle Z-up: X = width, Y = depth,

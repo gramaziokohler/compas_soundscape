@@ -631,7 +631,7 @@ export function SpeckleScene({
     soundscapeData,
   });
 
-  // ── Share view FPS: turn toward a sound focused from a card / DAW track ──
+  // ── FPS: turn toward a sound focused from a card / DAW track ──
   useFaceFocusedSound(soundscapeData);
 
   // ── Sound Sphere Highlight + Zoom ──
