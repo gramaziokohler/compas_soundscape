@@ -860,6 +860,8 @@ export const STABLE_AUDIO_EXTEND_MAX_SECONDS = 120;
 // prompt decides the optimal length. Looping is opt-in and defaults to on for
 // background beds.
 export const DEFAULT_SOUND_LOOP = false;
+// SFX v3 (GA Nov 2026). v2 (`eleven_text_to_sound_v2`) is deprecated, removed 2027-03-01.
+export const ELEVENLABS_MODEL_ID = "eleven_text_to_sound_v3";
 export const ELEVENLABS_DURATION_MIN = 0.5;
 export const ELEVENLABS_DURATION_MAX = 30;
 // HTTP statuses ElevenLabs returns when an output format (e.g. pcm_48000) isn't
@@ -1184,7 +1186,7 @@ export const LIBRARY_MAX_SEARCH_RESULTS = 10; // Max results for BBC/Freesound l
 // "Generate all" fans out across lanes without hammering an external API or the
 // backend threadpool.
 export const SOUND_GEN_CONCURRENCY = {
-  ELEVENLABS: 2,
+  ELEVENLABS: 5,
   CALIBRATE: 3,
   LIBRARY: 3,
   CATALOG: 3,

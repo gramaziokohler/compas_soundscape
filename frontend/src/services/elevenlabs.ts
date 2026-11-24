@@ -26,6 +26,7 @@ import {
   ELEVENLABS_DURATION_MAX,
   ELEVENLABS_DURATION_MIN,
   ELEVENLABS_FORMAT_REJECTED_STATUSES,
+  ELEVENLABS_MODEL_ID,
 } from "@/utils/constants";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -41,7 +42,7 @@ export interface ElevenLabsGenerateOptions {
   durationSeconds?: number;
   /**
    * Create a sound effect that loops smoothly (seamless start/end point).
-   * Only available for the `eleven_text_to_sound_v2` model.
+   * Supported by `eleven_text_to_sound_v2` and later (see ELEVENLABS_MODEL_ID).
    */
   loop?: boolean;
   /**
@@ -129,6 +130,8 @@ export async function generateSoundEffect(
 
   const request = {
     text,
+    // Pinned explicitly — the API's implicit default may lag the latest model.
+    modelId: ELEVENLABS_MODEL_ID,
     // Only pass duration_seconds when it is within the accepted range —
     // otherwise omit it so ElevenLabs guesses the optimal duration (None).
     durationSeconds:
