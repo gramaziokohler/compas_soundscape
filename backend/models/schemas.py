@@ -1332,9 +1332,7 @@ class SceneEditOp(BaseModel):
     count: int | None = None         # set_density (occurrences) / set_variants (copies)
     interval_s: float | None = None  # set_density
     seconds: float | None = None     # set_scene_duration
-    anchor_objects: list[str] = []   # move / add_*: object refs ("O3") the sound sits on
-    near: str = ""                   # move / add_*: sound ref to place it next to
-    position: list[float] = []       # move / add_*: explicit [x, y, z] (m)
+    position: list[float] = []       # move / add_*: [x, y, z] (m) chosen by the agent
     preset: str = ""                 # set_directivity: preset id from the snapshot
     yaw_deg: float | None = None     # set_directivity
     name: str = ""                   # add_sound: short sound name
@@ -1347,9 +1345,13 @@ class SceneEditOp(BaseModel):
 
 
 class SceneEditPlan(BaseModel):
-    """Edit-agent output: a reply for the chat plus the ops to apply."""
-    reply: str
+    """Edit-agent output: the ops to apply plus a reply for the chat.
+
+    ``ops`` comes first so the model writes the changes before describing them:
+    with the reply first it announced edits (a second speaker) it then never emitted.
+    """
     ops: list[SceneEditOp] = []
+    reply: str
 
 
 class SceneEditSnapshotCard(BaseModel):

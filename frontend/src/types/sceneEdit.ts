@@ -35,8 +35,6 @@ export interface SceneEditOp {
   count: number | null;
   interval_s: number | null;
   seconds: number | null;
-  anchor_objects: string[];
-  near: string;
   position: number[];
   preset: string;
   yaw_deg: number | null;
