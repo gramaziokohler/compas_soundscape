@@ -1994,6 +1994,21 @@ export class SoundSphereManager {
   }
 
   /**
+   * Positions of every sound currently shown in the scene: pending and generated
+   * sphere meshes plus entity-linked sounds. Stale `spherePositions` entries of
+   * hidden variants or removed cards are not included.
+   */
+  public getVisibleSoundPositions(): Array<[number, number, number]> {
+    const positions: Array<[number, number, number]> = this.soundMeshes.map(
+      (mesh) => [mesh.position.x, mesh.position.y, mesh.position.z],
+    );
+    for (const { position } of this.getEntityLinkedSoundPositions()) {
+      positions.push(position);
+    }
+    return positions;
+  }
+
+  /**
    * Get positions of all entity-linked sounds (for external point light placement).
    */
   public getEntityLinkedSoundPositions(): Array<{ id: string; position: [number, number, number] }> {

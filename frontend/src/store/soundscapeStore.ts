@@ -52,7 +52,6 @@ import {
   TTS_DEFAULT_VOICE,
   DEFAULT_PROMPT_INFLUENCE,
   DEFAULT_SOUND_LOOP,
-  ELEVENLABS_MIN_PROMPT_DURATION,
   normalizeSoundCategory,
   SOUND_GEN_CONCURRENCY,
 } from '@/utils/constants';
@@ -186,19 +185,19 @@ let _orchestrateProgressStatus: string | null = null;
 /**
  * Duration to request from ElevenLabs for a config.
  *
- * Only LLM-derived (scenario/foley) sounds carry a meaningful target length:
- * background beds and short (<4 s) events omit it so the model picks the
- * optimal length, and manual prompts never send one either — they have no
- * authored length, just the global default.
+ * Only sustained LLM-derived (scenario/foley) sounds carry a meaningful target
+ * length. Everything else omits it so the model picks the optimal length:
+ * background beds, one-shots the LLM labelled `oneShot` (impacts, knocks — a
+ * forced estimate only pads them with silence), and manual prompts (no
+ * authored length, just the global default).
  */
 function elevenLabsDurationSeconds(
   config: SoundGenerationConfig,
   isBackground: boolean,
 ): number | undefined {
-  if (isBackground) return undefined;
+  if (isBackground || config.one_shot) return undefined;
   const isLlmDerived = !!config.scenarioSource || !!config.orchestrateMeta;
-  if (!isLlmDerived) return undefined;
-  return config.duration >= ELEVENLABS_MIN_PROMPT_DURATION ? config.duration : undefined;
+  return isLlmDerived ? config.duration : undefined;
 }
 
 // Per-type config-validation error shown inline on the sound card (mirrors the
@@ -1808,7 +1807,8 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           const recordLaneError = (lane: string, err: unknown) => {
             if (err instanceof Error && (err.name === 'AbortError' || err.message === 'AbortError')) return;
             const message = err instanceof Error ? err.message : String(err);
-            laneErrors.push(`${lane}: ${message}`);
+            const entry = `${lane}: ${message}`;
+            if (!laneErrors.includes(entry)) laneErrors.push(entry);
           };
 
           if (total === 0) {
@@ -2428,7 +2428,12 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                   controller.signal,
                 );
                 elevenLabsEvents = results.flat().filter(Boolean) as any[];
-                errors.forEach(({ error }) => console.error('[soundscapeStore] ElevenLabs error:', error));
+                // Per-sound failures don't reject the lane — record them so the
+                // "Some sounds failed" notice shows instead of a silent skip.
+                errors.forEach(({ error }) => {
+                  console.error('[soundscapeStore] ElevenLabs error:', error);
+                  recordLaneError('ElevenLabs', error);
+                });
               })().catch((err) => recordLaneError('ElevenLabs', err)));
             }
 

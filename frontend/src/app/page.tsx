@@ -1,6 +1,7 @@
 "use client";
 
-import { isEngineSimulation } from '@/types/acoustics';
+import { isEngineSimulation, type AcousticSimulationMode as SimulationCardMode } from '@/types/acoustics';
+import { getSandboxResonanceBoundsFromScene } from '@/lib/three/placeholder-room-manager';
 import { useEffect, useState, useCallback, useRef, useMemo, Suspense } from "react";
 import { useRouter } from "next/navigation";
 import { SpeckleScene } from "@/components/scene/SpeckleScene";
@@ -1947,6 +1948,8 @@ function HomeContent() {
           // A background bed with a location (window, wall, vent…) stays background but plays
           // positioned: its Global toggle starts off.
           ...(isBackground && p.metadata?.spatial ? { global_playback: false } : {}),
+          // Short one-shot (impact, knock): generated at auto length + trimmed.
+          ...(!isBackground && p.metadata?.one_shot ? { one_shot: true } : {}),
           ...(parentUsageIndex !== undefined ? { parentUsageOriginalIndex: parentUsageIndex } : {}),
           ...(orchestrateMeta ? {
             orchestrateMeta: {
@@ -2010,6 +2013,16 @@ function HomeContent() {
       analysis.handleAddConfig(type);
     }
   }, [analysis, globalSpeckleData]);
+
+  // Handler: Add acoustics simulation config. On the Home stage (no model) a new
+  // ShoeBox room is fitted to the pending/generated sounds instead of the fixed
+  // placeholder room (which is the fallback when there are no sounds).
+  const handleAddSimulationConfig = useCallback((mode: SimulationCardMode) => {
+    const resonanceBounds = mode === 'resonance' && !useUIStore.getState().globalSpeckleData
+      ? getSandboxResonanceBoundsFromScene()
+      : undefined;
+    useAcousticsSimulationStore.getState().handleAddConfig(mode, resonanceBounds);
+  }, []);
 
   // Handler: Analyze sound events when audio file is uploaded
   const handleAnalyzeSoundEvents = useCallback(async () => {
@@ -4311,7 +4324,7 @@ function HomeContent() {
         // Acoustics simulation state
         simulationConfigs={acousticsSimulation.simulationConfigs}
         activeSimulationIndex={acousticsSimulation.activeSimulationIndex}
-        onAddSimulationConfig={acousticsSimulation.handleAddConfig}
+        onAddSimulationConfig={handleAddSimulationConfig}
         onRemoveSimulationConfig={handleRemoveSimulationConfig}
         onUpdateSimulationConfig={acousticsSimulation.handleUpdateConfig}
         onSetActiveSimulation={acousticsSimulation.handleSetActiveSimulation}

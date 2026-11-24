@@ -128,12 +128,13 @@ export async function generateSoundEffect(
 
   const client = getClient();
 
-  const request = {
+  // Typed against the SDK request: the SDK validates `modelId` against its own
+  // enum before sending, so an id the installed SDK doesn't know throws locally
+  // (no HTTP call). Typing the request makes that a compile error instead.
+  const request: ElevenLabs.CreateSoundEffectRequest = {
     text,
     // Pinned explicitly — the API's implicit default may lag the latest model.
-    // Assertion: the SDK's SfxModelId union (2.68) only lists v2, but the API
-    // accepts v3. Drop the cast once the SDK typings include the pinned model.
-    modelId: ELEVENLABS_MODEL_ID as ElevenLabs.SfxModelId,
+    modelId: ELEVENLABS_MODEL_ID,
     // Only pass duration_seconds when it is within the accepted range —
     // otherwise omit it so ElevenLabs guesses the optimal duration (None).
     durationSeconds:

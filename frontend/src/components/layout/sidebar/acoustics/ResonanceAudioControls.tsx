@@ -9,6 +9,7 @@ import { RefreshIcon } from '@/components/ui/Icon';
 import { useCanEdit } from '@/hooks/useCanEdit';
 import { useAcousticsSimulationStore, useUIStore } from '@/store';
 import { aabbsOverlap } from '@/lib/audio/utils/resonance-rooms';
+import { getSandboxResonanceBoundsFromScene } from '@/lib/three/placeholder-room-manager';
 import { RESONANCE_AUDIO } from '@/utils/constants';
 import type { ResonanceSimulationConfig, ResonanceRoom } from '@/types/acoustics';
 import type { ResonanceRoomMaterial } from '@/types/audio';
@@ -97,9 +98,11 @@ export function ResonanceAudioControls({
   };
 
   const handleReset = () => {
-    const modelBounds = useUIStore.getState().speckleBounds;
-    if (!modelBounds) return;
-    useAcousticsSimulationStore.getState().resetResonanceRoom(config.id, modelBounds);
+    const { globalSpeckleData, speckleBounds } = useUIStore.getState();
+    // Home stage (no model): refit to the pending/generated sounds.
+    const bounds = globalSpeckleData ? speckleBounds : getSandboxResonanceBoundsFromScene();
+    if (!bounds) return;
+    useAcousticsSimulationStore.getState().resetResonanceRoom(config.id, bounds);
   };
 
   return (

@@ -320,6 +320,7 @@ export function buildSoundscapeSavePayload(
       orchestrate_meta: config.orchestrateMeta,
       category: (config as any).category || undefined,
       global_playback: config.global_playback,
+      one_shot: config.one_shot || undefined,
       // Scenario pipeline reference for "incomplete" (pre-orchestrate) cards.
       scenario_source: (config as any).scenarioSource || undefined,
       // Manual override for a pending (not-yet-generated) non-entity sphere.
@@ -738,6 +739,7 @@ export function restoreSoundscapeState(
       orchestrateMeta: saved.orchestrate_meta as SoundGenerationConfig['orchestrateMeta'],
       category: saved.category,
       global_playback: saved.global_playback ?? undefined,
+      one_shot: saved.one_shot || undefined,
       scenarioSource: (saved as any).scenario_source as SoundGenerationConfig['scenarioSource'],
       // Manual override for a pending (not-yet-generated) non-entity sphere —
       // keeps its authored position after a refresh instead of camera-front.

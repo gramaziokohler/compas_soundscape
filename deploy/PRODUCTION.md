@@ -15,7 +15,7 @@ The operational scripts live **outside this repo**, in `C:\compas\`. Their full 
 | Scripts | `C:\compas\compas.ps1` (CLI `compas`), `compas-lib.ps1`, `compas-supervisor.ps1`, `compas-install.ps1` |
 | Config | `C:\compas\config.psd1`: paths, service names, ports, intervals, `EnableAutoDeploy`, `Pffdtd*` / `Cuda*` |
 | Backend Python env | `PythonExe` = `…\miniconda3\envs\compas-soundscape\python.exe` (**not** `compas-toy`) |
-| Stable Audio 3 env | `Sa3PythonExe` = `…\miniconda3\envs\compas-sa3\python.exe` |
+| Stable Audio 3 env | `Sa3PythonExe` = `…\miniconda3\envs\compas-sa3\python.exe`. `compas deps` never touches it: its worker packages (`redis python-dotenv scipy librosa`, deploy/README.md §0.1) come from `Install-CompasSa3Env` in `compas-lib.ps1`. A new SA3 worker dependency is installed by hand (ask first, see AGENTS.md) and added to that function. |
 | PFFDTD env | `PffdtdPythonExe` = `…\miniconda3\envs\compas-pffdtd\python.exe` (from `backend/pffdtd_backend/environment.yml`). The worker runs in the backend env (`--role pffdtd`) and calls this interpreter. The services get `PFFDTD_PYTHON` from `config.psd1` through nssm, so it is **not** set in `.env`. `compas deps` never touches this env. |
 | PFFDTD engine | `backend/pffdtd_backend/c_cuda/bin/*.exe`, built for `PffdtdCudaArch` = `sm_75` (RTX 2080 Ti) with `nvcc` from the `compas-cuda` conda env (`cuda-nvcc` 13.3, the driver's max CUDA). There is no system CUDA toolkit, so no installer can touch the display driver. VS 2026 Build Tools provide `cl.exe`. |
 | Services | `CompasApi`, `CompasWorkerGpu`, `CompasWorkerCpu`, `CompasWorkerSa3`, `CompasWorkerPffdtd`, `CompasFrontend` (`next start`), `CompasNginx` (:80), `CompasCloudflared`, `Memurai` |

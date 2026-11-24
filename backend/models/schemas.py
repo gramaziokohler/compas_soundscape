@@ -585,6 +585,8 @@ class SoundscapeSoundConfig(BaseModel):
     category: Optional[str] = None
     # Background card plays as a global (non-spatial) bed; None = default (on).
     global_playback: Optional[bool] = None
+    # Short one-shot (LLM label): generated at auto length + trimmed; None = sustained.
+    one_shot: Optional[bool] = None
     # Scenario pipeline reference (scenarioId + foley/speech ids + raw entry fields),
     # persisted so orchestration can be re-run from edited cards after refresh.
     scenario_source: Optional[dict] = None
@@ -1237,6 +1239,10 @@ class FoleySoundEvent(BaseModel):
     # (window, wall, vent…) — the frontend then plays it as a positioned source
     # (Global toggle off) instead of a non-spatial global bed.
     spatial: bool = False
+    # Short discrete one-shot (impact, knock, door slam, page turn): its length is
+    # left to the generator (ElevenLabs auto duration; SA3/TangoFlux trim silence)
+    # instead of forcing `duration`, which only pads the clip with silence.
+    oneShot: bool = False
     duration: str = ""           # MM:SS duration of a single sound occurrence
     timestamps: list[str]        # starting positions in MM:SS format
     objectsInvolved: list[str]   # hex IDs chronologically ordered
@@ -1303,6 +1309,7 @@ class OrchestrateEntry(BaseModel):
     description: str
     category: str    # "background sound" | "sound event" | "speech"
     spatial: bool = False  # passed through from the foley entry (see FoleySoundEvent.spatial)
+    oneShot: bool = False  # passed through from the foley entry (see FoleySoundEvent.oneShot)
     duration: str    # MM:SS; empty string for speech
     trigger: OrchestrateTrigger
     timestamps: list[str] = []   # starting positions in MM:SS (passed through from foley/speech)

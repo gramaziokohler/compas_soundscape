@@ -70,6 +70,23 @@ def test_scenarist_prompt_infers_people_and_room():
 
     _, fixed = svc._build_scenarist_prompts(None, fc, 60, 4, 9, has_furniture=False, room_bounds=extents)
     assert "People Count: 4" in fixed and "fixed by the 3D model" in fixed
+    assert '"roomDimensions": [],' in fixed
+
+
+def test_scenarist_default_room_is_not_a_hard_limit():
+    """With the virtual room, the prompt must not pin positions to its extents (the LLM kept
+    6x10x3 m for "a large auditorium") and must always ask for the room it sized."""
+    svc = _service()
+    fc, _, extents, _ = svc._scenarist_furniture_context(_load_furniture_list(None, None, None))
+    system, user = svc._build_scenarist_prompts(
+        "a conference in a large auditorium", fc, 30, None, 9,
+        has_furniture=False, room_bounds=extents, room_is_default=True,
+    )
+    assert "NOT a limit" in system and "room you size in rule 6" in user
+    assert "INSIDE these extents" not in user
+    assert "large auditorium ~" in user and "ALWAYS report the room" in user
+    assert '"roomDimensions": [<width>, <depth>, <height>]' in user
+    assert '"roomDimensions": [],' not in user
 
 
 def test_foley_and_speech_prompts_carry_room_extents():

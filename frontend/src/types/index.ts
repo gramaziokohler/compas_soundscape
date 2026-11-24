@@ -227,6 +227,11 @@ export interface SoundGenerationConfig {
    * Unset = GLOBAL_SOURCE.DEFAULT_ENABLED. Playback-only: not a generation input.
    */
   global_playback?: boolean;
+  /**
+   * Short discrete one-shot (LLM label: impact, knock, page turn). ElevenLabs gets
+   * no duration (auto length); SA3/TangoFlux trim the silence around the sound.
+   */
+  one_shot?: boolean;
   negative_prompt: string;
   seed_copies: number;
   steps: number;

@@ -183,6 +183,8 @@ export interface FoleySoundEvent {
   spl: string;
   /** Background bed coming from a place / direction (window, wall, vent…): plays positioned, not global. */
   spatial?: boolean;
+  /** Short discrete one-shot (impact, knock): generated at auto length, not the estimated `duration`. */
+  oneShot?: boolean;
   /** Distinct audio variants to generate for this sound type (1-5). */
   copyCount?: number;
   /** Set for an ongoing activity: its occurrences are spread and chained by code. */
@@ -237,6 +239,8 @@ export interface OrchestrateEntry {
   category: string;
   /** Background bed with a location (passed through from the foley entry). */
   spatial?: boolean;
+  /** Short one-shot (passed through from the foley entry). */
+  oneShot?: boolean;
   duration: string;
   trigger: OrchestrateTrigger;
   /** Original foley/speech timestamps (MM:SS), one per trigger expression slot. */
@@ -379,6 +383,8 @@ export interface TextPromptResult {
     category?: string;
     /** Background bed with a location (window, wall, vent…): its card starts with Global off. */
     spatial?: boolean;
+    /** Short one-shot (LLM label): the card gets `one_shot`. */
+    one_shot?: boolean;
     /** Catalogue recording to play instead of generating (crowd bed): the card becomes a catalog card. */
     catalogSound?: import('./index').CatalogSoundSelection;
     /** Orchestration metadata from the full pipeline (foley+speech → orchestrate) */

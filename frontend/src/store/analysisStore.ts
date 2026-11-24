@@ -1701,6 +1701,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                       : undefined,
                     category: entry.category,
                     spatial: entry.spatial,
+                    one_shot: entry.oneShot,
                     orchestrateMeta: {
                       orchestrateId: sc.orchestrateResult!.orchestrateId,
                       entryId: entry.id,
@@ -1784,6 +1785,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                     timestamps: isBgFoley ? undefined : (sound.timestamps?.length ? sound.timestamps : undefined),
                     category: sound.category,
                     spatial: sound.spatial,
+                    one_shot: sound.oneShot,
                     ...(sound.catalogSound ? { catalogSound: sound.catalogSound } : {}),
                     scenarioSource: {
                       scenarioId,

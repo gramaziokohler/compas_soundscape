@@ -89,8 +89,9 @@ pip install -e .
 #   pip install torch==2.7.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu126
 
 # 4. The worker reuses the repo's Redis job store + dotenv loader, and the shared
-#    resampler (backend/utils/resampling.py, scipy) — install just those into this env:
-pip install redis python-dotenv scipy
+#    resampler (backend/utils/resampling.py, scipy), plus librosa for the silence-trim
+#    detector (one-shot sounds / "Trim silence"; skipped with a warning without it):
+pip install redis python-dotenv scipy librosa
 
 # 5. Sanity check (import only — weights download on the first real job):
 python -c "from stable_audio_3 import StableAudioModel; print('ok')"
@@ -383,7 +384,7 @@ python scripts/loadtest/run.py --base-url http://localhost:8000 --users 3 --dura
 - **`No module named 'stable_audio_3'` in the sa3 worker** → it was launched from
   the wrong env; `mamba activate compas-sa3` first (§0.1).
 - **`No module named 'redis'` / `'dotenv'` in the sa3 worker** →
-  `mamba activate compas-sa3; pip install redis python-dotenv scipy`.
+  `mamba activate compas-sa3; pip install redis python-dotenv scipy librosa`.
 - **`No module named 'scipy'` in the sa3 worker** → same fix (needed by
   `utils/resampling.py` to write output at `AUDIO_SAMPLE_RATE`).
 - **401 / gated-repo error loading Stable Audio 3** → accept the model license and

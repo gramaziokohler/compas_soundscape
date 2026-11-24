@@ -106,6 +106,14 @@ safety net for the summed mix, so per-sound levels stay linear dB offsets.
   (`utils/recurrence.expand_recurrence`): `timestamps` and `copyCount` are derived, so the card's
   variant count follows the number of occurrences. `recurrence` is kept in `scenarioSource` so a
   re-orchestration rebuilds the trigger chain.
+- **One-shots** (`FoleySoundEvent.oneShot`, foley rule 10): the LLM labels short discrete sounds
+  (impacts, knocks, page turns). The label passes through orchestrate (`OrchestrateEntry.oneShot`)
+  to the card's `one_shot`. ElevenLabs then gets no `duration_seconds` (auto length; a forced
+  estimate only pads with silence); TangoFlux/SA3 clips get `trim_silence` per clip → `noise_trim`.
+  The trim region (`utils/audio_processing.compute_noise_trim_region`, also behind "Trim silence")
+  confirms onset gaps on the RMS envelope and cuts the trailing silence after the last sound
+  (`TRIM_*` in `config/constants.py`). SA3 needs `librosa` in `compas-sa3` for it.
+  Sustained LLM sounds send their duration to ElevenLabs; beds and manual prompts never do.
 - **Crowd murmur bed**: `utils/crowdBed.withCrowdBed` appends a background foley entry (and its
   selection key) after foley + speech when more people are present than speak; it is generated like
   any other bed card.

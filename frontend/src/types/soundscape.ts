@@ -56,6 +56,7 @@ export interface SoundscapeSoundConfig {
   category?: string;
   /** Background card plays as a global (non-spatial) bed. Unset = default (on). */
   global_playback?: boolean;
+  one_shot?: boolean;
   /** Scenario pipeline reference for "incomplete" (pre-orchestrate) cards. */
   scenario_source?: Record<string, unknown>;
   /** Manual [x, y, z] override for a pending (not-yet-generated) non-entity

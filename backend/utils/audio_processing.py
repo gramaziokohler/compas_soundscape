@@ -24,6 +24,11 @@ from config.constants import (
     LOOP_FINDER_ALIGN_REPEATS,
     LOOP_FINDER_MIN_MATCH_SCORE,
     LOOP_FINDER_LENGTH_PENALTY,
+    TRIM_SILENCE_DB,
+    TRIM_NOISE_FLOOR_MARGIN_DB,
+    TRIM_MIN_DYNAMIC_DB,
+    TRIM_RELEASE_S,
+    TRIM_FRAME_LENGTH,
 )
 
 try:
@@ -236,7 +241,7 @@ def _longest_sfx_region_samples(
     for gs, ge in sorted(significant):
         if gs > cursor:
             keep_regions.append((cursor, gs))
-        cursor = ge
+        cursor = max(cursor, ge)  # gaps may overlap (trailing gap vs. inter-onset gaps)
     if cursor < total_samples:
         keep_regions.append((cursor, total_samples))
 
@@ -246,17 +251,81 @@ def _longest_sfx_region_samples(
     return max(keep_regions, key=lambda r: r[1] - r[0])
 
 
+def _loud_frames(audio_1d: np.ndarray) -> np.ndarray | None:
+    """Per-frame "not silent" mask on the RMS envelope (hop ``DENOISING_ONSET_HOP_LENGTH``).
+
+    Silent = below ``TRIM_SILENCE_DB`` re the loudest frame and below the clip's
+    noise floor + ``TRIM_NOISE_FLOOR_MARGIN_DB``. ``None`` when the clip has no
+    silence at all (floor within ``TRIM_MIN_DYNAMIC_DB`` of the loudest frame).
+    """
+    rms = librosa.feature.rms(
+        y=audio_1d, frame_length=TRIM_FRAME_LENGTH, hop_length=DENOISING_ONSET_HOP_LENGTH, center=True,
+    )[0]
+    if rms.size == 0:
+        return None
+    loudest = float(np.max(rms))
+    if loudest <= 0.0:
+        return None
+    noise_floor = float(np.percentile(rms, 10))
+    if noise_floor > loudest * 10.0 ** (-TRIM_MIN_DYNAMIC_DB / 20.0):
+        return None
+    threshold = max(
+        loudest * 10.0 ** (TRIM_SILENCE_DB / 20.0),
+        noise_floor * 10.0 ** (TRIM_NOISE_FLOOR_MARGIN_DB / 20.0),
+    )
+    return rms >= threshold
+
+
+def _frame_end_sample(frame: int) -> int:
+    """Last sample covered by RMS frame ``frame`` (center=True framing)."""
+    return frame * DENOISING_ONSET_HOP_LENGTH + TRIM_FRAME_LENGTH // 2
+
+
+def _confirmed_silence_gaps(
+    audio_1d: np.ndarray,
+    sample_rate: int,
+    onset_gaps: list[tuple[int, int]],
+) -> list[tuple[int, int]]:
+    """Silence gaps for the trim region, confirmed on the RMS envelope.
+
+    An onset gap only proves that ONE window inside it is quiet, so a spurious
+    onset in a silent tail made the whole sound before it look like a gap (the
+    sound got trimmed away). Each onset gap therefore starts after the last loud
+    frame inside it (+ ``TRIM_RELEASE_S``). The tail after the last sound, which
+    onset gaps never cover, is added the same way.
+    """
+    loud = _loud_frames(audio_1d)
+    if loud is None:
+        return []
+    total = len(audio_1d)
+    release = int(TRIM_RELEASE_S * sample_rate)
+    min_gap = int(DENOISING_TRIM_MERGE_THRESHOLD * sample_rate)
+    frame_ends = np.array([_frame_end_sample(i) for i in range(loud.size)])
+
+    confirmed: list[tuple[int, int]] = []
+    # (0, total) = the trailing gap: it starts after the last loud frame of the clip.
+    for gs, ge in [*onset_gaps, (0, total)]:
+        # Loud frames ending inside the gap belong to the sound before it (its decay);
+        # frames reaching past `ge` belong to the next sound and must not cancel the gap.
+        inside = np.flatnonzero(loud & (frame_ends > gs) & (frame_ends <= ge))
+        if inside.size:
+            gs = max(gs, int(frame_ends[inside[-1]]) + release)
+        if ge - gs >= min_gap:
+            confirmed.append((gs, ge))
+    return confirmed
+
+
 def compute_noise_trim_region(
     audio_1d: np.ndarray,
     sample_rate: int,
 ) -> tuple[float, float] | None:
     """Detect the trim region of an audio clip as ``(start, end)`` fractions (0-1).
 
-    Uses the exact same noise-gap detection as denoising
-    (:func:`_find_all_noise_gaps`, librosa spectral-flux onset detection) so the
-    reported trim region is consistent with what noise reduction treats as noise.
-    Mirrors the old ``trim_silence`` behaviour: only the longest continuous SFX
-    region is kept (interior gaps ≤ ``DENOISING_TRIM_MERGE_THRESHOLD`` are merged).
+    Starts from the same onset gaps as denoising (:func:`_find_all_noise_gaps`,
+    librosa spectral-flux onset detection), confirms each on the RMS envelope
+    and adds the trailing silence after the last sound
+    (:func:`_confirmed_silence_gaps`). Only the longest continuous SFX region is
+    kept (interior gaps < ``DENOISING_TRIM_MERGE_THRESHOLD`` are merged).
 
     Returns ``None`` when no usable trim region is found (no noise profile, or the
     region spans essentially the whole file).
@@ -264,7 +333,10 @@ def compute_noise_trim_region(
     if audio_1d.ndim != 1:
         audio_1d = ensure_mono(audio_1d)
 
-    noise_gaps, _ = _find_all_noise_gaps(audio_1d, sample_rate)
+    if float(np.max(np.abs(audio_1d), initial=0.0)) < DENOISING_MIN_PEAK_AMPLITUDE:
+        return None
+    onset_gaps, _ = _find_all_noise_gaps(audio_1d, sample_rate)
+    noise_gaps = _confirmed_silence_gaps(audio_1d, sample_rate, onset_gaps)
     if not noise_gaps:
         return None
 

@@ -58,6 +58,21 @@ def _empty_gpu_cache() -> None:
         print(f"[sa3] empty_cache failed (non-fatal): {exc}")
 
 
+
+def _noise_trim_region(output_path: str) -> tuple[float, float] | None:
+    """Trim region of a finished clip (fractions 0-1), or None.
+
+    Imported lazily: the detector needs librosa, which the isolated compas-sa3
+    env may lack (deploy/README.md §0.1). Without it the clip is kept untrimmed.
+    """
+    try:
+        from utils.audio_processing import compute_noise_trim_region_from_file
+    except ImportError as exc:
+        print(f"[sa3] trim skipped — {exc} (pip install librosa in compas-sa3)")
+        return None
+    return compute_noise_trim_region_from_file(output_path)
+
+
 class Sa3Runner:
     def __init__(self, job_store: WorkerJobStore, state, worker_id: str):
         self.job_store = job_store
@@ -229,6 +244,11 @@ class Sa3Runner:
             }
             if clip.get("entity_index") is not None:
                 sound_data["entity_index"] = clip["entity_index"]
+            # Global "Trim silence" toggle, or an LLM-labelled one-shot (see the clip plan).
+            if payload.get("trim_silence") or clip.get("trim_silence"):
+                noise_trim = _noise_trim_region(output_path)
+                if noise_trim is not None:
+                    sound_data["noise_trim"] = noise_trim
 
             completed.append(sound_data)
             self.job_store.set_progress(

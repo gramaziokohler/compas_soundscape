@@ -93,8 +93,8 @@ const acousticsSimulationEquality = (a: AcousticsSimulationSnapshot, b: Acoustic
   a.simulationConfigs.length === b.simulationConfigs.length &&
   a.simulationConfigs.every((c, i) => undoEquality(editableProjection(c), editableProjection(b.simulationConfigs[i])));
 
-function defaultResonanceRoom(): ResonanceRoom {
-  const bounds = useUIStore.getState().speckleBounds;
+function defaultResonanceRoom(initialBounds?: ResonanceRoomBounds): ResonanceRoom {
+  const bounds = initialBounds ?? useUIStore.getState().speckleBounds;
   return {
     bounds: bounds
       ? { min: [...bounds.min] as [number, number, number], max: [...bounds.max] as [number, number, number] }
@@ -174,7 +174,11 @@ export interface AcousticsSimulationStoreState {
    */
   restoreNonce: number;
 
-  handleAddConfig: (mode: AcousticSimulationMode) => void;
+  /**
+   * `resonanceBounds` overrides the new ShoeBox room's initial AABB (default:
+   * the model bounds). The Home stage passes bounds fitted to its sounds.
+   */
+  handleAddConfig: (mode: AcousticSimulationMode, resonanceBounds?: ResonanceRoomBounds) => void;
   handleRemoveConfig: (index: number) => void;
   handleReorderConfigs: (from: number, to: number) => void;
   /** Ctrl+drag duplicate — deep-clones the config at `from` and inserts at `toInsertion`. */
@@ -209,7 +213,7 @@ export const useAcousticsSimulationStore = create<AcousticsSimulationStoreState>
         hiddenResonanceBoxIds: [],
         restoreNonce: 0,
 
-        handleAddConfig: (mode) => {
+        handleAddConfig: (mode, resonanceBounds) => {
           const { simulationConfigs, simulationCounter } = get();
           const timestamp = Date.now();
           const id = `sim_${timestamp}`;
@@ -225,7 +229,7 @@ export const useAcousticsSimulationStore = create<AcousticsSimulationStoreState>
                 type: 'resonance',
                 state: 'idle',
                 createdAt: timestamp,
-                room: defaultResonanceRoom(),
+                room: defaultResonanceRoom(resonanceBounds),
               } satisfies ResonanceSimulationConfig;
               break;
 

@@ -219,7 +219,7 @@ class GpuRunner:
             }
             if clip.get("entity_index") is not None:
                 sound_data["entity_index"] = clip["entity_index"]
-            if trim_silence:
+            if trim_silence or clip.get("trim_silence"):
                 sound_data["noise_trim"] = compute_noise_trim_region_from_file(output_path)
 
             completed.append(sound_data)

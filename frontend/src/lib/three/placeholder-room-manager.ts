@@ -13,6 +13,7 @@ import * as THREE from 'three';
 import type { CameraController, Viewer } from '@speckle/viewer';
 import { HOME_STAGE, RESONANCE_AUDIO } from '@/utils/constants';
 import type { BoundingBoxBounds } from '@/lib/three/BoundingBoxManager';
+import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 
 type CameraPlanesController = CameraController & {
   updateFarCameraPlane: () => void;
@@ -45,7 +46,7 @@ export function getPlaceholderRoomBounds(): BoundingBoxBounds {
  * (`AUTO_BBOX_MIN_SIZE`). With no sound sources it falls back to the fixed
  * centred placeholder room.
  */
-export function getSandboxResonanceBounds(soundPositions: THREE.Vector3[]): BoundingBoxBounds {
+export function getSandboxResonanceBounds(soundPositions: Array<[number, number, number]>): BoundingBoxBounds {
   const fallback = getPlaceholderRoomBounds();
   if (soundPositions.length === 0) return fallback;
 
@@ -54,13 +55,13 @@ export function getSandboxResonanceBounds(soundPositions: THREE.Vector3[]): Boun
 
   let minX = Infinity, minY = Infinity, minZ = Infinity;
   let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
-  for (const p of soundPositions) {
-    minX = Math.min(minX, p.x);
-    minY = Math.min(minY, p.y);
-    minZ = Math.min(minZ, p.z);
-    maxX = Math.max(maxX, p.x);
-    maxY = Math.max(maxY, p.y);
-    maxZ = Math.max(maxZ, p.z);
+  for (const [x, y, z] of soundPositions) {
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    minZ = Math.min(minZ, z);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+    maxZ = Math.max(maxZ, z);
   }
 
   // Logical buffer around the sound spheres.
@@ -85,6 +86,16 @@ export function getSandboxResonanceBounds(soundPositions: THREE.Vector3[]): Boun
     min: [centerX - halfW, centerY - halfD, floorZ],
     max: [centerX + halfW, centerY + halfD, ceilingZ],
   };
+}
+
+/**
+ * Home stage ShoeBox bounds fitted to the sounds currently in the scene
+ * (pending placeholders and generated sounds). Falls back to the placeholder
+ * room when there are no sounds or the viewer is not up yet.
+ */
+export function getSandboxResonanceBoundsFromScene(): BoundingBoxBounds {
+  const manager = useSpeckleEngineStore.getState().coordinator?.getSoundSphereManager();
+  return getSandboxResonanceBounds(manager?.getVisibleSoundPositions() ?? []);
 }
 
 /**

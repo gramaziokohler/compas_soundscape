@@ -9,7 +9,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@elevenlabs/elevenlabs-js": "^2.35.0",
+    "@elevenlabs/elevenlabs-js": "^2.80.0",
     "@next/env": "^16.2.4",
     "@speckle/viewer": "^2.26.9",
     "dotenv": "^17.2.4",

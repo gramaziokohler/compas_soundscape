@@ -867,10 +867,6 @@ export const ELEVENLABS_DURATION_MAX = 30;
 // HTTP statuses ElevenLabs returns when an output format (e.g. pcm_48000) isn't
 // allowed for the account's plan → fall back to the default MP3 format.
 export const ELEVENLABS_FORMAT_REJECTED_STATUSES: ReadonlySet<number> = new Set([400, 403, 422]);
-// Only send an explicit duration to ElevenLabs for non-background sounds whose
-// target (LLM) duration is at least this long. Shorter events and background
-// beds omit it so the model picks the optimal length itself.
-export const ELEVENLABS_MIN_PROMPT_DURATION = 4;
 export const DEFAULT_PROMPT_INFLUENCE = 0.3;
 export const PROMPT_INFLUENCE_MIN = 0;
 export const PROMPT_INFLUENCE_MAX = 1;

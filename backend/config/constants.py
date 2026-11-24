@@ -334,6 +334,15 @@ DENOISING_MIN_PEAK_AMPLITUDE = 0.001  # Below this peak the whole signal is sile
 DENOISING_ONSET_HOP_LENGTH = 512  # Hop length (samples) for onset detection
 DENOISING_ONSET_PRE_MARGIN = 0.02  # Seconds before first onset to exclude (avoids onset bleed)
 DENOISING_TRIM_MERGE_THRESHOLD = 0.2  # Max silence (seconds) between SFX to merge into one continuous region
+# Trim region silence test (RMS envelope). A frame is silent when it is below BOTH
+# TRIM_SILENCE_DB under the loudest frame AND TRIM_NOISE_FLOOR_MARGIN_DB above the clip's own
+# noise floor (10th-percentile frame) — the floor term lets hissy clips trim too. A clip whose
+# floor is within TRIM_MIN_DYNAMIC_DB of its loudest frame has no silence (sustained texture).
+TRIM_SILENCE_DB = -50.0
+TRIM_NOISE_FLOOR_MARGIN_DB = 6.0
+TRIM_MIN_DYNAMIC_DB = 20.0
+TRIM_RELEASE_S = 0.1  # kept after the last loud frame so a cut never clips the decay
+TRIM_FRAME_LENGTH = 2048  # RMS frame (samples); hop = DENOISING_ONSET_HOP_LENGTH
 
 # Loop detection (seamless-loop region finder) — decimated-envelope search.
 # The envelope is decimated to LOOP_FINDER_HOP_SEC resolution so the period scan

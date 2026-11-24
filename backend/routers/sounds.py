@@ -138,6 +138,8 @@ def _build_clip_plan(sound_configs: list[dict], apply_denoising: bool, audio_mod
                 "position": position,
                 "entity_index": entity_index,
                 "interval_seconds": interval_seconds,
+                # LLM-labelled one-shot (impact, knock): trim the silence around it.
+                "trim_silence": bool(cfg.get("one_shot")),
                 "negative_prompt": negative_prompt,
                 "filename": f"{short_prompt}_{param_hash}_{run_token}_copy{copy_idx}.wav",
             })
@@ -208,6 +210,8 @@ def _build_sa3_clip_plan(sound_configs: list[dict], base_dbfs: float | None) -> 
                 "entity_index": entity_index,
                 "interval_seconds": interval_seconds,
                 "negative_prompt": negative_prompt,
+                # LLM-labelled one-shot (impact, knock): trim the silence around it.
+                "trim_silence": bool(cfg.get("one_shot")),
                 "generation_mode": STABLE_AUDIO_MODE_TEXT,
                 "sampler_type": sampler_type,
                 "duration_padding_sec": duration_padding_sec,

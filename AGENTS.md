@@ -18,6 +18,13 @@ On the production host, never tell the user to run `uvicorn`/workers or `pip ins
 Use `compas restart <svc>` and `compas deps` instead, because `compas deps` honours
 `PipExcludePackages`. Local editable builds such as pyroomacoustics must not be overwritten.
 
+**Installing a package into a production env** (`compas-soundscape`, `compas-sa3`, `compas-pffdtd`,
+`compas-cuda` on the production host): ask the user first, naming the package and the env. Once they
+agree, do the install yourself (`<env>\python.exe -m pip install <pkg>`, never `pip install -r`),
+check that the service's imports still load, record the dependency where that env is set up
+(`requirements.txt`, or `deploy/README.md` / `deploy/PRODUCTION.md` for the isolated envs), and
+restart the affected service with `compas restart <svc>`.
+
 ## Run Commands (local dev — see `deploy/README.md`)
 
 The backend env is `compas-toy` on dev machines and `compas-soundscape` on the production host.
@@ -40,7 +47,7 @@ python -m workers.worker_main --role pffdtd --slots 1 --worker-id pffdtd-1
 # Stable Audio 3 (stable-audio-3-small-sfx, the default TTA model) MUST run in the
 # isolated compas-sa3 env (torch 2.7.1 / transformers 5 for T5Gemma; incompatible
 # with compas-toy). Full env setup on a new machine: deploy/README.md §0.1. One-time:
-#   mamba activate compas-sa3 && pip install redis python-dotenv scipy
+#   mamba activate compas-sa3 && pip install redis python-dotenv scipy librosa
 mamba activate compas-sa3 && python -m workers.worker_main --role sa3 --slots 1 --worker-id sa3-1
 
 # Frontend (from repo root), to run the app

@@ -1828,6 +1828,33 @@ For the duration estimation (in seconds with 0.1 precision):
                 'Detailed behavioral description referencing objects as '
                 'object.name (ids: hex1, hex2).'
             )
+        elif room_bounds and room_is_default:
+            # Virtual-room fallback: the extents are only an assumption. Stating
+            # them as hard limits here made the LLM keep 6x10x3 m even for "a
+            # large auditorium" (rule 6 lost to "strictly within" / "INSIDE").
+            spatial_grounding = (
+                "You must anchor every human movement, gesture, and pathing decision strictly within the "
+                "room you size in rule 6. No 3D model is loaded: the default extents "
+                f"({room_bounds}) are only a placeholder for a medium room, NOT a limit. No object list is "
+                "available — do NOT invent object references, IDs, or linked entities; describe each action "
+                "at an explicit fixed [x, y, z] position."
+            )
+            constraint_1 = (
+                "1. Spatial Positioning (no object list available): The space has NO resolvable object IDs. "
+                "Place every action at a fixed [x, y, z] position INSIDE the room you size in rule 6 "
+                "(x across the width and y across the depth, both centred on 0; z from the floor at 0). "
+                "Do NOT invent object references, IDs, or linked entities — describe positions explicitly "
+                "(e.g. 'at [3.2, 1.0, 1.5] near the east wall')."
+            )
+            spatial_analysis_step = (
+                "1. Spatial Analysis: FIRST decide the room size (rule 6): a size the context states, else "
+                "a typical size for this kind of space. Then lay out plausible zones (entrance, walls, "
+                "corners, windows, stage, seating, work or play areas) over the WHOLE floor area of that room."
+            )
+            example_description = (
+                'Detailed behavioral description with an explicit fixed [x, y, z] position '
+                'inside the room (no object IDs).'
+            )
         elif room_bounds:
             spatial_grounding = (
                 "You must anchor every human movement, gesture, and pathing decision strictly within the "
@@ -1869,17 +1896,22 @@ For the duration estimation (in seconds with 0.1 precision):
 
         if room_is_default:
             room_size_rule = (
-                "Room Size: The room extents above are only an ASSUMED default room. If the Additional "
-                "Context or the reference image states or implies the size of the space (e.g. 'a room of "
-                "8x10x4', 'a 12 m long hall', 'a small bathroom', 'a large open-plan office'), use THAT size "
-                "instead: width along x and depth along y, both centred on 0, floor at z = 0, ceiling at "
-                "z = height. Place every position inside that room and report it in `roomDimensions` as "
-                "[width, depth, height] in metres ('AxBxC' means width A, depth B, height C; with only two "
-                "values choose a plausible height). If nothing states or implies a size, return "
-                "`roomDimensions: []` and keep the default extents."
+                "Room Size (decide this FIRST — it overrides the default extents): No 3D model is loaded, so "
+                "the extents given above are only an ASSUMED default room. Size the room from the Additional "
+                "Context and the reference image: (a) a stated size wins ('a room of 8x10x4', 'a 12 m long "
+                "hall'; 'AxBxC' means width A, depth B, height C; with only two values choose a plausible "
+                "height); (b) otherwise a size word or a kind of space sets a typical real-world size (e.g. "
+                "a small bathroom ~2x3x2.5, a classroom ~8x10x3, a large open-plan office ~25x30x3.5, "
+                "a church nave ~15x40x12, a large auditorium ~25x35x10, a sports hall ~30x45x10); "
+                "(c) only when nothing hints at the size keep the default extents. ALWAYS report the room "
+                "you used in `roomDimensions` as [width, depth, height] in metres (width along x and depth "
+                "along y, both centred on 0, floor at z = 0, ceiling at z = height) and place every "
+                "position inside it."
             )
+            room_dims_example = "[<width>, <depth>, <height>]"
         else:
             room_size_rule = "Room Size: The room size is fixed by the 3D model — return `roomDimensions: []`."
+            room_dims_example = "[]"
 
         if people_count is None:
             people_line = "- People Count: not given — infer it (see rule 3)"
@@ -1971,7 +2003,7 @@ For the duration estimation (in seconds with 0.1 precision):
             f'  "peopleCount": <total number of people>,\n'
             f'  "peopleDescription": "who they are, e.g. 2 adults, 3 children",\n'
             f'  "hasSpeech": true,\n'
-            f'  "roomDimensions": [],\n'
+            f'  "roomDimensions": {room_dims_example},\n'
             f'  "likeliness": {likeliness},\n'
             f'  "events": [\n'
             f'    {{\n'
@@ -2206,6 +2238,11 @@ For the duration estimation (in seconds with 0.1 precision):
             'handling throughout the room). Discrete sound events always get "spatial": false.\n'
             '10. Estimate a realistic "duration" (MM:SS) for a SINGLE occurrence of the sound: short for '
             "impacts (e.g. 00:02), longer for continuous beds (e.g. 00:20).\n"
+            '   Set "oneShot": true for a short, discrete, self-contained sound whose natural length the '
+            "sound generator should decide: impacts, knocks, a door slam or click, a book set down, a page "
+            "turn, a single footstep, a cup placed on a saucer, a switch, a cough. Set false for anything "
+            "sustained or evolving over a set time (a kettle boiling, a printer run, a vacuum pass, rain, "
+            'machinery) and ALWAYS false for background beds.\n'
             '11. Estimate "copyCount" (integer 1 to 5): how many DISTINCT audio variants are worth '
             "generating for this sound type so repeated occurrences do not sound like the exact same clip "
             "retriggered. Base it on the number of times the sound recurs in the scenario (the length of "
@@ -2229,6 +2266,7 @@ For the duration estimation (in seconds with 0.1 precision):
             'action/material; use then for multi-part sequences. Do NOT include scenario character names.",\n'
             '    "category": "\\"background sound\\" | \\"sound event\\"",\n'
             '    "spatial": false,\n'
+            '    "oneShot": false,\n'
             '    "duration": "MM:SS duration of a single sound occurrence",\n'
             '    "timestamps": ["MM:SS", ...],\n'
             '    "copyCount": 1,\n'
@@ -3204,6 +3242,7 @@ For the duration estimation (in seconds with 0.1 precision):
                 "description": sound.get("description", ""),
                 "category": sound.get("category", "sound event"),
                 "spatial": bool(sound.get("spatial", False)),
+                "oneShot": bool(sound.get("oneShot", False)),
                 "duration": sound.get("duration", ""),
                 "timestamps": sound.get("timestamps", []) or [],
                 "character": "",
@@ -3264,6 +3303,7 @@ For the duration estimation (in seconds with 0.1 precision):
                 "description": base["description"],
                 "category": base["category"],
                 "spatial": base.get("spatial", False),
+                "oneShot": base.get("oneShot", False),
                 "duration": base["duration"],
                 "trigger": trigger,
                 "timestamps": base["timestamps"],
