@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, useState, useCallback, useEffect, memo } from 'react';
-import { API_BASE_URL, DAW_CLIP_TRIM } from '@/utils/constants';
+import { API_BASE_URL, CLIP_VARIATION, DAW_CLIP_TRIM } from '@/utils/constants';
 import { DAWClipTrimHandle } from './DAWClipTrimHandle';
 import { subscribeColorTheme } from '@/utils/color-theme';
 import { Spinner } from '@/components/ui/Spinner';
@@ -111,6 +111,10 @@ export interface DAWClipProps {
   /** Solver-excluded ghost clip: shown hatched, never played. */
   isExcluded?: boolean;
   excludedReason?: string;
+  /** Placed at its written time because its timing link failed: light amber outline. */
+  reanchorReason?: string;
+  /** Pitch / level offset of this occurrence, e.g. "+30 ct · −1.2 dB" ("" = none). */
+  variationLabel?: string;
   onPointerDownClip: (e: React.PointerEvent<HTMLDivElement>) => void;
   /** Edge-trim handles are shown only when the clip's source length is known. */
   canTrim?: boolean;
@@ -145,6 +149,8 @@ function DAWClipImpl({
   iterationLink,
   isExcluded,
   excludedReason,
+  reanchorReason,
+  variationLabel,
   onPointerDownClip,
   canTrim,
   isTrimming,
@@ -221,7 +227,13 @@ function DAWClipImpl({
       onContextMenu={handleContextMenuEvt}
       onMouseEnter={() => { setIsHovered(true); onHover?.(); }}
       onMouseLeave={() => { setIsHovered(false); onHoverEnd?.(); }}
-      title={isExcluded ? `${name} — excluded: ${excludedReason ?? 'timing link could not be satisfied'}` : name}
+      title={isExcluded
+        ? `${name} — excluded: ${excludedReason ?? 'timing link could not be satisfied'}`
+        : [
+            name,
+            reanchorReason ? `${reanchorReason}. Drag it to place it yourself.` : '',
+            variationLabel ? `Variation ${variationLabel} (right-click to change)` : '',
+          ].filter(Boolean).join(' — ')}
       style={{
         position: 'absolute',
         left: `${leftPx}px`,
@@ -246,7 +258,10 @@ function DAWClipImpl({
         opacity: isDragging ? 0.8 : 1,
         zIndex: isDragging ? 30 : isSelected ? 12 : 10,
         userSelect: 'none',
-        outline: isDragging && isDuplicating ? `2px dashed ${color}` : 'none',
+        outline: isDragging && isDuplicating
+          ? `2px dashed ${color}`
+          : reanchorReason ? '1.5px dashed var(--color-warning-tint-border)' : 'none',
+        outlineOffset: reanchorReason && !(isDragging && isDuplicating) ? '-1.5px' : undefined,
         ...(isExcluded
           ? {
               backgroundColor: 'color-mix(in srgb, var(--color-error) 20%, transparent)',
@@ -263,6 +278,15 @@ function DAWClipImpl({
       }}
       data-clip-key={clipKey}
     >
+      {reanchorReason && !isExcluded && (
+        <div
+          style={{
+            position: 'absolute', inset: 0, pointerEvents: 'none',
+            backgroundColor: 'var(--color-warning-tint)',
+          }}
+        />
+      )}
+
       <div style={{ width: '100%', height: '100%', pointerEvents: 'none', opacity: 0.75 }}>
         {peaks && <PeaksCanvas
             key={themeVersion}
@@ -294,6 +318,18 @@ function DAWClipImpl({
             <Spinner size={12} />
           </span>
         </div>
+      )}
+
+      {variationLabel && !isExcluded && widthPx >= CLIP_VARIATION.LABEL_MIN_WIDTH_PX && (
+        <span
+          style={{
+            position: 'absolute', left: 3, bottom: 2, pointerEvents: 'none', zIndex: 21,
+            fontSize: '7px', lineHeight: 1, color: 'rgba(255,255,255,0.85)', backgroundColor: 'rgba(0,0,0,0.45)',
+            borderRadius: '2px', padding: '1px 2px', whiteSpace: 'nowrap',
+          }}
+        >
+          {variationLabel}
+        </span>
       )}
 
       {isExcluded && (

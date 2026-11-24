@@ -18,7 +18,10 @@
  * All exports use 24-bit PCM WAV encoding.
  */
 
-import type { TimelineSound, Position, Position3D, Orientation, AmbisonicOrder, IterationLink, TrimRange } from '@/types/audio';
+import type {
+  TimelineSound, Position, Position3D, Orientation, AmbisonicOrder, IterationLink, TrimRange,
+  ClipVariation, ClipVariationMode, ClipVariationOverride,
+} from '@/types/audio';
 import { AudioMode } from '@/types/audio';
 import { cartesianToSpherical } from './utils/ambisonic-utils';
 import { AmbisonicMonoEncoder } from './utils/ambisonic-encoder';
@@ -29,6 +32,7 @@ import { applyFadeInOut, resolveClipFade, type FadeOptions } from './utils/fade-
 import { audioBufferToWavBlob24 } from './utils/wav-encode';
 import { resolveVariantSoundIdByPrompt } from './utils/variant-sound-id';
 import { resolveIterationTrim } from './utils/iteration-trim';
+import { clipVariation, variationKey } from './utils/clip-variation';
 import { computeMuteSolo } from './utils/mute-solo';
 import { applyOmniToEncoder, toOmniFilter } from './utils/global-source';
 import { AUDIO_CONTROL, GLOBAL_SOURCE } from '@/utils/constants';
@@ -93,6 +97,12 @@ export interface SoundscapeExportConfig {
 
   /** Per-clip trim overrides (DAW edge-drag), keyed `${soundId}-${iterationIndex}`. */
   iterationTrims?: Record<string, TrimRange>;
+
+  /** Hand-set per-occurrence variations, keyed `${soundId}-${iterationIndex}` (clip-variation.ts). */
+  iterationVariations?: Record<string, ClipVariationOverride>;
+
+  /** Per-sound variation range (off / subtle / strong). */
+  soundVariationModes?: Record<string, ClipVariationMode>;
 
   /** Per-sound loopable flag — mirrored from playback so export fades match. */
   soundLoopable?: Record<string, boolean>;
@@ -782,6 +792,8 @@ function applyLinkedLimiter(
 interface IterationPlayback {
   buffer?: AudioBuffer;
   trim?: TrimRange;
+  /** Per-occurrence pitch / level offset — identical to live playback (build-score.ts). */
+  variation?: ClipVariation;
 }
 
 /**
@@ -793,9 +805,16 @@ interface IterationPlayback {
 function resolveIterationBuffers(
   sound: TimelineSound,
   sourceRegistry: Map<string, { buffer: AudioBuffer; position: Position }>,
-  config: Pick<SoundscapeExportConfig, 'iterationLinks' | 'variantEvents' | 'soundTrims' | 'iterationTrims'>,
+  config: Pick<
+    SoundscapeExportConfig,
+    'iterationLinks' | 'variantEvents' | 'soundTrims' | 'iterationTrims' | 'iterationVariations' | 'soundVariationModes'
+  >,
 ): IterationPlayback[] {
   const { iterationLinks, variantEvents, soundTrims, iterationTrims } = config;
+  const variationAt = (origIdx: number): ClipVariation => clipVariation(
+    sound.id, origIdx, sound.soundGroup, config.soundVariationModes?.[sound.id],
+    config.iterationVariations?.[variationKey(sound.id, origIdx)],
+  );
   const primaryEntry = sourceRegistry.get(sound.id);
   const fallbackBuffer = primaryEntry?.buffer;
   const iterations: IterationPlayback[] = [];
@@ -822,11 +841,13 @@ function resolveIterationBuffers(
         trim: variantEntry
           ? resolveIterationTrim(sound.id, origIdx, variantId, iterationTrims, soundTrims)
           : soundTrims?.[sound.id],
+        variation: variationAt(origIdx),
       });
     } else {
       iterations.push({
         buffer: fallbackBuffer,
         trim: resolveIterationTrim(sound.id, origIdx, sound.id, iterationTrims, soundTrims),
+        variation: variationAt(origIdx),
       });
     }
   }
@@ -848,7 +869,7 @@ function scheduleIterations(
     const startSec = tsMs / 1000;
     if (startSec >= maxDurationSecs) continue;
 
-    const { buffer, trim } = iterations[i];
+    const { buffer, trim, variation } = iterations[i];
     if (!buffer) continue;
 
     const bufferDuration = buffer.duration;
@@ -857,11 +878,15 @@ function scheduleIterations(
 
     const src = offlineCtx.createBufferSource();
     src.buffer = buffer;
-    if (fade && (fade.fadeInMs || fade.fadeOutMs)) {
-      applyFadeInOut(src, destination, { ...fade, durationSec: duration, startTimeSec: startSec });
-    } else {
-      src.connect(destination);
-    }
+    // applyFadeInOut also applies the occurrence's pitch / level (and connects
+    // straight through when there is neither a fade nor a variation).
+    applyFadeInOut(src, destination, {
+      ...fade,
+      detuneCents: variation?.detuneCents,
+      gainDb: variation?.gainDb,
+      durationSec: duration,
+      startTimeSec: startSec,
+    });
     if (duration !== undefined && duration > 0) {
       src.start(startSec, offset, duration);
     } else {

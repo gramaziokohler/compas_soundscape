@@ -1,5 +1,6 @@
 import type { RenderStyle } from '@/types/speckle-scene';
-import type { FoleySoundDetail } from '@/types/analysis';
+import type { FoleySoundDetail, SceneLiveliness } from '@/types/analysis';
+import type { ClipVariationMode } from '@/types/audio';
 
 // ============================================================================
 // API Configuration
@@ -713,6 +714,63 @@ export const DEFAULT_FOLEY_SOUND_DETAIL: FoleySoundDetail = 'detailed';
 export const FOLEY_SOUND_DETAIL_HINT =
   "How finely the scenario's actions are split into sound events. A quiet scenario still gets few. Background and speech are not counted.";
 
+// Scene "Atmosphere" sent as `liveliness` to the scenarist, foley and speech agents.
+// Mirrors SCENE_LIVELINESS_LEVELS in backend/config/constants.py. The crowd-bed
+// fields drive the murmur bed added when more people are present than speak
+// (utils/crowdBed.ts).
+export const SCENE_LIVELINESS_OPTIONS: ReadonlyArray<{
+  value: SceneLiveliness;
+  label: string;
+  title: string;
+  /** Silent people (present but not speaking) needed before a crowd murmur bed is added. */
+  crowdMinSilentPeople: number;
+  /** Level of that bed (dBFS, inside the backend bed band). */
+  crowdBedDbfs: number;
+}> = [
+  { value: 'calm', label: 'Calm', title: 'Unhurried and quiet: slow activities, sparse conversation, few off-screen sounds', crowdMinSilentPeople: 4, crowdBedDbfs: -46 },
+  { value: 'normal', label: 'Normal', title: 'An ordinary level of activity for this place and time', crowdMinSilentPeople: 3, crowdBedDbfs: -42 },
+  { value: 'lively', label: 'Lively', title: 'Busy: frequent actions, near-continuous conversation, several off-screen sounds', crowdMinSilentPeople: 2, crowdBedDbfs: -38 },
+];
+export const DEFAULT_SCENE_LIVELINESS: SceneLiveliness = 'normal';
+export const SCENE_LIVELINESS_HINT =
+  'How busy the scene is: how often activities repeat, how much people talk, and how many off-screen sounds the place has.';
+
+// Per-occurrence variation (lib/audio/utils/clip-variation.ts): each played
+// occurrence of a repeated sound event gets a small, stable pitch + level offset
+// so repeats do not sound like the same clip retriggered. Speech and beds are
+// never varied. `scale` multiplies the base ranges per sound mode.
+export const CLIP_VARIATION = {
+  /** Base pitch range (± cents) at scale 1. 50 ct ≈ ±0.5 semitone ≈ ±3 % length. */
+  DETUNE_CENTS: 50,
+  /** Base level range (± dB) at scale 1. */
+  GAIN_DB: 2,
+  /** Hand-set bounds in the clip menu sliders. */
+  MAX_DETUNE_CENTS: 100,
+  MAX_GAIN_DB: 4,
+  /** Clip label shown only when the clip is at least this wide. */
+  LABEL_MIN_WIDTH_PX: 70,
+  DEFAULT_MODE: 'subtle' as ClipVariationMode,
+  MODES: [
+    { value: 'off', label: 'Off', title: 'Every occurrence plays the clip unchanged', scale: 0 },
+    { value: 'subtle', label: 'Subtle', title: 'About ±0.5 semitone and ±2 dB per occurrence', scale: 1 },
+    { value: 'strong', label: 'Strong', title: 'About ±1 semitone and ±4 dB per occurrence', scale: 2 },
+  ] as ReadonlyArray<{ value: ClipVariationMode; label: string; title: string; scale: number }>,
+} as const;
+
+// Crowd murmur bed (utils/crowdBed.ts): an indistinct-voices background added to a
+// scene with speech when more people are present than speaking voices.
+export const CROWD_BED = {
+  /** An existing bed whose name/description matches this already covers the crowd. */
+  EXISTING_BED_PATTERN: /murmur|chatter|crowd|walla|babble/i,
+  /** From this many silent people on, the bed is described as a busy room. */
+  LARGE_GROUP_SIZE: 10,
+  ENTRY_ID: 'crowd_murmur_1',
+  DURATION: '00:30',
+  SMALL_DESCRIPTION: 'soft indistinct conversation of a few people nearby, no clear words',
+  LARGE_DESCRIPTION: 'busy room walla of many indistinct voices, no clear words',
+  SOUND_NAME: 'crowd murmur',
+} as const;
+
 // Position Generation (for sound sphere spacing)
 // These values match the backend's position calculation logic
 // Used to space sounds evenly when no bounding box is provided
@@ -872,6 +930,30 @@ export const TTS_VOICES = [
 
 export const TTS_DEFAULT_VOICE = "Kore";
 export const TTS_DEFAULT_LANGUAGE = "English";
+
+/**
+ * TTS delivery style (card field `voice_style`, Gemini `speech_metadata.style`).
+ * Helpers are one-click English directions the card toggles in/out of the
+ * comma-separated style text. Their level effect lives in the backend
+ * (SPEECH_STYLE_LEVELS in backend/config/constants.py): whisper/soft play quieter,
+ * shout/angry louder when the scene is orchestrated.
+ */
+export const TTS_STYLE = {
+  MAX_CHARS: 200, // = backend TTS_STYLE_MAX_CHARS
+  SEPARATOR: ", ",
+  PLACEHOLDER: "Neutral — e.g. whispering, excited and fast",
+  PRESETS: [
+    { label: "Whisper", value: "whispering" },
+    { label: "Soft", value: "soft and quiet" },
+    { label: "Shout", value: "shouting" },
+    { label: "Angry", value: "angry" },
+    { label: "Excited", value: "excited" },
+    { label: "Sad", value: "sad" },
+    { label: "Tired", value: "tired" },
+    { label: "Fast", value: "fast" },
+    { label: "Slow", value: "slow" },
+  ],
+} as const;
 
 /**
  * TTS language / dialect resolution UI (components/ui/TtsLanguageInput.tsx,

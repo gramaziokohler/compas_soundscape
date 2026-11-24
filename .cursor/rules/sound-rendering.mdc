@@ -107,6 +107,14 @@ the IR modes play simulated IRs that already contain the pattern.
 - Like `globalSourceIds`, the resolved pattern lives in a per-mode `sourceDirectivities` map so
   chain rebuilds keep it, and global sources bypass the stage (`setBypass`) without losing it.
 
+## Per-Occurrence Variation in Voices
+
+`FadeOptions` carries `detuneCents` / `gainDb` (`lib/audio/utils/clip-variation.ts`). `applyFadeInOut`
+is the single place that applies them — `sourceNode.detune` and the envelope's plateau level (a
+level-only gain stage when there is no fade) — so every mode's `startVoice` and the exporter get
+them without mode-specific code. `durationSec` stays buffer time; the envelope runs on
+`durationSec / rate`. Never add a second per-voice gain or detune path in a mode.
+
 ## Ambisonic Signal Chain
 
 ```

@@ -84,6 +84,32 @@ Each clip's left/right edge can be dragged to trim that one iteration (`useClipT
   trim (and its variant). Changing a clip's variant drops its trim. Resetting a track to auto drops them too.
 - Persisted: undo history, localStorage, and `soundscape.json` (`iteration_trims`).
 
+## Per-Occurrence Variation (pitch / level)
+
+Repeated sound events vary slightly per occurrence so they do not sound like one clip retriggered.
+
+- **One resolver:** `clipVariation(soundId, iterIdx, category, mode, override)`
+  (`lib/audio/utils/clip-variation.ts`) — hash-seeded ±`CLIP_VARIATION.DETUNE_CENTS` / ±`GAIN_DB`,
+  scaled by the per-sound mode (`soundVariationModes`, Off/Subtle/Strong chips on the sound card),
+  replaced by a hand-set `iterationVariations[clipKey]` (clip menu sliders; `seed` = re-roll).
+  Speech and background beds are never varied. Used by the DAW label (`DAWClip` `variationLabel`),
+  live playback (`build-score` → `ScoreClip.detuneCents/gainDb` → `applyFadeInOut`) and WAV export.
+- **Length:** a detuned clip plays `2^(cents/1200)` faster; the bake divides that iteration's
+  duration so `after()` chains follow the played length (`Transport` maps time into the buffer too).
+  The DAW clip width stays the unshifted buffer length (≤3 % at Subtle).
+- **Keys move with clips** like `iterationTrims` (remapped on insert/remove, dropped on reset to auto).
+- Persisted: undo history, localStorage, `soundscape.json` (`iteration_variations`,
+  `sound_variation_modes`), and scene transfer (`scene_transfer_core.py`).
+
+## Re-anchored Clips (amber outline)
+
+A slot whose timing link could not be followed is placed at its written (authored) time instead of
+being dropped: the bake merges DAW edits and written times per slot (`resolveManualTimestamps`), and a
+slot still unresolved at write time falls back to its written time. Each such slot is listed in
+`audioControlsStore.reanchorReasons` (derived by every bake, never saved) and `DAWClip` draws a dashed
+`--color-warning-tint-border` outline with the reason as tooltip. Dragging the clip clears it
+(`clearIterationReanchor` in `useClipGesture`); the slot is then manual, so later bakes do not re-add it.
+
 ## Waveform Rendering — Cached Peaks, No WaveSurfer in the Dock
 
 `DAWClip` draws from `peaks-cache.ts` (`getAudioPeaks`) onto a plain `<canvas>` — it never mounts a

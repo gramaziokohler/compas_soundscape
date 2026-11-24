@@ -27,6 +27,7 @@ from config.constants import (
     SCENE_EDIT_SOUND_DURATION_RANGE_S,
     SCENE_EDIT_TEMPERATURE,
     SOUND_POSITION_WALL_MARGIN_M,
+    SPEECH_DBFS_DEFAULT,
     TTS_CHARACTER_NAMES,
     TTS_INLINE_VOCAL_TAGS,
 )
@@ -39,6 +40,7 @@ from models.schemas import (
 )
 from services.llm_service import LLMService
 from utils.spatial import clamp_position, room_extents_text
+from utils.speech_style import clean_style, proposed_speech_dbfs
 
 # Ops that act on existing sound cards (need at least one valid target).
 _TARGET_OPS = {
@@ -46,10 +48,10 @@ _TARGET_OPS = {
     "set_times", "shift", "set_density", "remove_occurrences",
     "move", "set_directivity",
     "remove", "change_sound", "regenerate", "set_variants",
-    "edit_lines", "change_voice",
+    "edit_lines", "change_voice", "set_style",
 }
 # Ops whose targets must be speech cards.
-_SPEECH_OPS = {"edit_lines", "change_voice"}
+_SPEECH_OPS = {"edit_lines", "change_voice", "set_style"}
 _NEW_SOUND_OPS = {"add_sound", "add_speaker"}
 _BACKGROUND_CATEGORY = "background sound"
 _EVENT_CATEGORY = "sound event"
@@ -81,12 +83,17 @@ CONTENT (regenerates audio)
 - regenerate {targets}: new takes with the same prompt ("make it different").
 - set_variants {targets, count}: number of distinct audio copies (1-5); only new copies are generated.
 SPEECH (regenerates voices)
-- add_speaker {new_ref, character, lines, times_s, position}: ONE new person talking. lines = only
-  what THIS person says, one entry per spoken turn; times_s = when each turn starts. A new
-  conversation between two new people = two add_speaker ops, one per person.
+- add_speaker {new_ref, character, lines, times_s, position, style}: ONE new person talking. lines =
+  only what THIS person says, one entry per spoken turn; times_s = when each turn starts. A new
+  conversation between two new people = two add_speaker ops, one per person. style = how they
+  speak (see set_style), "" for ordinary talk.
 - edit_lines {targets, lines}: rewrite a speaker's turns (e.g. cut a line short where someone
   interrupts, translate, change tone). Give ALL lines of that speaker, edited ones included.
 - change_voice {targets, character}
+- set_style {targets, style}: how a speaker delivers all their lines, a short English direction for
+  the voice ("whispering", "shouting across the room", "excited and fast", "tired and slow"); "" =
+  ordinary talk. Never write a delivery as a tag inside the lines. The app proposes a matching level
+  (a whisper plays quieter, a shout louder); add set_level only when the user asks for a level.
 SCENE
 - rename_scene {title}
 PLACEMENT
@@ -338,6 +345,13 @@ def normalise_plan(plan: SceneEditPlan, snapshot: SceneEditSnapshot) -> tuple[li
                 skip(op, f"unknown voice '{op.character}'")
                 continue
             op.character = character
+        elif op.op == "set_style":
+            op.style = clean_style(op.style)
+            # Propose the style's level (a neutral style goes back to normal talk)
+            # unless the agent set one itself.
+            if op.db is None:
+                op.db = proposed_speech_dbfs(op.style) or SPEECH_DBFS_DEFAULT
+            op.db = _clamp(op.db, DBFS_MIN, DBFS_MAX)
         elif op.op == "rename_scene":
             op.title = op.title.strip()
             if not op.title:
@@ -381,6 +395,11 @@ def normalise_plan(plan: SceneEditPlan, snapshot: SceneEditSnapshot) -> tuple[li
                         warnings.append(f"add_speaker: voice '{op.character}' replaced by {replacement}")
                     character = replacement
                 op.character = character
+                op.style = clean_style(op.style)
+                if op.db is None:
+                    op.db = proposed_speech_dbfs(op.style)
+                if op.db is not None:
+                    op.db = _clamp(op.db, DBFS_MIN, DBFS_MAX)
                 used_characters.add(character)
                 new_speech_refs.add(ref)
             new_refs.add(ref)

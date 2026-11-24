@@ -16,12 +16,15 @@ import { useSoundscapeStore } from '@/store/soundscapeStore';
 import { resolveVariantSoundIdByPrompt } from '@/lib/audio/utils/variant-sound-id';
 import { resolveClipFade } from '@/lib/audio/utils/fade-envelope';
 import { resolveIterationTrim } from '@/lib/audio/utils/iteration-trim';
+import { clipVariation, variationKey } from '@/lib/audio/utils/clip-variation';
 
 export function buildScoreFromTimelineSounds(
   timelineSounds: TimelineSound[],
   timelineDurationMs: number,
 ): TimelineScore {
-  const { iterationLinks, soundTrims, iterationTrims, soundLoopable } = useAudioControlsStore.getState();
+  const {
+    iterationLinks, soundTrims, iterationTrims, soundLoopable, iterationVariations, soundVariationModes,
+  } = useAudioControlsStore.getState();
   // Full sibling list for prompt_index-based variant resolution — works for every
   // id shape (including duplicated/AI-detected tracks), unlike string parsing.
   const generatedSounds = useSoundscapeStore.getState().generatedSounds;
@@ -59,6 +62,12 @@ export function buildScoreFromTimelineSounds(
         }
       }
 
+      // Small stable pitch / level offset per occurrence (sound events only).
+      const variation = clipVariation(
+        ts.id, originalIdx, ts.soundGroup, soundVariationModes[ts.id],
+        iterationVariations[variationKey(ts.id, originalIdx)],
+      );
+
       return {
         clipId: `${ts.id}-${originalIdx}`,
         startMs,
@@ -68,6 +77,8 @@ export function buildScoreFromTimelineSounds(
         fadeInMs: fade?.fadeInMs,
         fadeOutMs: fade?.fadeOutMs,
         position,
+        detuneCents: variation.detuneCents,
+        gainDb: variation.gainDb,
       };
     });
 

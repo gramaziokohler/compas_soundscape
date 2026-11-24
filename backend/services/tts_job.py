@@ -63,6 +63,7 @@ def generate_tts_item(
     language_code: str | None,
     tts_model: str,
     dbfs: float,
+    style: str | None = None,
 ) -> float:
     """Generate one TTS clip with retry/backoff, then calibrate to dbfs.
 
@@ -83,6 +84,7 @@ def generate_tts_item(
                 voice_name=voice_name,
                 language_code=language_code,
                 model=tts_model or DEFAULT_TTS_MODEL,
+                style=style,
             )
             last_exc = None
             break

@@ -22,6 +22,7 @@ from services.tts_voice_catalog import voice_catalog
 from services.tts_voice_service import pick_voice
 from services.metadata_store import metadata_store
 from utils.language_resolver import resolve_language
+from utils.speech_style import clean_style
 from services.job_store import job_store
 from services.io_jobs import start_io_job, run_blocking
 from services.paths import user_sounds_dir
@@ -85,6 +86,7 @@ async def generate_tts(request: TTSGenerationRequest, req: Request):
             copy_index = item.get("copy_index", 0)
             total_copies = item.get("total_copies", 1)
             dbfs = item.get("dbfs", DEFAULT_DBFS)
+            style = clean_style(item.get("style"))
 
             voice_counters[voice_name] = voice_counters.get(voice_name, 0) + 1
             voice_num = voice_counters[voice_name]
@@ -113,6 +115,7 @@ async def generate_tts(request: TTSGenerationRequest, req: Request):
                 real_duration_seconds = await run_blocking(
                     generate_tts_item,
                     tts_service, text, output_path, gemini_voice, match.language_code, tts_model, dbfs,
+                    style or None,
                 )
             except Exception as exc:
                 errors.append(f"{display_short}: {exc}")
@@ -141,6 +144,7 @@ async def generate_tts(request: TTSGenerationRequest, req: Request):
                 "position": item.get("position", [0, 0, 0]),
                 "volume_dbfs": dbfs,
                 "voice_name": voice_name,
+                "voice_style": style,
             })
 
             # Brief pause after each successful call so the Gemini TTS quota

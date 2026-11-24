@@ -72,8 +72,23 @@ from config.constants import (
     MODEL_ANALYSIS_PROMPT_SAMPLE_IDS,
     ROOM_SOURCE_DEFAULT,
     SOUND_POSITION_WALL_MARGIN_M,
+    EVENT_DBFS_MIN,
+    EVENT_DBFS_MAX,
+    EVENT_DBFS_DEFAULT,
+    SCENE_LIVELINESS_LEVELS,
+    DEFAULT_SCENE_LIVELINESS,
+    SCENARIO_DEFAULT_DURATION_S,
 )
 from utils.spatial import clamp_position, room_extents_text
+from utils.speech_style import clean_style, speech_dbfs_band, style_level_guidance
+from utils.recurrence import (
+    clamp_copy_count,
+    expand_recurrence,
+    parse_mmss,
+    recurrence_trigger,
+    reference_entry_id,
+    rotating_variants,
+)
 from utils.entity_grouping import EntityRecord, group_entities, compact_furniture_for_prompt
 
 
@@ -147,6 +162,68 @@ def _bed_spl(spl: str) -> str:
     """Orchestrator 'spl' string of a background bed, clamped to the bed band."""
     match = re.search(r"-?\d+(?:\.\d+)?", spl or "")
     return f"{_bed_dbfs(float(match.group(0)) if match else None):g} dBFS"
+
+
+def _clamped_spl(spl: str, lo: float, hi: float, default: float) -> str:
+    """An orchestrator 'spl' string clamped to [lo, hi] dBFS (default when missing)."""
+    match = re.search(r"-?\d+(?:\.\d+)?", spl or "")
+    value = float(match.group(0)) if match else default
+    return f"{max(lo, min(hi, value)):g} dBFS"
+
+
+def _entry_spl(spl: str, category: str, style: str = "") -> str:
+    """Level of a non-bed orchestrate entry, clamped to its category band.
+
+    Speech uses the band of its delivery style (a whisper sits ~10 dB under normal
+    talk, a shout above it — utils/speech_style.py); a missing level gets that
+    band's default, so a styled line always gets a fitting proposal.
+    """
+    if _normalized_category(category) == "speech":
+        return _clamped_spl(spl, *speech_dbfs_band(style))
+    return _clamped_spl(spl, EVENT_DBFS_MIN, EVENT_DBFS_MAX, EVENT_DBFS_DEFAULT)
+
+
+def _liveliness_level(liveliness: str | None) -> dict:
+    """The SCENE_LIVELINESS_LEVELS row for a key (unknown keys use the default)."""
+    return SCENE_LIVELINESS_LEVELS.get(liveliness or "", SCENE_LIVELINESS_LEVELS[DEFAULT_SCENE_LIVELINESS])
+
+
+def _scene_seconds(scenarios: list) -> float:
+    """Length of the (first) scenario in seconds, from its `duration` ("M:SS")."""
+    for scenario in scenarios or []:
+        if isinstance(scenario, dict):
+            seconds = parse_mmss(scenario.get("duration"))
+            if seconds:
+                return seconds
+    return float(SCENARIO_DEFAULT_DURATION_S)
+
+
+def _usable_recurrence(sound: dict) -> dict | None:
+    """A foley entry's expanded recurrence (has `gaps`), or None for a one-off sound.
+
+    Beds never recur. A recurrence that was never expanded (no `gaps`) is ignored
+    so the entry is orchestrated like any other sound.
+    """
+    rec = sound.get("recurrence")
+    if _is_background_entry(sound) or not isinstance(rec, dict) or not isinstance(rec.get("gaps"), list):
+        return None
+    return rec
+
+
+def _expand_foley_recurrences(sounds: list[dict], scenarios: list, seed_key: str, liveliness: str | None) -> list[dict]:
+    """Clamp copy counts and spread every recurring foley entry over its window."""
+    seconds = _scene_seconds(scenarios)
+    multiplier = _liveliness_level(liveliness)["rate_multiplier"]
+    out = []
+    for sound in sounds:
+        if not isinstance(sound, dict):
+            continue
+        if _is_background_entry(sound):
+            sound = {**sound, "recurrence": None, "copyCount": 1}
+            out.append(sound)
+            continue
+        out.append(expand_recurrence(sound, seconds, seed_key, multiplier))
+    return out
 
 
 def _bed_level_guidance() -> str:
@@ -259,7 +336,12 @@ def _sanitize_trigger_refs(trigger: dict, background_ids: set[str], fallback_tim
             continue
         op, args = m.group(1), m.group(2)
         raw_args = [a.strip() for a in args.split(",") if a.strip()]
-        kept = [a for a in raw_args if _reference_base_id(a) not in background_ids]
+        # Match the exact id ("bed_1" in "bed_1#2") as well as a legacy base id —
+        # comparing only the base ("bed") never matched the stored "bed_1".
+        kept = [
+            a for a in raw_args
+            if reference_entry_id(a) not in background_ids and _reference_base_id(a) not in background_ids
+        ]
         if len(kept) == len(raw_args):
             new_exprs.append(expr)
             new_delays.append(delay)
@@ -1703,6 +1785,7 @@ For the duration estimation (in seconds with 0.1 precision):
         has_furniture: bool = True,
         room_bounds: str | None = None,
         room_is_default: bool = False,
+        liveliness: str = DEFAULT_SCENE_LIVELINESS,
     ) -> tuple[str, str]:
         """Build system and user prompts for the scenarist agent.
 
@@ -1715,8 +1798,10 @@ For the duration estimation (in seconds with 0.1 precision):
         ``room_is_default`` they are only the assumed virtual room, and a size the
         user states or implies replaces them (reported in ``roomDimensions``).
         ``people_count`` None lets the agent infer the people from the context.
+        ``liveliness`` (a SCENE_LIVELINESS_LEVELS key) sets how busy the scene is.
         """
         duration_mmss = f"{duration // 60}:{duration % 60:02d}"
+        atmosphere = _liveliness_level(liveliness)["activity"]
         context_note = (
             f'\n- Additional Context: "{user_context}"'
             if user_context
@@ -1840,6 +1925,7 @@ For the duration estimation (in seconds with 0.1 precision):
             f"### Input Parameters\n"
             f"{people_line}\n"
             f"- Likeliness (1–10): {likeliness}\n"
+            f"- Atmosphere: {atmosphere}\n"
             f"- Space Typology & Bounds: {furniture_context}"
             f"{context_note}\n\n"
             f"### Constraints & Rules\n"
@@ -1848,15 +1934,27 @@ For the duration estimation (in seconds with 0.1 precision):
             f"and there must be no gaps between events. Each event block must span between 5 to 30 seconds.\n"
             f"{people_rule}\n"
             f"4. Scale to People Count:\n"
-            f"   - 0 People: Focus on environmental changes (sunlight shifting, a robotic vacuum, "
-            f"wind through a window, ambient soundscape echoes).\n"
+            f"   - 0 People: Focus on environmental changes (a robotic vacuum, wind or rain on a window, "
+            f"building systems cycling, distant activity outside).\n"
             f"   - 1–2 People: Focus on intimate, detailed micro-interactions and psychological "
             f"tension/comfort.\n"
             f"   - Large Groups: Focus on spatial crowding, bottlenecks, and split-group dynamics.\n"
             f"5. Speech: Set `hasSpeech` to false when the Additional Context asks for no voices, no speech, "
             f"no talking or silence, or when nobody present would speak (e.g. 0 people). Then never describe "
             f"anyone speaking, talking, greeting, singing or on the phone. Otherwise set it to true.\n"
-            f"6. {room_size_rule}\n\n"
+            f"6. {room_size_rule}\n"
+            f"7. Nobody Freezes: In EVERY event block, say what each person present is doing, not only "
+            f"the person the block focuses on. An activity started earlier continues until the text says it "
+            f"stops (e.g. 'the researcher keeps reading, turning a page now and then', 'the two at the bar "
+            f"are still chatting'). A person only falls still or silent when the text says so.\n"
+            f"8. Behaviour Over Decor: Keep the narrative natural and believable, but spend its words on "
+            f"what people do — actions, the objects and materials they handle, where it happens, how often "
+            f"and how long — rather than on light, colours, clothing or views. Name the handling that eating, "
+            f"drinking or working implies (cutting a tart on a plate, setting a cup back on its saucer, "
+            f"typing, flipping notebook pages).\n"
+            f"9. Outside World: When weather or the outside is present (rain, traffic, a courtyard, a "
+            f"corridor), say where it comes in (e.g. 'rain on the west windows', 'traffic through the open "
+            f"door').\n\n"
             f"### Step-by-Step Generation Process\n"
             f"Follow these steps inside your thinking process:\n"
             f"{spatial_analysis_step}\n"
@@ -1963,12 +2061,47 @@ For the duration estimation (in seconds with 0.1 precision):
             "- Background/ambient beds and speech are NOT counted in this number.\n\n"
         )
 
+    @staticmethod
+    def _foley_inference_rules(liveliness: str | None) -> str:
+        """Rules 12-14 of the foley prompt: read the sounds between the lines of the
+        scenario, give ongoing activities a rhythm, add the venue's off-screen sources.
+        The scenario stays a natural narrative; translating it into sound is this agent's job."""
+        level = _liveliness_level(liveliness)
+        return (
+            "12. LISTEN BETWEEN THE LINES: The scenario is a natural narrative, not a sound list. Infer "
+            "every sound its actions imply, even when only mentioned in passing: reading means page "
+            "turns; taking notes means pen or pencil on paper; eating a tart means a fork on a plate; "
+            "'sips' means a cup or glass set back down; 'sits down to work' means a chair, then typing. "
+            "A person described once as doing an ongoing activity keeps doing it until the text says "
+            "they stop.\n"
+            '13. RECURRING ACTIVITIES: For an ongoing activity (reading, writing, typing, eating, '
+            'drinking, stirring, shuffling papers, pacing), set "recurrence" instead of listing every '
+            'time: {"perMinute": typical occurrences per minute, "regularity": "steady" for an even rhythm '
+            '(walking) or "irregular" (page turns, sips), "start": "MM:SS" or, when the activity only '
+            'begins after another sound, that sound as "after(<id>#<k>)" or "overlap(<id>#<k>)" using '
+            'its exact id and 1-based occurrence (e.g. typing "start": "after(chair_sit_1#1)"), "end": '
+            '"MM:SS" when it stops (or "" for the end of the scene)}. Give "timestamps" with just the '
+            "first occurrence. Code spreads the occurrences and their copies. Typical rates per person: "
+            "page turns 1-2/min, pen writing bursts 6-10/min, typing bursts 8-15/min, cup or glass set "
+            "down 1-3/min, fork on plate 6-10/min while eating, a pacing person's footsteps as one walk "
+            "every 10-20 s. Sum several people doing the same thing into one entry with the combined rate. "
+            'One-off actions (a door, sitting down once) keep "recurrence": null and their timestamps.\n'
+            f"14. VENUE SOURCES: Infer the type of place and add its typical sounds from out of view as "
+            f"background beds or recurring events — {level['venue_sources']} — e.g. counter and espresso "
+            "machine in a café, kitchen pass in a restaurant, printer or phone in an office, a distant "
+            "door or trolley in a library, plus the outside world heard through the openings the scenario "
+            "names (rain on a window, traffic through a door). These count toward the event ceiling below.\n"
+            f"SCENE ATMOSPHERE: {level['activity']} Give typical rates in 'perMinute'; code scales them "
+            "to this atmosphere.\n\n"
+        )
+
     def _build_foley_prompts(
         self,
         scenarios_json: str,
         furniture_json: str,
         sound_detail: str = DEFAULT_FOLEY_SOUND_DETAIL,
         room_extents: str | None = None,
+        liveliness: str = DEFAULT_SCENE_LIVELINESS,
     ) -> tuple[str, str]:
         """Build system and user prompts for the foley artist agent.
 
@@ -2004,7 +2137,8 @@ For the duration estimation (in seconds with 0.1 precision):
             "to hear over room ambience. When a narrative action would only produce such an inaudible sound, "
             "skip it entirely rather than fabricating a barely-audible entry.\n"
             "3. GLOBAL DEDUPLICATION: Every repeat of the same sound type is ONE entry, however many times "
-            'it happens in the script (list each occurrence in "timestamps"). '
+            'it happens in the script (list each occurrence in "timestamps", or give a "recurrence" for an '
+            "ongoing activity, rule 13). "
             'E.g.: "John walks past the door", "Mary walks to the window" → 1 sound: "footsteps". '
             "How finely DIFFERENT actions are split into separate entries is set by the LEVEL OF DETAIL "
             "section below.\n"
@@ -2043,7 +2177,9 @@ For the duration estimation (in seconds with 0.1 precision):
             "retriggered. Base it on the number of times the sound recurs in the scenario (the length of "
             "'timestamps'): a one-off sound or an always-identical texture gets 1; a sound that repeats a "
             "few times gets 2 to 3; a very frequent action (e.g. many footsteps, several door closings) "
-            "gets 4 to 5. Background beds always get 1. Never exceed 5.\n\n"
+            "gets 4 to 5. Background beds always get 1. Never exceed 5. (For an entry with a "
+            '"recurrence" the copy count is recomputed by code.)\n'
+            f"{self._foley_inference_rules(liveliness)}"
             f"{self._foley_detail_rules(sound_detail)}"
             f"{self._spatial_placement_rules(room_extents)}"
             "Output Format — respond ONLY with a JSON array:\n"
@@ -2060,6 +2196,8 @@ For the duration estimation (in seconds with 0.1 precision):
             '    "duration": "MM:SS duration of a single sound occurrence",\n'
             '    "timestamps": ["MM:SS", ...],\n'
             '    "copyCount": 1,\n'
+            '    "recurrence": null | {"perMinute": 2, "regularity": "irregular", "start": "00:00 or '
+            'after(<id>#<k>)", "end": "MM:SS"},\n'
             '    "objectsInvolved": ["hex IDs chronologically, or empty list []"],\n'
             '    "position": [x, y, z or empty list []]\n'
             "  }\n"
@@ -2289,6 +2427,7 @@ For the duration estimation (in seconds with 0.1 precision):
         likeliness: int = 9,
         screenshots: list[str] | None = None,
         on_progress=None,
+        liveliness: str = DEFAULT_SCENE_LIVELINESS,
     ):
         """Async generator yielding formatted scenario events one by one.
 
@@ -2309,17 +2448,22 @@ For the duration estimation (in seconds with 0.1 precision):
         system_prompt, user_prompt = self._build_scenarist_prompts(
             user_context, furniture_context, duration, people_count, likeliness,
             has_furniture=has_furniture, room_bounds=room_bounds, room_is_default=room_is_default,
+            liveliness=liveliness,
+        )
+        image_note = (
+            " Describe the life the picture implies — what each person is doing and keeps doing, what "
+            "they handle — rather than describing the picture itself (light, colours, clothing)."
         )
         if screenshots and not (user_context or "").strip():
             user_prompt += (
                 "\n\nA reference image of the space is attached and it is the ONLY brief (no text was "
                 "given). Infer everything from it: the type of place, its approximate size, its materials, "
-                "who is there and how many, what they are doing, and the time of day."
+                "who is there and how many, what they are doing, and the time of day." + image_note
             )
         elif screenshots:
             user_prompt += (
                 "\n\nA reference image of the space is attached. Ground the scenario in what it "
-                "shows: the type of place, its size, its materials, its occupants and activities."
+                "shows: the type of place, its size, its materials, its occupants and activities." + image_note
             )
 
         import uuid as _uuid
@@ -2392,6 +2536,7 @@ For the duration estimation (in seconds with 0.1 precision):
         scenario_ids: list[int] | None = None,
         sound_detail: str = DEFAULT_FOLEY_SOUND_DETAIL,
         llm_model: str = DEFAULT_LLM_MODEL,
+        liveliness: str = DEFAULT_SCENE_LIVELINESS,
     ) -> dict:
         """
         Generate detailed foley sound events for scenarios from scenarist_agent.
@@ -2433,17 +2578,36 @@ For the duration estimation (in seconds with 0.1 precision):
         system_prompt, user_prompt = self._build_foley_prompts(
             scenarios_json, furniture_json, sound_detail,
             room_extents=self._room_extents(furniture_list),
+            liveliness=liveliness,
         )
 
         # ── Call LLM with structured output ───────────────────────────────────
         from models.schemas import FoleyOutput
 
-        return asyncio.run(self._call_llm(  # type: ignore[return-value]
+        result = asyncio.run(self._call_llm(
             user_prompt, system_prompt,
             response_schema=FoleyOutput,
             operation_name="Foley artist",
             llm_model=llm_model,
         ))
+        if not isinstance(result, dict):
+            result = result.model_dump() if hasattr(result, "model_dump") else dict(result)
+        return self._finalize_foley_result(result, selected_scenarios, scenarios_json, furniture_list, liveliness)
+
+    def _finalize_foley_result(
+        self,
+        result: dict,
+        scenarios: list,
+        seed_key: str,
+        furniture_list: dict | None,
+        liveliness: str | None,
+    ) -> dict:
+        """Shared foley post-processing: positions inside the room, copy counts in
+        range, recurring activities spread over their window (seeded by the scenario
+        text so a re-run of the same scenario gives the same rhythm)."""
+        self._clamp_entry_positions(result.get("sounds"), furniture_list)
+        result["sounds"] = _expand_foley_recurrences(result.get("sounds") or [], scenarios, seed_key, liveliness)
+        return result
 
     async def async_foley_artist(
         self,
@@ -2452,6 +2616,7 @@ For the duration estimation (in seconds with 0.1 precision):
         sound_detail: str = DEFAULT_FOLEY_SOUND_DETAIL,
         llm_model: str = DEFAULT_LLM_MODEL,
         on_progress=None,
+        liveliness: str = DEFAULT_SCENE_LIVELINESS,
     ) -> dict:
         """Async version of foley_artist — awaits _call_llm directly.
 
@@ -2469,6 +2634,7 @@ For the duration estimation (in seconds with 0.1 precision):
         system_prompt, user_prompt = self._build_foley_prompts(
             scenarios_json, furniture_json, sound_detail,
             room_extents=self._room_extents(furniture_list),
+            liveliness=liveliness,
         )
 
         result = await self._call_llm(
@@ -2480,8 +2646,7 @@ For the duration estimation (in seconds with 0.1 precision):
         )
         if not isinstance(result, dict):
             result = result.model_dump() if hasattr(result, "model_dump") else dict(result)
-        self._clamp_entry_positions(result.get("sounds"), furniture_list)
-        return result
+        return self._finalize_foley_result(result, all_scenarios, scenarios_json, furniture_list, liveliness)
 
     async def stream_foley_artist(
         self,
@@ -2490,6 +2655,7 @@ For the duration estimation (in seconds with 0.1 precision):
         sound_detail: str = DEFAULT_FOLEY_SOUND_DETAIL,
         llm_model: str = DEFAULT_LLM_MODEL,
         on_progress=None,
+        liveliness: str = DEFAULT_SCENE_LIVELINESS,
     ):
         """Async generator yielding foley sound events one by one.
 
@@ -2508,6 +2674,7 @@ For the duration estimation (in seconds with 0.1 precision):
                 sound_detail=sound_detail,
                 llm_model=llm_model,
                 on_progress=on_progress,
+                liveliness=liveliness,
             )
         except LLMCancelled:
             raise
@@ -2546,6 +2713,8 @@ For the duration estimation (in seconds with 0.1 precision):
         furniture_json: str = "{}",
         language: str | None = None,
         room_extents: str | None = None,
+        liveliness: str = DEFAULT_SCENE_LIVELINESS,
+        scenarios: list | None = None,
     ) -> tuple[str, str]:
         """Build system and user prompts for the speech scripting agent.
 
@@ -2553,8 +2722,11 @@ For the duration estimation (in seconds with 0.1 precision):
         Each speech entry includes a guessed [x,y,z] mouth-height position using
         the room bounding box and nearby furniture bounds.
         Character names are constrained to the allowed TTS voice labels.
+        ``scenarios`` (the parsed list) supplies the people count and scene length
+        for the SOCIAL SCENES density targets; ``liveliness`` scales them.
         """
         allowed_characters = ", ".join(TTS_CHARACTER_NAMES)
+        social_rules = self._speech_social_rules(scenarios or [], liveliness)
         system_prompt = (
             "You are an expert dialogue writer and narrative director. "
             "Your task is to analyze an architectural/spatial narrative scenario and extract "
@@ -2566,9 +2738,10 @@ For the duration estimation (in seconds with 0.1 precision):
             "spoken. Only when relevant, add English inline vocal tags in angle brackets for brief, "
             "momentary human vocal sounds or pauses, chosen exclusively from: "
             f"{', '.join(TTS_INLINE_VOCAL_TAGS)}. Any other tag is read aloud. Never invent tags for "
-            "a sustained delivery style or emotion (e.g. <whispering>, <whispers>, <angry>, <softly>), "
-            "never place two tags next to each other (separate them with words or punctuation), and "
-            "never use square-bracket tags, stage directions or emotion words like (excitedly)."
+            "a sustained delivery style or emotion (e.g. <whispering>, <whispers>, <angry>, <softly>) — "
+            "put that in the entry's 'style' field instead — never place two tags next to each other "
+            "(separate them with words or punctuation), and never use square-bracket tags, stage "
+            "directions or emotion words like (excitedly)."
         )
         # Gemini 3.8 TTS speaks the language/dialect of the TEXT (speech_config.language only
         # biases accent), so a dialect must be written as spoken, not in its standard form.
@@ -2591,7 +2764,8 @@ For the duration estimation (in seconds with 0.1 precision):
             "(no character name prefix in the script field — the character field carries the name).\n"
             "6. Do not include any physical action descriptions, timing parameters, or formatting "
             "outside the requested JSON structure.\n"
-            "7. Do not add spoken lines when not directly implied by the scenario script.\n"
+            "7. Do not add spoken lines when not directly implied by the scenario script — except in a "
+            "social scene (rule 11), where people who are together and talking keep talking.\n"
             "8. Character names MUST be chosen EXCLUSIVELY from this allowed voice list "
             f"(pick the names that best fit each person, one distinct name per distinct person, "
             f"and reuse the same name for the same person throughout): {allowed_characters}.\n"
@@ -2600,7 +2774,15 @@ For the duration estimation (in seconds with 0.1 precision):
             "rules below. Use the object bounding boxes and room extents as reference. Use one position per "
             "character, near the object(s) or zone they mostly interact with, and keep different characters "
             "apart unless the scenario puts them together.\n"
-            "10. If the scenario has \"hasSpeech\": false, return an empty JSON array [].\n\n"
+            "10. If the scenario has \"hasSpeech\": false, return an empty JSON array [].\n"
+            f"{social_rules}"
+            "12. 'timestamps' holds one MM:SS start per line of 'script', in the same order.\n"
+            "13. 'style' is the sustained delivery of the whole block, a short English direction the "
+            "text-to-speech voice follows (e.g. \"whispering\", \"shouting across the room\", \"excited and "
+            "fast\", \"tired, slow and soft\"). Set it only when the scenario implies it (a library, a "
+            "sleeping baby, a call across a hall, an argument); leave it \"\" for ordinary talk. When the "
+            "same person changes delivery (whispers, then speaks normally), split their lines into separate "
+            "entries (Clara_1, Clara_2), each with its own style.\n\n"
             f"{self._spatial_placement_rules(room_extents)}"
             "Output Format — respond ONLY with a JSON array:\n"
             "[\n"
@@ -2610,7 +2792,8 @@ For the duration estimation (in seconds with 0.1 precision):
             '    "timestamps": ["MM:SS", ...],\n'
             '    "character": "string — one of the allowed voice names listed above",\n'
             '    "script": "string (dialogue lines separated chronologically by semicolons)",\n'
-            '    "position": [x, y, z]\n'
+            '    "position": [x, y, z],\n'
+            '    "style": "string — delivery style of the block, or \\"\\" for ordinary talk"\n'
             "  }\n"
             "]\n\n"
             "Example input scenario:\n"
@@ -2624,13 +2807,39 @@ For the duration estimation (in seconds with 0.1 precision):
             '    "character": "Clara",\n'
             '    "script": "Morning Marcus, <cough> good to see you!; If you look closely at July, '
             'that is exactly where our third quarter drops began to manifest.; <laugh> Ok bye then!",\n'
-            '    "position": [1.2, 0.8, 1.55]\n'
+            '    "position": [1.2, 0.8, 1.55],\n'
+            '    "style": ""\n'
             "  }\n"
             "]\n\n"
             f"Architectural space information:\n{furniture_json}\n\n"
             f"Scenario:\n{scenarios_json}"
         )
         return system_prompt, user_prompt
+
+    @staticmethod
+    def _speech_social_rules(scenarios: list, liveliness: str | None) -> str:
+        """Rule 11 of the speech prompt: dialogue density for social scenes, from the
+        scenario's people count and length and the scene atmosphere."""
+        level = _liveliness_level(liveliness)
+        seconds = _scene_seconds(scenarios)
+        lines_per_speaker = max(1, round(level["speech_lines_per_speaker_per_30s"] * seconds / 30.0))
+        first = next((s for s in scenarios if isinstance(s, dict)), {})
+        people = first.get("peopleCount")
+        who = first.get("peopleDescription") or ""
+        people_line = (
+            f"The scene has {people} people{f' ({who})' if who else ''}. " if isinstance(people, int) else ""
+        )
+        return (
+            "11. SOCIAL SCENES: In a place where people gather and talk (café, restaurant, bar, open-plan "
+            f"office, party, waiting room…), conversation is continuous, not occasional. {people_line}"
+            "Every group the scenario shows talking talks throughout the whole scene: each member of the "
+            f"group speaks, about {lines_per_speaker} lines per speaker over the scene, and a group is never "
+            f"silent for more than about {level['speech_max_group_gap_s']} s. Write short reactions as their "
+            "own lines (laughs, 'mm', 'ah ouais', 'yeah, totally'), and let separate groups talk at the "
+            "same time (overlapping timestamps across groups, never within one group). People the scenario "
+            "shows alone or busy (reading, working on a laptop) stay silent. "
+            f"Atmosphere: {level['activity']}\n"
+        )
 
     async def async_speech_agent(
         self,
@@ -2639,6 +2848,7 @@ For the duration estimation (in seconds with 0.1 precision):
         llm_model: str = DEFAULT_LLM_MODEL,
         language: str | None = None,
         on_progress=None,
+        liveliness: str = DEFAULT_SCENE_LIVELINESS,
     ) -> dict:
         """Extract and generate spoken dialogue from scenario events.
 
@@ -2665,6 +2875,7 @@ For the duration estimation (in seconds with 0.1 precision):
         system_prompt, user_prompt = self._build_speech_prompts(
             scenarios_json, furniture_json, language=language,
             room_extents=self._room_extents(furniture_list),
+            liveliness=liveliness, scenarios=all_scenarios,
         )
 
         result = await self._call_llm(
@@ -2677,6 +2888,9 @@ For the duration estimation (in seconds with 0.1 precision):
         if not isinstance(result, dict):
             result = result.model_dump() if hasattr(result, "model_dump") else dict(result)
         self._clamp_entry_positions(result.get("speeches"), furniture_list)
+        for entry in result.get("speeches") or []:
+            if isinstance(entry, dict):
+                entry["style"] = clean_style(entry.get("style"))
         return result
 
     async def stream_speech_agent(
@@ -2686,6 +2900,7 @@ For the duration estimation (in seconds with 0.1 precision):
         llm_model: str = DEFAULT_LLM_MODEL,
         language: str | None = None,
         on_progress=None,
+        liveliness: str = DEFAULT_SCENE_LIVELINESS,
     ):
         """Async generator yielding speech entries one by one.
 
@@ -2701,6 +2916,7 @@ For the duration estimation (in seconds with 0.1 precision):
                 llm_model=llm_model,
                 language=language,
                 on_progress=on_progress,
+                liveliness=liveliness,
             )
         except LLMCancelled:
             raise
@@ -2741,6 +2957,7 @@ For the duration estimation (in seconds with 0.1 precision):
             mode: str = "initial",
             backgrounds_json: str = "{\"backgrounds\": []}",
             edit_instruction: str | None = None,
+            recurring_json: str = "{\"recurring\": []}",
         ) -> tuple[str, str]:
             """Build system and user prompts for the orchestrate agent.
 
@@ -2784,6 +3001,8 @@ For the duration estimation (in seconds with 0.1 precision):
                     "- When an edit removed a sound another entry previously referenced, re-anchor that entry to a "
                     "sensible remaining sound instead of leaving a dangling reference.\n\n"
                 )
+            if edit_instruction and edit_instruction.strip():
+                reorchestrate_block += self._edit_instruction_block(edit_instruction)
             user_prompt = (
                 "Each foley 'sound' and speech 'speech' input entry carries a base 'id', its 'timestamps', and "
                 "the MEASURED DURATIONS of its generated copies.\n"
@@ -2820,7 +3039,9 @@ For the duration estimation (in seconds with 0.1 precision):
                 "absolute MM:SS string.\n"
                 "6. ACYCLIC DEPENDENCIES: the graph formed by the triggers MUST be acyclic. If A is after B, B "
                 "must not be (directly or transitively) after A. Order a conversation linearly (each line after "
-                "the previous).\n"
+                "the previous). Groups that do not talk to each other (two tables, two desks) are SEPARATE "
+                "chains anchored independently, so their conversations run at the same time — never interleave "
+                "them into one chain.\n"
                 "7. STRICT SEQUENCING: 'after' means start at the reference's exact end + delay; 'overlap' means "
                 "start at the reference's start + delay. Use 'overlap' whenever the scenario has two DIFFERENT "
                 "sounds happening at the same time.\n"
@@ -2836,6 +3057,10 @@ For the duration estimation (in seconds with 0.1 precision):
                 "never anchor any sound to them. For each bed you MAY emit one entry whose ONLY meaningful field "
                 "is 'spl' (its trigger is forced to 00:00 by code — you can also set type \"absolute\", "
                 "expression [\"00:00\"], delay [0.0] and variants [1]).\n"
+                "9b. RECURRING SOUNDS ARE SCHEDULED BY CODE: ongoing activities (page turns, typing, sips…) are "
+                "listed separately under 'Recurring' with their occurrence times. Code chains their occurrences "
+                "from their rhythm: do NOT output a trigger for them. You MAY anchor other sounds to one of their "
+                "occurrences (e.g. 'overlap(typing_1#2)') and you MAY emit an entry with only an 'spl' for them.\n"
                 "10. Strict Array Alignment: 'trigger.expression', 'trigger.delay' and 'variants' MUST ALWAYS be "
                 "arrays whose length exactly equals the number of timestamps for that entry.\n\n"
                 "VARIANTS\n"
@@ -2853,9 +3078,11 @@ For the duration estimation (in seconds with 0.1 precision):
                 "for these bands and stay inside them unless the script clearly demands otherwise:\n"
                 "   - speech / dialogue: -22 to -16 dBFS. Speech is a foreground element but MUST NOT be the "
                 "loudest thing in the scene: keep it at most a couple of dB above the loudest discrete event and "
-                "never in the -10..0 range. Quiet or distant lines belong nearer -22.\n"
+                "never in the -10..0 range. Quiet or distant lines belong nearer -22. A speech entry with a "
+                f"'style' follows it — {style_level_guidance()}; other styles stay in the normal speech band.\n"
                 "   - close discrete impacts (door, chair, dropped object): -18 to -12 dBFS.\n"
-                "   - subtle events (typing, paper, cup, cloth): -26 to -18 dBFS.\n"
+                "   - subtle events (typing, paper, cup, cloth, taps): -26 to -18 dBFS — default to the middle "
+                "(about -22). Only the loudest nearby impact may come close to the speech level.\n"
                 f"   - {_bed_level_guidance()}.\n"
                 "Re-read the whole set before responding and pull any outlier back toward the scene's average.\n\n"
                 "Output Format — respond ONLY with a JSON array (timeline dynamics + levels only):\n"
@@ -2874,6 +3101,8 @@ For the duration estimation (in seconds with 0.1 precision):
                 f"Foley sounds:\n{foley_json}\n\n"
                 f"Speech:\n{speech_json}\n\n"
                 f"Backgrounds (fixed beds — provide an 'spl' only, never a trigger reference):\n{backgrounds_json}\n\n"
+                f"Recurring (scheduled by code — 'spl' only; others may reference their occurrences):\n"
+                f"{recurring_json}\n\n"
                 f"{reorchestrate_block}"
                 "Before outputting the final JSON, verify silently against this checklist and fix any violation "
                 "you find — only then output the JSON:\n\n"
@@ -2891,7 +3120,8 @@ For the duration estimation (in seconds with 0.1 precision):
                 "- [ ] overlap() is used ONLY to run DIFFERENT sounds concurrently, never an entry with itself.\n"
                 "- [ ] the dependency graph is acyclic (no entry transitively depends on itself).\n"
                 "- [ ] delays are end-to-start gaps derived from the MEASURED durations, not the authored MM:SS.\n"
-                "- [ ] speech sits within -22..-16 dBFS and is not the loudest element of the scene.\n"
+                "- [ ] speech sits within -22..-16 dBFS (or its style's band) and is not the loudest element of "
+                "the scene unless it is shouted.\n"
                 "- [ ] spl values are present, realistic, and balanced relative to one another across the scene.\n"
                 "If any item fails, fix it and re-check before responding."
             )
@@ -2935,6 +3165,8 @@ For the duration estimation (in seconds with 0.1 precision):
                 "character": "",
                 "objectsInvolved": sound.get("objectsInvolved", []) or [],
                 "position": sound.get("position", []) or [],
+                "copyCount": sound.get("copyCount", 1),
+                "recurrence": _usable_recurrence(sound),
             }
         for speech in (speech_result or {}).get("speeches", []):
             if not isinstance(speech, dict):
@@ -2951,8 +3183,11 @@ For the duration estimation (in seconds with 0.1 precision):
                 "duration": "",
                 "timestamps": speech.get("timestamps", []) or [],
                 "character": character,
+                "style": clean_style(speech.get("style")),
                 "objectsInvolved": [],
                 "position": speech.get("position", []) or [],
+                "copyCount": max(1, len(speech.get("timestamps", []) or [])),
+                "recurrence": None,
             }
         return passthrough
 
@@ -2969,12 +3204,17 @@ For the duration estimation (in seconds with 0.1 precision):
         """
         passthrough = self._build_orchestrate_passthrough(foley_result, speech_result)
         background_ids = {sid for sid, base in passthrough.items() if _is_background_entry(base)}
+        recurring_ids = {
+            sid for sid, base in passthrough.items()
+            if sid not in background_ids and base.get("recurrence")
+        }
+        known_ids = set(passthrough)
         playlist: list[dict] = []
         seen_ids: set[str] = set()
 
         def _append(entry_id: str, base: dict, trigger: dict, variants: list, spl: str) -> None:
             seen_ids.add(entry_id)
-            playlist.append({
+            item = {
                 "id": entry_id,
                 "soundName": base["soundName"],
                 "description": base["description"],
@@ -2984,11 +3224,34 @@ For the duration estimation (in seconds with 0.1 precision):
                 "trigger": trigger,
                 "timestamps": base["timestamps"],
                 "character": base["character"],
+                "style": base.get("style", ""),
                 "objectsInvolved": base["objectsInvolved"],
                 "position": base["position"],
                 "variants": variants,
                 "spl": spl,
-            })
+            }
+            if base.get("recurrence"):
+                item["recurrence"] = base["recurrence"]
+            playlist.append(item)
+
+        def _append_fixed(entry_id: str, base: dict, spl: str) -> None:
+            """Beds and recurring activities: schedule built by code, never by the LLM."""
+            if entry_id in background_ids:
+                _append(
+                    entry_id, base, _forced_background_trigger(base),
+                    [1] * max(1, len(base["timestamps"])), _bed_spl(spl),
+                )
+                return
+            trigger, warning = recurrence_trigger(
+                entry_id, base["recurrence"], base["timestamps"], known_ids, background_ids,
+            )
+            if warning:
+                logger.warning("[orchestrate] %s", warning)
+            n = len(trigger["expression"])
+            _append(
+                entry_id, base, trigger,
+                rotating_variants(n, base.get("copyCount", 1)), _entry_spl(spl, base["category"], base.get("style", "")),
+            )
 
         for entry in (llm_result or {}).get("playlist", []):
             if not isinstance(entry, dict):
@@ -2998,29 +3261,45 @@ For the duration estimation (in seconds with 0.1 precision):
             if base is None:
                 print(f"[orchestrate] skipping unknown id from LLM (no matching foley/speech input): {entry_id!r}")
                 continue
-            # Backgrounds are fixed beds — force an absolute 00:00 trigger no matter
-            # what the LLM produced, and keep one entry per authored timestamp.
-            if entry_id in background_ids:
-                _append(
-                    entry_id, base, _forced_background_trigger(base),
-                    [1] * max(1, len(base["timestamps"])), _bed_spl(entry.get("spl", "")),
-                )
+            if entry_id in seen_ids:
+                logger.warning("[orchestrate] duplicate id from LLM ignored: %r", entry_id)
+                continue
+            # Backgrounds are fixed beds (absolute 00:00) and recurring activities
+            # are chained from their rhythm — the LLM only contributes a level.
+            if entry_id in background_ids or entry_id in recurring_ids:
+                _append_fixed(entry_id, base, entry.get("spl", ""))
                 continue
             trigger = entry.get("trigger") or {"type": "absolute", "expression": [], "delay": [0.0]}
             trigger = _normalize_trigger_expressions(trigger, base["timestamps"])
             trigger = _sanitize_trigger_refs(trigger, background_ids, base["timestamps"])
             _append(
                 entry_id, base, trigger,
-                entry.get("variants", []) or [], entry.get("spl", ""),
+                entry.get("variants", []) or [], _entry_spl(entry.get("spl", ""), base["category"], base.get("style", "")),
             )
 
-        # Backgrounds must always be present in the final playlist even though the
-        # LLM never sees or emits them (they are excluded from its input).
+        # Entries the LLM did not return. Beds and recurring activities are fixed
+        # by code anyway; any other omitted sound is kept at its written times
+        # (absolute trigger) with a warning, instead of silently disappearing.
         for sid, base in passthrough.items():
-            if sid in seen_ids or sid not in background_ids:
+            if sid in seen_ids:
                 continue
-            # No LLM level: the bed default (an empty spl fell back to -18 dBFS in the UI).
-            _append(sid, base, _forced_background_trigger(base), [1] * max(1, len(base["timestamps"])), _bed_spl(""))
+            if sid in background_ids or sid in recurring_ids:
+                # No LLM level: the band default (an empty spl fell back to -18 dBFS in the UI).
+                _append_fixed(sid, base, "")
+                continue
+            written = [str(t) for t in base["timestamps"]] or ["00:00"]
+            logger.warning(
+                "[orchestrate] LLM omitted %r — kept at its written time(s) %s", sid, ", ".join(written),
+            )
+            variants = (
+                list(range(1, len(written) + 1)) if _normalized_category(base["category"]) == "speech"
+                else rotating_variants(len(written), base.get("copyCount", 1))
+            )
+            _append(
+                sid, base,
+                {"type": "absolute", "expression": written, "delay": [0.0] * len(written)},
+                variants, _entry_spl("", base["category"], base.get("style", "")),
+            )
 
         return {"playlist": playlist}
 
@@ -3070,7 +3349,22 @@ For the duration estimation (in seconds with 0.1 precision):
         # they cannot be picked as a trigger target, and their trigger is forced
         # to an absolute 00:00 by code after the merge.
         all_foley = [s for s in (foley_result or {}).get("sounds", []) if isinstance(s, dict)]
-        prompt_foley = {"sounds": [s for s in all_foley if not _is_background_entry(s)]}
+        # Recurring activities are chained from their rhythm by code: the LLM sees
+        # them read-only (to anchor other sounds and give a level), never re-times them.
+        prompt_foley = {
+            "sounds": [s for s in all_foley if not _is_background_entry(s) and not _usable_recurrence(s)]
+        }
+        prompt_recurring = {
+            "recurring": [
+                {
+                    "id": s.get("id"),
+                    "soundName": s.get("soundName", ""),
+                    "description": s.get("description", ""),
+                    "timestamps": s.get("timestamps", []) or [],
+                }
+                for s in all_foley if _usable_recurrence(s)
+            ]
+        }
         prompt_backgrounds = {
             "backgrounds": [
                 {
@@ -3089,6 +3383,7 @@ For the duration estimation (in seconds with 0.1 precision):
         system_prompt, user_prompt = self._build_orchestrate_prompts(
             scenarios_json, foley_json, speech_json, mode=mode, backgrounds_json=backgrounds_json,
             edit_instruction=edit_instruction,
+            recurring_json=json.dumps(prompt_recurring, indent=2),
         )
 
         llm_result = await self._call_llm(

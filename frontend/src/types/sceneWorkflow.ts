@@ -5,7 +5,7 @@
  * Analyze model → Scenario → Foley + Speech → Generate all sounds.
  */
 
-import type { FoleySoundDetail } from './analysis';
+import type { FoleySoundDetail, SceneLiveliness } from './analysis';
 
 /** Top-level UI presentation. `simple` = floating bubbles, `expert` = sidebars + cards. */
 export type UIMode = 'simple' | 'expert';
@@ -33,6 +33,8 @@ export interface SceneWorkflowOptions {
   likeliness: number;
   /** Foley agent: how finely the scenario's actions are split into sound events. */
   soundDetail: FoleySoundDetail;
+  /** Scene atmosphere: calm / normal / lively (activity rates, dialogue density, crowd bed). */
+  liveliness: SceneLiveliness;
   /** Language of the generated speech, free text (e.g. "Swiss German"). Empty keeps
    *  the app-wide TTS language; otherwise it becomes the app-wide TTS language. */
   speechLanguage: string;

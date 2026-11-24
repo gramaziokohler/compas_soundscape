@@ -7,6 +7,7 @@ import { useTtsSpeechLines } from '@/hooks/useTtsSpeechLines';
 import { CardSelect } from '@/components/ui/CardSelect';
 import { ModifiedMark, ModifiedCornerMark, useIsFieldModified } from '@/components/ui/ModifiedMark';
 import { Settings2 } from 'lucide-react';
+import { TtsStyleField } from './TtsStyleField';
 
 export interface TextToSpeechModeProps {
   config: SoundGenerationConfig;
@@ -63,6 +64,12 @@ export function TextToSpeechMode({ config, index, onUpdateConfig }: TextToSpeech
           }))}
         />
       </div>
+
+      <TtsStyleField
+        value={config.voice_style}
+        onChange={(v) => onUpdateConfig(index, 'voice_style', v)}
+        modified={isModified('voice_style')}
+      />
 
       <div className="flex items-center gap-2">
         <label className="text-xs text-foreground/70 whitespace-nowrap">Language:</label>

@@ -46,6 +46,7 @@ export function sceneEditOpLabel(op: SceneEditOp, names: Record<string, string>)
       return `+ ${op.character}${op.times_s.length ? ` at ${times(op.times_s)}` : ''}`;
     case 'edit_lines': return `Rewrote ${who}'s lines`;
     case 'change_voice': return `${who} now voiced by ${op.character}`;
+    case 'set_style': return op.style ? `${who} speaks: ${op.style}` : `${who} speaks normally`;
     case 'rename_scene': return `Renamed to “${op.title}”`;
     default: return op.op;
   }

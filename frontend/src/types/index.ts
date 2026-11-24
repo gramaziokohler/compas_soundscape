@@ -260,6 +260,11 @@ export interface SoundGenerationConfig {
   category?: string;
   /** TTS voice name (Gemini prebuilt voices: Kore, Fenrir, Puck, etc.) */
   voice_name?: string;
+  /**
+   * TTS delivery style of every line ("whispering", "excited and fast"); empty /
+   * unset = neutral. Sent as Gemini `speech_metadata.style`, never inside the text.
+   */
+  voice_style?: string;
   /** Orchestration metadata from the pipeline (foley+speech → orchestrate) */
   orchestrateMeta?: {
     orchestrateId: string;

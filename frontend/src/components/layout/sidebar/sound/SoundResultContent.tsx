@@ -9,6 +9,7 @@ import { SoundCardWaveSurfer } from '@/components/audio/SoundCardWaveSurfer';
 import { SoundCardBody } from './SoundCardBody';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { HelperHint } from '@/components/ui/HelperHint';
+import { SoundVariationChips } from './SoundVariationChips';
 
 /**
  * SoundResultContent Component
@@ -174,6 +175,7 @@ export function SoundResultContent({
       storeContext="audioControls"
       onBlueBackground
     />
+    <SoundVariationChips trackId={volumeKey} category={(primaryVariant ?? generatedSound).category} />
     </>
   );
 }

@@ -33,7 +33,7 @@ import type {
   SceneWorkflowStep,
   UIMode,
 } from '@/types/sceneWorkflow';
-import { DEFAULT_FOLEY_SOUND_DETAIL, SIMPLE_MODE } from '@/utils/constants';
+import { DEFAULT_FOLEY_SOUND_DETAIL, DEFAULT_SCENE_LIVELINESS, SIMPLE_MODE } from '@/utils/constants';
 import type { IndexMapper } from '@/utils/cardIndexRemap';
 import { remapIndexKeyedRecord } from '@/utils/cardIndexRemap';
 import { createLiveIndexRegistry, type LiveIndexRef } from '@/utils/liveIndexRegistry';
@@ -218,6 +218,7 @@ export function defaultSceneOptions(): SceneWorkflowOptions {
     llmModel: useSoundscapeStore.getState().llmModel,
     likeliness: SIMPLE_MODE.SCENARIO_LIKELINESS,
     soundDetail: DEFAULT_FOLEY_SOUND_DETAIL,
+    liveliness: DEFAULT_SCENE_LIVELINESS,
     // Empty = keep the app-wide TTS language (Settings › Audio).
     speechLanguage: '',
     image: null,
@@ -492,6 +493,7 @@ export const useSceneWorkflowStore = create<SceneWorkflowStoreState>()(
             timelineDurationMs: options.durationMs,
             includeSpeech: options.includeSpeech,
             soundDetail: options.soundDetail,
+            liveliness: options.liveliness,
             useAnalysisResult: !!useUIStore.getState().globalSpeckleData,
             // The reference image also grounds the scenario directly — the only
             // way it is used when no model is loaded (no analysis to re-run).

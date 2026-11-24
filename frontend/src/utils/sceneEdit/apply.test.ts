@@ -49,7 +49,7 @@ const event = (id: string, configId: string, promptIndex: number, extra: Partial
 const op = (partial: Partial<SceneEditOp> & Pick<SceneEditOp, 'op'>): SceneEditOp => ({
   targets: [], new_ref: '', db: null, delta_db: null, on: null, start: null, end: null, times_s: [],
   delta_s: null, count: null, interval_s: null, seconds: null, position: [],
-  preset: '', yaw_deg: null, name: '', prompt: '', category: '', duration_s: null, character: '', lines: [],
+  preset: '', yaw_deg: null, name: '', prompt: '', category: '', duration_s: null, character: '', lines: [], style: '',
   title: '', ...partial,
 });
 
@@ -168,6 +168,33 @@ describe('applySceneEditOps', () => {
     expect(added.dbfs).toBe(-24);
     expect(ctx.regen.generateNew.has(added.config_id as string)).toBe(true);
     expect(ctx.needsOrchestrate).toBe(true);
+  });
+
+  it('adds a styled speaker at the proposed level', () => {
+    apply(op({
+      op: 'add_speaker', new_ref: 'N1', character: 'Marc', lines: ['Psst'], position: [2, 3, 1.6],
+      style: 'whispering', db: -30,
+    }));
+    const configs = useSoundscapeStore.getState().soundConfigs;
+    const added = configs[configs.length - 1];
+    expect(added.voice_style).toBe('whispering');
+    expect(added.scenarioSource?.voiceStyle).toBe('whispering');
+    expect(added.dbfs).toBe(-30);
+  });
+
+  it('restyles a speaker, regenerates it and applies the proposed level', () => {
+    const ctx = apply(op({ op: 'set_style', targets: ['S3'], style: 'shouting', db: -12 }));
+    expect(useSoundscapeStore.getState().soundConfigs[2].voice_style).toBe('shouting');
+    expect(ctx.regen.force.has('SOFIA')).toBe(true);
+    expect(useAudioControlsStore.getState().soundVolumes.tts_SOFIA_0_Kore).toBe(-12);
+    expect(useAudioControlsStore.getState().soundVolumes.tts_SOFIA_1_Kore).toBe(-12);
+    expect(ctx.needsOrchestrate).toBe(true);
+  });
+
+  it('ignores set_style on foley and unchanged styles', () => {
+    const ctx = apply(op({ op: 'set_style', targets: ['S1'], style: 'whispering', db: -30 }));
+    expect(ctx.regen.force.size).toBe(0);
+    expect(useAudioControlsStore.getState().soundVolumes.generated_HUM_0).toBeUndefined();
   });
 
   it('queues only the extra variants of a generated sound', () => {

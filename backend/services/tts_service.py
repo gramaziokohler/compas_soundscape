@@ -28,6 +28,7 @@ from config.constants import (
     TTS_DEFAULT_VOICE,
     DEFAULT_TTS_MODEL,
 )
+from utils.speech_style import clean_style
 
 try:
     import google.genai as genai
@@ -58,9 +59,14 @@ class TTSService:
         voice_name: str = TTS_DEFAULT_VOICE,
         language_code: Optional[str] = None,
         model: str = DEFAULT_TTS_MODEL,
+        style: Optional[str] = None,
     ) -> tuple[str, float]:
         """
         Generate speech audio from text and save as WAV.
+
+        ``style`` is a sustained delivery instruction ("whispering", "excited and
+        fast"). Gemini 3.8 reads the transcript verbatim, so it travels as a
+        ``speech_metadata`` annotation over the whole text, never inside it.
 
         A fresh genai.Client is created for every call.  Reusing the same
         client across multiple sequential TTS requests causes the Gemini model
@@ -94,7 +100,7 @@ class TTSService:
             model=model or DEFAULT_TTS_MODEL,
             input=[{
                 "type": "user_input",
-                "content": [{"type": "text", "text": text}],
+                "content": [self._text_content(text, style)],
             }],
             response_format={
                 "type": "audio",
@@ -124,6 +130,20 @@ class TTSService:
         mime_type = getattr(audio, "mime_type", None) or "audio/wav"
         duration_seconds = self._write_audio(output_path, data, mime_type)
         return output_path, duration_seconds
+
+    @staticmethod
+    def _text_content(text: str, style: Optional[str]) -> dict:
+        """Transcript content block, with the delivery style annotated over all of it."""
+        content: dict = {"type": "text", "text": text}
+        style = clean_style(style)
+        if style:
+            content["annotations"] = [{
+                "type": "speech_metadata",
+                "style": style,
+                "start_index": 0,
+                "end_index": len(text.encode("utf-8")),  # byte offsets, exclusive
+            }]
+        return content
 
     @staticmethod
     def _write_audio(

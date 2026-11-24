@@ -268,6 +268,7 @@ function applyRestoredSoundscapePayload(
 
   useAudioControlsStore.getState().restoreIterationLinks(restored.iterationLinks);
   useAudioControlsStore.getState().restoreIterationTrims(restored.iterationTrims);
+  useAudioControlsStore.getState().restoreVariations(restored.iterationVariations, restored.soundVariationModes);
   useAudioControlsStore.getState().restoreMuteSolo(restored.mutedSounds, restored.soloedSounds);
   useAudioControlsStore.getState().restoreExclusions(restored.excludedIterations, restored.exclusionReasons);
 
@@ -1931,6 +1932,9 @@ function HomeContent() {
           entity: resolvedEntities?.[0], // backward compat
           type: isSpeech ? 'text-to-speech' : undefined,
           voice_name: isSpeech ? (orchestrateMeta?.voiceName || scenarioSource?.voiceName || 'Kore') : undefined,
+          ...(isSpeech && (orchestrateMeta?.voiceStyle || scenarioSource?.voiceStyle)
+            ? { voice_style: orchestrateMeta?.voiceStyle || scenarioSource?.voiceStyle }
+            : {}),
           ...(p.position && !resolvedEntities?.length ? { position: p.position } : {}),
           ...(!isBackground && p.metadata?.timestamps?.length ? { timestamps: p.metadata.timestamps } : {}),
           ...(p.metadata?.category ? { category: p.metadata.category } : {}),
@@ -2346,6 +2350,11 @@ function HomeContent() {
         useAudioControlsStore.getState().restoreIterationTrims(
           restored.iterationTrims,
         );
+        // Restore hand-set per-occurrence variations and per-sound ranges.
+        useAudioControlsStore.getState().restoreVariations(
+          restored.iterationVariations,
+          restored.soundVariationModes,
+        );
 
         // Restore DAW mute/solo states
         useAudioControlsStore.getState().restoreMuteSolo(
@@ -2648,6 +2657,13 @@ function HomeContent() {
 
       // Embed analysis state in the soundscape data
       payload.soundscape_data.analysis_state = analysisStateData.analysis_state;
+
+      // Per-occurrence variation (clip-variation.ts): only hand-set values are stored.
+      const { iterationVariations, soundVariationModes } = useAudioControlsStore.getState();
+      payload.soundscape_data.iteration_variations =
+        Object.keys(iterationVariations).length > 0 ? iterationVariations : undefined;
+      payload.soundscape_data.sound_variation_modes =
+        Object.keys(soundVariationModes).length > 0 ? soundVariationModes : undefined;
 
       // Public share selection, pruned of deleted scenes / simulations / listeners.
       const shareConfig = pruneShareConfig(selectShareConfig(useShareConfigStore.getState()), {

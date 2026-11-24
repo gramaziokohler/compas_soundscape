@@ -20,6 +20,7 @@ import { computeTimelineOverrun } from './daw-overrun';
 import type { ClipTrimCopy } from '@/store/audioControlsStore';
 import { parseTriggerExpression } from '@/lib/audio/utils/trigger-ref';
 import { trackVariants } from '@/lib/audio/utils/variant-sound-id';
+import { clipVariation, formatClipVariation, isVariedCategory } from '@/lib/audio/utils/clip-variation';
 import { useMuteSolo } from '@/hooks/useMuteSolo';
 import { useAudioControlsStore } from '@/store/audioControlsStore';
 import { useSoundscapeStore } from '@/store/soundscapeStore';
@@ -103,6 +104,10 @@ export function DAWDock({
   const soundBufferDurations = useAudioControlsStore((s) => s.soundBufferDurations);
   const soundIterationDurations = useAudioControlsStore((s) => s.soundIterationDurations);
   const excludedIterations = useAudioControlsStore((s) => s.excludedIterations);
+  const reanchorReasons = useAudioControlsStore((s) => s.reanchorReasons);
+  const iterationVariations = useAudioControlsStore((s) => s.iterationVariations);
+  const soundVariationModes = useAudioControlsStore((s) => s.soundVariationModes);
+  const setIterationVariation = useAudioControlsStore((s) => s.setIterationVariation);
   const handleTimestampsChange = useAudioControlsStore((s) => s.handleTimestampsChange);
   const handleRemoveTimestamp = useAudioControlsStore((s) => s.handleRemoveTimestamp);
   const handleMute = useAudioControlsStore((s) => s.handleMute);
@@ -240,7 +245,14 @@ export function DAWDock({
         registry.set(clipKey, { clipKey, soundId: sound.id, iterationIndex: originalIdx, startMs, durationMs });
         const trim = sound.iterationTrims?.[i];
         const sourceDurationMs = sound.iterationSourceDurationsMs?.[i];
-        return { clipKey, iterationIndex: originalIdx, startMs, durationMs, audioUrl, trim, sourceDurationMs, label: displayName, iterationLink: iterationLinks[clipKey] };
+        const variation = clipVariation(
+          sound.id, originalIdx, sound.soundGroup, soundVariationModes[sound.id], iterationVariations[clipKey],
+        );
+        return {
+          clipKey, iterationIndex: originalIdx, startMs, durationMs, audioUrl, trim, sourceDurationMs,
+          label: displayName, iterationLink: iterationLinks[clipKey], reanchorReason: reanchorReasons[clipKey],
+          variationLabel: formatClipVariation(variation),
+        };
       });
 
       // Excluded iterations: display-only ghost clips (never draggable/played).
@@ -259,7 +271,7 @@ export function DAWDock({
       return { sound, displayName, configIdx, clips };
     });
     return { rows, registry };
-  }, [sortedSounds, soundConfigs, iterationLinks]);
+  }, [sortedSounds, soundConfigs, iterationLinks, reanchorReasons, iterationVariations, soundVariationModes]);
 
   /* ---- Refs mirrored each render for the gesture hook (avoids stale closures mid-drag) ---- */
   const soundsRef = useRef(sounds); soundsRef.current = sounds;
@@ -723,8 +735,17 @@ export function DAWDock({
       ? (timelineSound.scheduledIterationOriginalIndices ?? timelineSound.scheduledIterations.map((_, i) => i))
       : [];
 
-    return { soundId, iterationIndex, cardIndex, currentLink, variants, linkedEntities, triggerExpression, configEntities, iterationIndices };
-  }, [contextMenu, iterationLinks, sounds, generatedSounds, soundConfigs, objectSoundLinks]);
+    // Per-occurrence pitch / level (sound events only — speech and beds never vary).
+    const variationOverride = iterationVariations[linkKey];
+    const variation = isVariedCategory(timelineSound?.soundGroup)
+      ? clipVariation(soundId, iterationIndex, timelineSound?.soundGroup, soundVariationModes[soundId], variationOverride)
+      : null;
+
+    return {
+      soundId, iterationIndex, cardIndex, currentLink, variants, linkedEntities, triggerExpression, configEntities,
+      iterationIndices, variation, variationOverride,
+    };
+  }, [contextMenu, iterationLinks, sounds, generatedSounds, soundConfigs, objectSoundLinks, iterationVariations, soundVariationModes]);
 
   // Bulk-fill every iteration of the right-clicked track with one override
   // (variant or linked entity) in a single store commit.
@@ -1037,6 +1058,16 @@ export function DAWDock({
           onResetTrim={iterationTrims[`${contextMenuData.soundId}-${contextMenuData.iterationIndex}`]
             ? () => trimGesture.resetTrim(contextMenuData.soundId, contextMenuData.iterationIndex)
             : undefined}
+          variation={contextMenuData.variation ? {
+            variation: contextMenuData.variation,
+            isOverridden: !!contextMenuData.variationOverride,
+            onSet: (detuneCents, gainDb) =>
+              setIterationVariation(contextMenuData.soundId, contextMenuData.iterationIndex, { detuneCents, gainDb }),
+            onReroll: () => setIterationVariation(contextMenuData.soundId, contextMenuData.iterationIndex, {
+              seed: (contextMenuData.variationOverride?.seed ?? 0) + 1,
+            }),
+            onReset: () => setIterationVariation(contextMenuData.soundId, contextMenuData.iterationIndex, null),
+          } : undefined}
           onClose={() => setContextMenu(null)}
         />
       )}

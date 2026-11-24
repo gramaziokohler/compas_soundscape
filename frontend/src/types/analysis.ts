@@ -154,6 +154,21 @@ export interface ScenarioResult {
   scenarioId: string;
 }
 
+/**
+ * Rhythm of an ongoing foley activity (page turns, typing, sips…). The backend
+ * spreads its occurrences (`timestamps`) and the orchestrator chains them as
+ * `after(<self>#k)` with these gaps, so a re-orchestration keeps the rhythm.
+ */
+export interface FoleyRecurrence {
+  perMinute: number;
+  regularity: 'steady' | 'irregular' | string;
+  /** "MM:SS", or the sound that starts it: "after(<id>#<k>)" / "overlap(<id>#<k>)". */
+  start: string;
+  end: string;
+  /** End-to-start gap (s) before occurrences 2..n. */
+  gaps: number[];
+}
+
 export interface FoleySoundEvent {
   id: string;
   soundName: string;
@@ -168,6 +183,8 @@ export interface FoleySoundEvent {
   spatial?: boolean;
   /** Distinct audio variants to generate for this sound type (1-5). */
   copyCount?: number;
+  /** Set for an ongoing activity: its occurrences are spread and chained by code. */
+  recurrence?: FoleyRecurrence | null;
 }
 
 export interface FoleyScenario {
@@ -186,6 +203,8 @@ export interface SpeechEntry {
   character: string;
   script: string;
   position: number[];
+  /** Delivery style of the whole block ("whispering"); "" / absent = neutral. */
+  style?: string;
 }
 
 export interface SpeechResult {
@@ -212,10 +231,14 @@ export interface OrchestrateEntry {
   timestamps: string[];
   /** TTS voice label for speech entries (e.g. "Clara"); empty for foley. */
   character: string;
+  /** Speech delivery style (SpeechEntry.style); empty for foley. */
+  style?: string;
   objectsInvolved: string[];
   position: number[];
   variants: number[];
   spl: string;
+  /** Ongoing activity: the trigger is a code-built chain from this rhythm. */
+  recurrence?: FoleyRecurrence | null;
 }
 
 export interface OrchestrateResult {
@@ -252,10 +275,17 @@ export interface ScenarioSource {
   speechLines: string[];
   /** Resolved TTS voice value (Gemini prebuilt voice) for speech cards. */
   voiceName?: string;
+  /** Speech delivery style chosen by the speech agent (the card's `voice_style` seed). */
+  voiceStyle?: string;
+  /** Ongoing activity rhythm — sent back so a re-orchestration keeps the chain. */
+  recurrence?: FoleyRecurrence;
 }
 
 /** Foley "sound detail" level — how finely scenario actions are split into sound events. */
 export type FoleySoundDetail = 'essential' | 'balanced' | 'detailed' | 'exhaustive';
+
+/** Scene "Atmosphere": how busy the generated scene is (all scenario agents + crowd bed). */
+export type SceneLiveliness = 'calm' | 'normal' | 'lively';
 
 /**
  * Scenario Config — streams a scenario from scenarist agent, then calls foley artist
@@ -293,6 +323,8 @@ export interface ScenarioConfig extends AnalysisBaseConfig {
   includeSpeech?: boolean;
   /** How finely the foley agent splits actions into sound events. Undefined = DEFAULT_FOLEY_SOUND_DETAIL. */
   soundDetail?: FoleySoundDetail;
+  /** Scene atmosphere for every agent and the crowd bed. Undefined = DEFAULT_SCENE_LIVELINESS. */
+  liveliness?: SceneLiveliness;
   /** Reference images (data URIs) sent to the scenarist. Transient — not saved or kept in undo history. */
   referenceImages?: string[];
   /** File name of the composer's reference image (Scene settings preview). Saved with the project. */
@@ -344,6 +376,8 @@ export interface TextPromptResult {
       allObjectIds: string[];
       isSpeech: boolean;
       voiceName?: string;
+      /** Speech delivery style from the orchestrate entry. */
+      voiceStyle?: string;
       speechLines?: string[];
       /** Original foley/speech timestamps (MM:SS) — fallback when trigger resolution fails. */
       timestamps?: string[];

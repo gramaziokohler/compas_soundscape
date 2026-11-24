@@ -24,6 +24,8 @@ import {
   IMAGE_PREVIEW,
   LLM_MODEL_NAMES,
   SCENARIO_TIMELINE,
+  SCENE_LIVELINESS_HINT,
+  SCENE_LIVELINESS_OPTIONS,
   SIMPLE_MODE,
 } from '@/utils/constants';
 import { isModEnter } from '@/lib/shortcuts/keyboard-utils';
@@ -85,6 +87,12 @@ export function ScenePromptComposer({ onSubmit, onClose }: ScenePromptComposerPr
   const canSend = prompt.trim().length > 0 || hasModel || !!options.image;
   // Speech on = allowed; the scenarist still decides whether anyone talks.
   const speechOn = options.includeSpeech;
+  // Atmosphere chip: click cycles calm → normal → lively.
+  const livelinessIdx = Math.max(0, SCENE_LIVELINESS_OPTIONS.findIndex((o) => o.value === options.liveliness));
+  const livelinessOption = SCENE_LIVELINESS_OPTIONS[livelinessIdx];
+  const nextLivelinessOption = SCENE_LIVELINESS_OPTIONS[(livelinessIdx + 1) % SCENE_LIVELINESS_OPTIONS.length];
+  const nextLiveliness = nextLivelinessOption.value;
+  const nextLivelinessLabel = nextLivelinessOption.label;
   const speechLanguage = options.speechLanguage || appSpeechLanguage;
 
   const submit = () => {
@@ -227,6 +235,21 @@ export function ScenePromptComposer({ onSubmit, onClose }: ScenePromptComposerPr
         onSelect: () => patch({ soundDetail: o.value }),
       })),
     },
+    {
+      kind: 'submenu',
+      key: 'liveliness',
+      label: 'Atmosphere',
+      hint: livelinessOption.label,
+      title: SCENE_LIVELINESS_HINT,
+      items: SCENE_LIVELINESS_OPTIONS.map((o) => ({
+        kind: 'radio' as const,
+        key: o.value,
+        label: o.label,
+        title: o.title,
+        checked: options.liveliness === o.value,
+        onSelect: () => patch({ liveliness: o.value }),
+      })),
+    },
     { kind: 'separator', key: 'sep-image' },
     {
       kind: 'action',
@@ -304,6 +327,14 @@ export function ScenePromptComposer({ onSubmit, onClose }: ScenePromptComposerPr
           title="Length of the generated scene"
           onChange={(s) => patch({ durationMs: s * MS_PER_SECOND })}
         />
+        <button
+          type="button"
+          className="bubble-chip"
+          onClick={() => patch({ liveliness: nextLiveliness })}
+          title={`Atmosphere: ${livelinessOption.title}. Click for ${nextLivelinessLabel}.`}
+        >
+          {livelinessOption.label}
+        </button>
         <button
           type="button"
           className={`bubble-chip bubble-chip--icon ${menu ? 'bubble-chip--on' : ''}`}

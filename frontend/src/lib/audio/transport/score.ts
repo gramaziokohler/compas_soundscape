@@ -47,6 +47,10 @@ export interface ScoreClip {
   fadeOutMs?: number;
   /** Per-clip entity position override (world space). Absent = use the track's default registered position. */
   position?: [number, number, number];
+  /** Per-occurrence pitch offset (cents) — see lib/audio/utils/clip-variation.ts. */
+  detuneCents?: number;
+  /** Per-occurrence level offset (dB). */
+  gainDb?: number;
 }
 
 /** One timeline track — one row in the DAW, one primary sound id in the orchestrator. */

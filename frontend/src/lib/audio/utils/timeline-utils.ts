@@ -530,3 +530,13 @@ export function formatTimelineTime(ms: number): string {
 
   return `${seconds}s`;
 }
+
+/**
+ * Tooltip text for an iteration the schedule bake re-anchored to its written
+ * time, e.g. "Couldn't follow after(Clara_1#2) (cycle broken): placed at its
+ * written time 17.0s".
+ */
+export function formatReanchorReason(expression: string | undefined, reason: string, atSec: number): string {
+  const link = expression?.trim() ? expression.trim() : 'its timing link';
+  return `Couldn't follow ${link} (${reason}): placed at its written time ${formatTimelineTime(atSec * 1000)}`;
+}

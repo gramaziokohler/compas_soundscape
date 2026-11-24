@@ -98,6 +98,33 @@ BACKGROUND_BED_DBFS_DEFAULT = -42.0   # used when the LLM gives no level for a b
 BACKGROUND_BED_QUIET_DBFS = (-48.0, -42.0)  # prompt band: quiet room tone, HVAC hum
 BACKGROUND_BED_BUSY_DBFS = (-42.0, -36.0)   # prompt band: lively ambience (café chatter, street)
 
+# Orchestrated event / speech levels are clamped to these bands after the LLM
+# (like beds above), so one outlier cannot dominate the mix. The prompt quotes
+# narrower bands; these keep a few dB of slack around them.
+EVENT_DBFS_MIN = -34.0
+EVENT_DBFS_MAX = -12.0
+EVENT_DBFS_DEFAULT = -22.0   # an event the LLM gave no level
+SPEECH_DBFS_MIN = -24.0
+SPEECH_DBFS_MAX = -14.0
+SPEECH_DBFS_DEFAULT = -19.0  # a speech entry the LLM gave no level
+# A speech entry's delivery style (TTS `speech_metadata.style`) moves its level band:
+# every TTS file is calibrated to the same loudness anchor, so a whisper would
+# otherwise play as loud as normal talk. First matching row wins (keywords are
+# matched as substrings of the lower-cased style). Used by utils/speech_style.py
+# for the orchestrator clamp/prompt and the scene-edit level proposal; mirrored
+# by TTS_STYLE_PRESETS in frontend/src/utils/constants.ts.
+SPEECH_STYLE_LEVELS = (
+    {"key": "whisper", "keywords": ("whisper", "under their breath", "under his breath", "under her breath", "hushed"),
+     "min": -34.0, "max": -26.0, "default": -30.0},
+    {"key": "shout", "keywords": ("shout", "yell", "scream", "call out", "calling out", "bellow", "cheer"),
+     "min": -16.0, "max": -9.0, "default": -12.0},
+    {"key": "loud", "keywords": ("loud", "angry", "furious", "projecting", "announc"),
+     "min": -20.0, "max": -12.0, "default": -15.0},
+    {"key": "soft", "keywords": ("soft", "quiet", "gentle", "murmur", "mumbl", "tired", "sleepy", "sad", "shy"),
+     "min": -27.0, "max": -19.0, "default": -23.0},
+)
+TTS_STYLE_MAX_CHARS = 200  # delivery-style instruction sent with a TTS request
+
 # Speed of sound (shared by all simulation methods)
 DEFAULT_SPEED_OF_SOUND = 343.0  # m/s
 SPEED_OF_SOUND_MIN = 300.0
@@ -150,6 +177,57 @@ FOLEY_SOUND_DETAIL_LEVELS = {
     },
 }
 DEFAULT_FOLEY_SOUND_DETAIL = "balanced"
+
+# Most distinct audio copies generated for one sound (frontend MAX_SEED_COPIES).
+MAX_SEED_COPIES = 5
+
+# Scene "Atmosphere" (calm / normal / lively): how busy the generated scene is.
+# One row feeds every agent — the scenarist's activity level, the foley agent's
+# off-screen venue sources and recurrence rates, the speech agent's dialogue
+# density — and the frontend crowd-bed rule (mirrored as SCENE_LIVELINESS_OPTIONS
+# in frontend/src/utils/constants.ts).
+SCENE_LIVELINESS_LEVELS = {
+    "calm": {
+        "activity": (
+            "Calm: people are unhurried and mostly quiet; activities are slow and rarely overlap."
+        ),
+        "rate_multiplier": 0.6,
+        "venue_sources": "at most one off-screen venue source",
+        "speech_lines_per_speaker_per_30s": 2,
+        "speech_max_group_gap_s": 12,
+    },
+    "normal": {
+        "activity": (
+            "Normal: an ordinary, believable level of activity for this kind of place and time."
+        ),
+        "rate_multiplier": 1.0,
+        "venue_sources": "one or two off-screen venue sources",
+        "speech_lines_per_speaker_per_30s": 3,
+        "speech_max_group_gap_s": 8,
+    },
+    "lively": {
+        "activity": (
+            "Lively: the place is busy; people move, handle things and talk a lot, and several "
+            "activities overlap at any moment."
+        ),
+        "rate_multiplier": 1.5,
+        "venue_sources": "two or three off-screen venue sources",
+        "speech_lines_per_speaker_per_30s": 5,
+        "speech_max_group_gap_s": 4,
+    },
+}
+DEFAULT_SCENE_LIVELINESS = "normal"
+
+# Recurring activities (foley `recurrence`, expanded in utils/recurrence.py):
+# an ongoing action (reading, typing, sipping…) is given a rate instead of hand-
+# listed times; code spreads its occurrences with seeded, irregular gaps.
+RECURRENCE_MIN_GAP_S = 0.4           # shortest end-to-start gap between two occurrences
+RECURRENCE_MAX_OCCURRENCES = 24      # cap per entry (keeps the DAW and solver light)
+RECURRENCE_OCCURRENCES_PER_COPY = 3  # one distinct audio copy per this many occurrences
+RECURRENCE_JITTER_STEADY = 0.15      # relative gap spread of a steady rhythm (walking)
+RECURRENCE_JITTER_IRREGULAR = 0.6    # relative gap spread of an irregular one (page turns)
+RECURRENCE_DEFAULT_DURATION_S = 2.0  # one occurrence's length when the entry gives none
+SCENARIO_DEFAULT_DURATION_S = 150    # scene length when a request / scenario gives none
 
 # Virtual room extents used to anchor scenario sound positions when no context
 # model (3D layout analysis) is available. Speckle Z-up: X = width, Y = depth,

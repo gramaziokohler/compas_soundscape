@@ -84,6 +84,7 @@ export function buildSceneEditSnapshot(
       character: speech
         ? config.scenarioSource?.character || TTS_VOICE_TO_CHARACTER[config.voice_name ?? ''] || ''
         : '',
+      style: speech ? config.voice_style ?? '' : '',
       times_s: cardTimes(config, trackId).map((t) => round(t, 1)),
       level_db: round(cardLevelDb(config, trackId, primary?.volume_dbfs), 1),
       muted: !!trackId && audio.mutedSounds.has(trackId),

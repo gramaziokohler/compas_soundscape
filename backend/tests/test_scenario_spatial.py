@@ -81,6 +81,27 @@ def test_foley_and_speech_prompts_carry_room_extents():
         assert "SPATIAL PLACEMENT" in prompt and "width 8.00 m" in prompt
 
 
+def test_scenario_and_foley_prompts_carry_the_realism_rules():
+    svc = _service()
+    _, scenario = svc._build_scenarist_prompts(None, "{}", 60, 3, 9, has_furniture=False, liveliness="lively")
+    assert "Nobody Freezes" in scenario and "Behaviour Over Decor" in scenario
+    assert "Outside World" in scenario and "Atmosphere: Lively" in scenario
+    _, foley = svc._build_foley_prompts("{}", "{}", "balanced", liveliness="calm")
+    for rule in ("LISTEN BETWEEN THE LINES", "RECURRING ACTIVITIES", "VENUE SOURCES", '"recurrence"'):
+        assert rule in foley
+    assert "at most one off-screen venue source" in foley
+
+
+def test_speech_prompt_scales_social_density():
+    svc = _service()
+    scenarios = [{"duration": "1:00", "peopleCount": 8, "peopleDescription": "8 friends"}]
+    _, calm = svc._build_speech_prompts("{}", liveliness="calm", scenarios=scenarios)
+    _, lively = svc._build_speech_prompts("{}", liveliness="lively", scenarios=scenarios)
+    assert "SOCIAL SCENES" in lively and "The scene has 8 people (8 friends)" in lively
+    # 2 vs 5 lines per speaker per 30 s over a 60 s scene.
+    assert "about 4 lines per speaker" in calm and "about 10 lines per speaker" in lively
+
+
 def test_schema_defaults():
     scenario = Scenario(title="t", duration="1:00", peopleCount=5, likeliness=9, events=[])
     assert scenario.hasSpeech and scenario.roomDimensions == [] and scenario.peopleDescription == ""

@@ -307,6 +307,9 @@ export function useSpeckleTimeline({
         iterationTrims,
         soundLoopable,
         iterationLinks,
+        // Same per-occurrence pitch / level variation as live playback.
+        iterationVariations: useAudioControlsStore.getState().iterationVariations,
+        soundVariationModes: useAudioControlsStore.getState().soundVariationModes,
         simulationName: activeSimulation?.display_name ?? null,
         variantEvents: soundscapeData ?? [],
         // Same per-track global flags as live playback (set by useSpeckleAudioSync)

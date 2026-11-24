@@ -311,14 +311,20 @@ export class Transport {
 
     const bufferDuration = this.orchestrator.getSourceBufferDuration(sourceId) ?? 0;
     const trimStartSec = clip.trimStartFraction * bufferDuration;
-    const offsetSec = trimStartSec + intoClipMs / 1000;
-    const remainingDurationSec = clip.durationMs / 1000 - intoClipMs / 1000;
+    // A detuned clip advances through its buffer `rate` times faster than the
+    // timeline, so wall-clock time into the clip maps to `rate ×` buffer time.
+    const rate = Math.pow(2, (clip.detuneCents ?? 0) / 1200);
+    const intoBufferSec = (intoClipMs / 1000) * rate;
+    const offsetSec = trimStartSec + intoBufferSec;
+    const remainingDurationSec = clip.durationMs / 1000 - intoBufferSec;
 
     if (remainingDurationSec <= 0) return;
 
     this.orchestrator.startVoice(sourceId, when, offsetSec, remainingDurationSec, {
       fadeInMs: clip.fadeInMs,
       fadeOutMs: clip.fadeOutMs,
+      detuneCents: clip.detuneCents,
+      gainDb: clip.gainDb,
     });
   }
 }

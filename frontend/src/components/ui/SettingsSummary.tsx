@@ -362,6 +362,7 @@ export function getSettingsRows(config: CardBaseConfig): SettingsRow[] {
             promptText = speechLines[selectedIdx] ?? speechLines[0] ?? original.prompt;
           }
           if (promptText) rows.push({ label: 'Prompt', value: promptText, expandable: true });
+          if (original.voice_style) rows.push({ label: 'Style', value: original.voice_style, expandable: true });
           break;
         }
         case 'upload':

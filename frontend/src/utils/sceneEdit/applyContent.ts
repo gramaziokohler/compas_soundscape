@@ -17,6 +17,8 @@ import {
   resolveVoiceForCharacter,
 } from '@/utils/constants';
 import { newConfigId } from '@/utils/config-id';
+import { cleanStyle } from '@/utils/ttsStyle';
+import { applyMixOp } from './applyMix';
 import { configAt, patchConfig, resolveTargets, type SceneEditApplyContext } from './applyContext';
 import { resolvePlacement } from './applySpace';
 import {
@@ -134,6 +136,7 @@ function addSpeaker(ctx: SceneEditApplyContext, op: SceneEditOp): boolean {
   const timestamps = op.times_s.map(formatMmSs);
   const position = newCardPosition(op);
   const base = baseSource(ctx, entryIdFor(op.character, sceneEntryIds(ctx.usageIndex)));
+  const style = cleanStyle(op.style);
   const config: SoundGenerationConfig = {
     config_id: newConfigId(),
     type: 'text-to-speech',
@@ -143,11 +146,13 @@ function addSpeaker(ctx: SceneEditApplyContext, op: SceneEditOp): boolean {
     negative_prompt: '',
     seed_copies: op.lines.length,
     steps: SIMPLE_MODE.DIFFUSION_STEPS,
-    dbfs: DEFAULT_DBFS,
+    // The backend proposes a level for a styled speaker (a whisper plays quieter).
+    dbfs: op.db ?? DEFAULT_DBFS,
     interval_seconds: SCENE_EDIT.DEFAULT_SOUND_DURATION_S,
     display_name: op.character,
     category: SPEECH_CATEGORY,
     voice_name: voiceName,
+    ...(style ? { voice_style: style } : {}),
     parentUsageOriginalIndex: ctx.usageIndex,
     ...(position ? { position } : {}),
     ...(timestamps.length ? { timestamps } : {}),
@@ -165,6 +170,7 @@ function addSpeaker(ctx: SceneEditApplyContext, op: SceneEditOp): boolean {
         script: op.lines.join('; '),
         speechLines: op.lines,
         voiceName,
+        ...(style ? { voiceStyle: style } : {}),
       },
     } : {}),
   };
@@ -300,6 +306,25 @@ function changeVoice(ctx: SceneEditApplyContext, op: SceneEditOp): boolean {
   return applied;
 }
 
+/** New delivery style for every line of the targeted speakers, at the backend's proposed level. */
+function setStyle(ctx: SceneEditApplyContext, op: SceneEditOp): boolean {
+  const style = cleanStyle(op.style);
+  const changed: string[] = []; // refs whose style changed (they get the proposed level)
+  op.targets.forEach((ref) => {
+    const [index] = resolveTargets(ctx, { ...op, targets: [ref] });
+    const config = index === undefined ? undefined : configAt(index);
+    if (!config?.config_id || !isSpeechCard(config)) return;
+    if (cleanStyle(config.voice_style) === style) return;
+    patchConfig(index, { voice_style: style });
+    ctx.regen.force.add(config.config_id);
+    changed.push(ref);
+  });
+  if (changed.length === 0) return false;
+  if (op.db !== null) applyMixOp(ctx, { ...op, op: 'set_level', targets: changed, delta_db: null });
+  ctx.needsOrchestrate = true;
+  return true;
+}
+
 /** Apply a content / speech op; returns false when nothing changed. */
 export function applyContentOp(ctx: SceneEditApplyContext, op: SceneEditOp): boolean {
   switch (op.op) {
@@ -311,6 +336,7 @@ export function applyContentOp(ctx: SceneEditApplyContext, op: SceneEditOp): boo
     case 'set_variants': return setVariants(ctx, op);
     case 'edit_lines': return editLines(ctx, op);
     case 'change_voice': return changeVoice(ctx, op);
+    case 'set_style': return setStyle(ctx, op);
     default: return false;
   }
 }

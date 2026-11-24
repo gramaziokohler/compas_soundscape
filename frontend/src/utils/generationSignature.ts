@@ -59,7 +59,12 @@ const SIGNATURE_SPECS: Partial<Record<CardType, SignatureSpec>> = {
     fields: ['prompt', 'duration', 'guidance_scale', 'prompt_influence', 'loop', 'seed_copies', 'steps', 'negative_prompt'],
     cardLevel: ['seed_copies'],
   },
-  'text-to-speech': { fields: ['prompt', 'voice_name', 'seed_copies'], speechLines: true, cardLevel: ['seed_copies'] },
+  // voice_style applies to every line, so it is card-level: editing it regenerates all variants.
+  'text-to-speech': {
+    fields: ['prompt', 'voice_name', 'voice_style', 'seed_copies'],
+    speechLines: true,
+    cardLevel: ['seed_copies', 'voice_style'],
+  },
   library: { fields: ['selectedLibrarySound'] },
   catalog: { fields: ['selectedCatalogSound'] },
   pyroomacoustics: {

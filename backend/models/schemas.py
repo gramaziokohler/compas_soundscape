@@ -25,6 +25,9 @@ from config.constants import STUDY_MAX_TAGS
 from config.constants import DEFAULT_AUDIO_MODEL
 from config.constants import DEFAULT_DBFS
 from config.constants import DEFAULT_FOLEY_SOUND_DETAIL
+from config.constants import DEFAULT_SCENE_LIVELINESS
+from config.constants import SCENE_LIVELINESS_LEVELS
+from config.constants import SCENARIO_DEFAULT_DURATION_S
 from config.constants import DEFAULT_LLM_MODEL
 from config.constants import DEFAULT_TTS_MODEL
 from config.constants import FOLEY_SOUND_DETAIL_LEVELS
@@ -584,6 +587,10 @@ class SoundscapeSoundConfig(BaseModel):
     # Scenario pipeline reference (scenarioId + foley/speech ids + raw entry fields),
     # persisted so orchestration can be re-run from edited cards after refresh.
     scenario_source: Optional[dict] = None
+    # TTS voice of a speech card (Gemini prebuilt voice); None = default voice.
+    voice_name: Optional[str] = None
+    # TTS delivery style of a speech card ("whispering"); None = neutral.
+    voice_style: Optional[str] = None
     # Explicit-position sound that must stay where authored (the deterministic
     # Home Sample at SANDBOX_SAMPLE_SPHERE_POSITION). Persisted so the pin
     # survives a refresh/save-load without inferring it from the card type.
@@ -939,6 +946,10 @@ class SoundscapeData(BaseModel):
     iteration_links: Optional[dict] = None
     # Per-clip DAW trim overrides {start, end} (0-1 of the source), keyed `${soundId}-${iterationIndex}`
     iteration_trims: Optional[dict] = None
+    # Hand-set per-occurrence pitch / level {detuneCents, gainDb, seed}, keyed `${soundId}-${iterationIndex}`
+    iteration_variations: Optional[dict] = None
+    # Per-sound variation range ("off" | "subtle" | "strong"), keyed by sound id
+    sound_variation_modes: Optional[dict] = None
     # Sound IDs currently muted in the DAW timeline
     muted_sounds: Optional[list[str]] = None
     # Legacy single soloed sound ID (read-only fallback; superseded by soloed_sounds)
@@ -1202,6 +1213,17 @@ class ScenarioResponse(BaseModel):
     found: bool = False
 
 
+class FoleyRecurrence(BaseModel):
+    """An ongoing activity's rhythm (expanded into occurrences by utils/recurrence.py)."""
+    perMinute: float                 # typical occurrences per minute
+    regularity: str = "irregular"    # "steady" (walking) | "irregular" (page turns, sips)
+    # "MM:SS", or the sound that starts it: "after(<id>#<k>)" / "overlap(<id>#<k>)".
+    start: str = "00:00"
+    end: str = ""                    # "MM:SS"; "" = until the scene ends
+    # Filled by code: end-to-start gap (s) before occurrences 2..n.
+    gaps: list[float] = []
+
+
 class FoleySoundEvent(BaseModel):
     """A single deduplicated foley sound type extracted from a scenario."""
     id: str                      # snake_case identifier, e.g. sound_01
@@ -1220,7 +1242,11 @@ class FoleySoundEvent(BaseModel):
     # estimated from how often it recurs (1-5). 1 = a single occurrence or an
     # always-identical sound; higher for frequently repeated actions so the
     # timeline can rotate between copies instead of retriggering one clip.
+    # Clamped to 1..MAX_SEED_COPIES by code (utils/recurrence.clamp_copy_count).
     copyCount: int = 1
+    # Set for an ongoing activity (reading, typing, sipping…): its occurrences are
+    # spread by code and chained in the orchestrate trigger. None = one-off sound.
+    recurrence: FoleyRecurrence | None = None
 
 
 class FoleyOutput(BaseModel):
@@ -1241,6 +1267,9 @@ class SpeechEntry(BaseModel):
     character: str
     script: str              # "CharacterName: line1; line2"
     position: list[float] = []  # [x,y,z] mouth-height position within the room
+    # Sustained delivery of the whole block ("whispering", "shouting across the room");
+    # empty = neutral. Sent to TTS as speech_metadata.style and moves the level band.
+    style: str = ""
 
 
 class SpeechOutput(BaseModel):
@@ -1267,10 +1296,14 @@ class OrchestrateEntry(BaseModel):
     trigger: OrchestrateTrigger
     timestamps: list[str] = []   # starting positions in MM:SS (passed through from foley/speech)
     character: str = ""          # TTS voice label for speech entries; empty for foley
+    style: str = ""              # speech delivery style (SpeechEntry.style); empty for foley
     objectsInvolved: list[str]
     position: list[float]   # [x, y, z]; empty when objectsInvolved is populated
     variants: list[int]
     spl: str         # e.g. "75 dB"
+    # Ongoing activity: its trigger is a code-built chain (see utils/recurrence.py);
+    # carried so a re-orchestration keeps the rhythm.
+    recurrence: FoleyRecurrence | None = None
 
 
 class OrchestrateOutput(BaseModel):
@@ -1309,7 +1342,7 @@ SceneEditOpName = Literal[
     # content
     "add_sound", "remove", "change_sound", "regenerate", "set_variants",
     # speech
-    "add_speaker", "edit_lines", "change_voice",
+    "add_speaker", "edit_lines", "change_voice", "set_style",
     # scene
     "rename_scene",
 ]
@@ -1346,6 +1379,7 @@ class SceneEditOp(BaseModel):
     duration_s: float | None = None  # add_sound / change_sound: clip length
     character: str = ""              # add_speaker / change_voice: TTS character name
     lines: list[str] = []            # add_speaker / edit_lines: one entry per spoken line
+    style: str = ""                  # add_speaker / set_style: TTS delivery style ("" = neutral)
     title: str = ""                  # rename_scene
 
 
@@ -1368,6 +1402,7 @@ class SceneEditSnapshotCard(BaseModel):
     prompt: str = ""
     lines: list[str] = []
     character: str = ""
+    style: str = ""                  # speech delivery style
     times_s: list[float] = []
     level_db: float | None = None
     muted: bool = False
@@ -1434,13 +1469,27 @@ class ScenaristStreamRequest(BaseModel):
     # None = the scenarist infers the number of people from the prompt / image.
     people_count: int | None = None
     likeliness: int = 9
-    duration: int = 150
+    duration: int = SCENARIO_DEFAULT_DURATION_S
     # Optional {min:[x,y,z], max:[x,y,z]} spatial reference (model bounds) used
     # when no analysis result supplies extents. Falls back to VIRTUAL_ROOM_BOUNDS.
     bounding_box: dict | None = None
     # Optional reference images of the space (base64 data URIs, max 3) — lets a
     # scene be grounded in a picture when no 3D model / analysis is available.
     screenshots: list[str] | None = None
+    # Scene atmosphere (a SCENE_LIVELINESS_LEVELS key).
+    liveliness: str = DEFAULT_SCENE_LIVELINESS
+
+    @field_validator("liveliness")
+    @classmethod
+    def _check_liveliness(cls, v: str) -> str:
+        return validate_liveliness(v)
+
+
+def validate_liveliness(value: str) -> str:
+    """Shared validator for the scene `liveliness` request field."""
+    if value not in SCENE_LIVELINESS_LEVELS:
+        raise ValueError(f"liveliness must be one of {list(SCENE_LIVELINESS_LEVELS)}")
+    return value
 
 
 class FoleyArtistRequest(BaseModel):
@@ -1451,6 +1500,8 @@ class FoleyArtistRequest(BaseModel):
     # (a FOLEY_SOUND_DETAIL_LEVELS key; background and speech are not counted).
     sound_detail: str = DEFAULT_FOLEY_SOUND_DETAIL
     bounding_box: dict | None = None
+    # Scene atmosphere: off-screen venue sources and recurrence rates.
+    liveliness: str = DEFAULT_SCENE_LIVELINESS
 
     @field_validator("sound_detail")
     @classmethod
@@ -1458,6 +1509,26 @@ class FoleyArtistRequest(BaseModel):
         if v not in FOLEY_SOUND_DETAIL_LEVELS:
             raise ValueError(f"sound_detail must be one of {list(FOLEY_SOUND_DETAIL_LEVELS)}")
         return v
+
+    @field_validator("liveliness")
+    @classmethod
+    def _check_liveliness(cls, v: str) -> str:
+        return validate_liveliness(v)
+
+
+class SpeechAgentRequest(BaseModel):
+    scenario_id: str
+    analysis_id: str | None = None
+    llm_model: str = DEFAULT_LLM_MODEL
+    language: str | None = None
+    bounding_box: dict | None = None
+    # Scene atmosphere: dialogue density (lines per speaker, longest group silence).
+    liveliness: str = DEFAULT_SCENE_LIVELINESS
+
+    @field_validator("liveliness")
+    @classmethod
+    def _check_liveliness(cls, v: str) -> str:
+        return validate_liveliness(v)
 
 
 class ScenarioDuplicateResponse(BaseModel):

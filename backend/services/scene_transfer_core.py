@@ -31,7 +31,9 @@ ITERATION_LINK_ENTITY_KEYS = ("entityNodeId", "entityPosition", "entityIndex")
 AUDIO_REF_KEYS = ("audio_filename", "persisted_audio_filename")
 UNPLACED_POSITION = [0.0, 0.0, 0.0]  # SoundSphereManager places it in front of the camera
 # Per-sound maps keyed `${soundId}-${iterationIndex}`.
-ITERATION_KEYED_MAPS = ("iteration_links", "iteration_trims", "exclusion_reasons")
+ITERATION_KEYED_MAPS = ("iteration_links", "iteration_trims", "iteration_variations", "exclusion_reasons")
+# Per-sound maps keyed by the sound id itself.
+SOUND_KEYED_MAPS = ("excluded_iterations", "sound_variation_modes")
 SCENE_TITLE_MAX_CHARS = 48
 
 
@@ -252,11 +254,12 @@ def extract_package(
                     value.pop(k, None)
             out[new_key] = value
         maps[name] = out
-    maps["excluded_iterations"] = {
-        id_map[k]: copy.deepcopy(v)
-        for k, v in (source.get("excluded_iterations") or {}).items()
-        if k in id_map
-    }
+    for name in SOUND_KEYED_MAPS:
+        maps[name] = {
+            id_map[k]: copy.deepcopy(v)
+            for k, v in (source.get(name) or {}).items()
+            if k in id_map
+        }
     soloed = list(source.get("soloed_sounds") or [])
     if not soloed and source.get("soloed_sound"):
         soloed = [source["soloed_sound"]]
@@ -420,7 +423,7 @@ def merge_package(target: dict, package: dict) -> dict:
         merged["sound_events"].append(ev)
 
     maps = package["maps"]
-    for name in (*ITERATION_KEYED_MAPS, "excluded_iterations"):
+    for name in (*ITERATION_KEYED_MAPS, *SOUND_KEYED_MAPS):
         if maps.get(name):
             merged[name] = {**(merged.get(name) or {}), **maps[name]}
     for name in ("muted_sounds", "soloed_sounds"):

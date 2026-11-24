@@ -29,7 +29,7 @@ import type {
 import type { SavedObjectVisibility } from '@/types/card';
 import type { SimulationAcousticSelection } from '@/types/acoustics';
 import type { GridListenerData } from '@/types/receiver';
-import type { ImpulseResponseMetadata, SourceReceiverIRMapping, ResonanceAudioConfig } from '@/types/audio';
+import type { ImpulseResponseMetadata, SourceReceiverIRMapping, ResonanceAudioConfig, ClipVariationMode, ClipVariationOverride } from '@/types/audio';
 import { defaultResonanceMaterials } from '@/lib/audio/utils/resonance-rooms';
 import type { AnalysisConfig, AnalysisResult, TextPromptResult } from '@/types/analysis';
 import { API_BASE_URL, AUDIO_PLAYBACK, PFFDTD, SCENE_EDIT, PYROOMACOUSTICS_DEFAULT_MAX_ORDER, PYROOMACOUSTICS_DEFAULT_PARALLEL, PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE } from '@/utils/constants';
@@ -327,6 +327,8 @@ export function buildSoundscapeSavePayload(
       // of falling back to camera-front spiral placement.
       position: config.position ? [...config.position] : undefined,
       directivity: serializeDirectivity(config.directivity),
+      voice_name: config.voice_name || undefined,
+      voice_style: config.voice_style || undefined,
     };
   });
 
@@ -691,6 +693,8 @@ export function restoreSoundscapeState(
   soundTimestamps: Record<string, number[]>;
   iterationLinks: Record<string, SoundscapeIterationLink>;
   iterationTrims: Record<string, { start: number; end: number }>;
+  iterationVariations: Record<string, ClipVariationOverride>;
+  soundVariationModes: Record<string, ClipVariationMode>;
   globalSettings: {
     duration: number;
     steps: number;
@@ -741,6 +745,12 @@ export function restoreSoundscapeState(
         ? [saved.position[0], saved.position[1], saved.position[2]] as [number, number, number]
         : undefined,
       directivity: serializeDirectivity(saved.directivity),
+      // Older saves lack voice_name: fall back to the orchestrated / scenario voice.
+      voice_name: saved.voice_name
+        || (saved.orchestrate_meta as SoundGenerationConfig['orchestrateMeta'])?.voiceName
+        || ((saved as any).scenario_source as SoundGenerationConfig['scenarioSource'])?.voiceName
+        || undefined,
+      voice_style: saved.voice_style || undefined,
       entity: undefined, // deprecated — use entities[] below
       entities: (() => {
         // entity_node_ids is the link's identity. Restore from it first: the saved
@@ -1216,6 +1226,8 @@ export function restoreSoundscapeState(
     soundTimestamps,
     iterationLinks: loadedData.iteration_links ?? {},
     iterationTrims: loadedData.iteration_trims ?? {},
+    iterationVariations: loadedData.iteration_variations ?? {},
+    soundVariationModes: loadedData.sound_variation_modes ?? {},
     globalSettings,
     receivers: restoredReceivers,
     gridListeners: restoredGridListeners,
@@ -1274,6 +1286,7 @@ export function buildAnalysisStateSave(
     if ('peopleCount' in config) base.peopleCount = (config as any).peopleCount;
     if ('likeliness' in config) base.likeliness = (config as any).likeliness;
     if (config.type === 'scenario' && config.soundDetail) base.soundDetail = config.soundDetail;
+    if (config.type === 'scenario' && config.liveliness) base.liveliness = config.liveliness;
     if (config.type === 'scenario' && config.referenceImageFilename) {
       base.referenceImageFilename = config.referenceImageFilename;
       base.referenceImageName = config.referenceImageName;
@@ -1468,6 +1481,7 @@ export function restoreAnalysisState(analysisState: AnalysisState): {
     if (saved.peopleCount !== undefined) config.peopleCount = saved.peopleCount;
     if (saved.likeliness !== undefined) config.likeliness = saved.likeliness;
     if (saved.soundDetail !== undefined) config.soundDetail = saved.soundDetail;
+    if (saved.liveliness !== undefined) config.liveliness = saved.liveliness;
     // URL resolved after load (analysisStore.rehydrateSceneImages), against the audio base URL.
     if (saved.referenceImageFilename) {
       config.referenceImageFilename = saved.referenceImageFilename;

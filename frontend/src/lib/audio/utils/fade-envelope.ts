@@ -20,6 +20,10 @@ export interface FadeOptions {
   fadeInMs?: number;
   /** Fade-in duration in milliseconds at the end of a window (loop seam). */
   fadeOutMs?: number;
+  /** Per-occurrence pitch offset in cents (clip-variation.ts). 0 / absent = none. */
+  detuneCents?: number;
+  /** Per-occurrence level offset in dB (clip-variation.ts). 0 / absent = none. */
+  gainDb?: number;
 }
 
 /**
@@ -71,10 +75,24 @@ export function applyFadeInOut(
 ): AudioNode {
   const fadeInSec = (opts.fadeInMs ?? 0) / 1000;
   const fadeOutSec = (opts.fadeOutMs ?? 0) / 1000;
+  // Per-occurrence variation: pitch on the source, level as the envelope's plateau.
+  const detuneCents = opts.detuneCents ?? 0;
+  const level = opts.gainDb ? Math.pow(10, opts.gainDb / 20) : 1;
+  if (detuneCents !== 0) sourceNode.detune.value = detuneCents;
+  // A detuned voice plays its buffer window faster / slower: `durationSec` is in
+  // buffer time, the envelope runs in wall-clock time.
+  const rate = Math.pow(2, detuneCents / 1200);
 
   if (fadeInSec <= 0 && fadeOutSec <= 0) {
-    sourceNode.connect(gainSink);
-    return sourceNode;
+    if (level === 1) {
+      sourceNode.connect(gainSink);
+      return sourceNode;
+    }
+    const levelGain = sourceNode.context.createGain();
+    levelGain.gain.value = level;
+    levelGain.connect(gainSink);
+    sourceNode.connect(levelGain);
+    return levelGain;
   }
 
   const ctx = sourceNode.context;
@@ -84,7 +102,7 @@ export function applyFadeInOut(
   // The audible window this source will occupy. Prefer the caller-provided
   // remaining duration; fall back to the buffer's own length for a full-buffer
   // play (e.g. `playSource` without a duration).
-  const windowSec = opts.durationSec ?? sourceNode.buffer?.duration ?? 0;
+  const windowSec = (opts.durationSec ?? sourceNode.buffer?.duration ?? 0) / rate;
 
   // Never let the two ramps meet/cross on a very short window — clamp each to a
   // third of it so a short clip still passes through silence at both edges.
@@ -98,9 +116,9 @@ export function applyFadeInOut(
   // Start from silence and ramp up over the fade-in window.
   fadeGain.gain.setValueAtTime(0, startSec);
   if (inSec > 0) {
-    fadeGain.gain.linearRampToValueAtTime(1, startSec + Math.max(0.001, inSec));
+    fadeGain.gain.linearRampToValueAtTime(level, startSec + Math.max(0.001, inSec));
   } else {
-    fadeGain.gain.setValueAtTime(1, startSec);
+    fadeGain.gain.setValueAtTime(level, startSec);
   }
 
   // Fade out so the window's tail approaches silence just before the wrap / end.
@@ -108,7 +126,7 @@ export function applyFadeInOut(
   if (outSec > 0 && windowSec > 0) {
     const fadeStart = startSec + Math.max(inSec, windowSec - outSec);
     if (fadeStart >= startSec) {
-      fadeGain.gain.setValueAtTime(1, fadeStart);
+      fadeGain.gain.setValueAtTime(level, fadeStart);
       fadeGain.gain.linearRampToValueAtTime(0, fadeStart + outSec);
     }
   }

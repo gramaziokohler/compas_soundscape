@@ -47,6 +47,19 @@ describe('restoreSoundscapeState', () => {
     expect(soundConfigs[0].uploadedAudioUrl).toBe('/audio/a0.wav');
     expect(soundConfigs[1].uploadedAudioUrl).toBe('/audio/b0.wav');
   });
+
+  it('restores a speech card voice and style', () => {
+    const save = staleSave();
+    Object.assign(save.sound_configs[2], { voice_name: 'Puck', voice_style: 'whispering' });
+    const { soundConfigs } = restoreSoundscapeState(save, '/audio');
+    expect(soundConfigs[2]).toMatchObject({ voice_name: 'Puck', voice_style: 'whispering' });
+  });
+
+  it('falls back to the orchestrated voice for saves without voice_name', () => {
+    const save = staleSave();
+    Object.assign(save.sound_configs[2], { orchestrate_meta: { voiceName: 'Fenrir' } });
+    expect(restoreSoundscapeState(save, '/audio').soundConfigs[2].voice_name).toBe('Fenrir');
+  });
 });
 
 describe('wave-based (PFFDTD) free positioning settings', () => {

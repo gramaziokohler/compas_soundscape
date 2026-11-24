@@ -34,6 +34,7 @@ import {
   API_BASE_URL,
   DEFAULT_DBFS,
   DEFAULT_FOLEY_SOUND_DETAIL,
+  DEFAULT_SCENE_LIVELINESS,
   DBFS_MIN,
   LLM_JOB_STATUS_MISS_TOLERANCE,
   LLM_SUGGESTED_INTERVAL_SECONDS,
@@ -63,6 +64,7 @@ import { useFileUploadStore } from './fileUploadStore';
 import { remapLinkedCardIndices } from './cardIndexLinks';
 import { captureGenerationSignature } from '@/utils/generationSignature';
 import { isScenarioSpeechDone } from '@/utils/scenarioSpeech';
+import { withCrowdBed } from '@/utils/crowdBed';
 import { urlToDataUrl } from '@/utils/dataUrl';
 import { collectUnsharedSceneAudioUrls } from '@/utils/sceneAudioUrls';
 import {
@@ -1707,6 +1709,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                       allObjectIds: involvedIds,
                       isSpeech,
                       voiceName,
+                      voiceStyle: isSpeech ? (entry.style || undefined) : undefined,
                       speechLines: isSpeech ? speechLines : undefined,
                       timestamps: entry.timestamps,
                     },
@@ -1800,6 +1803,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                       character: '',
                       script: '',
                       speechLines: [],
+                      ...(sound.recurrence && !isBgFoley ? { recurrence: sound.recurrence } : {}),
                     },
                   },
                 });
@@ -1848,6 +1852,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                     script: speech.script,
                     speechLines,
                     voiceName,
+                    voiceStyle: speech.style || undefined,
                   },
                 },
               });
@@ -2413,6 +2418,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             // Omitted when null (Auto): the scenarist infers the people from the prompt.
             people_count: config.peopleCount ?? undefined,
             likeliness: config.likeliness,
+            liveliness: config.liveliness ?? DEFAULT_SCENE_LIVELINESS,
             duration: Math.round(scenarioDurationMs / 1000),
             bounding_box: getScenarioBounds(),
             screenshots: await sceneReferenceScreenshots(config),
@@ -2512,6 +2518,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
               analysis_id: analysisId,
               llm_model: config.llmModel ?? DEFAULT_LLM_MODEL,
               sound_detail: config.soundDetail ?? DEFAULT_FOLEY_SOUND_DETAIL,
+              liveliness: config.liveliness ?? DEFAULT_SCENE_LIVELINESS,
               bounding_box: getScenarioBounds(),
             };
             const speechBody = {
@@ -2519,6 +2526,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
               analysis_id: analysisId,
               llm_model: config.llmModel ?? DEFAULT_LLM_MODEL,
               language: useAudioControlsStore.getState().ttsLanguage,
+              liveliness: config.liveliness ?? DEFAULT_SCENE_LIVELINESS,
               bounding_box: getScenarioBounds(),
             };
 
@@ -2591,6 +2599,25 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             })();
 
             await Promise.all([foleyPromise, speechPromise]);
+          }
+
+          // More people present than speaking voices → an indistinct crowd
+          // murmur bed (both results are known only once both agents are done).
+          const done = liveScenario();
+          if (done?.foleyResult) {
+            const added = withCrowdBed({
+              scenario: done.scenarioResult?.scenarios?.[0],
+              foley: done.foleyResult,
+              speech: done.speechResult,
+              liveliness: done.liveliness,
+              includeSpeech: done.includeSpeech,
+            });
+            if (added) {
+              updateCard(ref, {
+                foleyResult: added.foley,
+                selectedFoleyKeys: [...(done.selectedFoleyKeys ?? []), added.key],
+              } as Partial<ScenarioConfig>);
+            }
           }
         }),
       }),

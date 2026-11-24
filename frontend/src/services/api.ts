@@ -1031,7 +1031,7 @@ export const apiService = {
 
   // Generate TTS (async — returns job_id for polling via /api/jobs/{id})
   async generateTTS(data: {
-    texts: { text: string; voice_name?: string; display_name?: string; position?: number[]; dbfs?: number; prompt_index?: number; copy_index?: number; total_copies?: number }[];
+    texts: { text: string; voice_name?: string; style?: string; display_name?: string; position?: number[]; dbfs?: number; prompt_index?: number; copy_index?: number; total_copies?: number }[];
     language?: string;
     tts_model?: string;
   }): Promise<{ generation_id: string } & { job_id: string }> {

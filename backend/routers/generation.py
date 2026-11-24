@@ -24,6 +24,7 @@ from models.schemas import (
     UnifiedPromptGenerationRequest,
     ScenaristStreamRequest,
     FoleyArtistRequest,
+    SpeechAgentRequest,
     JobEnqueueResponse,
     ScenarioDuplicateResponse,
 )
@@ -514,6 +515,7 @@ async def scenarist(request: ScenaristStreamRequest, req: Request):
     duration = request.duration
     people_count = request.people_count
     likeliness = request.likeliness
+    liveliness = request.liveliness
     screenshots = list(request.screenshots or [])
 
     async def _run(job_id: str) -> None:
@@ -529,6 +531,7 @@ async def scenarist(request: ScenaristStreamRequest, req: Request):
                 duration=duration,
                 people_count=people_count,
                 likeliness=likeliness,
+                liveliness=liveliness,
                 screenshots=screenshots or None,
                 on_progress=on_progress,
             )
@@ -570,6 +573,7 @@ async def foley_artist(request: FoleyArtistRequest, req: Request):
     scenario_data = _load_json_id_file("scenarios", request.scenario_id, "scenario_id")
     furniture_list = _load_furniture_list(request.analysis_id, request.bounding_box, scenario_data)
     sound_detail = request.sound_detail
+    liveliness = request.liveliness
     llm_model = request.llm_model
 
     async def _run(job_id: str) -> None:
@@ -582,6 +586,7 @@ async def foley_artist(request: FoleyArtistRequest, req: Request):
                 scenarist_agent_result=scenario_data,
                 furniture_list=furniture_list,
                 sound_detail=sound_detail,
+                liveliness=liveliness,
                 llm_model=llm_model,
                 on_progress=on_progress,
             )
@@ -623,14 +628,6 @@ async def foley_artist(request: FoleyArtistRequest, req: Request):
     return JobEnqueueResponse(job_id=job_id, position=1, total=1)
 
 
-class SpeechAgentRequest(BaseModel):
-    scenario_id: str
-    analysis_id: str | None = None
-    llm_model: str = DEFAULT_LLM_MODEL
-    language: str | None = None
-    bounding_box: dict | None = None
-
-
 @router.post("/api/speech-agent", response_model=JobEnqueueResponse)
 async def speech_agent(request: SpeechAgentRequest, req: Request):
     """Enqueue speech agent. Poll GET /api/jobs/{job_id} for thought progress."""
@@ -638,6 +635,7 @@ async def speech_agent(request: SpeechAgentRequest, req: Request):
     furniture_list = _load_furniture_list(request.analysis_id, request.bounding_box, scenario_data)
     llm_model = request.llm_model
     language = request.language
+    liveliness = request.liveliness
 
     async def _run(job_id: str) -> None:
         partial: dict = {"kind": "speech", "thinking": "", "phase": "thinking", "items": []}
@@ -650,6 +648,7 @@ async def speech_agent(request: SpeechAgentRequest, req: Request):
                 furniture_list=furniture_list,
                 llm_model=llm_model,
                 language=language,
+                liveliness=liveliness,
                 on_progress=on_progress,
             )
             async for event in stream:

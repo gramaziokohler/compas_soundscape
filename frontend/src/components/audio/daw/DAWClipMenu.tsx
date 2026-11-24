@@ -4,6 +4,7 @@ import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { useViewportClampedPosition } from '@/hooks/useViewportClampedPosition';
 import { getViewport } from '@/utils/scale';
 import { POPUP_MENU } from '@/utils/constants';
+import { DAWClipVariationSection, type DAWClipVariationSectionProps } from './DAWClipVariationSection';
 
 export interface DAWClipMenuVariant {
   id: string;
@@ -31,10 +32,12 @@ export interface DAWClipMenuProps {
   onApplyEntityToAll: () => void;
   /** Present when the clip has its own DAW trim — drops it back to the card trim. */
   onResetTrim?: () => void;
+  /** Present for a varied sound event: per-occurrence pitch / level controls. */
+  variation?: DAWClipVariationSectionProps;
   onClose: () => void;
 }
 
-const MENU_WIDTH = 150;
+const MENU_WIDTH = 180;
 const SUBMENU_WIDTH = 80;
 
 /**
@@ -88,6 +91,7 @@ export function DAWClipMenu({
   onApplyVariantToAll,
   onApplyEntityToAll,
   onResetTrim,
+  variation,
   onClose,
 }: DAWClipMenuProps) {
   const [submenuOpen, setSubmenuOpen] = useState<'variants' | 'entities' | null>(null);
@@ -166,7 +170,7 @@ export function DAWClipMenu({
         </div>
       )}
 
-      {variants.length <= 1 && linkedEntities.length === 0 && !onResetTrim && (
+      {variants.length <= 1 && linkedEntities.length === 0 && !onResetTrim && !variation && (
         <div style={{ padding: '8px 12px', color: 'var(--color-text-3)', fontStyle: 'italic', cursor: 'default', textAlign: 'center' }}>
           No variants or linked objects
         </div>
@@ -243,6 +247,14 @@ export function DAWClipMenu({
             Reset clip trim
           </div>
         </div>
+      )}
+
+      {variation && (
+        // Remount on a new value (re-roll / reset) so the sliders show it.
+        <DAWClipVariationSection
+          key={`${variation.variation.detuneCents}:${variation.variation.gainDb}`}
+          {...variation}
+        />
       )}
     </div>
   );

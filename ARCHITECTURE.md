@@ -582,6 +582,42 @@ Scenario agent room (routers/generation._load_furniture_list → meta.total_boun
   Each step writes sidebarWizardStep / cardFlowStore + uiStore.sidebarNavCommand so a
   mounted expert Sidebar follows the pipeline live.
 
+Scene realism (living scenes, not one-off stage directions)
+  Atmosphere  composer chip / "Atmosphere" menu (Calm · Normal · Lively) → ScenarioConfig.liveliness →
+              `liveliness` on /api/scenarist, /api/foley-artist, /api/speech-agent. One row of
+              SCENE_LIVELINESS_LEVELS (config/constants.py, mirrored SCENE_LIVELINESS_OPTIONS) sets the
+              scenarist's activity level, recurrence-rate multiplier, off-screen venue sources, dialogue
+              density and the crowd-bed threshold / level.
+  Scenarist   stays a natural narrative; rules "Nobody Freezes" (every person's ongoing activity in
+              every window), "Behaviour Over Decor", "Outside World" (where weather / traffic come in).
+  Foley       reads between the lines (implied handling sounds, venue sources). An ongoing activity is
+              emitted with `recurrence` {perMinute, regularity, start ("MM:SS" | "after(<id>#k)"), end};
+              llm_service._finalize_foley_result → utils/recurrence.expand_recurrence spreads it with
+              seeded gaps (steady / irregular), derives copyCount, stores `recurrence.gaps`.
+  Orchestrate recurring entries are kept out of the LLM's re-timing (listed read-only) and chained in
+              code: occurrence 1 = start / cause, occurrence k = after(<self>#k-1) + gap_k
+              (utils/recurrence.recurrence_trigger) — the solver resolves them from measured durations.
+              Omitted ids are kept at their written times (warning); event / speech levels are clamped
+              to EVENT_DBFS_* / SPEECH_DBFS_*; bed references are stripped from triggers. `recurrence`
+              travels in scenarioSource so a re-orchestration rebuilds the chain.
+  Speech      "SOCIAL SCENES": continuous group conversation, reactions as lines, groups overlap;
+              lines per speaker and max group silence from the atmosphere + peopleCount.
+  Crowd bed   analysisStore.handleFoleyArtist, after foley + speech: utils/crowdBed.withCrowdBed adds a
+              non-spatial "crowd murmur" background card when peopleCount − speakers ≥ the atmosphere's
+              threshold (scene has speech, no murmur bed yet).
+  Variation   lib/audio/utils/clip-variation.clipVariation(soundId, iterIdx, category, mode, override):
+              hash-seeded ±cents / ±dB per occurrence (sound events only), scaled by the per-sound mode
+              (audioControlsStore.soundVariationModes; SoundVariationChips on the card) or replaced by
+              a hand-set override (iterationVariations; DAW clip menu sliders / re-roll / reset). Applied
+              in applyFadeInOut (detune + envelope plateau) for live playback (build-score → Transport)
+              and export; the bake shortens / lengthens detuned iterations for after() chains. Saved as
+              iteration_variations / sound_variation_modes in soundscape.json.
+  Re-anchors  bake: manualTimestamps merge DAW edits and written times per slot
+              (orchestrate-schedule.resolveManualTimestamps), so an unresolved slot falls back to its
+              written time; such slots (solver fallbacks + write-time safety net) are listed in
+              audioControlsStore.reanchorReasons (derived, not saved) and outlined in amber in the DAW
+              until the clip is dragged.
+
 Simple-mode 3D highlights (hooks/useSimpleSceneHighlights, mounted by SimpleSoundscapes)
   analysis groups  → speckleStore.setAnalysisObjectGroups only while the Analyze step runs,
                      or sceneHighlightStore.analysisContextIndex ("Show colors") / focusedGroup
@@ -610,6 +646,16 @@ Sound Scene Duplicate (scene bubble right-click → Duplicate; utils/duplicateSo
   (`savedObjectVisibility`); powering the scene or simulation on restores it (`useApplySavedObjectVisibility`,
   see .cursor/rules/object-explorer.mdc § Saved Object Visibility).
 
+TTS Delivery Style (speech card `voice_style`)
+  TextToSpeechMode → TtsStyleField: free text + helper chips (TTS_STYLE.PRESETS, utils/ttsStyle.ts);
+  card-level generation input (generationSignature) → editing it offers "Regenerate" on a generated
+  card; SettingsSummary shows it. Sent as `style` per /api/generate-tts item → TTSService puts it in a
+  `speech_metadata` annotation over the whole transcript (never inside the text).
+  Speech agent writes SpeechEntry.style → scenarioSource.voiceStyle / orchestrateMeta.voiceStyle →
+  card voice_style. Level: utils/speech_style.py (SPEECH_STYLE_LEVELS) — the orchestrator prompt quotes
+  each style's dBFS band and _entry_spl clamps speech to it (whisper ≈ −30, shout ≈ −12); scene-edit
+  add_speaker / set_style get the band default as a proposed level when the agent gives none.
+
 Scene Edit Chat (Simple: scene panel → "Edit with chat" panel; Expert: scenario card → "Edit with chat")
   components/sceneEdit/SceneEditChat (hooks/useSceneEditChat) → sceneEditStore.sendTurn(usageIndex, text)
   1. utils/sceneEdit/snapshot.buildSceneEditSnapshot → compact scene JSON: sound cards as refs S1…
@@ -625,7 +671,8 @@ Scene Edit Chat (Simple: scene panel → "Edit with chat" panel; Expert: scenari
                              to absolute MM:SS (bake places them); scene duration → scenario card
        space  (applySpace)   move (objects / near a sound / xyz) / directivity
        content(applyContent) add_sound / add_speaker (appendSoundConfigs, scenarioSource), remove,
-                             change_sound, regenerate, set_variants, edit_lines, change_voice
+                             change_sound, regenerate, set_variants, edit_lines, change_voice,
+                             set_style (voice_style + the backend's proposed level → set_level)
      then re-sync + re-bake. Audio work is only queued (ctx.regen, keyed by config_id).
   4. sceneEditStore generates it: new cards → handleGenerateFiltered({skipOrchestrate}); new
      prompt / voice / line count → handleGenerateInternal({force, skipOrchestrate}); extra

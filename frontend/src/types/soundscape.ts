@@ -8,8 +8,8 @@
 import type { HybridRunInfo } from '@/types/acoustics';
 import type { DrawnArea } from './area-drawing';
 import type { GridPlacementMode } from './receiver';
-import type { IRAcousticParameters, IRBandMetrics } from './audio';
-import type { FoleySoundDetail } from './analysis';
+import type { IRAcousticParameters, IRBandMetrics, ClipVariationMode, ClipVariationOverride } from './audio';
+import type { FoleySoundDetail, SceneLiveliness } from './analysis';
 import type { PffdtdVoxelProblem } from './pffdtd';
 import type { CustomMaterialRecord } from './materials';
 import type { DirectivityRecord, SoundDirectivity } from './directivity';
@@ -64,6 +64,10 @@ export interface SoundscapeSoundConfig {
   position?: number[];
   /** Source directivity + orientation (absent = omnidirectional). */
   directivity?: SoundDirectivity;
+  /** TTS voice of a speech card (Gemini prebuilt voice, e.g. "Kore"). */
+  voice_name?: string;
+  /** TTS delivery style of a speech card ("whispering"). */
+  voice_style?: string;
 }
 
 /** Serializable orchestration metadata (parametric trigger links). */
@@ -337,6 +341,10 @@ export interface SoundscapeData {
   iteration_links?: Record<string, SoundscapeIterationLink>;
   /** Per-clip trim overrides (0–1 of the source buffer), keyed `${soundId}-${iterationIndex}`. */
   iteration_trims?: Record<string, { start: number; end: number }>;
+  /** Hand-set per-occurrence pitch / level, keyed `${soundId}-${iterationIndex}`. */
+  iteration_variations?: Record<string, ClipVariationOverride>;
+  /** Per-sound variation range (off / subtle / strong). */
+  sound_variation_modes?: Record<string, ClipVariationMode>;
   /** Sound IDs currently muted in the DAW timeline. */
   muted_sounds?: string[];
   /** Sound ID currently soloed in the DAW timeline (null = none). */
@@ -444,6 +452,8 @@ export interface SerializedAnalysisConfig {
   referenceImageName?: string;
   /** Scenario cards: foley sound detail level. */
   soundDetail?: FoleySoundDetail;
+  /** Scenario cards: scene atmosphere (calm / normal / lively). */
+  liveliness?: SceneLiveliness;
   /** Per-scenario DAW sound-scene length in ms (scenario cards only). */
   timelineDurationMs?: number;
   /** Scenario cards: scene edit chat thread. */

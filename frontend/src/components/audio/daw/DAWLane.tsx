@@ -22,6 +22,10 @@ export interface DAWLaneClip {
   excluded?: boolean;
   /** Why the iteration was excluded. */
   reason?: string;
+  /** Set when the bake placed this clip at its written time (its link failed). */
+  reanchorReason?: string;
+  /** Pitch / level offset label of this occurrence ("" when none). */
+  variationLabel?: string;
 }
 
 interface DAWLaneProps {
@@ -137,6 +141,8 @@ function DAWLaneImpl({
           iterationLink={clip.iterationLink}
           isExcluded={clip.excluded}
           excludedReason={clip.reason}
+          reanchorReason={clip.excluded ? undefined : clip.reanchorReason}
+          variationLabel={clip.excluded ? undefined : clip.variationLabel}
           onPointerDownClip={clip.excluded ? () => {} : (e) => onClipPointerDown(e, clip)}
           canTrim={!!clip.sourceDurationMs && !!onClipTrimPointerDown}
           isTrimming={trimPreview?.clipKey === clip.clipKey}

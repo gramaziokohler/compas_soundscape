@@ -16,7 +16,7 @@ export type SceneEditOpName =
   // content
   | 'add_sound' | 'remove' | 'change_sound' | 'regenerate' | 'set_variants'
   // speech
-  | 'add_speaker' | 'edit_lines' | 'change_voice'
+  | 'add_speaker' | 'edit_lines' | 'change_voice' | 'set_style'
   // scene
   | 'rename_scene';
 
@@ -44,6 +44,8 @@ export interface SceneEditOp {
   duration_s: number | null;
   character: string;
   lines: string[];
+  /** add_speaker / set_style: TTS delivery style ("" = neutral). */
+  style: string;
   title: string;
 }
 
@@ -64,6 +66,8 @@ export interface SceneEditSnapshotCard {
   prompt: string;
   lines: string[];
   character: string;
+  /** Speech delivery style ("" = neutral). */
+  style: string;
   times_s: number[];
   level_db: number | null;
   muted: boolean;

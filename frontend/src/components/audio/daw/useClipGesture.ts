@@ -214,6 +214,8 @@ export function useClipGesture({
           if (sound?.promptIndex !== undefined) {
             clearOrchestrateTrigger(sound.cardIndex ?? sound.promptIndex, d.iterationIndex);
           }
+          // Placed by hand now: drop the "re-anchored to written time" highlight.
+          store.clearIterationReanchor(d.soundId, d.iterationIndex);
         });
 
         // Transitive dependents (trigger-linked) move by the same delta.

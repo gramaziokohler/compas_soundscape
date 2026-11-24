@@ -23,14 +23,20 @@ import { temporal } from 'zundo';
 import { devtools, persist, createJSONStorage } from 'zustand/middleware';
 import { UNDO_HISTORY_LIMIT, undoEquality, runWithoutUndo, type RegisterTemporalStoreOptions } from './undoRedoRegistry';
 import type { SoundState, SoundGenerationConfig } from '@/types';
-import type { AmbisonicOrder, AmbisonicSendStatus, AmbisonicSendTransport, IterationLink, TrimRange } from '@/types/audio';
+import type { AmbisonicOrder, AmbisonicSendStatus, AmbisonicSendTransport, IterationLink, TrimRange, ClipVariationMode, ClipVariationOverride } from '@/types/audio';
 import { iterationKey, remapIterationKeys, clearIterationKeysForSound } from '@/lib/audio/utils/iteration-keys';
 import { trimmedDuration } from '@/lib/audio/utils/iteration-trim';
 import { orderVariants, trackVariants } from '@/lib/audio/utils/variant-sound-id';
 import { isParamExpression } from '@/lib/audio/utils/trigger-ref';
-import { solveOrchestrateSchedule, scheduleEntryKey } from '@/lib/audio/orchestrate-schedule';
+import {
+  solveOrchestrateSchedule,
+  scheduleEntryKey,
+  resolveManualTimestamps,
+  isPlacedTimestamp,
+} from '@/lib/audio/orchestrate-schedule';
 import { serializeTrackOverlaps } from '@/lib/audio/utils/serialize-track-overlaps';
-import { parseAuthoredSeconds } from '@/lib/audio/utils/timeline-utils';
+import { parseAuthoredSeconds, formatReanchorReason } from '@/lib/audio/utils/timeline-utils';
+import { clipVariation, detuneRate, variationKey } from '@/lib/audio/utils/clip-variation';
 import { computeTimelineOverrun } from '@/components/audio/daw/daw-overrun';
 import { pausePreviewInstance, pauseAllPreviewInstances } from '@/lib/audio/previewRegistry';
 import { AMBISONIC_SEND, AUDIO_CONTROL, AUDIO_PLAYBACK, AUDIO_TIMELINE, AUDIO_OUTPUT, DEFAULT_DBFS, TTS_DEFAULT_LANGUAGE } from '@/utils/constants';
@@ -161,6 +167,13 @@ export interface AudioControlsStoreState {
   excludedIterations: Record<string, number[]>;
   /** Reason per excluded iteration. Key = `${soundId}-${iterationIndex}`. */
   exclusionReasons: Record<string, string>;
+  /**
+   * Iterations whose timing link could not be followed, so the bake placed
+   * them at their written (authored) time. Key = `${soundId}-${iterationIndex}`.
+   * The DAW outlines them lightly; dragging the clip clears the entry. Derived
+   * by every bake (one runs on load), so never persisted.
+   */
+  reanchorReasons: Record<string, string>;
   /** True while bakeOrchestrateSchedule is asynchronously computing; used to show a loading UI. */
   isBakingSchedule: boolean;
   /** True when bake ran before all variant buffers were loaded; DFS is deferred.
@@ -189,6 +202,14 @@ export interface AudioControlsStoreState {
    * an entry REPLACES that variant's card trim (`soundTrims`) for this clip only.
    */
   iterationTrims: Record<string, TrimRange>;
+  /**
+   * Hand-set pitch / level of single occurrences (DAW clip menu). Key =
+   * `${soundId}-${iterationIndex}`, remapped with iterationTrims. Absent = the
+   * automatic, hash-seeded variation (lib/audio/utils/clip-variation.ts).
+   */
+  iterationVariations: Record<string, ClipVariationOverride>;
+  /** Per-sound variation range (sound card chip). Absent = CLIP_VARIATION.DEFAULT_MODE. */
+  soundVariationModes: Record<string, ClipVariationMode>;
 
   // ── Sync ──
   syncGeneratedSounds: (sounds: any[]) => void;
@@ -342,6 +363,14 @@ export interface AudioControlsStoreState {
    * ghost disappears because the user has taken over that iteration.
    */
   clearIterationExclusion: (soundId: string, iterationIndex: number) => void;
+  /** Drop the re-anchored highlight of one iteration (the user placed it by hand). */
+  clearIterationReanchor: (soundId: string, iterationIndex: number) => void;
+  /** Set (or clear with `null`) one occurrence's hand-set variation. */
+  setIterationVariation: (soundId: string, iterationIndex: number, override: ClipVariationOverride | null) => void;
+  /** Variation range of every occurrence of one sound (off / subtle / strong). */
+  setSoundVariationMode: (soundId: string, mode: ClipVariationMode) => void;
+  /** Domain load: restore saved variations. */
+  restoreVariations: (iterationVariations: Record<string, ClipVariationOverride>, modes: Record<string, ClipVariationMode>) => void;
   /** Remove a track's stored schedule entirely — it returns to its auto default loop. */
   clearSoundTimestampsEntry: (soundId: string) => void;
   /**
@@ -394,6 +423,8 @@ export const audioControlsPartialize = (state: AudioControlsStoreState) => ({
   soundVolumes: state.soundVolumes,
   soundTrims: state.soundTrims,
   iterationTrims: state.iterationTrims,
+  iterationVariations: state.iterationVariations,
+  soundVariationModes: state.soundVariationModes,
   iterationLinks: state.iterationLinks,
   selectedVariants: state.selectedVariants,
   mutedSounds: state.mutedSounds,
@@ -470,6 +501,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
         soundIterationDurations: {},
         excludedIterations: {},
         exclusionReasons: {},
+        reanchorReasons: {},
         isBakingSchedule: false,
         isDeferredCycleBakePending: false,
         _pendingPlayAllStagger: false,
@@ -477,6 +509,8 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
         _generationInProgress: false,
         iterationLinks: {},
         iterationTrims: {},
+        iterationVariations: {},
+        soundVariationModes: {},
         orchestrateResult: null,
 
         // ── Sync ──
@@ -629,6 +663,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
                 soundTimestamps: { ...state.soundTimestamps, [soundId]: newTimestamps },
                 iterationLinks: remapIterationKeys(state.iterationLinks, soundId, shiftDown),
                 iterationTrims: remapIterationKeys(state.iterationTrims, soundId, shiftDown),
+                iterationVariations: remapIterationKeys(state.iterationVariations, soundId, shiftDown),
               };
             },
             false,
@@ -654,7 +689,8 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
                   iterationLinks[newKey] = { ...iterationLinks[newKey], variantIndex: copy.variantIndex };
                 }
               }
-              return { iterationLinks, iterationTrims };
+              const iterationVariations = remapIterationKeys(state.iterationVariations, soundId, shiftUp);
+              return { iterationLinks, iterationTrims, iterationVariations };
             },
             false,
             'audio/remapIterationLinksForInsert',
@@ -1113,13 +1149,16 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
           setTimeout(() => runWithoutUndo(() => {
           if (bakeId !== _pendingBakeId) return; // superseded — the newer bake will run the pending callback
 
-          const { _soundConfigs, _generatedSounds, soundTrims, iterationTrims, soundTimestamps, soundBufferDurations, soundIterationDurations } = get();
+          const {
+            _soundConfigs, _generatedSounds, soundTrims, iterationTrims, soundTimestamps, soundBufferDurations,
+            soundIterationDurations, iterationVariations, soundVariationModes,
+          } = get();
 
           if (!_soundConfigs.some(c => c.orchestrateMeta)) {
             _pendingBakeNotify = false;
             if (bakeId === _pendingBakeId) {
               set(
-                { isBakingSchedule: false, excludedIterations: {}, exclusionReasons: {} },
+                { isBakingSchedule: false, excludedIterations: {}, exclusionReasons: {}, reanchorReasons: {} },
                 false,
                 'audio/bakeOrchestrateSchedule/noop',
               );
@@ -1147,8 +1186,10 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             excludedIndices: number[];
             /** False while durations are still theoretical (pre-generation). */
             durationsKnown: boolean;
-            /** Existing manual schedule for this sound (seconds), per iteration. */
+            /** Per-slot fallback: the DAW-edited time, else the authored one (seconds). */
             manualTimestamps: (number | null | undefined)[];
+            /** The entry's written (authored) times in seconds, per iteration. */
+            authoredTimestamps: (number | null)[];
             /** Solver expressions (backgrounds are pinned to a constant anchor). */
             expressions: string[];
             /** Solver delays, parallel to `expressions`. */
@@ -1223,12 +1264,23 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             const authoredTimestamps = (meta.timestamps ?? []).map((t) => parseAuthoredSeconds(t));
             // A DAW clip trim gives that one iteration its own length, so after() /
             // alignEnd() dependents and same-track serialization follow the trim.
+            // A per-occurrence detune (clip-variation.ts) plays the clip faster /
+            // slower, so it also shortens / lengthens that iteration.
             const iterationDurations = expressions.map((_, i): number | null => {
               const clipTrim = soundId && !isBackground ? iterationTrims[iterationKey(soundId, i)] : undefined;
-              if (!clipTrim) return null;
               const variantIdx = (meta.variants[i] ?? 1) - 1;
               const raw = rawVariantDurations[variantIdx] ?? rawVariantDurations[0];
-              return raw ? trimmedDuration(raw, clipTrim) : null;
+              const base = clipTrim
+                ? (raw ? trimmedDuration(raw, clipTrim) : null)
+                : (variantDurations[variantIdx] ?? variantDurations[0] ?? null);
+              const detune = soundId && !isBackground
+                ? clipVariation(
+                    soundId, i, config.category, soundVariationModes[soundId],
+                    iterationVariations[variationKey(soundId, i)],
+                  ).detuneCents
+                : 0;
+              if (detune === 0) return clipTrim ? base : null;
+              return base === null ? null : base / detuneRate(detune);
             });
             entryMap.set(scheduleEntryKey(meta.orchestrateId, meta.entryId), {
               configIndex,
@@ -1239,9 +1291,8 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
               timestamps: new Array(expressions.length).fill(null),
               excludedIndices: [],
               durationsKnown: isBackground ? true : durationsKnown,
-              manualTimestamps: editedTimestamps && editedTimestamps.length > 0
-                ? editedTimestamps
-                : authoredTimestamps,
+              manualTimestamps: resolveManualTimestamps(editedTimestamps, authoredTimestamps),
+              authoredTimestamps,
               expressions,
               delays,
               isBackground,
@@ -1442,6 +1493,18 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
           // carried flag now that this duration-complete bake has consumed it.
           _pendingBakeNotify = false;
 
+          // Re-anchored iterations: slots placed at their written time because
+          // their link could not be followed. The DAW outlines them lightly.
+          const newReanchorReasons: Record<string, string> = {};
+          solver.fallbacks.forEach((fb) => {
+            const entry = entryMap.get(scheduleEntryKey(fb.orchestrateId, fb.entryId));
+            if (!entry?.soundId || entry.isBackground) return;
+            newReanchorReasons[`${entry.soundId}-${fb.iterationIndex}`] = formatReanchorReason(
+              entry.expressions[fb.iterationIndex], fb.reason, fb.timestamp,
+            );
+          });
+          const writeTimeReanchors: string[] = [];
+
           // Apply resolved timestamps — use actual generated sound ID as key.
           const UNRESOLVED = AUDIO_TIMELINE.UNRESOLVED_TIMESTAMP_SEC;
           const newTimestamps = { ...soundTimestamps };
@@ -1463,11 +1526,21 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             // preserve a stale value — that produced far-away ghost-slot clips);
             // for empty expressions (cleared by manual drag), preserve the existing
             // concrete timestamp so dragged positions survive save/load.
+            // Safety net: a slot that would still be written as UNRESOLVED but
+            // has a written time is placed there (and flagged) instead of dropped.
             const finalTs = timestamps.map((t, i) => {
               if (t !== null) return parseFloat(t.toFixed(3));
               if (excludedIndices.includes(i)) return UNRESOLVED;
               const existingT = soundTimestamps[soundId]?.[i];
               if (existingT != null && existingT < UNRESOLVED) return existingT;
+              const authoredT = entry.authoredTimestamps[i];
+              if (isPlacedTimestamp(authoredT)) {
+                newReanchorReasons[`${soundId}-${i}`] = formatReanchorReason(
+                  entry.expressions[i], 'unresolved at write time', authoredT,
+                );
+                writeTimeReanchors.push(`${meta.entryId}#${i + 1} → ${authoredT}s`);
+                return authoredT;
+              }
               return UNRESOLVED;
             });
 
@@ -1488,6 +1561,18 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
               anyChange = true;
             }
           });
+
+          if (writeTimeReanchors.length > 0) {
+            console.warn('[orchestrate] re-anchored to written time:', writeTimeReanchors);
+            if (notify) {
+              void import('@/store/errorsStore').then(({ notifyError }) => {
+                notifyError(
+                  `Orchestrate: ${writeTimeReanchors.length} occurrence(s) could not follow their link — placed at their written time (outlined in the timeline).`,
+                  'warning',
+                );
+              });
+            }
+          }
 
           // Auto-extend timeline so that all resolved content is visible.
           // Round up to the nearest 30s with a 10s margin.
@@ -1511,7 +1596,10 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             const { soundId, timestamps, isBackground } = entry;
             if (!soundId || isBackground) return;
             const UNRESOLVED_CHECK = AUDIO_TIMELINE.UNRESOLVED_TIMESTAMP_SEC;
-            const iterDursMs = timestamps.map((t, i) => {
+            // Written schedule (includes slots re-anchored at write time).
+            const written = newTimestamps[soundId] ?? [];
+            const iterDursMs = timestamps.map((resolvedT, i) => {
+              const t = resolvedT ?? written[i] ?? null;
               if (t === null || t >= UNRESOLVED_CHECK) return 0;
               return iterDurationSec(entry, i) * 1000;
             });
@@ -1557,6 +1645,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
               soundIterationDurations: newIterDurations,
               excludedIterations: newExcludedIterations,
               exclusionReasons: newExclusionReasons,
+              reanchorReasons: newReanchorReasons,
               timelineDurationMs: newDurationMs,
               isBakingSchedule: false,
               isDeferredCycleBakePending: false,
@@ -1569,6 +1658,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
               soundIterationDurations: newIterDurations,
               excludedIterations: newExcludedIterations,
               exclusionReasons: newExclusionReasons,
+              reanchorReasons: newReanchorReasons,
               isDeferredCycleBakePending: false,
             }, false, 'audio/bakeOrchestrateSchedule/done');
           }
@@ -1714,6 +1804,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
               return {
                 soundTimestamps: rest,
                 iterationTrims: clearIterationKeysForSound(state.iterationTrims, soundId),
+                iterationVariations: clearIterationKeysForSound(state.iterationVariations, soundId),
               };
             },
             false,
@@ -1730,8 +1821,10 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
               const excludedIterations = { ...state.excludedIterations };
               const exclusionReasons = { ...state.exclusionReasons };
               let iterationTrims = state.iterationTrims;
+              let iterationVariations = state.iterationVariations;
               drop.forEach((id) => {
                 iterationTrims = clearIterationKeysForSound(iterationTrims, id);
+                iterationVariations = clearIterationKeysForSound(iterationVariations, id);
                 delete soundTimestamps[id];
                 delete soundIterationDurations[id];
                 delete excludedIterations[id];
@@ -1739,7 +1832,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
                   if (k.startsWith(`${id}-`)) delete exclusionReasons[k];
                 });
               });
-              return { soundTimestamps, soundIterationDurations, excludedIterations, exclusionReasons, iterationTrims };
+              return { soundTimestamps, soundIterationDurations, excludedIterations, exclusionReasons, iterationTrims, iterationVariations };
             },
             false,
             'audio/clearSoundTimestampsFor',
@@ -1767,6 +1860,51 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             },
             false,
             'audio/clearIterationExclusion',
+          ),
+
+        clearIterationReanchor: (soundId, iterationIndex) =>
+          set(
+            (state) => {
+              const key = `${soundId}-${iterationIndex}`;
+              if (!(key in state.reanchorReasons)) return {};
+              const next = { ...state.reanchorReasons };
+              delete next[key];
+              return { reanchorReasons: next };
+            },
+            false,
+            'audio/clearIterationReanchor',
+          ),
+
+        setIterationVariation: (soundId, iterationIndex, override) => {
+          set(
+            (state) => {
+              const key = iterationKey(soundId, iterationIndex);
+              const next = { ...state.iterationVariations };
+              if (override) next[key] = { ...override };
+              else delete next[key];
+              return { iterationVariations: next };
+            },
+            false,
+            'audio/setIterationVariation',
+          );
+          // A detuned clip plays shorter / longer: after() dependents follow it.
+          if (get()._soundConfigs.some(c => c.orchestrateMeta)) get().bakeOrchestrateSchedule();
+        },
+
+        setSoundVariationMode: (soundId, mode) => {
+          set(
+            (state) => ({ soundVariationModes: { ...state.soundVariationModes, [soundId]: mode } }),
+            false,
+            'audio/setSoundVariationMode',
+          );
+          if (get()._soundConfigs.some(c => c.orchestrateMeta)) get().bakeOrchestrateSchedule();
+        },
+
+        restoreVariations: (iterationVariations, modes) =>
+          set(
+            { iterationVariations, soundVariationModes: modes },
+            false,
+            'audio/restoreVariations',
           ),
 
         // Every domain load / reset passes through here. `selectedVariants` is
@@ -1970,7 +2108,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
     partialize: (state: AudioControlsStoreState) => {
       // `selectedVariants` is model-bound (keyed by card position) — never persisted.
       const { individualSoundStates, previewingSoundId, _generatedSounds, _soundConfigs, selectedVariants,
-        soundBufferDurations, isBakingSchedule, isDeferredCycleBakePending,
+        soundBufferDurations, isBakingSchedule, isDeferredCycleBakePending, reanchorReasons,
         _pendingPlayAllStagger, _generationInProgress, loopAnalysisInProgress,
         ambisonicSendEnabled, ambisonicSendStatus, ambisonicSendTransport, ...persistable } = state;
       return {

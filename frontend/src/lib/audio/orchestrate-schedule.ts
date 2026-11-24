@@ -88,10 +88,36 @@ export interface SolverResult {
 }
 
 const ABS = /^(\d+):(\d+(?:\.\d+)?)$/;
+/** Mirrors `AUDIO_TIMELINE.UNRESOLVED_TIMESTAMP_SEC` (kept local: this module has no app imports). */
 const UNRESOLVED_SENTINEL = 999999;
 
 export function scheduleEntryKey(orchestrateId: string | undefined, entryId: string): string {
   return `${orchestrateId ?? ''}::${entryId}`;
+}
+
+/** True for a real placed time (not null, not negative, not the unresolved sentinel). */
+export function isPlacedTimestamp(t: number | null | undefined): t is number {
+  return t != null && Number.isFinite(t) && t >= 0 && t < UNRESOLVED_SENTINEL;
+}
+
+/**
+ * Per-slot fallback times for the solver: the user's DAW-edited time where the
+ * slot has a real one, otherwise the entry's authored (written) time. Merging
+ * per slot — not "edited list if any, else authored list" — keeps the authored
+ * fallback for slots an earlier bake wrote as unresolved, so they are
+ * re-anchored to their written time instead of being dropped forever.
+ */
+export function resolveManualTimestamps(
+  edited: readonly (number | null | undefined)[] | undefined,
+  authored: readonly (number | null | undefined)[],
+): (number | null)[] {
+  const length = Math.max(edited?.length ?? 0, authored.length);
+  return Array.from({ length }, (_, i) => {
+    const e = edited?.[i];
+    if (isPlacedTimestamp(e)) return e;
+    const a = authored[i];
+    return isPlacedTimestamp(a) ? a : null;
+  });
 }
 
 function parseAbsolute(expr: string): number | null {

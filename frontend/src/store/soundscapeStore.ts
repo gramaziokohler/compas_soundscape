@@ -98,6 +98,7 @@ import {
 import { isConfigGlobal } from '@/lib/audio/utils/global-source';
 import { cardIndexOfPrompt } from '@/lib/audio/utils/mute-solo';
 import { parseAuthoredSeconds } from '@/lib/audio/utils/timeline-utils';
+import { cleanStyle } from '@/utils/ttsStyle';
 
 // ─── Module-level concurrency state ──────────────────────────────────────────
 // Multiple generations may run at once (e.g. TTA on the GPU pool while a
@@ -572,6 +573,8 @@ function buildOrchestrateInputs(
         character: src.character,
         script: lines.join('; '),
         position: src.position,
+        // The card's current style (user-editable) drives the orchestrator's level band.
+        style: cleanStyle(config.voice_style) ?? '',
         copyCount: Math.max(1, lines.length),
         copyDurations: timing?.copyDurations,
         lines: timing?.lines,
@@ -589,6 +592,8 @@ function buildOrchestrateInputs(
         position: src.position,
         copyCount: Math.max(1, config.seed_copies ?? src.copyCount ?? 1),
         copyDurations: timing?.copyDurations,
+        // Ongoing activity: the backend rebuilds its chain from this rhythm.
+        ...(src.recurrence ? { recurrence: src.recurrence } : {}),
         ...currentSchedule,
       });
     }
@@ -2199,6 +2204,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                       ttsTexts.push({
                         text: lineText,
                         voice_name: config.voice_name,
+                        style: cleanStyle(config.voice_style),
                         display_name: config.display_name || lineText,
                         position: config.position,
                         // Calibrate the WAV to the global anchor; the per-sound level
@@ -2217,6 +2223,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                       ttsTexts.push({
                         text: config.prompt,
                         voice_name: config.voice_name,
+                        style: cleanStyle(config.voice_style),
                         display_name: config.display_name || config.prompt,
                         position: config.position,
                         dbfs: globalBaseDbfs,
@@ -3026,6 +3033,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 texts: [{
                   text: prompt,
                   voice_name: config.voice_name,
+                  style: cleanStyle(config.voice_style),
                   display_name: config.display_name || prompt,
                   position: target.position ?? config.position,
                   // Calibrate the WAV to the global anchor; config.dbfs is applied at

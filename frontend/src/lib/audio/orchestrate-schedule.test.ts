@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { solveOrchestrateSchedule, scheduleEntryKey, type SolverEntryInput } from './orchestrate-schedule';
+import {
+  solveOrchestrateSchedule,
+  scheduleEntryKey,
+  resolveManualTimestamps,
+  type SolverEntryInput,
+} from './orchestrate-schedule';
 
 const key = (scope: string, entryId: string) => scheduleEntryKey(scope, entryId);
 
@@ -247,5 +252,37 @@ describe('solveOrchestrateSchedule — per-iteration duration overrides (DAW cli
       entry({ entryId: 'steps', expressions: ['after(door)'] }),
     ]);
     expect(result.byEntry[key('s', 'steps')].timestamps).toEqual([3]);
+  });
+});
+
+describe('resolveManualTimestamps — per-slot fallback', () => {
+  const SENTINEL = 999999;
+
+  it('keeps edited times and falls back to the written time for unresolved slots', () => {
+    expect(resolveManualTimestamps([4, SENTINEL, 12], [1, 7, 9])).toEqual([4, 7, 12]);
+  });
+
+  it('uses the written times when nothing was edited', () => {
+    expect(resolveManualTimestamps(undefined, [1, 7])).toEqual([1, 7]);
+  });
+
+  it('covers slots past the end of a shorter edited list', () => {
+    expect(resolveManualTimestamps([2], [1, 7, 9])).toEqual([2, 7, 9]);
+  });
+
+  it('returns null where neither time is usable', () => {
+    expect(resolveManualTimestamps([SENTINEL], [Number.NaN])).toEqual([null]);
+  });
+
+  it('re-anchors a once-unresolved slot instead of excluding it on the next bake', () => {
+    // Regression: an earlier bake wrote 999999 for B#2; the DAW-edited list then
+    // replaced the authored list wholesale and the slot lost its fallback.
+    const manual = resolveManualTimestamps([5, SENTINEL], [5, 17]);
+    const r = solveOrchestrateSchedule([
+      entry({ entryId: 'B', expressions: ['00:05', 'after(missing_1)'], manualTimestamps: manual }),
+    ]);
+    expect(r.byEntry[key('s', 'B')].timestamps).toEqual([5, 17]);
+    expect(r.byEntry[key('s', 'B')].excludedIndices).toEqual([]);
+    expect(r.fallbacks.map((f) => f.iterationIndex)).toEqual([1]);
   });
 });

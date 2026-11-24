@@ -98,6 +98,18 @@ The live master limiter (`AUDIO_CONTROL.LIMITER`, also the export's post-render 
 safety net for the summed mix, so per-sound levels stay linear dB offsets.
 `orchestrator.getLimiterReductionDb()` / `OutputDiagnostics.limiterReductionDb` report it.
 
+## Scene Realism Inputs (scenario pipeline)
+
+- **Atmosphere** (`liveliness`: calm / normal / lively) is sent to the scenarist, foley and speech
+  agents; `SCENE_LIVELINESS_LEVELS` (backend) / `SCENE_LIVELINESS_OPTIONS` (frontend) are one table.
+- **Recurring foley** (`FoleySoundEvent.recurrence`) is expanded in code
+  (`utils/recurrence.expand_recurrence`): `timestamps` and `copyCount` are derived, so the card's
+  variant count follows the number of occurrences. `recurrence` is kept in `scenarioSource` so a
+  re-orchestration rebuilds the trigger chain.
+- **Crowd murmur bed**: `utils/crowdBed.withCrowdBed` appends a background foley entry (and its
+  selection key) after foley + speech when more people are present than speak; it is generated like
+  any other bed card.
+
 ## Backend — Hash-Based Deduplication
 
 The clip plan builder (`routers/sounds.py::_build_clip_plan`) computes a parameter hash to determine the output filename:

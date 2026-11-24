@@ -66,6 +66,25 @@ export interface IterationLink {
   entityIndex?: number;
 }
 
+/** How much repeated occurrences of one sound vary in pitch and level. */
+export type ClipVariationMode = 'off' | 'subtle' | 'strong';
+
+/**
+ * Hand-set variation of one occurrence (key `${soundId}-${iterationIndex}`).
+ * Explicit values win over the automatic ones; `seed` re-rolls the automatic ones.
+ */
+export interface ClipVariationOverride {
+  detuneCents?: number;
+  gainDb?: number;
+  seed?: number;
+}
+
+/** Resolved pitch / level offset applied to one played occurrence. */
+export interface ClipVariation {
+  detuneCents: number;
+  gainDb: number;
+}
+
 /** Kept window of a source buffer, as fractions (0–1) of its full length. */
 export interface TrimRange {
   start: number;
