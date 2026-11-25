@@ -1259,16 +1259,22 @@ class FoleySoundEvent(BaseModel):
 
 
 class FoleyCrowdChoice(BaseModel):
-    """Crowd voices for people present but not talking (foley rule 15)."""
-    catalogName: str = ""   # exact name from the catalogue "crowds" category; "" = use `prompt`
-    prompt: str = ""        # Text-to-Audio fallback when no catalogue sound fits
+    """Crowd voices for people present but not talking (foley rule 15).
+
+    Both fields are required (no defaults) so the structured-output schema forces
+    the LLM to answer: with optional fields Gemini often returned an empty choice.
+    """
+    catalogName: str   # exact name from the catalogue "crowds" category; "" = use `prompt`
+    prompt: str        # Text-to-Audio fallback when no catalogue sound fits
 
 
 class FoleyOutput(BaseModel):
     """Flat list of deduplicated sound types from the foley agent."""
     sounds: list[FoleySoundEvent]
     # The frontend adds it as a background card only when more people are present than speak.
-    crowd: FoleyCrowdChoice | None = None
+    # Required, not Optional: an optional field lets the LLM answer "crowd": null, which
+    # silently dropped the catalogue pick (the bed then fell back to Text-to-Audio).
+    crowd: FoleyCrowdChoice
 
 
 # Keep legacy alias so existing imports (FoleyResponse) still resolve
@@ -1661,6 +1667,9 @@ class UserPreferences(BaseModel):
     tts_model: Optional[str] = None
     tts_language: Optional[str] = None
     audio_model: Optional[str] = None
+    # Model keys the user picked by hand ("audioModel", "llmModel", "ttsModel");
+    # the others follow the frontend constants.ts defaults.
+    custom_models: Optional[list[str]] = None
     diffusion_steps: Optional[int] = None
     negative_prompt: Optional[str] = None
     apply_denoising: Optional[bool] = None

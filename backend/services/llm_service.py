@@ -2706,7 +2706,7 @@ For the duration estimation (in seconds with 0.1 precision):
 
         all_scenarios = scenarist_agent_result.get("scenarios", [])
         if not all_scenarios:
-            return _FoleyOutput(sounds=[]).model_dump()
+            return {"sounds": [], "crowd": None}
 
         scenarios_json = json.dumps({"scenarios": all_scenarios}, indent=2)
         furniture_json = _furniture_prompt_json(furniture_list)

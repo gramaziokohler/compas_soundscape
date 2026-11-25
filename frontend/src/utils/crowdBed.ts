@@ -7,7 +7,8 @@
  * as indistinct voices. The foley agent picks that sound (foley rule 15): a
  * recording from the catalogue's "crowds" category when one fits (e.g. "Crowd
  * Talking", "Voices Murmur", "Voices On Street Accent"), else a Text-to-Audio
- * prompt. When a scene with speech has enough silent people for its atmosphere,
+ * prompt. When the agent gives neither, the liveliness default recording
+ * (CROWD_BED.FALLBACK_CATALOG_NAME) is used. When a scene with speech has enough silent people for its atmosphere,
  * a non-spatial background entry is appended to the foley result: a catalog
  * card for a recording, a generated card for a prompt.
  */
@@ -86,8 +87,14 @@ export function buildCrowdBed({
   const covered = sounds.some((s) => isBed(s) && CROWD_BED.EXISTING_BED_PATTERN.test(`${s.soundName} ${s.description}`));
   if (covered || sounds.some((s) => s.id === CROWD_BED.ENTRY_ID)) return null;
 
-  const recording = matchCatalogSound(foley?.crowd, catalog);
-  const prompt = foley?.crowd?.prompt?.trim()
+  const agentPrompt = foley?.crowd?.prompt?.trim() ?? '';
+  // A recording is preferred over Text-to-Audio: when the agent named none that
+  // matches and wrote no prompt of its own, use the liveliness default recording.
+  const recording = matchCatalogSound(foley?.crowd, catalog)
+    ?? (agentPrompt ? undefined : matchCatalogSound(
+      { catalogName: CROWD_BED.FALLBACK_CATALOG_NAME[level.value], prompt: '' }, catalog,
+    ));
+  const prompt = agentPrompt
     || (silent >= CROWD_BED.LARGE_GROUP_SIZE ? CROWD_BED.LARGE_DESCRIPTION : CROWD_BED.SMALL_DESCRIPTION);
 
   return {

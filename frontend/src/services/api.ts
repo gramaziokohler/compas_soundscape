@@ -484,6 +484,7 @@ const PREF_WIRE_KEYS: Record<keyof UserPreferences, string> = {
   ttsModel: 'tts_model',
   ttsLanguage: 'tts_language',
   audioModel: 'audio_model',
+  customModels: 'custom_models',
   diffusionSteps: 'diffusion_steps',
   negativePrompt: 'negative_prompt',
   applyDenoising: 'apply_denoising',

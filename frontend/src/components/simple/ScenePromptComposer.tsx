@@ -15,7 +15,8 @@ import { ImagePreviewButton } from '@/components/ui/ImagePreviewButton';
 import { NestedMenu, type NestedMenuItem } from '@/components/ui/NestedMenu';
 import { TtsLanguageStatus } from '@/components/ui/TtsLanguageStatus';
 import { useTtsLanguageResolver } from '@/hooks/useTtsLanguageResolver';
-import { defaultSceneOptions, useAudioControlsStore, useUIStore } from '@/store';
+import { defaultSceneOptions, useAudioControlsStore, useSoundscapeStore, useUIStore } from '@/store';
+import { chooseModel } from '@/lib/user-preferences-sync';
 import type { SceneWorkflowOptions } from '@/types/sceneWorkflow';
 import {
   AUDIO_MODEL_NAMES,
@@ -70,6 +71,11 @@ export function ScenePromptComposer({ onSubmit, onClose }: ScenePromptComposerPr
   const appSpeechLanguage = useAudioControlsStore((s) => s.ttsLanguage);
   // Checks a committed speech language against the voice library / custom voices.
   const languageResolver = useTtsLanguageResolver();
+  // Models are the Advanced Settings ones, read live: the Home composer can mount
+  // before the user preferences load, so a snapshot at mount would go stale.
+  // Picking one here changes (and persists) the Advanced Settings model.
+  const audioModel = useSoundscapeStore((s) => s.audioModel);
+  const llmModel = useSoundscapeStore((s) => s.llmModel);
 
   const [prompt, setPrompt] = useState('');
   const [options, setOptions] = useState<SceneWorkflowOptions>(() => defaultSceneOptions());
@@ -99,6 +105,8 @@ export function ScenePromptComposer({ onSubmit, onClose }: ScenePromptComposerPr
     if (!canSend) return;
     onSubmit(prompt.trim(), {
       ...options,
+      audioModel,
+      llmModel,
       includeSpeech: speechOn,
       speechLanguage: options.speechLanguage.trim(),
       reanalyze: hasModel && options.reanalyze,
@@ -181,26 +189,26 @@ export function ScenePromptComposer({ onSubmit, onClose }: ScenePromptComposerPr
       kind: 'submenu',
       key: 'audio-model',
       label: 'Text-to-audio model',
-      hint: AUDIO_MODEL_NAMES[options.audioModel],
+      hint: AUDIO_MODEL_NAMES[audioModel],
       items: SIMPLE_MODE.AUDIO_MODEL_OPTIONS.map((m) => ({
         kind: 'radio' as const,
         key: m,
         label: AUDIO_MODEL_NAMES[m] ?? m,
-        checked: options.audioModel === m,
-        onSelect: () => patch({ audioModel: m }),
+        checked: audioModel === m,
+        onSelect: () => chooseModel('audioModel', m),
       })),
     },
     {
       kind: 'submenu',
       key: 'llm-model',
       label: 'LLM model',
-      hint: LLM_MODEL_NAMES[options.llmModel],
+      hint: LLM_MODEL_NAMES[llmModel],
       items: SIMPLE_MODE.LLM_MODEL_OPTIONS.map((m) => ({
         kind: 'radio' as const,
         key: m,
         label: LLM_MODEL_NAMES[m] ?? m,
-        checked: options.llmModel === m,
-        onSelect: () => patch({ llmModel: m }),
+        checked: llmModel === m,
+        onSelect: () => chooseModel('llmModel', m),
       })),
     },
     {

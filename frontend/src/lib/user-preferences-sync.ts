@@ -19,7 +19,23 @@ import type { UserPreferences } from '@/types';
 import type { ColorThemePreference } from '@/utils/color-theme';
 import { apiService } from '@/services/api';
 import { useUIStore, useAudioControlsStore, useSoundscapeStore, runAsLoad } from '@/store';
-import { USER_PREFERENCES_SAVE_DEBOUNCE_MS } from '@/utils/constants';
+import {
+  DEFAULT_AUDIO_MODEL,
+  DEFAULT_LLM_MODEL,
+  DEFAULT_TTS_MODEL,
+  USER_PREFERENCES_SAVE_DEBOUNCE_MS,
+} from '@/utils/constants';
+
+/** Model preferences that follow the constants.ts defaults until the user picks one. */
+export type ModelPreferenceKey = 'audioModel' | 'llmModel' | 'ttsModel';
+const MODEL_PREFERENCE_KEYS: readonly ModelPreferenceKey[] = ['audioModel', 'llmModel', 'ttsModel'];
+const MODEL_DEFAULTS: Record<ModelPreferenceKey, string> = {
+  audioModel: DEFAULT_AUDIO_MODEL,
+  llmModel: DEFAULT_LLM_MODEL,
+  ttsModel: DEFAULT_TTS_MODEL,
+};
+const isModelPreferenceKey = (k: string): k is ModelPreferenceKey =>
+  (MODEL_PREFERENCE_KEYS as readonly string[]).includes(k);
 
 let _saveTimer: ReturnType<typeof setTimeout> | null = null;
 let _subscribed = false;
@@ -30,6 +46,25 @@ let _lastSignature = '';
 /** Last preferences received from the server, kept so we can re-apply them
  *  after a soundscape load overwrites the generation settings (user prefs win). */
 let _lastLoaded: UserPreferences = {};
+/** Models the user picked by hand (Advanced Settings or the scene composer).
+ *  Only these are persisted; every other model follows its constants.ts default,
+ *  so a first connection — or a model never touched — gets the current default. */
+const _customModels = new Set<ModelPreferenceKey>();
+
+/** Set a model the user picked by hand (Advanced Settings, scene composer) and
+ *  mark it as chosen so it is persisted instead of following the default. */
+export function chooseModel(key: ModelPreferenceKey, value: string): void {
+  _customModels.add(key);
+  const sc = useSoundscapeStore.getState();
+  if (key === 'audioModel') sc.setAudioModel(value);
+  else if (key === 'llmModel') sc.setLlmModel(value);
+  else sc.setTtsModel(value);
+}
+
+/** Forget the hand-picked models (Reset to defaults): they follow constants.ts again. */
+export function clearChosenModels(): void {
+  _customModels.clear();
+}
 
 /** Read the current preference-relevant values from every owning store. */
 function collectPreferences(): UserPreferences {
@@ -62,9 +97,10 @@ function collectPreferences(): UserPreferences {
     applyDenoising: sc.applyDenoising,
     trimSilence: sc.trimSilence,
     applyNoiseReduction: sc.applyNoiseReduction,
-    audioModel: sc.audioModel,
-    llmModel: sc.llmModel,
-    ttsModel: sc.ttsModel,
+    ...(_customModels.has('audioModel') && { audioModel: sc.audioModel }),
+    ...(_customModels.has('llmModel') && { llmModel: sc.llmModel }),
+    ...(_customModels.has('ttsModel') && { ttsModel: sc.ttsModel }),
+    customModels: [..._customModels],
   };
 }
 
@@ -109,9 +145,17 @@ export function applyPreferences(prefs: UserPreferences): void {
   if (prefs.applyDenoising !== undefined) sc.setApplyDenoising(prefs.applyDenoising);
   if (prefs.trimSilence !== undefined) sc.setTrimSilence(prefs.trimSilence);
   if (prefs.applyNoiseReduction !== undefined) sc.setApplyNoiseReduction(prefs.applyNoiseReduction);
-  if (prefs.audioModel !== undefined) sc.setAudioModel(prefs.audioModel);
-  if (prefs.llmModel !== undefined) sc.setLlmModel(prefs.llmModel);
-  if (prefs.ttsModel !== undefined) sc.setTtsModel(prefs.ttsModel);
+  // Models: a hand-picked one is restored, any other takes its constants.ts default
+  // (a stored value without the customModels marker predates it and is ignored).
+  _customModels.clear();
+  for (const key of prefs.customModels ?? []) {
+    if (isModelPreferenceKey(key) && prefs[key] !== undefined) _customModels.add(key);
+  }
+  const model = (key: ModelPreferenceKey) =>
+    (_customModels.has(key) ? prefs[key] : undefined) ?? MODEL_DEFAULTS[key];
+  sc.setAudioModel(model('audioModel'));
+  sc.setLlmModel(model('llmModel'));
+  sc.setTtsModel(model('ttsModel'));
 }
 
 /** Apply prefs without emitting save events, then resync the signature. */

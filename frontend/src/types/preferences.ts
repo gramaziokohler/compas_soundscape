@@ -32,6 +32,9 @@ export interface UserPreferences {
   ttsModel?: string;
   ttsLanguage?: string;
   audioModel?: string;
+  /** Model keys ('audioModel' | 'llmModel' | 'ttsModel') the user picked by hand.
+   *  Models not listed follow the frontend constants.ts defaults. */
+  customModels?: string[];
   diffusionSteps?: number;
   negativePrompt?: string;
   applyDenoising?: boolean;

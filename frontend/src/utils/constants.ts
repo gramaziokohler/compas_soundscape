@@ -771,6 +771,11 @@ export const CROWD_BED = {
   SOUND_NAME: 'crowd murmur',
   /** Catalogue category the foley agent picks the crowd recording from (Google Sound Library). */
   CATALOG_CATEGORY: 'crowds',
+  /**
+   * Catalogue recording used when the foley agent gave no usable crowd choice
+   * (no name that matches, no prompt). Mirrors backend CROWD_CATALOG_PREFERENCES.
+   */
+  FALLBACK_CATALOG_NAME: { calm: 'Voices Murmur', normal: 'Voices Murmur', lively: 'Crowd Talking' },
 } as const;
 
 /**
@@ -825,7 +830,7 @@ export const AUDIO_MODEL_AUDIOLDM2 = "audioldm2";
 export const AUDIO_MODEL_ELEVENLABS = "elevenlabs";
 export const AUDIO_MODEL_SA3 = "stable-audio-3";
 export const AUDIO_MODEL_TTS = "gemini-tts";
-export const DEFAULT_AUDIO_MODEL = AUDIO_MODEL_SA3;
+export const DEFAULT_AUDIO_MODEL = AUDIO_MODEL_ELEVENLABS;
 
 // Stable Audio 3 (small-sfx) — text-to-audio plus the FX restyle/inpaint effect.
 export const STABLE_AUDIO_MODES = {

@@ -37,7 +37,7 @@ describe('crowd murmur bed', () => {
   });
 
   it('describes a large crowd as a busy room', () => {
-    const bed = buildCrowdBed({ scenario: scenario(30), foley: foley(), speech: speech('A') });
+    const bed = buildCrowdBed({ scenario: scenario(30), foley: foley(), speech: speech('A'), catalog: [] });
     expect(bed?.description).toBe(CROWD_BED.LARGE_DESCRIPTION);
     expect(bed?.category).toBe('background sound');
   });
@@ -67,8 +67,17 @@ describe('crowd murmur bed', () => {
     expect(bed?.description).toBe('hushed voices in a library');
   });
 
+  it('plays the liveliness default recording when the agent gave no crowd choice', () => {
+    const base = { scenario: scenario(10), speech: speech('A') };
+    const quiet = buildCrowdBed({ ...base, foley: { ...foley(), crowd: null } });
+    expect(quiet?.soundName).toBe('Voices Murmur');
+    expect(quiet?.catalogSound?.url).toMatch(/voices_murmur\.ogg$/);
+    const unknown = { ...foley(), crowd: { catalogName: 'No Such Sound', prompt: '' } };
+    expect(buildCrowdBed({ ...base, foley: unknown, liveliness: 'lively' })?.soundName).toBe('Crowd Talking');
+  });
+
   it('appends the bed to the first foley scenario with its selection key', () => {
-    const added = withCrowdBed({ scenario: scenario(10), foley: foley(['room tone']), speech: speech('A') });
+    const added = withCrowdBed({ scenario: scenario(10), foley: foley(['room tone']), speech: speech('A'), catalog: [] });
     expect(added?.key).toBe(`Café__${CROWD_BED.SOUND_NAME}`);
     expect(added?.foley.scenarios[0].sound_events.map((s) => s.id)).toEqual(['bed_0', CROWD_BED.ENTRY_ID]);
   });

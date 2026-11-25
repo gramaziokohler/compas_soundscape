@@ -61,7 +61,7 @@ import { syncExpertNavigation } from "@/store/sceneWorkflowStore";
 import * as THREE from "three";
 import { useAudioNormalization } from "@/hooks/useAudioNormalization";
 import { useUserPreferencesSync } from "@/hooks/useUserPreferencesSync";
-import { reapplyUserPreferences } from "@/lib/user-preferences-sync";
+import { clearChosenModels, reapplyUserPreferences } from "@/lib/user-preferences-sync";
 import { useAudioOrchestrator } from "@/hooks/useAudioOrchestrator";
 import { useAudioOutputDeviceSync } from "@/hooks/useAudioOutputDeviceSync";
 import { useAmbisonicSendSync } from "@/hooks/useAmbisonicSendSync";
@@ -3300,6 +3300,8 @@ function HomeContent() {
   }, [audioNormalization]);
 
   const handleResetAdvancedSettings = useCallback(() => {
+    // Models go back to following the constants.ts defaults (no longer persisted).
+    clearChosenModels();
     soundGen.handleResetToDefaults();
     audioNormalization.reset();
     setShowAxesHelper(false);

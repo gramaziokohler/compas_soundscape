@@ -19,6 +19,7 @@ import { SearchBar } from "@/components/ui/SearchBar";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { TtsLanguageInput } from "@/components/ui/TtsLanguageInput";
 import { apiService } from "@/services/api";
+import { chooseModel } from "@/lib/user-preferences-sync";
 import type { TokenStatus, LLMProviders } from "@/services/api";
 import type { SoundscapeStats } from "@/types/soundscape";
 import { useTextGenerationStore } from "@/store/textGenerationStore";
@@ -631,7 +632,11 @@ export function AdvancedSettingsSection({
   const ttsLanguage = useAudioControlsStore((s) => s.ttsLanguage);
   const setTtsLanguage = useAudioControlsStore((s) => s.setTtsLanguage);
   const ttsModel = useSoundscapeStore((s) => s.ttsModel);
-  const setTtsModel = useSoundscapeStore((s) => s.setTtsModel);
+  // A model picked here is the user's choice: it is persisted, while untouched
+  // models keep following the constants.ts defaults (lib/user-preferences-sync).
+  const handleTtsModelChange = (v: string) => chooseModel('ttsModel', v);
+  const handleLlmModelChange = (v: string) => { chooseModel('llmModel', v); onLlmModelChange(v); };
+  const handleAudioModelChange = (v: string) => { chooseModel('audioModel', v); onAudioModelChange(v); };
 
   const globalSoundSpeed = useUIStore((s) => s.globalSoundSpeed);
   const setGlobalSoundSpeed = useUIStore((s) => s.setGlobalSoundSpeed);
@@ -852,7 +857,7 @@ export function AdvancedSettingsSection({
                   <label className="text-[10px] text-secondary-hover">LLM model</label>
                   <CardSelect
                     value={llmModel}
-                    onChange={onLlmModelChange}
+                    onChange={handleLlmModelChange}
                     options={LLM_MODEL_OPTIONS.map((m) => {
                       const installed = isProviderInstalled(m, llmProviders);
                       return {
@@ -870,7 +875,7 @@ export function AdvancedSettingsSection({
                   <CardSelect
                     forceMenu
                     value={ttsModel}
-                    onChange={setTtsModel}
+                    onChange={handleTtsModelChange}
                     options={TTS_AVAILABLE_MODELS.map((m) => ({
                       value: m,
                       label: TTS_MODEL_NAMES[m],
@@ -900,7 +905,7 @@ export function AdvancedSettingsSection({
                   <CardSelect
                     forceMenu
                     value={audioModel}
-                    onChange={onAudioModelChange}
+                    onChange={handleAudioModelChange}
                     options={[
                       {
                         value: AUDIO_MODEL_TANGOFLUX,

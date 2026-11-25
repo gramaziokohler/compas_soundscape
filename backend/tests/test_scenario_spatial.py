@@ -123,6 +123,17 @@ def test_foley_prompt_picks_crowd_voices_from_the_catalogue():
     assert FoleyArtistRequest(scenario_id="s", crowd_catalog=["Crowd Talking"]).crowd_catalog == ["Crowd Talking"]
 
 
+def test_foley_schema_forces_a_crowd_choice():
+    """An optional `crowd` let Gemini answer null, dropping the catalogue pick."""
+    from models.schemas import FoleyOutput
+
+    schema = LLMService._to_json_schema(FoleyOutput)
+    assert "crowd" in schema["required"]
+    assert "anyOf" not in schema["properties"]["crowd"]  # no null branch
+    choice = schema["$defs"]["FoleyCrowdChoice"]
+    assert set(choice["required"]) == {"catalogName", "prompt"}
+
+
 def test_speech_prompt_scales_social_density():
     svc = _service()
     scenarios = [{"duration": "1:00", "peopleCount": 8, "peopleDescription": "8 friends"}]
