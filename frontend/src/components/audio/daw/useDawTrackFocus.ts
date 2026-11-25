@@ -9,7 +9,8 @@ interface UseDawTrackFocusResult {
   /** Ref callback for a track row, keyed by card index. */
   registerRow: (configIdx: number | undefined) => (el: HTMLDivElement | null) => void;
   /** A track (name or clip) was clicked: focus its sound. */
-  focusTrack: (configIdx: number) => void;
+  /** `entityNodeId` singles out one of the sound's linked entities (a clicked clip). */
+  focusTrack: (configIdx: number, entityNodeId?: string) => void;
 }
 
 /**
@@ -56,8 +57,8 @@ export function useDawTrackFocus(): UseDawTrackFocusResult {
     });
   }, [soundFocus?.version]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const focusTrack = useCallback((configIdx: number) => {
-    useUIStore.getState().focusSound(configIdx, 'daw');
+  const focusTrack = useCallback((configIdx: number, entityNodeId?: string) => {
+    useUIStore.getState().focusSound(configIdx, 'daw', false, entityNodeId);
   }, []);
 
   return { focusedIndex: soundFocus?.index ?? null, registerRow, focusTrack };

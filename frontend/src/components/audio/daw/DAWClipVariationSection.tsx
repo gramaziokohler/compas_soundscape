@@ -17,7 +17,6 @@ export interface DAWClipVariationSectionProps {
   onReset: () => void;
 }
 
-const actionStyle = { padding: '5px 12px', cursor: 'pointer', color: 'var(--foreground)', whiteSpace: 'nowrap' } as const;
 const mutedText = { color: 'var(--color-secondary-hover)', fontSize: '10px' } as const;
 
 interface CompactSliderProps {
@@ -34,7 +33,7 @@ interface CompactSliderProps {
 /** One menu-sized slider row: label · range · value (commits on release). */
 function CompactSlider({ label, value, min, max, step, format, onChange, onCommit }: CompactSliderProps) {
   return (
-    <div style={{ padding: '3px 12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+    <div style={{ padding: '3px 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
       <span style={{ ...mutedText, width: 28, flexShrink: 0 }}>{label}</span>
       <input
         type="range"
@@ -58,7 +57,7 @@ function CompactSlider({ label, value, min, max, step, format, onChange, onCommi
 }
 
 /**
- * "Variation" block of the DAW clip menu: pitch / level offset of this one
+ * "Variation" block of the DAW clip menu (NestedMenu custom row, styled with its classes): pitch / level offset of this one
  * occurrence (lib/audio/utils/clip-variation.ts). Only the sound changes — the
  * clip keeps its place on the timeline.
  */
@@ -66,13 +65,9 @@ export function DAWClipVariationSection({ variation, isOverridden, onSet, onRero
   const [cents, setCents] = useState(variation.detuneCents);
   const [db, setDb] = useState(variation.gainDb);
 
-  const hover = (e: React.MouseEvent<HTMLDivElement>, on: boolean) => {
-    e.currentTarget.style.backgroundColor = on ? 'var(--color-border)' : 'transparent';
-  };
-
   return (
-    <div style={{ borderTop: '1px solid var(--color-border)', marginTop: '4px', paddingTop: '4px' }}>
-      <div style={{ padding: '2px 12px', ...mutedText }}>
+    <div>
+      <div className="nested-menu__label">
         Variation {isOverridden ? '· set by hand' : '· auto'}
       </div>
       <CompactSlider
@@ -95,24 +90,19 @@ export function DAWClipVariationSection({ variation, isOverridden, onSet, onRero
         onChange={setDb}
         onCommit={(v) => onSet(cents, v)}
       />
-      <div
-        style={actionStyle}
-        onMouseEnter={(e) => hover(e, true)}
-        onMouseLeave={(e) => hover(e, false)}
+      <button
+        type="button"
+        role="menuitem"
+        className="nested-menu__row"
         onClick={onReroll}
         title="Draw a new random pitch and level for this occurrence"
       >
         Re-roll variation
-      </div>
+      </button>
       {isOverridden && (
-        <div
-          style={actionStyle}
-          onMouseEnter={(e) => hover(e, true)}
-          onMouseLeave={(e) => hover(e, false)}
-          onClick={onReset}
-        >
+        <button type="button" role="menuitem" className="nested-menu__row" onClick={onReset}>
           Reset to auto
-        </div>
+        </button>
       )}
     </div>
   );

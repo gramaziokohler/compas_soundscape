@@ -14,7 +14,7 @@ DAWDock.tsx                  ← bottom-docked shell: state, gestures, context m
   ├─ DAWTrackHead.tsx        ← per-track: color badge, name, sub-label, M/S, fader, kebab menu
   ├─ DAWLane.tsx             ← per-track clip lane (grid background, overlap detection)
   │    └─ DAWClip.tsx        ← one clip block (cached-peaks canvas, name label, badges, edge trim handles)
-  ├─ DAWClipMenu.tsx         ← right-click context menu (variant / linked-entity override, reset clip trim)
+  ├─ daw-menus.ts            ← track + clip right-click menus (items for ui/NestedMenu; see Right-Click Menus)
   └─ DAWBarControls.tsx      ← snap / zoom % / export, portaled by DAWDock into SceneBottomBar (right of "Timeline") while expanded; dock height auto-fits up to 1/3 of the window, manual drag up to 1/2
                                 (no transport — play/stop live in the scene bottom bar)
 ```
@@ -25,6 +25,23 @@ selection), `useClipGesture.ts` (drag, group drag, duplicate — one store commi
 `useClipTrimGesture.ts` (per-clip edge trim + reset), `daw-trim.ts` (pure trim math),
 `daw-snap.ts` (pure snap resolution: off / 0.1 / 0.5 / 1 / smart + edge magnetism),
 `daw-overrun.ts` (pure: explicit `soundTimestamps` whose clips start or end past `timelineDurationMs`).
+
+## Right-Click Menus (track + clip, one structure)
+
+Both menus are `NestedMenu` (body-portaled, viewport-clamped, submenus flip left at the screen edge,
+hovering any row closes another row's flyout, closes on outside click / Escape). `DAWDock` owns a
+single `menu` state; `daw-menus.ts` builds the items — never hand-roll a menu panel in a DAW component.
+
+- **Track menu** — kebab (flips above the button near the screen bottom), right-click on the head,
+  right-click on an empty lane. Title · Distribute/Interval settings · Select all · Variant (all
+  clips) ▸ · Linked entity (all clips) ▸ · Open sound card · Zoom to entity · Clear entity links ·
+  Reset track · Clear clips (danger).
+- **Clip menu** — right-click a clip. Title (`Clip n of m`) + trigger expression · Variant ▸ ·
+  Linked entity ▸ (same radio submenus, current value as hint) · Use … on all clips · Reset clip trim ·
+  Delete clip / Delete N selected · Variation sliders (custom row) · Track ▸ (the track menu's rows).
+- New per-track action → `buildTrackMenuBody` (it appears in both menus); per-clip → `buildClipMenuItems`.
+- The first-person "can't zoom" hint lives in `DAWDock` (`requestZoomToEntity`), shared by the
+  name double-click and both menus.
 
 ## Timeline Overrun Warning
 

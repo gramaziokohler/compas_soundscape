@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { clampToViewport } from "@/utils/scale";
+import { clampToViewport, flipAboveIfOverflow, getViewport } from "@/utils/scale";
 import { NESTED_MENU } from "@/utils/constants";
 
 export type NestedMenuItem =
@@ -28,7 +28,22 @@ export type NestedMenuItem =
       placeholder?: string;
       onCommit: (value: string) => void;
     }
-  | { kind: "action"; key: string; label: string; hint?: string; onSelect: () => void; keepOpen?: boolean }
+  | {
+      kind: "action";
+      key: string;
+      label: string;
+      hint?: string;
+      title?: string;
+      onSelect: () => void;
+      keepOpen?: boolean;
+      /** Destructive action (clear / delete / reset): error-tinted label. */
+      danger?: boolean;
+      disabled?: boolean;
+    }
+  /** Static, non-interactive heading (muted); `mono` for code-like text. */
+  | { kind: "label"; key: string; label: string; title?: string; mono?: boolean }
+  /** Free-form content (sliders, ...). Keys pressed inside it do not reach outer handlers. */
+  | { kind: "custom"; key: string; content: ReactNode }
   | { kind: "separator"; key: string };
 
 export interface NestedMenuProps {
@@ -37,6 +52,9 @@ export interface NestedMenuProps {
   y: number;
   items: NestedMenuItem[];
   onClose: () => void;
+  /** Opened below an anchor (kebab): near the screen bottom it flips above, its
+   * bottom edge landing at `flipBottomY`, instead of only shifting up over the anchor. */
+  flipBottomY?: number;
 }
 
 const MENU_ATTR = "data-nested-menu";
@@ -127,22 +145,34 @@ interface PanelProps {
   y: number;
   items: NestedMenuItem[];
   onClose: () => void;
+  /** Submenu: the parent row's left edge, to flip to when it would leave the viewport on the right. */
+  flipLeftX?: number;
+  flipBottomY?: number;
 }
 
-function MenuPanel({ x, y, items, onClose }: PanelProps) {
+function MenuPanel({ x, y, items, onClose, flipLeftX, flipBottomY }: PanelProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
-  const [openSub, setOpenSub] = useState<{ key: string; x: number; y: number } | null>(null);
+  const [openSub, setOpenSub] = useState<{ key: string; x: number; y: number; flipLeftX: number } | null>(null);
 
+  // Re-measured after every render: custom content may change height while open.
   useLayoutEffect(() => {
     const panel = panelRef.current;
     if (!panel) return;
-    setPos(clampToViewport(x, y, panel.offsetWidth, panel.offsetHeight, NESTED_MENU.VIEWPORT_MARGIN));
-  }, [x, y, items.length]);
+    const margin = NESTED_MENU.VIEWPORT_MARGIN;
+    const width = panel.offsetWidth;
+    const height = panel.offsetHeight;
+    const left = flipLeftX !== undefined && x + width > getViewport().width - margin
+      ? flipLeftX - NESTED_MENU.SUBMENU_GAP - width
+      : x;
+    const top = flipBottomY === undefined ? y : flipAboveIfOverflow(y, height, flipBottomY, margin);
+    const next = clampToViewport(left, top, width, height, margin);
+    setPos((prev) => (prev && prev.x === next.x && prev.y === next.y ? prev : next));
+  });
 
   const openSubmenu = (key: string, el: HTMLElement) => {
     const rect = el.getBoundingClientRect();
-    setOpenSub({ key, x: rect.right + NESTED_MENU.SUBMENU_GAP, y: rect.top - NESTED_MENU.PADDING_Y });
+    setOpenSub({ key, x: rect.right + NESTED_MENU.SUBMENU_GAP, y: rect.top - NESTED_MENU.PADDING_Y, flipLeftX: rect.left });
   };
 
   const sub = openSub ? items.find((i) => i.key === openSub.key) : undefined;
@@ -162,7 +192,7 @@ function MenuPanel({ x, y, items, onClose }: PanelProps) {
         }}
       >
         {items.map((item) => {
-          if (item.kind === "separator") return <div key={item.key} className="nested-menu__separator" />;
+          if (item.kind === "separator") return <div key={item.key} role="separator" className="nested-menu__separator" />;
 
           if (item.kind === "submenu") {
             const isOpen = openSub?.key === item.key;
@@ -186,6 +216,27 @@ function MenuPanel({ x, y, items, onClose }: PanelProps) {
           }
 
           const closeSub = () => setOpenSub(null);
+
+          if (item.kind === "label") {
+            return (
+              <div
+                key={item.key}
+                title={item.title ?? item.label}
+                className={`nested-menu__label ${item.mono ? "nested-menu__label--mono" : ""}`}
+                onMouseEnter={closeSub}
+              >
+                {item.label}
+              </div>
+            );
+          }
+
+          if (item.kind === "custom") {
+            return (
+              <div key={item.key} onMouseEnter={closeSub} onKeyDown={(e) => e.stopPropagation()}>
+                {item.content}
+              </div>
+            );
+          }
 
           if (item.kind === "radio") {
             return (
@@ -259,7 +310,9 @@ function MenuPanel({ x, y, items, onClose }: PanelProps) {
               key={item.key}
               type="button"
               role="menuitem"
-              className="nested-menu__row"
+              title={item.title}
+              disabled={item.disabled}
+              className={`nested-menu__row ${item.danger ? "nested-menu__row--danger" : ""}`}
               onMouseEnter={closeSub}
               onClick={() => { item.onSelect(); if (!item.keepOpen) onClose(); }}
             >
@@ -270,7 +323,7 @@ function MenuPanel({ x, y, items, onClose }: PanelProps) {
         })}
       </div>
       {sub?.kind === "submenu" && openSub && (
-        <MenuPanel x={openSub.x} y={openSub.y} items={sub.items} onClose={onClose} />
+        <MenuPanel key={openSub.key} x={openSub.x} y={openSub.y} flipLeftX={openSub.flipLeftX} items={sub.items} onClose={onClose} />
       )}
     </>
   );
@@ -280,7 +333,9 @@ function MenuPanel({ x, y, items, onClose }: PanelProps) {
  * NestedMenu Component
  *
  * Minimal multi-level dropdown: rows can open a submenu (hover or click), pick
- * a radio value, flip a toggle, step a number, type a short value, or run an action. Portaled to
+ * a radio value, flip a toggle, step a number, type a short value, or run an action; static
+ * labels, separators and custom content (sliders) structure it. Hovering any other row closes
+ * an open submenu; a submenu flips left at the right screen edge. Portaled to
  * `document.body`, clamped into the viewport, closes on outside pointerdown or
  * Escape.
  *
@@ -301,7 +356,7 @@ function MenuPanel({ x, y, items, onClose }: PanelProps) {
  * )}
  * ```
  */
-export function NestedMenu({ x, y, items, onClose }: NestedMenuProps) {
+export function NestedMenu({ x, y, items, onClose, flipBottomY }: NestedMenuProps) {
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
 
@@ -323,5 +378,11 @@ export function NestedMenu({ x, y, items, onClose }: NestedMenuProps) {
   }, []);
 
   if (typeof document === "undefined") return null;
-  return createPortal(<MenuPanel x={x} y={y} items={items} onClose={onClose} />, document.body);
+  return createPortal(
+    // Right-clicking inside the menu never opens the browser menu or a menu behind it.
+    <div onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }}>
+      <MenuPanel x={x} y={y} items={items} onClose={onClose} flipBottomY={flipBottomY} />
+    </div>,
+    document.body,
+  );
 }

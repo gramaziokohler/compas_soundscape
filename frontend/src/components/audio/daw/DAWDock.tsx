@@ -4,10 +4,13 @@ import { useCanEdit } from '@/hooks/useCanEdit';
 import { Fragment, useLayoutEffect, useRef, useState, useCallback, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { DAWRuler, computeTickStep } from './DAWRuler';
-import { DAWTrackHead } from './DAWTrackHead';
+import { DAWTrackHead, type DAWHintAnchor, type DAWTrackMenuRequest } from './DAWTrackHead';
 import { DAWLane, type DAWLaneClip } from './DAWLane';
 import { DAWBarControls } from './DAWBarControls';
-import { DAWClipMenu } from './DAWClipMenu';
+import { DAWClipVariationSection } from './DAWClipVariationSection';
+import { buildClipMenuItems, buildTrackMenuBody, buildTrackMenuItems, type DawMenuEntity, type TrackMenuActions, type TrackMenuModel } from './daw-menus';
+import { NestedMenu, type NestedMenuItem } from '@/components/ui/NestedMenu';
+import { Icon } from '@/components/ui/Icon';
 import { DAWPlayheadCursor } from './DAWPlayheadCursor';
 import { useTransportTimeStore } from '@/store';
 import { IntervalSettingsPanel } from './IntervalSettingsPanel';
@@ -30,12 +33,17 @@ import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { useUIStore } from '@/store/uiStore';
 import { useSceneWorkflowStore } from '@/store/sceneWorkflowStore';
 import { clearPreferredPlaybackTarget, setPreferredPlaybackTarget } from '@/lib/shortcuts/shortcut-targets';
-import { DAW, DEFAULT_DBFS, SCENE_BOTTOM_BAR, UI_SIDEBAR_RESIZE, UI_SIDEBAR_TOGGLE } from '@/utils/constants';
+import { DAW, DAW_FPS_ZOOM_HINT, DEFAULT_DBFS, SCENE_BOTTOM_BAR, UI_SIDEBAR_RESIZE, UI_SIDEBAR_TOGGLE } from '@/utils/constants';
 import type { TimelineSound, IterationLink } from '@/types/audio';
 import type { SoundGenerationConfig } from '@/types';
 import type { PlaybackSchedulerService } from '@/lib/audio/playback-scheduler-service';
 
 const GROUP_ORDER = ['background', 'sound_event', 'speech'];
+
+/** The one open right-click menu: a track's (kebab / head / empty lane) or a clip's. */
+type DawMenuState =
+  | ({ kind: 'track'; soundId: string } & DAWTrackMenuRequest)
+  | { kind: 'clip'; soundId: string; iterationIndex: number; x: number; y: number };
 const GROUP_LABELS: Record<string, string> = {
   background: 'Background', sound_event: 'Sound Events', speech: 'Speech', sounds: 'Sounds',
 };
@@ -128,7 +136,7 @@ export function DAWDock({
   const soundConfigs = useSoundscapeStore((s) => s.soundConfigs);
   const objectSoundLinks = useSpeckleStore((s) => s.objectSoundLinks);
   // The 3D camera is locked to a listener while in first-person view — zooming
-  // to an entity has no effect, so the track head shows a hint instead.
+  // to an entity has no effect, so a hint explains it instead (requestZoomToEntity).
   const isFirstPersonMode = useSpeckleEngineStore((s) => s.isFirstPersonMode);
 
   const {
@@ -292,6 +300,17 @@ export function DAWDock({
   const selectedClipKeysRef = useRef(selection.selectedClipKeys); selectedClipKeysRef.current = selection.selectedClipKeys;
   const registryRef = useRef(registry); registryRef.current = registry;
 
+  // A clip click focuses its sound; when the sound has several linked entities and
+  // this occurrence is linked to one of them, that entity is zoomed to and singled
+  // out in the 3D view (only it gets the focus tint).
+  const focusClip = useCallback((soundId: string, iterationIndex: number, configIdx: number) => {
+    const entityCount = soundConfigs[configIdx]?.entities?.length ?? 0;
+    const entityNodeId = entityCount > 1 ? iterationLinks[`${soundId}-${iterationIndex}`]?.entityNodeId : undefined;
+    focusTrack(configIdx, entityNodeId);
+    if (entityNodeId) useSpeckleStore.getState().zoomToObjectById(entityNodeId);
+  }, [soundConfigs, iterationLinks, focusTrack]);
+  const focusClipRef = useRef(focusClip); focusClipRef.current = focusClip;
+
   const gesture = useClipGesture({
     soundsRef,
     pxPerSecondRef,
@@ -310,7 +329,7 @@ export function DAWDock({
       const d = registryRef.current.get(clipKey);
       const sound = d && soundsRef.current.find((s) => s.id === d.soundId);
       const configIdx = sound?.cardIndex ?? sound?.promptIndex;
-      if (configIdx !== undefined) focusTrack(configIdx);
+      if (sound && d && configIdx !== undefined) focusClipRef.current(sound.id, d.iterationIndex, configIdx);
     },
   });
 
@@ -354,6 +373,26 @@ export function DAWDock({
     triggerZoomToSoundCard(configIdx);
     handleZoomToLinkedEntity(configIdx);
   }, [triggerZoomToSoundCard, handleZoomToLinkedEntity]);
+
+  // "Can't zoom" hint — shown instead of zooming while the camera is locked to a
+  // listener's first-person view (zoomToObjectById would have no effect).
+  const [fpsHintAnchor, setFpsHintAnchor] = useState<DAWHintAnchor | null>(null);
+  useEffect(() => {
+    if (!fpsHintAnchor) return;
+    const close = () => setFpsHintAnchor(null);
+    window.addEventListener('pointerdown', close);
+    return () => window.removeEventListener('pointerdown', close);
+  }, [fpsHintAnchor]);
+  // Leaving first-person view makes the hint moot.
+  useEffect(() => {
+    if (!isFirstPersonMode) setFpsHintAnchor(null);
+  }, [isFirstPersonMode]);
+
+  /** Track-name double-click and the menus' "Zoom to entity". */
+  const requestZoomToEntity = useCallback((configIdx: number, hintAnchor: DAWHintAnchor) => {
+    if (isFirstPersonMode) { setFpsHintAnchor(hintAnchor); return; }
+    handleZoomToEntity(configIdx);
+  }, [isFirstPersonMode, handleZoomToEntity]);
 
   /* ---- Track-head kebab actions ---- */
   // Which track has its transient "Interval settings" popover open, anchored at
@@ -480,14 +519,9 @@ export function DAWDock({
     useAudioControlsStore.getState().resetTrack(sound.id);
   }, []);
 
-  /* ---- Context menu (variant / entity override) ---- */
-  const [contextMenu, setContextMenu] = useState<{ soundId: string; iterationIndex: number; x: number; y: number } | null>(null);
-  useEffect(() => {
-    if (!contextMenu) return;
-    const close = () => setContextMenu(null);
-    window.addEventListener('pointerdown', close);
-    return () => window.removeEventListener('pointerdown', close);
-  }, [contextMenu]);
+  /* ---- Right-click menus (track + clip) — structure in daw-menus.ts ---- */
+  const [menu, setMenu] = useState<DawMenuState | null>(null);
+  const closeMenu = useCallback(() => setMenu(null), []);
 
   /* ---- Marquee (box) selection across tracks ---- */
   const [marqueeRect, setMarqueeRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
@@ -756,60 +790,139 @@ export function DAWDock({
     return pairs;
   }, [hoveredIteration, triggerGraph]);
 
-  /* ---- Context menu derived data ---- */
-  const contextMenuData = useMemo(() => {
-    if (!contextMenu) return null;
-    const { soundId, iterationIndex } = contextMenu;
-    const linkKey = `${soundId}-${iterationIndex}`;
-    const currentLink = iterationLinks[linkKey] ?? {};
-    const timelineSound = sounds.find((s) => s.id === soundId);
-    const cardIndex = timelineSound?.cardIndex ?? timelineSound?.promptIndex;
+  /* ---- Right-click menu items (built only while a menu is open) ---- */
+  const buildMenuItems = (state: DawMenuState): NestedMenuItem[] | null => {
+    const row = rows.find((r) => r.sound.id === state.soundId);
+    if (!row) return null;
+    const { sound, displayName, configIdx, clips } = row;
+    const cardIndex = sound.cardIndex ?? sound.promptIndex;
+    const liveClips = clips.filter((c) => !c.excluded);
 
     // Exactly the list playback resolves `variantIndex` against.
-    const variants = trackVariants(timelineSound?.promptIndex, generatedSounds)
+    const variants = trackVariants(sound.promptIndex, generatedSounds)
       .map((v, vi) => ({ id: v.id, label: String.fromCharCode(65 + vi) }));
 
     const configEntities = cardIndex !== undefined ? soundConfigs[cardIndex]?.entities ?? [] : [];
     const entityIdxMap = new Map<string, number>();
     configEntities.forEach((e: any, ei: number) => { const eid = e.nodeId || e.id; if (eid) entityIdxMap.set(eid, ei); });
-
-    const linkedEntities = cardIndex !== undefined
+    const linkedEntities: DawMenuEntity[] = cardIndex !== undefined
       ? [...objectSoundLinks.entries()].filter(([, pi]) => pi === cardIndex).map(([objectId]) => ({
           id: objectId,
           displayNumber: (entityIdxMap.get(objectId) ?? 0) + 1,
         }))
       : [];
+    const entityLink = (entityId: string): Partial<IterationLink> => {
+      const entity = configEntities.find((e: any) => (e.nodeId || e.id) === entityId);
+      const entityPosition = entity?.bounds?.center
+        ? [entity.bounds.center[0], entity.bounds.center[1], entity.bounds.center[2]] as [number, number, number]
+        : entity?.position && entity.position.length >= 3
+          ? [entity.position[0], entity.position[1], entity.position[2]] as [number, number, number]
+          : undefined;
+      const displayNumber = linkedEntities.find((e) => e.id === entityId)?.displayNumber;
+      return { entityNodeId: entityId, entityPosition, entityIndex: displayNumber !== undefined ? displayNumber - 1 : undefined };
+    };
 
+    // Original indices of every clip rendered on this track — the target set of
+    // the "all clips" actions.
+    const iterationIndices = sound.scheduledIterationOriginalIndices ?? sound.scheduledIterations.map((_, i) => i);
+    const applyToAll = (partial: Partial<IterationLink>) => {
+      if (iterationIndices.length === 0) return;
+      setIterationLinkForAllIterations(sound.id, iterationIndices, partial);
+      scheduleBakeOrchestrate();
+    };
+
+    const links = iterationIndices.map((i) => iterationLinks[`${sound.id}-${i}`] ?? {});
+    const variantIdxs = links.map((l) => l.variantIndex ?? 0);
+    const entityIds = links.map((l) => l.entityNodeId);
+    const trackModel: TrackMenuModel = {
+      title: displayName,
+      isRecurring: !!(cardIndex !== undefined && soundConfigs[cardIndex]?.orchestrateMeta
+        && soundConfigs[cardIndex]?.scenarioSource?.recurrence),
+      clipCount: liveClips.length,
+      variants,
+      uniformVariantIndex: variantIdxs.every((v) => v === variantIdxs[0]) ? (variantIdxs[0] ?? 0) : null,
+      linkedEntities,
+      uniformEntityId: entityIds.every((e) => e === entityIds[0]) ? entityIds[0] : null,
+      hasEntityLinks: entityIds.some(Boolean),
+    };
+    // The clip menu has no kebab: its panel / hint point at the click.
+    const panelAnchor = state.kind === 'track' ? state.panelAnchor : { x: state.x, y: state.y };
+    const hintAnchor = state.kind === 'track' ? state.hintAnchor : { left: state.x, centerY: state.y };
+    const trackActions: TrackMenuActions = {
+      onDistribute: () => openDistributeFor(sound, panelAnchor),
+      onSelectAllClips: () => selection.replace(liveClips.map((c) => c.clipKey)),
+      onPickVariantForAll: (variantIndex) => applyToAll({ variantIndex }),
+      onPickEntityForAll: (entityId) => applyToAll(entityLink(entityId)),
+      onOpenSoundCard: configIdx !== undefined && onRevealSoundCard ? () => onRevealSoundCard(configIdx) : undefined,
+      onZoomToEntity: configIdx !== undefined ? () => requestZoomToEntity(configIdx, hintAnchor) : undefined,
+      onClearEntityLinks: () => clearAllIterationLinksForSound(sound.id),
+      onClearClips: () => handleClearClips(sound),
+      onResetTrack: () => handleResetTrack(sound),
+    };
+    if (state.kind === 'track') return buildTrackMenuItems(trackModel, trackActions);
+
+    const { iterationIndex } = state;
+    const linkKey = `${sound.id}-${iterationIndex}`;
+    const currentLink = iterationLinks[linkKey] ?? {};
+    const ordered = [...liveClips].sort((a, b) => a.startMs - b.startMs);
     const orchestrateMeta = cardIndex !== undefined ? soundConfigs[cardIndex]?.orchestrateMeta : undefined;
     const triggerExpression = orchestrateMeta
       ? `${orchestrateMeta.trigger?.expression?.[iterationIndex] ?? '-'}${orchestrateMeta.trigger?.delay?.[iterationIndex] ? ` +${orchestrateMeta.trigger.delay[iterationIndex]}s` : ''}`
       : null;
-
-    // Original indices of every clip rendered on this track — the target set for
-    // the menu's "apply to all iterations" bulk actions.
-    const iterationIndices = timelineSound
-      ? (timelineSound.scheduledIterationOriginalIndices ?? timelineSound.scheduledIterations.map((_, i) => i))
-      : [];
-
     // Per-occurrence pitch / level (sound events only — speech and beds never vary).
     const variationOverride = iterationVariations[linkKey];
-    const variation = isVariedCategory(timelineSound?.soundGroup)
-      ? clipVariation(soundId, iterationIndex, timelineSound?.soundGroup, soundVariationModes[soundId], variationOverride)
+    const variation = isVariedCategory(sound.soundGroup)
+      ? clipVariation(sound.id, iterationIndex, sound.soundGroup, soundVariationModes[sound.id], variationOverride)
       : null;
+    const inMultiSelection = selection.selectedClipKeys.has(linkKey) && selection.selectedClipKeys.size > 1;
 
-    return {
-      soundId, iterationIndex, cardIndex, currentLink, variants, linkedEntities, triggerExpression, configEntities,
-      iterationIndices, variation, variationOverride,
-    };
-  }, [contextMenu, iterationLinks, sounds, generatedSounds, soundConfigs, objectSoundLinks, iterationVariations, soundVariationModes]);
-
-  // Bulk-fill every iteration of the right-clicked track with one override
-  // (variant or linked entity) in a single store commit.
-  const applyLinkToAllIterations = useCallback((partial: Partial<IterationLink>) => {
-    if (!contextMenuData || contextMenuData.iterationIndices.length === 0) return;
-    setIterationLinkForAllIterations(contextMenuData.soundId, contextMenuData.iterationIndices, partial);
-    scheduleBakeOrchestrate();
-  }, [contextMenuData, setIterationLinkForAllIterations, scheduleBakeOrchestrate]);
+    return buildClipMenuItems({
+      clipNumber: ordered.findIndex((c) => c.iterationIndex === iterationIndex) + 1,
+      clipCount: ordered.length,
+      triggerExpression,
+      variants,
+      currentVariantIndex: currentLink.variantIndex ?? 0,
+      linkedEntities,
+      currentEntityId: currentLink.entityNodeId,
+      hasTrim: !!iterationTrims[linkKey],
+      deleteCount: inMultiSelection ? selection.selectedClipKeys.size : 1,
+      variationContent: variation && (
+        // Remount on a new value (re-roll / reset) so the sliders show it.
+        <DAWClipVariationSection
+          key={`${variation.detuneCents}:${variation.gainDb}`}
+          variation={variation}
+          isOverridden={!!variationOverride}
+          onSet={(detuneCents, gainDb) => setIterationVariation(sound.id, iterationIndex, { detuneCents, gainDb })}
+          onReroll={() => setIterationVariation(sound.id, iterationIndex, { seed: (variationOverride?.seed ?? 0) + 1 })}
+          onReset={() => setIterationVariation(sound.id, iterationIndex, null)}
+        />
+      ),
+      trackTitle: displayName,
+    }, {
+      onPickVariant: (variantIndex) => {
+        setIterationLink(sound.id, iterationIndex, { variantIndex });
+        scheduleBakeOrchestrate();
+      },
+      onPickEntity: (entityId) => {
+        // Picking the linked entity again unlinks it.
+        if (currentLink.entityNodeId === entityId) clearIterationLink(sound.id, iterationIndex);
+        else setIterationLink(sound.id, iterationIndex, entityLink(entityId));
+      },
+      onApplyVariantToAll: () => applyToAll({ variantIndex: currentLink.variantIndex ?? 0 }),
+      onApplyEntityToAll: () => applyToAll({
+        entityNodeId: currentLink.entityNodeId,
+        entityPosition: currentLink.entityPosition,
+        entityIndex: currentLink.entityIndex,
+      }),
+      onResetTrim: () => trimGesture.resetTrim(sound.id, iterationIndex),
+      onDelete: () => {
+        if (inMultiSelection) { handleDeleteSelected(); return; }
+        ensureTrackMaterialized(soundsRef, sound.id);
+        handleRemoveTimestamp(sound.id, iterationIndex);
+      },
+    }, buildTrackMenuBody(trackModel, trackActions));
+  };
+  const menuItems = menu ? buildMenuItems(menu) : null;
 
   return (
     <div
@@ -892,17 +1005,9 @@ export function DAWDock({
                   onSolo={() => handleSolo(sound.id)}
                   onVolumeChange={(db) => handleVolumeChange(sound.id, db)}
                   onSelectSoundCard={configIdx !== undefined ? () => focusTrack(configIdx) : undefined}
-                  onOpenSoundCard={configIdx !== undefined && onRevealSoundCard ? () => onRevealSoundCard(configIdx) : undefined}
                   isFocused={configIdx !== undefined && configIdx === focusedIndex}
-                  onRequestDistribute={(anchor) => openDistributeFor(sound, anchor)}
-                  isRecurring={!!(configIdx !== undefined && soundConfigs[configIdx]?.orchestrateMeta
-                    && soundConfigs[configIdx]?.scenarioSource?.recurrence)}
-                  onSelectAllClips={() => selection.replace(clips.map((c) => c.clipKey))}
-                  onClearClips={() => handleClearClips(sound)}
-                  onResetTrack={() => handleResetTrack(sound)}
-                  onZoomToEntity={configIdx !== undefined ? () => handleZoomToEntity(configIdx) : undefined}
-                  isFirstPersonMode={isFirstPersonMode}
-                  onClearEntityLinks={() => clearAllIterationLinksForSound(sound.id)}
+                  onOpenMenu={canEdit ? (request) => setMenu({ kind: 'track', soundId: sound.id, ...request }) : undefined}
+                  onZoomToEntity={configIdx !== undefined ? (anchor) => requestZoomToEntity(configIdx, anchor) : undefined}
                   onHoverTrack={() => configIdx !== undefined && setHoveredSoundCardIndex(configIdx)}
                   onHoverTrackEnd={() => setHoveredSoundCardIndex(null)}
                 />
@@ -922,7 +1027,7 @@ export function DAWDock({
                   tickStepPx={tickStepPx}
                   onClipPointerDown={(e, clip) => {
                     // Share view: no drag/selection — a clip press only focuses its sound.
-                    if (!canEdit) { if (configIdx !== undefined) focusTrack(configIdx); return; }
+                    if (!canEdit) { if (configIdx !== undefined) focusClip(sound.id, clip.iterationIndex, configIdx); return; }
                     selection.onClipPressed(clip.clipKey, e, clips.map((c) => c.clipKey));
                     gesture.beginDrag(e, { clipKey: clip.clipKey, soundId: sound.id, iterationIndex: clip.iterationIndex, startMs: clip.startMs, durationMs: clip.durationMs });
                   }}
@@ -940,7 +1045,10 @@ export function DAWDock({
                     }, edge);
                   }}
                   onDeleteClip={(iterationIndex) => { if (!canEdit) return; ensureTrackMaterialized(soundsRef, sound.id); handleRemoveTimestamp(sound.id, iterationIndex); }}
-                  onClipContextMenu={(iterationIndex, x, y) => { if (canEdit) setContextMenu({ soundId: sound.id, iterationIndex, x, y }); }}
+                  onClipContextMenu={(iterationIndex, x, y) => { if (canEdit) setMenu({ kind: 'clip', soundId: sound.id, iterationIndex, x, y }); }}
+                  onLaneContextMenu={canEdit ? (x, y) => setMenu({
+                    kind: 'track', soundId: sound.id, x, y, panelAnchor: { x, y }, hintAnchor: { left: x, centerY: y },
+                  }) : undefined}
                   onClipDoubleClick={configIdx !== undefined ? () => handleZoomToEntity(configIdx) : undefined}
                   onClipHover={(iterationIndex) => handleIterationHover(sound.id, iterationIndex, configIdx)}
                   onClipHoverEnd={handleIterationHoverEnd}
@@ -1084,57 +1192,45 @@ export function DAWDock({
         </div>
       )}
 
-      {contextMenu && contextMenuData && (
-        <DAWClipMenu
-          x={contextMenu.x}
-          y={contextMenu.y}
-          variants={contextMenuData.variants}
-          currentVariantIndex={contextMenuData.currentLink.variantIndex}
-          linkedEntities={contextMenuData.linkedEntities}
-          currentEntityNodeId={contextMenuData.currentLink.entityNodeId}
-          triggerExpression={contextMenuData.triggerExpression}
-          onPickVariant={(variantIndex) => {
-            setIterationLink(contextMenuData.soundId, contextMenuData.iterationIndex, { variantIndex });
-            scheduleBakeOrchestrate();
-          }}
-          onPickEntity={(entityId, entityIndex) => {
-            if (contextMenuData.currentLink.entityNodeId === entityId) {
-              clearIterationLink(contextMenuData.soundId, contextMenuData.iterationIndex);
-              return;
-            }
-            const entity = contextMenuData.configEntities.find((e: any) => (e.nodeId || e.id) === entityId);
-            const entityPosition = entity?.bounds?.center
-              ? [entity.bounds.center[0], entity.bounds.center[1], entity.bounds.center[2]] as [number, number, number]
-              : entity?.position && entity.position.length >= 3
-                ? [entity.position[0], entity.position[1], entity.position[2]] as [number, number, number]
-                : undefined;
-            setIterationLink(contextMenuData.soundId, contextMenuData.iterationIndex, { entityNodeId: entityId, entityPosition, entityIndex });
-          }}
-          onApplyVariantToAll={() =>
-            applyLinkToAllIterations({ variantIndex: contextMenuData.currentLink.variantIndex ?? 0 })
-          }
-          onApplyEntityToAll={() =>
-            applyLinkToAllIterations({
-              entityNodeId: contextMenuData.currentLink.entityNodeId,
-              entityPosition: contextMenuData.currentLink.entityPosition,
-              entityIndex: contextMenuData.currentLink.entityIndex,
-            })
-          }
-          onResetTrim={iterationTrims[`${contextMenuData.soundId}-${contextMenuData.iterationIndex}`]
-            ? () => trimGesture.resetTrim(contextMenuData.soundId, contextMenuData.iterationIndex)
-            : undefined}
-          variation={contextMenuData.variation ? {
-            variation: contextMenuData.variation,
-            isOverridden: !!contextMenuData.variationOverride,
-            onSet: (detuneCents, gainDb) =>
-              setIterationVariation(contextMenuData.soundId, contextMenuData.iterationIndex, { detuneCents, gainDb }),
-            onReroll: () => setIterationVariation(contextMenuData.soundId, contextMenuData.iterationIndex, {
-              seed: (contextMenuData.variationOverride?.seed ?? 0) + 1,
-            }),
-            onReset: () => setIterationVariation(contextMenuData.soundId, contextMenuData.iterationIndex, null),
-          } : undefined}
-          onClose={() => setContextMenu(null)}
+      {menu && menuItems && (
+        <NestedMenu
+          x={menu.x}
+          y={menu.y}
+          flipBottomY={menu.kind === 'track' ? menu.flipBottomY : undefined}
+          items={menuItems}
+          onClose={closeMenu}
         />
+      )}
+
+      {fpsHintAnchor && (
+        <div
+          className="bar-hint fps-hint"
+          role="status"
+          aria-live="polite"
+          style={{
+            left: fpsHintAnchor.left + DAW_FPS_ZOOM_HINT.GAP,
+            top: fpsHintAnchor.centerY,
+            width: DAW_FPS_ZOOM_HINT.WIDTH,
+            zIndex: DAW_FPS_ZOOM_HINT.Z_INDEX,
+          }}
+        >
+          <div className="bar-hint__body">
+            <p className="bar-hint__title">{DAW_FPS_ZOOM_HINT.TITLE}</p>
+            <p className="bar-hint__message">{DAW_FPS_ZOOM_HINT.MESSAGE}</p>
+          </div>
+          <button
+            type="button"
+            className="bar-hint__close"
+            onClick={() => setFpsHintAnchor(null)}
+            title={DAW_FPS_ZOOM_HINT.CLOSE_LABEL}
+            aria-label={DAW_FPS_ZOOM_HINT.CLOSE_LABEL}
+          >
+            <Icon size="12px">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </Icon>
+          </button>
+        </div>
       )}
     </div>
   );

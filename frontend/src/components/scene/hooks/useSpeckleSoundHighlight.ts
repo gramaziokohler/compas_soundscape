@@ -34,6 +34,8 @@ export function useSpeckleSoundHighlight({
   const expandedSoundCardIndex = useUIStore(s => s.expandedSoundCardIndex);
   // Shared sound focus (sphere / DAW track / card click) — see uiStore.soundFocus.
   const focusedSoundIndex = useUIStore(selectFocusedSoundIndex);
+  // Set when a DAW clip linked to one of the sound's several entities was clicked.
+  const focusedEntityNodeId = useUIStore(s => s.soundFocus?.entityNodeId ?? null);
   const zoomToSoundCardTrigger = useUIStore(s => s.zoomToSoundCardTrigger);
   // Entity-sound links drive which prompts get a surface marker (large objects).
   // Markers are (re)built by useSpeckleSoundSpheres in response to this map, but
@@ -185,18 +187,23 @@ export function useSpeckleSoundHighlight({
     const { getObjectLinkCards, setSoundFocusHighlight } = useSpeckleStore.getState();
     const indices = new Set<number>();
     const effectiveIndex = focusedSoundIndex ?? expandedSoundCardIndex;
-    if (effectiveIndex !== null && !effectiveCardIsGlobal) indices.add(effectiveIndex);
-    if (hoveredSoundCardIndex !== null) indices.add(hoveredSoundCardIndex);
-    const ids: string[] = [];
+    // A clicked DAW clip singles out its linked entity: tint only that one for the
+    // focused sound (also while its clip is still hovered).
+    const singleEntity = focusedSoundIndex !== null && focusedEntityNodeId !== null && !effectiveCardIsGlobal;
+    if (effectiveIndex !== null && !effectiveCardIsGlobal && !singleEntity) indices.add(effectiveIndex);
+    if (hoveredSoundCardIndex !== null && !(singleEntity && hoveredSoundCardIndex === focusedSoundIndex)) {
+      indices.add(hoveredSoundCardIndex);
+    }
+    const ids: string[] = singleEntity ? [focusedEntityNodeId] : [];
     if (indices.size > 0) {
       getObjectLinkCards().forEach((cards, objectId) => {
         for (const idx of cards) {
-          if (indices.has(idx)) { ids.push(objectId); break; }
+          if (indices.has(idx)) { if (!ids.includes(objectId)) ids.push(objectId); break; }
         }
       });
     }
     setSoundFocusHighlight(ids);
-  }, [isViewerReady, focusedSoundIndex, expandedSoundCardIndex, hoveredSoundCardIndex, objectSoundLinks, effectiveCardIsGlobal]);
+  }, [isViewerReady, focusedSoundIndex, focusedEntityNodeId, expandedSoundCardIndex, hoveredSoundCardIndex, objectSoundLinks, effectiveCardIsGlobal]);
 
   // Clear the entity tint when the scene unmounts.
   useEffect(() => () => useSpeckleStore.getState().setSoundFocusHighlight([]), []);

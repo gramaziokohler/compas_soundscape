@@ -50,6 +50,8 @@ interface DAWLaneProps {
   onClipTrimPointerDown?: (e: React.PointerEvent<HTMLDivElement>, clip: DAWLaneClip, edge: TrimEdge) => void;
   onDeleteClip: (iterationIndex: number) => void;
   onClipContextMenu: (iterationIndex: number, x: number, y: number) => void;
+  /** Right-click on the empty lane (not on a clip): the track menu at the cursor. */
+  onLaneContextMenu?: (x: number, y: number) => void;
   onClipDoubleClick?: () => void;
   onClipHover?: (iterationIndex: number) => void;
   onClipHoverEnd?: () => void;
@@ -78,6 +80,7 @@ function DAWLaneImpl({
   onClipTrimPointerDown,
   onDeleteClip,
   onClipContextMenu,
+  onLaneContextMenu,
   onClipDoubleClick,
   onClipHover,
   onClipHoverEnd,
@@ -107,6 +110,7 @@ function DAWLaneImpl({
   return (
     <div
       data-daw-lane={soundId}
+      onContextMenu={onLaneContextMenu ? (e) => { e.preventDefault(); onLaneContextMenu(e.clientX, e.clientY); } : undefined}
       style={{
         flex: 1,
         position: 'relative',

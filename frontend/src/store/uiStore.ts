@@ -50,6 +50,9 @@ export interface SoundFocus {
   /** Explicit "reveal" (e.g. scene right-click → show sound): open the sound's scene panel /
    *  sidebar even when closed. Plain clicks only update surfaces already open. */
   reveal: boolean;
+  /** A single linked entity of the sound to single out (a DAW clip linked to one of the
+   *  sound's several entities): the entity tint covers only it instead of all of them. */
+  entityNodeId?: string;
   /** Bumped on every focus, so the same index re-applies. */
   version: number;
 }
@@ -227,7 +230,7 @@ export interface UIStoreState {
    * its own click); a new `version` re-applies the same index. Not persisted.
    */
   soundFocus: SoundFocus | null;
-  focusSound: (index: number, source: SoundFocusSource, reveal?: boolean) => void;
+  focusSound: (index: number, source: SoundFocusSource, reveal?: boolean, entityNodeId?: string) => void;
   clearSoundFocus: () => void;
   /** Active parent (usage or context) index filtering the Sounds section. Null = no filter. */
   activeSoundParentIndex: number | null;
@@ -559,9 +562,9 @@ export const useUIStore = create<UIStoreState>()(
       hoveredSoundCardIndex: null,
       setHoveredSoundCardIndex: (index) => set({ hoveredSoundCardIndex: index }, false, 'ui/setHoveredSoundCardIndex'),
       soundFocus: null,
-      focusSound: (index, source, reveal = false) =>
+      focusSound: (index, source, reveal = false, entityNodeId) =>
         set(
-          (s) => ({ soundFocus: { index, source, reveal, version: (s.soundFocus?.version ?? 0) + 1 } }),
+          (s) => ({ soundFocus: { index, source, reveal, ...(entityNodeId && { entityNodeId }), version: (s.soundFocus?.version ?? 0) + 1 } }),
           false,
           'ui/focusSound',
         ),

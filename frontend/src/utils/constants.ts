@@ -421,7 +421,7 @@ export const ACTION_MENU = {
   Z_INDEX: 9999,              // body-portaled popup, same layer as the other context menus
 } as const;
 
-// Self-positioned right-click menus (Card, DAWClipMenu) — see hooks/useViewportClampedPosition.ts.
+// Self-positioned right-click menus (Card) — see hooks/useViewportClampedPosition.ts.
 /** Cards scroll content revealed by an option into view (hooks/useRevealOnExpand.ts). */
 export const CARD_REVEAL = {
   /** Content mounted within this long after a click / change counts as revealed by it. */

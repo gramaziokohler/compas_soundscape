@@ -1319,6 +1319,28 @@ canvas {
 .nested-menu__row--open {
   background: var(--color-secondary-light);
 }
+.nested-menu__row:disabled,
+.nested-menu__row:disabled:hover {
+  opacity: 0.4;
+  cursor: default;
+  background: transparent;
+}
+.nested-menu__row--danger {
+  color: var(--color-error);
+}
+.nested-menu__label {
+  padding: 4px 10px 2px;
+  font-size: 10px;
+  color: var(--color-secondary-hover);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 260px;
+  cursor: default;
+}
+.nested-menu__label--mono {
+  font-family: var(--font-mono, monospace);
+}
 .nested-menu__hint {
   color: var(--color-secondary-hover);
   max-width: 90px;
