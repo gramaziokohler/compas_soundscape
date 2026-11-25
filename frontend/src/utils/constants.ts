@@ -861,10 +861,19 @@ export const STABLE_AUDIO_EXTEND_DEFAULT_SECONDS = 10;
 export const STABLE_AUDIO_EXTEND_MAX_SECONDS = 120;
 
 // ElevenLabs Sound Effects
-// Duration is intentionally left to the model (duration_seconds = None): the
-// prompt decides the optimal length. Looping is opt-in and defaults to on for
+// duration_seconds is never sent: sustained scene sounds get their target length
+// as a text hint (", 3 seconds" — measured exact on v3, like duration_seconds),
+// everything else lets the model pick. Looping is opt-in and defaults to on for
 // background beds.
 export const DEFAULT_SOUND_LOOP = false;
+// Raw `pcm_<rate>` responses are INTERLEAVED STEREO int16 (measured 2026-11-25 on
+// v2 and v3: every clip was exactly 2× the requested length when read as mono).
+// The client downmixes to mono before wrapping it in a WAV header.
+export const ELEVENLABS_PCM_CHANNELS = 2;
+// Appended to a text-to-audio card prompt sent directly to ElevenLabs (not to
+// LLM scene prompts, which the foley agent writes in ElevenLabs style itself).
+// Positive wording: "no reverb" can pull reverb in, since the model keys on words.
+export const ELEVENLABS_DRY_PROMPT_SUFFIX = "dry, close-mic, isolated SFX";
 // SFX v3 (GA Nov 2026). v2 (`eleven_text_to_sound_v2`) is deprecated, removed 2027-03-01.
 export const ELEVENLABS_MODEL_ID = "eleven_text_to_sound_v3";
 export const ELEVENLABS_DURATION_MIN = 0.5;

@@ -108,12 +108,21 @@ safety net for the summed mix, so per-sound levels stay linear dB offsets.
   re-orchestration rebuilds the trigger chain.
 - **One-shots** (`FoleySoundEvent.oneShot`, foley rule 10): the LLM labels short discrete sounds
   (impacts, knocks, page turns). The label passes through orchestrate (`OrchestrateEntry.oneShot`)
-  to the card's `one_shot`. ElevenLabs then gets no `duration_seconds` (auto length; a forced
-  estimate only pads with silence); TangoFlux/SA3 clips get `trim_silence` per clip → `noise_trim`.
+  to the card's `one_shot`, and to the orchestrate input (`oneShot`, used by its overlap rule).
+  A series of repeated actions (a walk, typing, writing) is never a one-shot. One-shot clips get
+  `trim_silence` per clip → `noise_trim` on every model (ElevenLabs via `calibrateBlobUrl`).
   The trim region (`utils/audio_processing.compute_noise_trim_region`, also behind "Trim silence")
   confirms onset gaps on the RMS envelope and cuts the trailing silence after the last sound
   (`TRIM_*` in `config/constants.py`). SA3 needs `librosa` in `compas-sa3` for it.
-  Sustained LLM sounds send their duration to ElevenLabs; beds and manual prompts never do.
+- **ElevenLabs request** (`elevenLabsRequest` in `soundscapeStore.ts`): `duration_seconds` is never
+  sent. Sustained scene sounds append their length as text (", 3 seconds": measured exact on SFX v3);
+  one-shots and beds keep the model's length. A text-to-audio card sent directly (no scene) gets
+  `ELEVENLABS_DRY_PROMPT_SUFFIX`. With ElevenLabs selected, `/api/foley-artist` gets `audio_model`
+  and foley rule 5 asks for layered ElevenLabs-style prompts (`_foley_description_rules`).
+  Raw `pcm_48000` responses are interleaved STEREO: `services/elevenlabs.ts` downmixes to mono.
+- **Overlap rule** (orchestrate prompt + `_enforce_overlap_policy` in `llm_service.py`): `overlap()`
+  only references sustained/recurring sounds. An overlap on a one-shot impact, or a speech entry
+  overlapping a foley sound, is rewritten to `after(ref)` with `delay − ref length` (floored at 0).
 - **Crowd murmur bed**: `utils/crowdBed.withCrowdBed` appends a background foley entry (and its
   selection key) after foley + speech when more people are present than speak; it is generated like
   any other bed card.

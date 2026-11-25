@@ -1529,6 +1529,9 @@ class FoleyArtistRequest(BaseModel):
     # Sound names of the catalogue's "crowds" category — the agent picks the crowd
     # voices from them (foley rule 15). Empty = it writes a Text-to-Audio prompt.
     crowd_catalog: list[str] = Field(default_factory=list, max_length=CROWD_CATALOG_MAX_NAMES)
+    # Text-to-audio model the scene will be generated with. "elevenlabs" makes the
+    # agent write layered ElevenLabs-style prompts; anything else, short captions.
+    audio_model: str | None = None
 
     @field_validator("sound_detail")
     @classmethod

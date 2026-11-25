@@ -589,6 +589,7 @@ async def foley_artist(request: FoleyArtistRequest, req: Request):
                 sound_detail=sound_detail,
                 liveliness=liveliness,
                 crowd_catalog=crowd_catalog,
+                audio_model=request.audio_model,
                 llm_model=llm_model,
                 on_progress=on_progress,
             )

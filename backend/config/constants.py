@@ -365,6 +365,7 @@ AUDIO_MODEL_TANGOFLUX = "tangoflux"
 AUDIO_MODEL_AUDIOLDM2 = "audioldm2"
 AUDIO_MODEL_SA3 = "stable-audio-3"  # StabilityAI stable-audio-3 (small-sfx)
 AUDIO_MODEL_TTS = "gemini-tts"
+AUDIO_MODEL_ELEVENLABS = "elevenlabs"  # browser-side SFX v3 (frontend AUDIO_MODEL_ELEVENLABS); the backend only tunes LLM prompts for it
 DEFAULT_AUDIO_MODEL = AUDIO_MODEL_SA3  # Default model for text-to-audio
 
 # Device Configuration

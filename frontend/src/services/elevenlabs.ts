@@ -10,9 +10,9 @@
  * and short events omit it. Pass `loop: true` for seamless background/ambience
  * beds.
  *
- * Output is requested as raw PCM at AUDIO_SAMPLE_RATE (`pcm_<rate>`) and
- * wrapped in a WAV header, so ElevenLabs sounds match the app's master rate
- * losslessly. If the account's tier rejects PCM output, it falls back to the
+ * Output is requested as raw PCM at AUDIO_SAMPLE_RATE (`pcm_<rate>`), which
+ * arrives as interleaved stereo; it is downmixed to mono and wrapped in a WAV
+ * header, so ElevenLabs sounds match the app's master rate losslessly. If the account's tier rejects PCM output, it falls back to the
  * SDK default (MP3 44.1 kHz), which the AudioContext resamples on decode.
  *
  * Requires: NEXT_PUBLIC_ELEVENLABS_API_KEY set in .env.local
@@ -27,6 +27,7 @@ import {
   ELEVENLABS_DURATION_MIN,
   ELEVENLABS_FORMAT_REJECTED_STATUSES,
   ELEVENLABS_MODEL_ID,
+  ELEVENLABS_PCM_CHANNELS,
 } from "@/utils/constants";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -86,6 +87,24 @@ function getClient(): ElevenLabsClient {
 
 /** Raw PCM at the master rate — a compile error here means ElevenLabs has no such PCM rate. */
 const PCM_OUTPUT_FORMAT = `pcm_${AUDIO_SAMPLE_RATE}` as const;
+
+/**
+ * Average interleaved int16 PCM channels into mono int16 (little-endian).
+ * ElevenLabs PCM is stereo (ELEVENLABS_PCM_CHANNELS); the app only uses mono.
+ */
+function downmixPcm16ToMono(pcm: Uint8Array, channels: number): Uint8Array {
+  if (channels <= 1) return pcm;
+  const src = new DataView(pcm.buffer, pcm.byteOffset, pcm.byteLength);
+  const frames = Math.floor(pcm.byteLength / (2 * channels));
+  const out = new Uint8Array(frames * 2);
+  const dst = new DataView(out.buffer);
+  for (let f = 0; f < frames; f++) {
+    let sum = 0;
+    for (let c = 0; c < channels; c++) sum += src.getInt16((f * channels + c) * 2, true);
+    dst.setInt16(f * 2, Math.round(sum / channels), true);
+  }
+  return out;
+}
 
 async function readStreamBytes(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
   const reader = stream.getReader();
@@ -152,7 +171,7 @@ export async function generateSoundEffect(
     // The SDK returns a Web ReadableStream<Uint8Array>
     const stream = await client.textToSoundEffects.convert({ ...request, outputFormat: PCM_OUTPUT_FORMAT });
     const pcm = await readStreamBytes(stream as ReadableStream<Uint8Array>);
-    blob = pcm16ToWavBlob(pcm, AUDIO_SAMPLE_RATE);
+    blob = pcm16ToWavBlob(downmixPcm16ToMono(pcm, ELEVENLABS_PCM_CHANNELS), AUDIO_SAMPLE_RATE);
   } catch (err) {
     if (!(err instanceof ElevenLabsError && err.statusCode !== undefined && ELEVENLABS_FORMAT_REJECTED_STATUSES.has(err.statusCode))) {
       throw err;

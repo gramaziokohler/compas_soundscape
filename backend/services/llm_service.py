@@ -40,6 +40,7 @@ from config.constants import (
     DEFAULT_LLM_MODEL,
     LLM_MODEL_VERSIONS,
     DEFAULT_FOLEY_SOUND_DETAIL,
+    AUDIO_MODEL_ELEVENLABS,
     FOLEY_SOUND_DETAIL_LEVELS,
     DEFAULT_DBFS,
     LLM_SUGGESTED_INTERVAL_SECONDS,
@@ -363,6 +364,93 @@ def _sanitize_trigger_refs(trigger: dict, background_ids: set[str], fallback_tim
         "expression": new_exprs,
         "delay": new_delays,
     }
+
+
+def _measured_entry_durations(foley_result: dict, speech_result: dict) -> dict[str, list[float]]:
+    """Measured clip length per copy (seconds) for each orchestrate input id.
+
+    Foley sounds carry ``copyDurations``; speech entries carry ``lines`` with a
+    ``durationSec`` per copy (= per iteration). Missing data gives an empty list.
+    """
+    out: dict[str, list[float]] = {}
+    for sound in (foley_result or {}).get("sounds", []) or []:
+        if isinstance(sound, dict) and sound.get("id"):
+            out[sound["id"]] = [float(d) for d in (sound.get("copyDurations") or []) if isinstance(d, (int, float))]
+    for speech in (speech_result or {}).get("speeches", []) or []:
+        if isinstance(speech, dict) and speech.get("id"):
+            lines = speech.get("lines") or []
+            out[speech["id"]] = [
+                float(ln.get("durationSec") or 0.0) for ln in lines if isinstance(ln, dict)
+            ]
+    return out
+
+
+def _reference_duration(ref: str, durations: dict[str, list[float]]) -> float:
+    """Length of the referenced iteration: speech line k for ``id#k``, else the mean copy length."""
+    entry_id = reference_entry_id(ref)
+    lengths = durations.get(entry_id) or []
+    if not lengths:
+        return 0.0
+    if "#" in ref:
+        try:
+            k = int(ref.split("#", 1)[1].strip())
+        except ValueError:
+            k = 0
+        if 1 <= k <= len(lengths) and lengths[k - 1] > 0:
+            return lengths[k - 1]
+    return sum(lengths) / len(lengths)
+
+
+def _enforce_overlap_policy(
+    entry_id: str,
+    trigger: dict,
+    passthrough: dict[str, dict],
+    durations: dict[str, list[float]],
+) -> dict:
+    """Turn the overlaps the orchestrate rules forbid into ``after`` anchors.
+
+    ``overlap`` (start-to-start) is only realistic against a sustained or recurring
+    sound (a walk, typing, cooking). It is rewritten to ``after(ref)`` when:
+      - a reference is an impact one-shot (door, knock): what follows it happens
+        once it is over, not part-way through it;
+      - the entry is speech and a reference is not speech: a line reacting to an
+        event starts after it (two speech entries may still overlap).
+    The start is kept where the LLM meant it when that was past the reference's
+    end (delay − ref length); otherwise the entry starts right at the end.
+    """
+    if not isinstance(trigger, dict) or not isinstance(trigger.get("expression"), list):
+        return trigger
+    is_speech = _normalized_category((passthrough.get(entry_id) or {}).get("category")) == "speech"
+    exprs = list(trigger["expression"])
+    delays = list(trigger.get("delay") or [])
+    changed = False
+    for i, expr in enumerate(exprs):
+        m = _ORCHESTRATE_OP_RE.match(expr) if isinstance(expr, str) else None
+        if not m or m.group(1) not in ("overlap", "overlapAll"):
+            continue
+        refs = [a.strip() for a in m.group(2).split(",") if a.strip()]
+        bases = [passthrough.get(reference_entry_id(r)) or {} for r in refs]
+        impact_ref = any(b.get("oneShot") for b in bases)
+        speech_on_sound = is_speech and any(
+            _normalized_category(b.get("category")) != "speech" for b in bases
+        )
+        if not (impact_ref or speech_on_sound):
+            continue
+        delay = float(delays[i]) if i < len(delays) and isinstance(delays[i], (int, float)) else 0.0
+        ref_len = max((_reference_duration(r, durations) for r in refs), default=0.0)
+        exprs[i] = f"after({', '.join(refs)})"
+        while len(delays) <= i:
+            delays.append(0.0)
+        delays[i] = round(max(0.0, delay - ref_len), 3)
+        changed = True
+        logger.info(
+            "[orchestrate] %s #%d: %s -> %s (delay %.2f) — %s",
+            entry_id, i + 1, expr, exprs[i], delays[i],
+            "impact reference" if impact_ref else "speech after a sound",
+        )
+    if not changed:
+        return trigger
+    return {"type": trigger.get("type", "param"), "expression": exprs, "delay": delays}
 
 
 def _iter_response_parts(chunk) -> list[tuple[bool, str]]:
@@ -2153,6 +2241,45 @@ For the duration estimation (in seconds with 0.1 precision):
             "no clear words (e.g. \"distant hushed voices in a library reading room\").\n"
         )
 
+    @staticmethod
+    def _foley_description_rules(audio_model: str | None) -> tuple[str, str]:
+        """Rule 5 of the foley prompt and the matching "description" output hint.
+
+        ElevenLabs SFX v3 follows long, layered prompts (its own examples read like
+        "Refrigerator door closing shut, magnetic rubber seal suction thud, ... close
+        up isolated SFX"); the diffusion models want a short 2-10 word caption.
+        """
+        if audio_model == AUDIO_MODEL_ELEVENLABS:
+            rule = (
+                '5. The "description" is the Text-to-Audio prompt (ElevenLabs Sound Effects) for a SINGLE '
+                "generic instance of that acoustic profile. Write it as comma-separated sound layers, 8 to 25 "
+                "words, under 300 characters: first the source and action with its material (\"heavy wooden "
+                "door closing shut\"), then 2 to 4 audible details in the order they happen (\"magnetic latch "
+                "click, solid thud\"). For multi-part sounds, keep the order with \"then\". A \"sound event\" "
+                'ends with "close up, isolated SFX"; a background bed instead names its 2 to 4 layers and ends '
+                'with "seamless ambience". Use positive words only: write what is heard, never "no ..." / '
+                '"without ..." (the model keys on the words, so "no hum" adds hum). Never name the room '
+                "acoustics (reverb, echo, hall). Never write \"Multiple chairs\" — describe one instance. Never "
+                "put a length in it (code adds it).\n"
+            )
+            hint = (
+                "ElevenLabs prompt: comma-separated layers, source + action + material first, then 2-4 audible "
+                'details; sound events end with \\"close up, isolated SFX\\". No character names.'
+            )
+        else:
+            rule = (
+                '5. The "description" is the Text-to-Audio prompt for a SINGLE generic instance of that acoustic '
+                "profile. Write a clear, concise 2 to 10 word description naming the sound source and the action or "
+                'material producing it (e.g., "office chair wheels rolling on parquet"). For multi-part sounds, '
+                'describe the sequence in order with "then" (e.g., "footsteps on gravel, then a metallic door opens"). '
+                'Never write "Multiple chairs" — describe one instance.\n'
+            )
+            hint = (
+                "clear 2 to 10 word Text-to-Audio prompt naming the sound source and "
+                "action/material; use then for multi-part sequences. Do NOT include scenario character names."
+            )
+        return rule, hint
+
     def _build_foley_prompts(
         self,
         scenarios_json: str,
@@ -2161,6 +2288,7 @@ For the duration estimation (in seconds with 0.1 precision):
         room_extents: str | None = None,
         liveliness: str = DEFAULT_SCENE_LIVELINESS,
         crowd_catalog: list[str] | None = None,
+        audio_model: str | None = None,
     ) -> tuple[str, str]:
         """Build system and user prompts for the foley artist agent.
 
@@ -2168,8 +2296,10 @@ For the duration estimation (in seconds with 0.1 precision):
         Outputs a flat, globally-deduplicated list of sound types — no scenario grouping.
         Each entry carries either linked object IDs or a guessed spatial position.
         ``sound_detail`` (a FOLEY_SOUND_DETAIL_LEVELS key) sets how finely actions
-        are split into separate sound types.
+        are split into separate sound types. ``audio_model`` sets the description
+        style (layered ElevenLabs prompts when it is AUDIO_MODEL_ELEVENLABS).
         """
+        description_rule, description_hint = self._foley_description_rules(audio_model)
         system_prompt = (
             "You are an expert foley artist specializing in architectural soundscapes. "
             "Create comprehensive, realistic sound event lists for interior spaces, and "
@@ -2203,11 +2333,7 @@ For the duration estimation (in seconds with 0.1 precision):
             "section below.\n"
             '4. It is STRICTLY FORBIDDEN to append personal names, character roles, or scene numbers to the '
             '"soundName" or "id" fields (e.g., "laptop_placement_sarah" or "footsteps_michael" are WRONG).\n'
-            '5. The "description" is the Text-to-Audio prompt for a SINGLE generic instance of that acoustic '
-            "profile. Write a clear, concise 2 to 10 word description naming the sound source and the action or "
-            'material producing it (e.g., "office chair wheels rolling on parquet"). For multi-part sounds, '
-            'describe the sequence in order with "then" (e.g., "footsteps on gravel, then a metallic door opens"). '
-            'Never write "Multiple chairs" — describe one instance.\n'
+            f"{description_rule}"
             '6. The "objectsInvolved" array must collect ALL the target object hex IDs from the spatial context '
             "that execute this specific sound type across the entire story timeline. "
             "Order them chronologically as they appear in the text.\n"
@@ -2240,7 +2366,9 @@ For the duration estimation (in seconds with 0.1 precision):
             "impacts (e.g. 00:02), longer for continuous beds (e.g. 00:20).\n"
             '   Set "oneShot": true for a short, discrete, self-contained sound whose natural length the '
             "sound generator should decide: impacts, knocks, a door slam or click, a book set down, a page "
-            "turn, a single footstep, a cup placed on a saucer, a switch, a cough. Set false for anything "
+            "turn, a single footstep, a cup placed on a saucer, a switch, a cough. Set false for any SERIES "
+            "of repeated actions (footsteps walking or crossing a room, typing, writing, chopping: their "
+            "length is the \"duration\" you estimate), for anything "
             "sustained or evolving over a set time (a kettle boiling, a printer run, a vacuum pass, rain, "
             'machinery) and ALWAYS false for background beds.\n'
             '11. Estimate "copyCount" (integer 1 to 5): how many DISTINCT audio variants are worth '
@@ -2262,8 +2390,7 @@ For the duration estimation (in seconds with 0.1 precision):
             'suffix, e.g. footsteps_1, door_close_1, chair_scrape_2. Derive the root from the sound '
             "category; NEVER use generic \\\"sound_NN\\\" ids and NEVER append personal/character names.\",\n"
             '    "soundName": "string (brief generic descriptive name of the sound profile)",\n'
-            '    "description": "clear 2 to 10 word Text-to-Audio prompt naming the sound source and '
-            'action/material; use then for multi-part sequences. Do NOT include scenario character names.",\n'
+            f'    "description": "{description_hint}",\n'
             '    "category": "\\"background sound\\" | \\"sound event\\"",\n'
             '    "spatial": false,\n'
             '    "oneShot": false,\n'
@@ -2614,6 +2741,7 @@ For the duration estimation (in seconds with 0.1 precision):
         llm_model: str = DEFAULT_LLM_MODEL,
         liveliness: str = DEFAULT_SCENE_LIVELINESS,
         crowd_catalog: list[str] | None = None,
+        audio_model: str | None = None,
     ) -> dict:
         """
         Generate detailed foley sound events for scenarios from scenarist_agent.
@@ -2657,6 +2785,7 @@ For the duration estimation (in seconds with 0.1 precision):
             room_extents=self._room_extents(furniture_list),
             liveliness=liveliness,
             crowd_catalog=crowd_catalog,
+            audio_model=audio_model,
         )
 
         # ── Call LLM with structured output ───────────────────────────────────
@@ -2696,6 +2825,7 @@ For the duration estimation (in seconds with 0.1 precision):
         on_progress=None,
         liveliness: str = DEFAULT_SCENE_LIVELINESS,
         crowd_catalog: list[str] | None = None,
+        audio_model: str | None = None,
     ) -> dict:
         """Async version of foley_artist — awaits _call_llm directly.
 
@@ -2715,6 +2845,7 @@ For the duration estimation (in seconds with 0.1 precision):
             room_extents=self._room_extents(furniture_list),
             liveliness=liveliness,
             crowd_catalog=crowd_catalog,
+            audio_model=audio_model,
         )
 
         result = await self._call_llm(
@@ -2737,6 +2868,7 @@ For the duration estimation (in seconds with 0.1 precision):
         on_progress=None,
         liveliness: str = DEFAULT_SCENE_LIVELINESS,
         crowd_catalog: list[str] | None = None,
+        audio_model: str | None = None,
     ):
         """Async generator yielding foley sound events one by one.
 
@@ -2757,6 +2889,7 @@ For the duration estimation (in seconds with 0.1 precision):
                 on_progress=on_progress,
                 liveliness=liveliness,
                 crowd_catalog=crowd_catalog,
+                audio_model=audio_model,
             )
         except LLMCancelled:
             raise
@@ -3089,6 +3222,7 @@ For the duration estimation (in seconds with 0.1 precision):
                 "Each foley 'sound' and speech 'speech' input entry carries a base 'id', its 'timestamps', and "
                 "the MEASURED DURATIONS of its generated copies.\n"
                 "- 'copyDurations': exact length in seconds of each generated audio copy (index 0 = first copy).\n"
+                "- 'oneShot': true marks a short impact (door, knock, object set down), see the OVERLAP RULE.\n"
                 "- speech 'lines': the spoken text and its measured duration per copy.\n"
                 "For every input entry, output exactly one object keyed by that same 'id'. Do NOT invent, drop, "
                 "split or rename ids. Use the real durations and the scenario script to order the sounds — the "
@@ -3107,6 +3241,12 @@ For the duration estimation (in seconds with 0.1 precision):
                 "   - overlap(id [, id2, ...]) → starts at the reference's START + delay (start-to-start). Use "
                 "for PARALLEL / concurrent activity (e.g. one person typing while another takes notes) and for "
                 "continuous activity that spans an interval.\n"
+                "   OVERLAP RULE: overlap() may only reference a SUSTAINED or RECURRING sound (footsteps walking, "
+                "typing, writing, cooking), e.g. a chair pulled out 3 s into the footsteps. NEVER overlap an "
+                "impact one-shot ('oneShot': true — a door closing, a knock, an object set down): whatever follows "
+                "it in the story uses after(). Cause and effect (a door closes, THEN footsteps; someone sits, THEN "
+                "puts a laptop down) is always after(). Speech never uses overlap() on a foley sound: a line "
+                "reacting to an event is after() that event (code rewrites a forbidden overlap into after()).\n"
                 "   - afterAll(...) and overlapAll(...) are the explicit multi-reference (join) forms; a "
                 "comma-separated reference list behaves identically.\n"
                 "3. DELAY SEMANTICS: 'delay' is the end-to-start gap (or start-to-start offset for overlap) in "
@@ -3200,6 +3340,7 @@ For the duration estimation (in seconds with 0.1 precision):
                 "- [ ] no reference points to a background bed; beds get an 'spl' but no schedule.\n"
                 "- [ ] no two iterations of the SAME entry overlap; same-entry chains go #1 -> #2 -> #3 linearly.\n"
                 "- [ ] overlap() is used ONLY to run DIFFERENT sounds concurrently, never an entry with itself.\n"
+                "- [ ] no overlap() references a 'oneShot' impact, and no speech entry overlaps a foley sound.\n"
                 "- [ ] the dependency graph is acyclic (no entry transitively depends on itself).\n"
                 "- [ ] delays are end-to-start gaps derived from the MEASURED durations, not the authored MM:SS.\n"
                 "- [ ] speech sits within -22..-16 dBFS (or its style's band) and is not the loudest element of "
@@ -3286,7 +3427,8 @@ For the duration estimation (in seconds with 0.1 precision):
         Returns a dict matching OrchestrateOutput ("playlist": list of full entries).
         """
         passthrough = self._build_orchestrate_passthrough(foley_result, speech_result)
-        background_ids = {sid for sid, base in passthrough.items() if _is_background_entry(base)}
+        durations = _measured_entry_durations(foley_result, speech_result)
+        background_ids ={sid for sid, base in passthrough.items() if _is_background_entry(base)}
         recurring_ids = {
             sid for sid, base in passthrough.items()
             if sid not in background_ids and base.get("recurrence")
@@ -3356,6 +3498,7 @@ For the duration estimation (in seconds with 0.1 precision):
             trigger = entry.get("trigger") or {"type": "absolute", "expression": [], "delay": [0.0]}
             trigger = _normalize_trigger_expressions(trigger, base["timestamps"])
             trigger = _sanitize_trigger_refs(trigger, background_ids, base["timestamps"])
+            trigger = _enforce_overlap_policy(entry_id, trigger, passthrough, durations)
             _append(
                 entry_id, base, trigger,
                 entry.get("variants", []) or [], _entry_spl(entry.get("spl", ""), base["category"], base.get("style", "")),

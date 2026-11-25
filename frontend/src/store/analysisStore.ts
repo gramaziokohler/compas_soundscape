@@ -2525,6 +2525,8 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
               // Baked catalogue crowd names: the agent picks the crowd voices from them.
               crowd_catalog: crowdCatalogNames(),
               bounding_box: getScenarioBounds(),
+              // ElevenLabs gets layered prompts from the foley agent (foley rule 5).
+              audio_model: useSoundscapeStore.getState().audioModel,
             };
             const speechBody = {
               scenario_id: config.scenarioId,

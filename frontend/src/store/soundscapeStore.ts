@@ -52,6 +52,9 @@ import {
   TTS_DEFAULT_VOICE,
   DEFAULT_PROMPT_INFLUENCE,
   DEFAULT_SOUND_LOOP,
+  ELEVENLABS_DRY_PROMPT_SUFFIX,
+  ELEVENLABS_DURATION_MAX,
+  ELEVENLABS_DURATION_MIN,
   normalizeSoundCategory,
   SOUND_GEN_CONCURRENCY,
 } from '@/utils/constants';
@@ -183,21 +186,32 @@ const _targetIndices = new Set<number>();
 let _orchestrateProgressStatus: string | null = null;
 
 /**
- * Duration to request from ElevenLabs for a config.
+ * Text and silence-trim flag to send to ElevenLabs for a config.
  *
- * Only sustained LLM-derived (scenario/foley) sounds carry a meaningful target
- * length. Everything else omits it so the model picks the optimal length:
- * background beds, one-shots the LLM labelled `oneShot` (impacts, knocks — a
- * forced estimate only pads them with silence), and manual prompts (no
- * authored length, just the global default).
+ * - Sustained LLM-derived (scene) sounds get their target length as a text hint
+ *   (", 3 seconds"). Measured on SFX v3 it gives the exact length, as
+ *   `duration_seconds` does; without it a walk came back 5–8 s instead of 3.
+ * - One-shots (impacts, knocks) and beds keep the model's own length; one-shots
+ *   are always silence-trimmed (the model leaves a 0.5–1.5 s silent tail).
+ * - A text-to-audio card sent directly (no scene) gets the dry/close-mic suffix;
+ *   scene prompts are already written in ElevenLabs style by the foley agent.
  */
-function elevenLabsDurationSeconds(
+function elevenLabsRequest(
   config: SoundGenerationConfig,
+  prompt: string,
   isBackground: boolean,
-): number | undefined {
-  if (isBackground || config.one_shot) return undefined;
+  trimSilence: boolean,
+): { text: string; trimSilence: boolean } {
   const isLlmDerived = !!config.scenarioSource || !!config.orchestrateMeta;
-  return isLlmDerived ? config.duration : undefined;
+  const parts = [prompt.trim().replace(/[,.\s]+$/, '')];
+  if (!isLlmDerived && !isBackground && !prompt.toLowerCase().includes('close-mic')) {
+    parts.push(ELEVENLABS_DRY_PROMPT_SUFFIX);
+  }
+  if (isLlmDerived && !isBackground && !config.one_shot && config.duration > 0) {
+    const seconds = Math.min(ELEVENLABS_DURATION_MAX, Math.max(ELEVENLABS_DURATION_MIN, config.duration));
+    parts.push(`${Number(seconds.toFixed(1))} seconds`);
+  }
+  return { text: parts.join(', '), trimSilence: trimSilence || !!config.one_shot };
 }
 
 // Per-type config-validation error shown inline on the sound card (mirrors the
@@ -585,6 +599,8 @@ function buildOrchestrateInputs(
         soundName: src.soundName,
         description: src.description,
         category: src.category,
+        // Impact one-shot: never an overlap() reference (orchestrate overlap rule).
+        oneShot: !!config.one_shot,
         duration: src.duration,
         timestamps,
         objectsInvolved: src.objectsInvolved,
@@ -2370,8 +2386,8 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
 
             // ── ElevenLabs (browser pool) ───────────────────────────────────────
             // ElevenLabs takes a different request shape from TangoFlux:
-            //  - duration is omitted for background beds and short (<4 s) events,
-            //    otherwise the target (LLM) duration is passed;
+            //  - text + trim come from elevenLabsRequest (length hint for sustained
+            //    scene sounds, dry suffix for direct cards, one-shots trimmed);
             //  - background beds request a seamless loop (opt-in per config);
             //  - prompt_influence replaces the diffusion guidance scale;
             //  - noise reduction is never applied (only optional silence trimming).
@@ -2388,9 +2404,9 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                     const copies = Math.max(1, config.seed_copies ?? 1);
                     const events: any[] = [];
                     for (let copyIdx = 0; copyIdx < copies; copyIdx++) {
+                      const elReq = elevenLabsRequest(config, config.prompt, isBackground, trimSilence);
                       const rawUrl = await generateSoundEffect({
-                        text: config.prompt,
-                        durationSeconds: elevenLabsDurationSeconds(config, isBackground),
+                        text: elReq.text,
                         loop,
                         promptInfluence: config.prompt_influence ?? DEFAULT_PROMPT_INFLUENCE,
                       });
@@ -2399,7 +2415,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                         rawUrl,
                         globalBaseDbfs,
                         false, // noise reduction never applies to ElevenLabs
-                        trimSilence,
+                        elReq.trimSilence,
                       );
                       const baseEvent = createSoundEventFromUpload(
                         { ...config, dbfs: resolvedDbfs, ...(loop ? { interval_seconds: 0 } : {}) },
@@ -2769,15 +2785,15 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           try {
             // ElevenLabs regenerates client-side — never through the TangoFlux
             // backend. Mirrors the ElevenLabs branch of handleGenerateInternal
-            // (duration for long non-background events, seamless loop for
-            // background beds, prompt influence).
+            // (elevenLabsRequest text + trim, seamless loop for background beds,
+            // prompt influence).
             if (audioModel === AUDIO_MODEL_ELEVENLABS) {
               const globalBaseDbfs = useAudioControlsStore.getState().globalBaseDbfs;
               const isBackground = normalizeSoundCategory(config.category) === 'background';
               const loop = config.loop ?? (isBackground || DEFAULT_SOUND_LOOP);
+              const elReq = elevenLabsRequest(config, config.prompt, isBackground, trimSilence);
               const rawUrl = await generateSoundEffect({
-                text: config.prompt,
-                durationSeconds: elevenLabsDurationSeconds(config, isBackground),
+                text: elReq.text,
                 loop,
                 promptInfluence: config.prompt_influence ?? DEFAULT_PROMPT_INFLUENCE,
               });
@@ -2786,7 +2802,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 rawUrl,
                 globalBaseDbfs,
                 false, // noise reduction never applies to ElevenLabs
-                trimSilence,
+                elReq.trimSilence,
               );
 
               const currentForCopy = get().soundscapeData || [];
@@ -3082,9 +3098,9 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               const globalBaseDbfs = useAudioControlsStore.getState().globalBaseDbfs;
               const isBackground = normalizeSoundCategory(config.category) === 'background';
               const loop = config.loop ?? (isBackground || DEFAULT_SOUND_LOOP);
+              const elReq = elevenLabsRequest(config, prompt, isBackground, trimSilence);
               const rawUrl = await generateSoundEffect({
-                text: prompt,
-                durationSeconds: elevenLabsDurationSeconds(config, isBackground),
+                text: elReq.text,
                 loop,
                 promptInfluence: config.prompt_influence ?? DEFAULT_PROMPT_INFLUENCE,
               });
@@ -3093,7 +3109,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 rawUrl,
                 globalBaseDbfs,
                 false, // noise reduction never applies to ElevenLabs
-                trimSilence,
+                elReq.trimSilence,
               );
               patch = {
                 url: audioUrl,
