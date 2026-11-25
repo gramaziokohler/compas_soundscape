@@ -44,7 +44,17 @@ Client polls GET /api/jobs/{id}  (routers/jobs.py reads the Redis hash)
 | card simulations (`pyroomacoustics` speckle/geometry variants) | `simq:<workspace>` (simulation scheduler) | `--role cpu` simulation slots — child process per job | `--slots` (production 2), at most `SIM_MAX_CONCURRENT` (2) on the host |
 | preflight, path views, voxel preview, `sed`, `loop`, directivity | `queue:cpu-light` | `--role cpu` light slots | `CPU_LIGHT_SLOTS` (2) |
 | `pffdtd`, `pffdtd_animation` | `queue:pffdtd` | `--role pffdtd` — child process per job (CUDA engine in the isolated `compas-pffdtd` env) | `PFFDTD_WORKER_SLOTS` (1) |
-| `llm`, `model_analysis`, `tts` | *(none)* | **Inside the API process** as `asyncio.create_task`, semaphore-gated | `LLM_MAX_CONCURRENT` (8), `TTS_MAX_CONCURRENT` (2) |
+| `llm`, `model_analysis`, `tts` | *(none)* | **Inside the API process** as `asyncio.create_task`, semaphore-gated | `LLM_MAX_CONCURRENT` (8), `TTS_MAX_CONCURRENT` (64 jobs, a runaway guard only) |
+
+Gemini TTS has no concurrency cap, only the project's RPM/RPD quota (1,000 RPM / 10,000 RPD).
+`TTSService.generate_speech` is async (`client.aio`), so a call waiting on Gemini holds no thread;
+every line of every job starts at once and waits only on the shared sliding-window `TTS_LIMITER`
+(`services/rate_limiter.py`, `TTS_RPM_LIMIT` 950). A per-minute 429 calls
+`TTS_LIMITER.back_off(retryDelay)` and retries (up to `TTS_MAX_QUOTA_RETRIES`); a per-day 429 raises
+`TtsDailyQuotaError`, is never retried, and drops the job's lines still waiting (finished lines are
+kept). Measured 2026-11-25: 3 jobs x 50 lines, all 150 in flight, 18.5 s wall, no 429. The limiter is
+per process: correct because `CompasApi` runs one uvicorn process; move it to Redis before adding
+`--workers`.
 
 - GPU jobs get a per-session fairness cap: max `GPU_QUEUE_PER_SESSION_MAX` (3) pending per
   session → the enqueue raises `GpuQueueFullError` → the router returns **HTTP 429**.
@@ -179,7 +189,7 @@ through `job_store.enqueue`.
 | Text-to-audio (TangoFlux) | GPU worker queue (`queue:gpu`) — AudioLDM2 is NOT loaded by workers |
 | Text-to-audio / restyle / inpaint (Stable Audio 3) | SA3 worker queue (`queue:sa3`) — isolated `compas-sa3` env (`--role sa3`) |
 | LLM API call (Gemini / OpenAI / Anthropic) | in-process asyncio task (`LLM_SEMAPHORE`) |
-| Gemini TTS | in-process asyncio task (`TTS_SEMAPHORE`) + `run_in_threadpool` per item |
+| Gemini TTS | in-process asyncio task (`TTS_SEMAPHORE`) + async Gemini call behind `TTS_LIMITER`; only calibration uses `run_in_threadpool` |
 | 3D model analysis | in-process asyncio task (`run_blocking` for sync `analyze_3dmodel`) |
 | SSE agent streams | acquire `LLM_SEMAPHORE` directly; keepalive `: ping` every `SSE_KEEPALIVE_INTERVAL_S` |
 | pyroomacoustics / SED / loop | CPU worker (child process per job) |

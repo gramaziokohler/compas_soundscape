@@ -1505,7 +1505,25 @@ GPU_QUEUE_PER_SESSION_MAX = int(os.environ.get("GPU_QUEUE_PER_SESSION_MAX", "3")
 
 # In-process asyncio concurrency (LLM / TTS — network-bound, no subprocess)
 LLM_MAX_CONCURRENT = int(os.environ.get("LLM_MAX_CONCURRENT", "8"))
-TTS_MAX_CONCURRENT = int(os.environ.get("TTS_MAX_CONCURRENT", "2"))
+# TTS jobs at once. Not a throughput limit (TTS_RPM_LIMIT is): Gemini calls
+# are async and hold no thread, so this only bounds runaway job counts.
+TTS_MAX_CONCURRENT = int(os.environ.get("TTS_MAX_CONCURRENT", "64"))
+
+# Gemini TTS quota (services/rate_limiter.py). Google counts requests per minute
+# and per day for each project; there is no concurrency limit. Every line of
+# every job starts as soon as the shared RPM budget allows, so a user alone
+# gets the whole budget. Project limits (AI Studio, Nov 2026): 1,000 RPM and
+# 10,000 RPD; 950 leaves headroom for drift between our count and Google's.
+# Shared by every TTS job in the API process (production runs one uvicorn process).
+TTS_RPM_LIMIT = int(os.environ.get("TTS_RPM_LIMIT", "950"))
+TTS_RPM_WINDOW_S = 60.0
+# Per-minute 429 with no retryDelay in the response: pause every TTS call this long.
+TTS_RATE_LIMIT_DEFAULT_BACKOFF_S = 10.0
+# Per-minute 429s a single line may absorb before it gives up (each one waits
+# for the shared back-off, so this is minutes of patience, not a hammer).
+TTS_MAX_QUOTA_RETRIES = 10
+# Countdown refresh while a line waits for quota (progress text updates).
+TTS_RATE_LIMIT_TICK_S = 1.0
 
 # Job lifecycle
 JOB_HEARTBEAT_TIMEOUT_S = int(os.environ.get("JOB_HEARTBEAT_TIMEOUT_S", "90"))

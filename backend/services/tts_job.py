@@ -1,30 +1,47 @@
 """
-Per-item TTS generation helper — synchronous (blocking) Gemini TTS calls with
-retry/backoff and loudness calibration.
+Per-item TTS generation — rate-limited Gemini TTS calls with retry/backoff and
+loudness calibration.
 
-Called via services.io_jobs.run_blocking() (starlette run_in_threadpool) from
-routers/tts.py's in-process asyncio job, so a slow or rate-limited TTS call
-can't stall the event loop the way it would if awaited directly.
+``generate_tts_item`` is async: every attempt waits for the shared RPM budget
+(``services.rate_limiter.TTS_LIMITER``) and nothing else, then awaits the
+async Gemini call (no thread held while waiting on the network). Only the
+short CPU-bound calibration runs in the threadpool (services.io_jobs.run_blocking).
 """
 from __future__ import annotations
 
-import time
+import asyncio
+from typing import Awaitable, Callable, Optional
 
+from services.io_jobs import run_blocking
+from services.rate_limiter import TTS_LIMITER
 from services.tts_service import TTSService
 from utils.audio_processing import calibrate_audio_loudness
+from utils.gemini_quota import classify_quota_error
 from utils.resampling import resample_to
 from config.constants import (
     DEFAULT_TTS_MODEL,
     FILENAME_MAX_LENGTH,
     WINDOWS_ILLEGAL_FILENAME_CHARS,
     AUDIO_SAMPLE_RATE,
+    TTS_MAX_QUOTA_RETRIES,
+    TTS_RATE_LIMIT_DEFAULT_BACKOFF_S,
 )
 
 # The Gemini TTS API can return 400 INVALID_ARGUMENT or empty content when
 # rate-limited (rather than a clean 429) — retry with backoff so the quota
-# has time to recover.
+# has time to recover. A per-minute 429 waits on the shared limiter instead;
+# a per-day 429 is not retried (TtsDailyQuotaError).
 TTS_MAX_RETRIES = 4
 TTS_RETRY_DELAYS_S = [3, 6, 12, 24]
+
+
+class TtsDailyQuotaError(RuntimeError):
+    """Gemini's per-day TTS quota for the project is used up (resets at
+    midnight Pacific time). Retrying before then cannot succeed."""
+
+
+class TtsCancelled(Exception):
+    """The user cancelled the TTS job while a line waited for quota."""
 
 
 def _calibrate_wav_to_dbfs(input_path: str, target_dbfs: float) -> None:
@@ -55,7 +72,7 @@ def sanitize_filename(text: str) -> str:
     return short_name or "speech"
 
 
-def generate_tts_item(
+async def generate_tts_item(
     tts_service: TTSService,
     text: str,
     output_path: str,
@@ -64,21 +81,29 @@ def generate_tts_item(
     tts_model: str,
     dbfs: float,
     style: str | None = None,
+    on_wait: Optional[Callable[[float], Awaitable[None]]] = None,
 ) -> float:
-    """Generate one TTS clip with retry/backoff, then calibrate to dbfs.
+    """Generate one TTS clip with rate limiting and retry/backoff, then
+    calibrate to dbfs.
+
+    ``on_wait(seconds)`` is called about once a second while this item waits
+    for the RPM budget, so the job can show a countdown, then with 0 when the
+    call starts. It may raise to abandon the item (e.g. on cancel).
 
     Returns the real measured clip duration (seconds) reported by the API —
     used downstream to space out dependent sounds/dialogue via
     after()/alignEnd() links, so it must reflect the actual audio length, not
-    a nominal guess. Raises the last exception after exhausting retries.
+    a nominal guess. Raises TtsDailyQuotaError at once on a per-day 429, and
+    the last exception after exhausting retries otherwise.
     """
-    last_exc: Exception | None = None
-    real_duration_seconds = 5.0
-    for attempt in range(TTS_MAX_RETRIES):
-        if attempt > 0:
-            time.sleep(TTS_RETRY_DELAYS_S[attempt - 1])
+    other_failures = 0
+    quota_retries = 0
+    while True:
+        await TTS_LIMITER.acquire(on_wait)
+        if on_wait is not None:
+            await on_wait(0.0)
         try:
-            _, real_duration_seconds = tts_service.generate_speech(
+            _, real_duration_seconds = await tts_service.generate_speech(
                 text=text,
                 output_path=output_path,
                 voice_name=voice_name,
@@ -86,12 +111,25 @@ def generate_tts_item(
                 model=tts_model or DEFAULT_TTS_MODEL,
                 style=style,
             )
-            last_exc = None
             break
         except Exception as exc:
-            last_exc = exc
-    if last_exc is not None:
-        raise last_exc
+            kind, retry_delay_s = classify_quota_error(exc)
+            if kind == "daily":
+                raise TtsDailyQuotaError(
+                    "Daily Gemini TTS quota reached (resets at midnight Pacific time)"
+                ) from exc
+            if kind == "minute":
+                # Pause every TTS call, not just this one; the next attempt
+                # waits on the limiter (with countdown).
+                quota_retries += 1
+                if quota_retries > TTS_MAX_QUOTA_RETRIES:
+                    raise
+                TTS_LIMITER.back_off(retry_delay_s or TTS_RATE_LIMIT_DEFAULT_BACKOFF_S)
+                continue
+            other_failures += 1
+            if other_failures >= TTS_MAX_RETRIES:
+                raise
+            await asyncio.sleep(TTS_RETRY_DELAYS_S[other_failures - 1])
 
-    _calibrate_wav_to_dbfs(output_path, dbfs)
+    await run_blocking(_calibrate_wav_to_dbfs, output_path, dbfs)
     return real_duration_seconds

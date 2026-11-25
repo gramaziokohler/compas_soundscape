@@ -52,7 +52,7 @@ class TTSService:
             return False
         return True
 
-    def generate_speech(
+    async def generate_speech(
         self,
         text: str,
         output_path: str,
@@ -67,6 +67,10 @@ class TTSService:
         ``style`` is a sustained delivery instruction ("whispering", "excited and
         fast"). Gemini 3.8 reads the transcript verbatim, so it travels as a
         ``speech_metadata`` annotation over the whole text, never inside it.
+
+        Async (``client.aio``): a call waiting on Gemini holds no thread, so
+        a job can run as many calls at once as the RPM budget allows without
+        starving the API's threadpool.
 
         A fresh genai.Client is created for every call.  Reusing the same
         client across multiple sequential TTS requests causes the Gemini model
@@ -96,7 +100,7 @@ class TTSService:
             # the transcript (which is read verbatim).
             speech_config["language"] = language_code
 
-        interaction = client.interactions.create(
+        interaction = await client.aio.interactions.create(
             model=model or DEFAULT_TTS_MODEL,
             input=[{
                 "type": "user_input",
