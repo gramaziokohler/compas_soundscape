@@ -104,7 +104,7 @@ describe('sound-paths panel', () => {
     expect(html).toContain('outdated');
     expect(html).toContain('1 edge off');
     expect(html).toContain('2 edges (1 carry a path)');
-    expect(html).toContain('own corners do not diffract');
+    expect(html).toContain('faces disagree on which side is air'); // the payload's note, shown as a Notice
     expect(html).toContain('Show paths in 3D');
     expect(html).not.toContain('Click edges in 3D'); // view controls only once shown in 3D
   });
