@@ -741,31 +741,47 @@ CA_TO_APP_LEVEL_SCALE = 4.0 * 3.141592653589793
 # (stage, done, of); each stage gets a label, the unit of its counts, and the span of a part's bar
 # it covers. Spans measured on a 2 x 2 pair, order-2 ambisonic run (10k rays): ray tracing ~25 %,
 # image sources ~4 %, then the three rendering steps about a quarter each.
+# Stage names since compas_acoustics b66a67e: Mono reports "simulating" as it starts and "simulating i/n"
+# per response; the hybrids render as "simulating: <step>". The names before it ("responses", "rendering",
+# "rendering: <step>") stay mapped until requirements.txt pins an engine-integration built on b66a67e.
+CA_PROGRESS_STAGE_SIMULATING = "simulating"
+_CA_RENDER_STEPS = {
+    "early reflections": "Early reflections",
+    "late reverberation": "Late reverberation (FDN)",
+    "ambisonic encoding": "Ambisonic encoding",
+    "binaural encoding": "Binaural encoding",
+}
+_CA_RENDER_STEP_SPANS = {
+    "early reflections": (0.42, 0.62),
+    "late reverberation": (0.62, 0.8),
+    "ambisonic encoding": (0.8, 1.0),
+    "binaural encoding": (0.8, 1.0),
+}
+_CA_RENDER_PREFIXES = ("simulating: ", "rendering: ")
 CA_PROGRESS_STAGE_LABELS = {
     "references": "Reference response",
     "ray tracing": "Ray tracing",
     "diffraction": "Diffraction",
+    CA_PROGRESS_STAGE_SIMULATING: "Simulating",
     "responses": "Responses",
     "image sources": "Image sources",
     "directional histograms": "Directional histograms",
     "energy map: rays": "Energy map rays",
     "energy map: image sources": "Energy map image sources",
     "rendering": "Rendering",
-    "rendering: early reflections": "Early reflections",
-    "rendering: late reverberation": "Late reverberation (FDN)",
-    "rendering: ambisonic encoding": "Ambisonic encoding",
-    "rendering: binaural encoding": "Binaural encoding",
+    **{prefix + step: label for prefix in _CA_RENDER_PREFIXES for step, label in _CA_RENDER_STEPS.items()},
 }
 CA_PROGRESS_STAGE_UNITS = {  # "ray tracing" counts rays (sources when one process per source traces them)
     "image sources": "reflections",  # found so far, with no total
+    CA_PROGRESS_STAGE_SIMULATING: "responses",
     "responses": "responses",
     "directional histograms": "sources",
     "rendering": "pairs",
-    "rendering: early reflections": "pairs",
-    "rendering: late reverberation": "pairs",
-    "rendering: ambisonic encoding": "pairs",
-    "rendering: binaural encoding": "pairs",
+    **{prefix + step: "pairs" for prefix in _CA_RENDER_PREFIXES for step in _CA_RENDER_STEPS},
 }
+# Stages whose span applies only to a report with counts: bare "simulating" starts a Mono run (or a hybrid's
+# reference), "simulating i/n" counts its responses at the end.
+CA_PROGRESS_COUNTED_ONLY = (CA_PROGRESS_STAGE_SIMULATING,)
 # The collapsed line of a run split over processes: the phase of its slowest part, then the pairs done
 # ("Rendering responses · 3/18 pairs"); each part's own step and counts are in its expanded row.
 CA_PROGRESS_PHASES = {
@@ -774,31 +790,29 @@ CA_PROGRESS_PHASES = {
     "ray tracing": "Tracing sound paths",
     "diffraction": "Tracing sound paths",
     "directional histograms": "Tracing sound paths",
+    CA_PROGRESS_STAGE_SIMULATING: "Rendering responses",
     "responses": "Rendering responses",
     "rendering": "Rendering responses",
-    "rendering: early reflections": "Rendering responses",
-    "rendering: late reverberation": "Rendering responses",
-    "rendering: ambisonic encoding": "Rendering responses",
-    "rendering: binaural encoding": "Rendering responses",
+    **{prefix + step: "Rendering responses" for prefix in _CA_RENDER_PREFIXES for step in _CA_RENDER_STEPS},
 }
 CA_PROGRESS_PHASE_STARTING = "Starting"
+CA_PROGRESS_PHASE_DONE = "Done"  # every part has finished
 CA_PROGRESS_SPANS_AMBISONIC = {
     "references": (0.0, 0.02),
     "ray tracing": (0.02, 0.27),
     "diffraction": (0.27, 0.3),
+    CA_PROGRESS_STAGE_SIMULATING: (0.3, 0.34),  # the reference's responses
     "responses": (0.3, 0.34),
     "image sources": (0.34, 0.38),
     "directional histograms": (0.38, 0.42),
     "rendering": (0.42, 1.0),
-    "rendering: early reflections": (0.42, 0.62),
-    "rendering: late reverberation": (0.62, 0.8),
-    "rendering: ambisonic encoding": (0.8, 1.0),
-    "rendering: binaural encoding": (0.8, 1.0),
+    **{prefix + step: span for prefix in _CA_RENDER_PREFIXES for step, span in _CA_RENDER_STEP_SPANS.items()},
 }
 CA_PROGRESS_SPANS_MONO = {
     "image sources": (0.0, 0.1),
     "ray tracing": (0.0, 0.6),
     "diffraction": (0.6, 0.7),
+    CA_PROGRESS_STAGE_SIMULATING: (0.7, 1.0),
     "responses": (0.7, 1.0),
 }
 # Key of a job's ``partial`` holding the rows of its parts that run side by side (services/progress_lanes.py)

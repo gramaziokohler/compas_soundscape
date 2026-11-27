@@ -254,6 +254,10 @@ def test_progress_lines_name_the_step_and_its_counts():
     from services import ca_progress
 
     assert ca_progress.describe("rendering: late reverberation", 2, 3, 10000) == "Late reverberation (FDN) · 2/3 pairs"
+    # the stage names since compas_acoustics b66a67e
+    assert ca_progress.describe("simulating: late reverberation", 2, 3, 10000) == "Late reverberation (FDN) · 2/3 pairs"
+    assert ca_progress.describe("simulating", 1, 4, 10000) == "Simulating · 1/4 responses"
+    assert ca_progress.describe("simulating", None, None, 10000) == "Simulating"
     assert ca_progress.describe("ray tracing", 6200, 20000, 10000) == "Ray tracing · 6,200/20,000 rays"
     assert ca_progress.describe("ray tracing", 1, 3, 10000) == "Ray tracing · 1/3 sources"
     assert ca_progress.describe("image sources", None, None, 10000) == "Image sources"
@@ -275,6 +279,19 @@ def test_progress_lines_name_the_step_and_its_counts():
     lane.update("references", None, None)  # a stage met again never moves the bar back
     assert lane.fraction == halfway and 0.5 < halfway < 1.0
     assert ca_progress._ranges([1, 2, 3, 5, 7, 8]) == "1–3, 5, 7–8"
+    # Mono's bare "simulating" starts the run: the bar stays at 0 until its responses are counted
+    mono = ca_progress.Lane("S1 → R1", 1, ca_progress.stage_spans(False), 10000)
+    mono.update("simulating", None, None)
+    assert mono.fraction == 0.0
+    mono.update("image sources", 120, None)
+    mono.update("simulating", 1, 2)
+    assert 0.7 < mono.fraction < 1.0
+    hybrid = ca_progress.Lane("S1 → R1", 1, ca_progress.stage_spans(True), 10000)
+    hybrid.update("simulating: early reflections", 0, 1)
+    assert hybrid.fraction == ca_progress.stage_spans(True)["simulating: early reflections"][0]
+    assert ca_progress.summary([hybrid], 1)[1] == "Rendering responses · 0/1 pairs"
+    hybrid.finish()
+    assert ca_progress.summary([hybrid], 1)[1] == "Done · 1/1 pairs"
 
 
 def test_mono_metrics_from_the_pool_match():
@@ -285,7 +302,8 @@ def test_mono_metrics_from_the_pool_match():
     pairs = [{"source_id": "s1", "source_position": source, "receiver_id": r, "receiver_position": rp} for r, rp in receivers.items()]
     mesh = _prepared_shoebox([source] + list(receivers.values()))
     offset = room_offset(mesh)
-    base = dict(max_order=2, ray_tracing=False, air_absorption=False)
+    # order 6: the response outlasts 50 ms, so C50 and D50 have a late part (the Analyser gives NaN without one)
+    base = dict(max_order=6, ray_tracing=False, air_absorption=False)
     serial = engine.simulate_pairs(mesh, offset, pairs, engine.EngineSettings(**base, n_jobs=1), lambda f, t, d: None)
     pooled = engine.simulate_pairs(mesh, offset, pairs, engine.EngineSettings(**base, n_jobs=2), lambda f, t, d: None)
     for a, b in zip(serial.responses, pooled.responses):
@@ -293,6 +311,7 @@ def test_mono_metrics_from_the_pool_match():
         assert a.metrics is not None and b.metrics is not None
         bands_a, bands_b = a.metrics["acoustic_parameters_bands"], b.metrics["acoustic_parameters_bands"]
         for key in ("C50", "D50"):   # float32 hand-over to the pool: equal to rounding
+            assert None not in bands_a[key], key
             np.testing.assert_allclose(bands_b[key], bands_a[key], atol=0.05)
 
 

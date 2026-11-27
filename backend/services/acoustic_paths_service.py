@@ -162,8 +162,10 @@ def compute_paths(
         with scene_geometry(geometry):
             field = ca.RayField.from_scene(scene, n_rays=int(n_rays), max_reflection_order=int(ray_order))
         rays = [{"s": int(ray.source_index), "points": _flat(ray.points, offset)} for ray in field.rays if len(ray.points) >= 2]
+        # the longest travel time of the rays (compas_acoustics 0.2 dropped RayField.duration_ms)
+        duration_ms = max((float(ray.travel_time) for ray in field.rays), default=0.0)
         doc["rays"] = {"n_rays": int(n_rays), "max_order": int(ray_order), "rays": rays,
-                       "duration_ms": round(float(field.duration_ms), 2) if rays else 0.0}
+                       "duration_ms": round(duration_ms, 2) if rays else 0.0}
 
     if "diffraction" in kinds:
         progress(75, "Finding diffracting edges...")

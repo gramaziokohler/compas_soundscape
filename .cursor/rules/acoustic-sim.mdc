@@ -90,8 +90,10 @@ Step 5 above is the **legacy** engine. Since the compas_acoustics migration
   and `air_humidity` override it.
 - **Progress:** CA reports `(stage, done, of)`; `services/ca_progress.py` turns each report into a
   bar fraction (`CA_PROGRESS_SPANS_*`) and a line ("Late reverberation (FDN) · 2/3 pairs"). The
-  hybrid's rendering stage reports its steps (`rendering: early reflections` / `late reverberation`
-  / `ambisonic encoding`) while pairs render. When the pairs render in several processes, each one
+  hybrid's rendering stage reports its steps (`simulating: early reflections` / `late reverberation`
+  / `ambisonic encoding`) while pairs render; Mono reports bare `simulating` as it starts (no bar
+  move, `CA_PROGRESS_COUNTED_ONLY`) and `simulating i/n` per response. The names before CA b66a67e
+  (`responses`, `rendering: <step>`) stay mapped until the pin moves past it. When the pairs render in several processes, each one
   writes its last report to `temp/simulations/ca_lanes_*/lane<k>.json`. The job reads them every
   `CA_PROGRESS_POLL_S` into `partial.ca_progress.lanes`. The card's ▾ next to the status line shows
   one row per process with its step and counts (`components/ui/ProgressLanes.tsx`); the collapsed

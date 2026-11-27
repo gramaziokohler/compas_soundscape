@@ -15,6 +15,8 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
+from config.constants import CA_PROGRESS_COUNTED_ONLY
+from config.constants import CA_PROGRESS_PHASE_DONE
 from config.constants import CA_PROGRESS_PHASE_STARTING
 from config.constants import CA_PROGRESS_PHASES
 from config.constants import CA_PROGRESS_SPANS_AMBISONIC
@@ -92,6 +94,8 @@ class Lane:
             self.state, self.started = LANE_RUNNING, time.monotonic()
         self.stage, self.done, self.of = stage, done, of
         span = self.spans.get(stage)
+        if stage in CA_PROGRESS_COUNTED_ONLY and done is None:
+            span = None  # the bare stage starts the run; its span is that of its counted reports
         if span is not None:
             inner = min(done / of, 1.0) if (done is not None and of) else 0.0
             # stages without counts, or met twice (the reference's own), never move the bar back
@@ -143,6 +147,8 @@ def read_lane(path: str) -> Optional[tuple]:
 
 def phase(lanes: list[Lane]) -> str:
     """The high-level phase of the slowest running part ("Tracing sound paths", "Rendering responses")."""
+    if lanes and all(lane.state == LANE_DONE for lane in lanes):
+        return CA_PROGRESS_PHASE_DONE
     running = [lane for lane in lanes if lane.state == LANE_RUNNING and lane.stage]
     if not running:
         return CA_PROGRESS_PHASE_STARTING

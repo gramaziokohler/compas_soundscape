@@ -42,7 +42,7 @@ def _analyser(w: np.ndarray, fs: int, generation: Optional[dict]):
 
     if generation:
         # A compas_acoustics response: rebuilt on the package scale with its generation metadata, so
-        # the Analyser starts its direct-sound search at the geometric arrival.
+        # the Analyser keeps its absolute level (G). Its onset is pyfar's 20 dB start of the channel.
         source, receiver = ca.Source("s", 0.0, 0.0, 0.0), ca.Receiver("r", 1.0, 0.0, 0.0)
         ir = ca.ImpulseResponse("ir", source, receiver, w / CA_TO_APP_LEVEL_SCALE, int(fs),
                                 normalized=False, generation=generation)
@@ -65,8 +65,8 @@ def measure_ir(
         rir: (samples,) or (samples, channels); channel 0 (the W channel of an ambisonic IR) is
             analysed. Pass the response BEFORE it is trimmed for export.
         fs: Sample rate in Hz.
-        generation: The ``ImpulseResponse.generation`` of a compas_acoustics response, whose
-            geometric direct-sound arrival then anchors the analysis.
+        generation: The ``ImpulseResponse.generation`` of a compas_acoustics response, which keeps
+            its absolute (package-scale) level for the analysis.
         band_limit_hz: A band-limited IR (PFFDTD) carries nothing above this frequency: the bands
             reaching above it are left out (None), and the single numbers that need them too.
     """
