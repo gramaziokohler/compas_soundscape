@@ -247,12 +247,14 @@ One job on the PFFDTD queue (`JOB_TYPE_PFFDTD`, payload `variant: "hybrid"`,
     recommended crossover and the GPU max; helpers in `lib/acoustics/crossover-band.ts`). Dragging
     onto the recommended line, or clicking its "rec" label, sets Schroeder × 1; clicking "GPU max"
     moves the handle to the highest frequency that fits (`floorCrossover`); anywhere else is a
-    manual frequency. The crossover is set on the band only (no mode dropdown). The selected part's
-    settings (`Hybrid2PartSettings.tsx`, no "Additional settings" group) are tinted with its colour
+    manual frequency; double-clicking the band opens a number field for it. The crossover is set
+    on the band only (no mode dropdown); the line under it reads "Crossover frequency: 155 Hz
+    (solved up to 233 Hz)." The selected part's settings (`Hybrid2PartSettings.tsx`; the wave part
+    shows every control, the rays keep their "Additional settings") are tinted with its colour
     (`--section-accent` on the section; explicit `ToggleField color` / `CardSelect accentColor` for
     the wave part); precision is a dropdown (`PffdtdPrecisionToggle asSelect`). New cards match the
     parts' levels at the crossover (`level_match: true`). The run's notes take the colour of the
-    part they are about (`notePart`).
+    part they are about (`notePart`). Switching parts keeps the sidebar's scroll offset.
   - **Steps** (`Hybrid2Steps.tsx`, transient `hybrid2Steps` in AcousticsSection): Setup → Check →
     Run → Results. Setup's button is "Check geometry" (opens Check, runs the preflight unless one
     is current); Check (`Hybrid2CheckPanel.tsx`: verdict, figures, issues, 3D preview, details)

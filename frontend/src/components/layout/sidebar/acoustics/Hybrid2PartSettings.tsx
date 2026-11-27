@@ -1,8 +1,8 @@
 /**
  * Hybrid2PartSettings — the settings of the part selected on the crossover band of Hybrid
  * simulation 2: the wave solver's (grid, IR length, precision, level match) or the rays' (rays, image
- * sources, air, diffraction, parallel processing and the engine options). No "Additional settings"
- * group: every control shows. The crossover itself is set on the band only.
+ * sources, air, diffraction; parallel processing and the engine options under "Additional settings").
+ * The crossover itself is set on the band only.
  *
  * The controls are the ones of the original hybrid card (HybridSimulationSettings), split by part.
  * The parent colours them with the part's colour (`--section-accent`).
@@ -173,7 +173,7 @@ export function RaysPartSettings({ settings: s, set, isModified, disabled }: Par
         isModified={(field: keyof EngineSettings) => isModified(field)}
         disabled={disabled}
         lockEngine
-        additionalVariant="inline"
+        additionalVariant="section"
         additionalExtraModified={isModified('parallel')}
         additionalExtra={(
           <ToggleField

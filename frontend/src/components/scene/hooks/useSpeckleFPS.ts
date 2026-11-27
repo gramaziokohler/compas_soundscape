@@ -60,17 +60,18 @@ export function useSpeckleFPS({
     isFirstPersonModeRef.current = isFirstPersonMode;
   }, [isFirstPersonMode]);
 
-  // Mouse joystick drag state (rate-based rotation)
-  const leftDragRef = useRef(false);
-  const rightDragRef = useRef(false);
-  const leftOriginRef = useRef({ x: 0, y: 0 });
-  const rightOriginXRef = useRef(0);
-  const leftVecRef = useRef({ x: 0, y: 0 });
+  // Mouse joystick drag state (rate-based rotation): right-drag looks
+  // (yaw/pitch), middle-drag rolls. Left is left to selection.
+  const lookDragRef = useRef(false);
+  const rollDragRef = useRef(false);
+  const lookOriginRef = useRef({ x: 0, y: 0 });
+  const rollOriginXRef = useRef(0);
+  const lookVecRef = useRef({ x: 0, y: 0 });
   const rollValRef = useRef(0);
   const animFrameRef = useRef<number | null>(null);
   const lastTimeRef = useRef(0);
 
-  // Roll return-to-initial (roll-only debouncer): after releasing the right
+  // Roll return-to-initial (roll-only debouncer): after releasing the middle
   // button the roll eases back to the value captured when the drag started.
   const rollInitialRef = useRef(0);
   const rollReturningRef = useRef(false);
@@ -135,12 +136,13 @@ export function useSpeckleFPS({
   }, []);
 
   // ============================================================================
-  // Effect - Mouse Joystick (left-drag yaw/pitch, right-drag roll)
+  // Effect - Mouse Joystick (right-drag yaw/pitch, middle-drag roll)
   // Rate-based joystick: deflection from the press origin (clamped to MAX_THROW
   // px) drives a constant angular speed, scaled by frame delta. A RAF loop runs
-  // while FPS mode is active and is cancelled on exit. Right-drag suppresses the
-  // context menu. Registered only while isFirstPersonMode so the orbit camera is
-  // unaffected.
+  // while FPS mode is active and is cancelled on exit. Left-click is not used
+  // here: it only selects (sounds, listeners, model objects). The context menu
+  // is suppressed so right-drag can look around. Registered only while
+  // isFirstPersonMode so the orbit camera is unaffected.
   //
   // Uses Pointer Events (not Mouse Events): the Speckle viewer calls
   // preventDefault() on pointerdown, which suppresses the compatibility
@@ -163,31 +165,25 @@ export function useSpeckleFPS({
     const MAX_FRAME_DT = 0.1;    // cap dt to avoid rotation jumps after frame hitches
 
     // Reset any stale drag state from a previous FPS session
-    leftDragRef.current = false;
-    rightDragRef.current = false;
+    lookDragRef.current = false;
+    rollDragRef.current = false;
     rollReturningRef.current = false;
-    leftVecRef.current = { x: 0, y: 0 };
+    lookVecRef.current = { x: 0, y: 0 };
     rollValRef.current = 0;
     lastTimeRef.current = 0;
 
     const handlePointerDown = (event: PointerEvent) => {
-      if (event.button === 0) {
-        // Don't start the camera-look joystick when the press is over a
-        // draggable element (sound source / listener) or its drag gizmo — the
-        // user intends to select/drag that element, not look around.
-        const { coordinator } = useSpeckleEngineStore.getState();
-        if (coordinator?.isPointerOverDraggable(event.clientX, event.clientY)) {
-          leftDragRef.current = false;
-          return;
-        }
-        leftDragRef.current = true;
-        leftOriginRef.current = { x: event.clientX, y: event.clientY };
-        leftVecRef.current = { x: 0, y: 0 };
-      } else if (event.button === 2) {
+      if (event.button === 2) {
+        lookDragRef.current = true;
+        lookOriginRef.current = { x: event.clientX, y: event.clientY };
+        lookVecRef.current = { x: 0, y: 0 };
+      } else if (event.button === 1) {
+        // No middle-click autoscroll while rolling.
+        event.preventDefault();
         // Cancel any in-progress roll return and capture the roll to return to.
         rollReturningRef.current = false;
-        rightDragRef.current = true;
-        rightOriginXRef.current = event.clientX;
+        rollDragRef.current = true;
+        rollOriginXRef.current = event.clientX;
         rollValRef.current = 0;
         const { coordinator } = useSpeckleEngineStore.getState();
         const cam = coordinator?.getCameraController();
@@ -196,15 +192,15 @@ export function useSpeckleFPS({
     };
 
     const handlePointerMove = (event: PointerEvent) => {
-      if (leftDragRef.current) {
-        leftVecRef.current = {
-          x: THREE.MathUtils.clamp(event.clientX - leftOriginRef.current.x, -MAX_THROW, MAX_THROW),
-          y: THREE.MathUtils.clamp(event.clientY - leftOriginRef.current.y, -MAX_THROW, MAX_THROW),
+      if (lookDragRef.current) {
+        lookVecRef.current = {
+          x: THREE.MathUtils.clamp(event.clientX - lookOriginRef.current.x, -MAX_THROW, MAX_THROW),
+          y: THREE.MathUtils.clamp(event.clientY - lookOriginRef.current.y, -MAX_THROW, MAX_THROW),
         };
       }
-      if (rightDragRef.current) {
+      if (rollDragRef.current) {
         rollValRef.current = THREE.MathUtils.clamp(
-          event.clientX - rightOriginXRef.current,
+          event.clientX - rollOriginXRef.current,
           -MAX_THROW,
           MAX_THROW
         );
@@ -212,11 +208,11 @@ export function useSpeckleFPS({
     };
 
     const handlePointerUp = (event: PointerEvent) => {
-      if (event.button === 0) {
-        leftDragRef.current = false;
-        leftVecRef.current = { x: 0, y: 0 };
-      } else if (event.button === 2) {
-        rightDragRef.current = false;
+      if (event.button === 2) {
+        lookDragRef.current = false;
+        lookVecRef.current = { x: 0, y: 0 };
+      } else if (event.button === 1) {
+        rollDragRef.current = false;
         rollValRef.current = 0;
         // Ease the roll back to where it was when this drag started.
         rollReturningRef.current = true;
@@ -246,16 +242,16 @@ export function useSpeckleFPS({
       if (dt > 0) {
         const { coordinator } = useSpeckleEngineStore.getState();
         if (coordinator) {
-          // Yaw/pitch — left-drag joystick (rate-based).
-          if (leftDragRef.current) {
+          // Yaw/pitch — right-drag joystick (rate-based).
+          if (lookDragRef.current) {
             // Drag right → look right (+yaw, matches ArrowRight); drag down →
             // look down (-pitch, matches ArrowDown).
-            const yaw = (leftVecRef.current.x / MAX_THROW) * MAX_ANG_SPEED * dt;
-            const pitch = -(leftVecRef.current.y / MAX_THROW) * MAX_ANG_SPEED * dt;
+            const yaw = (lookVecRef.current.x / MAX_THROW) * MAX_ANG_SPEED * dt;
+            const pitch = -(lookVecRef.current.y / MAX_THROW) * MAX_ANG_SPEED * dt;
             coordinator.rotateFirstPersonView(yaw, pitch, 0);
           }
-          // Roll — right-drag joystick, or eased return to the initial roll.
-          if (rightDragRef.current) {
+          // Roll — middle-drag joystick, or eased return to the initial roll.
+          if (rollDragRef.current) {
             const roll = -(rollValRef.current / MAX_THROW) * ROLL_MAX_ANG_SPEED * dt;
             coordinator.rotateFirstPersonView(0, 0, roll);
           } else if (rollReturningRef.current) {

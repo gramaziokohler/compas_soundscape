@@ -12,7 +12,8 @@
  * hatched red. An orange "used" line marks the crossover the simulation actually ran with when the
  * job had to fit it (GPU memory, a seed near a surface; Hybrid2WaveFitNotice). Dragging near the
  * recommended line snaps to it. The handle is a slider for the
- * keyboard (arrows, Shift for larger steps, Home = recommended).
+ * keyboard (arrows, Shift for larger steps, Home = recommended); double-clicking the band opens a
+ * number field to type the frequency.
  *
  * Usage:
  * ```tsx
@@ -26,6 +27,7 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { ChevronsLeftRight } from 'lucide-react';
 import { Checkbox } from '@/components/ui/Checkbox';
+import { NumberField } from '@/components/ui/NumberField';
 import { HYBRID, HYBRID_BAND } from '@/utils/constants';
 import {
   bandFrequency,
@@ -135,6 +137,14 @@ export function CrossoverBand({
 }: CrossoverBandProps) {
   const bandRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
+  // Double-click on the band: type the frequency (Enter / leaving the field sets it, Escape cancels)
+  const [typing, setTyping] = useState(false);
+  const typingCancelled = useRef(false);
+  const commitTyped = (value: number | null) => {
+    setTyping(false);
+    if (typingCancelled.current || value === null || !Number.isFinite(value)) return;
+    onCrossoverChange(Math.min(HYBRID.CROSSOVER_HZ_MAX, Math.max(HYBRID.CROSSOVER_HZ_MIN, value)));
+  };
   const waveOn = parts !== 'rays';
   const raysOn = parts !== 'wave';
   const hasHandle = waveOn;
@@ -250,6 +260,11 @@ export function CrossoverBand({
       <div className="relative select-none">
         <div
           ref={bandRef}
+          onDoubleClick={() => {
+            if (!hasHandle || disabled) return;
+            typingCancelled.current = false;
+            setTyping(true);
+          }}
           className="relative overflow-visible rounded border"
           style={{
             height: HYBRID_BAND.HEIGHT_PX,
@@ -296,6 +311,31 @@ export function CrossoverBand({
               onClick={hasHandle && !disabled ? () => onCrossoverChange(usedHz) : undefined} />
           )}
 
+          {hasHandle && typing && (
+            <div
+              className="absolute top-1/2 z-30 -translate-x-1/2 -translate-y-1/2"
+              style={{ left: pct(split) }}
+              onPointerDown={(e) => e.stopPropagation()}
+              onDoubleClick={(e) => e.stopPropagation()}
+            >
+              <NumberField
+                value={Math.round(crossoverHz)}
+                precision={0}
+                autoFocus
+                onCommit={commitTyped}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    typingCancelled.current = true;
+                    setTyping(false);
+                  }
+                }}
+                containerStyle={{ width: '7ch' }}
+                className="!text-xs !py-0"
+                aria-label={raysOn ? 'Crossover frequency (Hz)' : 'Wave band top frequency (Hz)'}
+                title={`${HYBRID.CROSSOVER_HZ_MIN}–${HYBRID.CROSSOVER_HZ_MAX} Hz. Enter to set, Escape to cancel.`}
+              />
+            </div>
+          )}
           {hasHandle && (
             <div
               role="slider"
@@ -310,7 +350,7 @@ export function CrossoverBand({
               onKeyDown={onHandleKey}
               className="absolute inset-y-0 z-20 flex -translate-x-1/2 touch-none items-center justify-center outline-none focus-visible:ring-2"
               style={{ left: pct(split), width: 16, cursor: disabled ? 'default' : 'ew-resize' }}
-              title={`${raysOn ? 'Crossover' : 'Wave band top'}: ${formatHz(crossoverHz)}. Drag, or use the arrow keys (Home: recommended).`}
+              title={`${raysOn ? 'Crossover' : 'Wave band top'}: ${formatHz(crossoverHz)}. Drag, double-click to type a value, or use the arrow keys (Home: recommended).`}
             >
               <div className="absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2" style={{ backgroundColor: overGpu ? 'var(--color-error)' : 'var(--foreground)' }} />
               <div

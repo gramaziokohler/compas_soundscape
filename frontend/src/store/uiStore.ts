@@ -57,6 +57,14 @@ export interface SoundFocus {
   version: number;
 }
 
+/** The focused listener — see `UIStoreState.listenerFocus`. */
+export interface ListenerFocus {
+  /** Receiver id, or grid listener point id (`${gridId}-${index}`). */
+  id: string;
+  /** Bumped on every focus, so the same listener re-applies. */
+  version: number;
+}
+
 export type AdvancedSettingsFocusTarget = 'tts-language' | 'text-to-audio' | 'workspaces';
 
 export interface UIStoreState {
@@ -234,6 +242,12 @@ export interface UIStoreState {
   soundFocus: SoundFocus | null;
   focusSound: (index: number, source: SoundFocusSource, reveal?: boolean, entityNodeId?: string) => void;
   clearSoundFocus: () => void;
+  /**
+   * The last listener (receiver / grid point) clicked in the 3D scene. An expanded simulation
+   * card scrolls its IR list to that listener's group. Not persisted.
+   */
+  listenerFocus: ListenerFocus | null;
+  focusListener: (id: string) => void;
   /** Active parent (usage or context) index filtering the Sounds section. Null = no filter. */
   activeSoundParentIndex: number | null;
   setActiveSoundParentIndex: (index: number | null) => void;
@@ -578,6 +592,13 @@ export const useUIStore = create<UIStoreState>()(
           'ui/focusSound',
         ),
       clearSoundFocus: () => set({ soundFocus: null }, false, 'ui/clearSoundFocus'),
+      listenerFocus: null,
+      focusListener: (id) =>
+        set(
+          (s) => ({ listenerFocus: { id, version: (s.listenerFocus?.version ?? 0) + 1 } }),
+          false,
+          'ui/focusListener',
+        ),
       activeSoundParentIndex: null,
       setActiveSoundParentIndex: (index) =>
         set(
@@ -717,7 +738,7 @@ export const useUIStore = create<UIStoreState>()(
         hoveredIRSourceReceiver, activeGradientMap, selectedIRId, selectedIRMetadata,
         irRefreshTrigger, refreshBoundingBoxTrigger, roomScale, isUploadingGlobalModel,
         globalModelUploadProgress,
-        isSavingSoundscape, zoomToSoundCardTrigger, hoveredSoundCardIndex, soundFocus,
+        isSavingSoundscape, zoomToSoundCardTrigger, hoveredSoundCardIndex, soundFocus, listenerFocus,
         activeSoundParentIndex, isInSoundsStep, showBoundingBox,
         acousticLayerSelectionMode, soundsNavTrigger,
         leftSidebarExpandCommand, homeProject, sidebarNavCommand, dawDockBottomSpace, bubbleColumnCounts, showLoadModelPanel,

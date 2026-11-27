@@ -100,16 +100,19 @@ export function FpsControlsHint() {
       <span className="fps-controls-hint__title">{FPS_CONTROLS_HINT.TITLE}</span>
       <span>{FPS_CONTROLS_HINT.LOCKED}</span>
       <span className="fps-controls-hint__item">
-        Look around <MouseIcon control="left" size={iconSize} /> or
+        Look around <MouseIcon control="right" size={iconSize} /> drag or
         <span className="kbd-group">
           {FPS_CONTROLS_HINT.ARROW_KEYS.map((key) => <kbd key={key} className="kbd">{key}</kbd>)}
         </span>
       </span>
       <span className="fps-controls-hint__item">
-        Roll <MouseIcon control="right" size={iconSize} />
+        Roll <MouseIcon control="wheel" size={iconSize} /> drag
       </span>
       <span className="fps-controls-hint__item">
-        Zoom <MouseIcon control="wheel" size={iconSize} />
+        Zoom <MouseIcon control="wheel" size={iconSize} /> scroll
+      </span>
+      <span className="fps-controls-hint__item">
+        Select <MouseIcon control="left" size={iconSize} /> click
       </span>
       <span className="fps-controls-hint__item">
         Leave <kbd className="kbd">Esc</kbd> or <ExitIcon />

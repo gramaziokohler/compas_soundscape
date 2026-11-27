@@ -498,7 +498,10 @@ Listener cards — expand ≠ power (one powered listener at a time, off by defa
   orientation: ListenerOrientationWidget — Y/P/R editable (PositionWidget); while powered it
             mirrors the FPS camera and autosaves to receiversStore (debounced,
             LISTENER_ORIENTATION). useSpeckleFPS reads receivers via ref so saves never
-            re-enter FPS. First FPS entry ever (per user, uiStore.seenHints synced via
+            re-enter FPS. FPS mouse (useSpeckleFPS, editor and share view): right-drag looks
+            around (yaw/pitch), middle-drag rolls (eases back on release), wheel = focal length,
+            left-click only selects; listed by FPS_CONTROLS / SHARE_SCENE_INFO.FPS_CONTROLS
+            (utils/constants.ts) and FpsControlsHint. First FPS entry ever (per user, uiStore.seenHints synced via
             user preferences) shows components/scene/FpsHelpPopup in Simple mode.
 
 Bubble columns overflow (all three columns):
@@ -1411,9 +1414,6 @@ SimulationMeshService.prepare(seeds = sources + receivers, MeshPrepSettings)
   - `find_non_convex_walls` uses scale-aware hull planes and includes wall 0.
   - Two-sided surfaces fail loudly on a pra build without `two_sided`; there is no silent fallback.
 
-### Heatmap (EnergyMap) job
-
-The Heatmap listener card maps the sound level over the points the Grid listener surface UI generates,
 ### Stored sound paths (IR hover / select)
 
 Every compas_acoustics run (ray-tracing card, hybrid, rays-only) stores the sound paths of its pairs
@@ -1436,6 +1436,9 @@ ImpulseResponseUpload row hover ──▶ hoverPair    preview panel open ──
 useSpeckleAcousticPaths: hovered ?? selected pair → AcousticPathsOverlay (direct, order 1, dashed diffracted)
 ```
 
+### Heatmap (EnergyMap) job
+
+The Heatmap listener card maps the sound level over the points the Grid listener surface UI generates,
 with the active simulation card's geometry and materials (compas_acoustics `EnergyMap`).
 
 ```

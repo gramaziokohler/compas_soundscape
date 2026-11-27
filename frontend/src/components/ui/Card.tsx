@@ -381,6 +381,8 @@ function CardView<TConfig extends CardBaseConfig>({
   const showFooterSuffix = !!footerSuffix && generateStatus !== 'generating';
   const showFooterExtras = showFooterPrefix || showFooterSuffix;
   const showFooterNote = !!footerNote && isExpanded && generateStatus === 'done';
+  const showVersion = isExpanded && !!versionTitle;
+  const showFooterRemove = isFloating && canRemove;
   // `empty:hidden`: a note component that renders nothing takes no row (nor the shell's gap).
   const footerNoteEl = (
     <div className={`text-xxs min-w-0 truncate empty:hidden ${isGeneratedActive ? 'text-on-blue-muted' : 'text-text-3'}`}>
@@ -503,24 +505,6 @@ function CardView<TConfig extends CardBaseConfig>({
                   playing
                 </div>
               )}
-              {isExpanded && version && (
-                <div className="card-title-meta flex items-center gap-1 min-w-0">
-                  <div
-                    className={`text-xxs min-w-0 overflow-hidden text-ellipsis whitespace-nowrap ${isGeneratedActive ? 'text-on-blue-muted' : 'text-text-3'}`}
-                    title={versionTitle}
-                  >
-                    {versionTitle}
-                  </div>
-                  {/* Info ("i") popover — at the end of the version text, no gap, shown
-                      only while expanded and only on cards that expose a version. */}
-                  <InfoPopover
-                    title={CARD_TYPE_LABELS[config.type]}
-                    text={cardDescription}
-                    label={`Info: ${CARD_TYPE_LABELS[config.type]}`}
-                    compact
-                  />
-                </div>
-              )}
             </div>
           )}
         </div>
@@ -528,7 +512,7 @@ function CardView<TConfig extends CardBaseConfig>({
         {/* Action buttons — collapse out of flow until title-bar hover/focus so the
             title can use the full bar; when they appear the title truncates to fit.
             self-start keeps them aligned with the title row (higher) instead of
-            centered against the taller title+version block. */}
+            centered against a taller title+info block. */}
         <div className={`flex items-center gap-1 flex-shrink-0 self-start ${isFloating ? '' : 'w-0 overflow-hidden opacity-0 pointer-events-none group-hover:w-auto group-hover:opacity-100 group-hover:pointer-events-auto focus-within:w-auto focus-within:opacity-100 focus-within:pointer-events-auto'}`}>
           {/* Reduce button — floating (Simple-mode) cards fold back into their bubble */}
           {onReduce && (
@@ -661,19 +645,45 @@ function CardView<TConfig extends CardBaseConfig>({
         </div>
       )}
 
-      {/* Footer row: note (generated + expanded, bottom-left) and, on floating
-          cards, the confirmed remove (bottom-right) */}
-      {isFloating && canRemove ? (
+      {/* Footer row: note + version/info (bottom-left, truncated to the space
+          left) and, on floating cards, the confirmed remove (bottom-right) */}
+      {(showFooterNote || showVersion || showFooterRemove) && (
         <div className="flex items-center justify-between gap-2 min-w-0">
-          {showFooterNote ? footerNoteEl : <span />}
-          <DeleteConfirmButton
-            title={closeButtonTitle}
-            message={removeConfirmMessage ?? `${closeButtonTitle}?`}
-            onConfirm={() => onRemove(index)}
-            onBlueBackground={isGeneratedActive}
-          />
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            {showFooterNote && footerNoteEl}
+            {showVersion && (
+              <div className="flex items-center gap-1 min-w-0">
+                <div
+                  className={`text-xxs min-w-0 truncate ${isGeneratedActive ? 'text-on-blue-muted' : 'text-text-3'}`}
+                  title={versionTitle}
+                >
+                  {versionTitle}
+                </div>
+                {/* Info ("i") popover — right after the version text, only on
+                    cards that expose a version. */}
+                <div className="flex-shrink-0">
+                  <InfoPopover
+                    title={CARD_TYPE_LABELS[config.type]}
+                    text={cardDescription}
+                    label={`Info: ${CARD_TYPE_LABELS[config.type]}`}
+                    compact
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+          {showFooterRemove && (
+            <div className="flex-shrink-0">
+              <DeleteConfirmButton
+                title={closeButtonTitle}
+                message={removeConfirmMessage ?? `${closeButtonTitle}?`}
+                onConfirm={() => onRemove(index)}
+                onBlueBackground={isGeneratedActive}
+              />
+            </div>
+          )}
         </div>
-      ) : showFooterNote ? footerNoteEl : null}
+      )}
       </div>
 
       {/* Right-click context menu — portaled to <body> (CardContextMenu) so it escapes the

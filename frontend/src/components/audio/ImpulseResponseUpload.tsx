@@ -23,7 +23,7 @@ import { isLowEnergyPeak } from "@/utils/irEnergy";
 import { clampToViewport } from "@/utils/scale";
 import { trimDisplayName } from "@/utils/utils";
 import { parsePositionKey } from "@/utils/positionKey";
-import { IR_SOURCE_ROW_ATTR, useIRSoundFocus } from "@/components/audio/useIRSoundFocus";
+import { IR_GROUP_ATTR, IR_SOURCE_ROW_ATTR, useIRSoundFocus, type RevealIRGroup } from "@/components/audio/useIRSoundFocus";
 
 type SourceReceiverPair = {
   sourceId: string;
@@ -484,22 +484,27 @@ export function ImpulseResponseUpload({
     return { groups: Array.from(groups.values()), unmapped };
   }, [sourceReceiverIRMapping, pairDefinitions, impulseResponses, receiverGroups, receiverDisplayNames]);
 
-  // Shared sound focus (DAW track / sphere / card click): expand + scroll to that sound's IRs.
-  const revealSources = useCallback((sourceIds: Set<string>) => {
+  // Shared focus (DAW track / sphere / card click, receiver click): expand + scroll to its IRs.
+  const revealGroup = useCallback<RevealIRGroup>((groupId, sourceIds, listenerFirst) => {
     const groups = groupedByReceiver?.groups ?? [];
+    const holdsSource = (g: ReceiverGroup) => g.sources.some((src) => sourceIds.has(src.sourceId));
+    const clicked = groupId ? groups.find((g) => g.groupId === groupId) : undefined;
+    const target = clicked && (listenerFirst || holdsSource(clicked)) ? clicked : groups.find(holdsSource);
+    if (!target) return null;
+    // An expanded group stays expanded; only a collapsed target opens.
     setCollapsedGroups((prev) => {
+      if (!prev.has(target.groupId)) return prev;
       const next = new Set(prev);
-      for (const g of groups) {
-        if (g.sources.some((src) => sourceIds.has(src.sourceId))) next.delete(g.groupId);
-      }
-      return next.size === prev.size ? prev : next;
+      next.delete(target.groupId);
+      return next;
     });
+    return target.groupId;
   }, [groupedByReceiver]);
-  const focusedSourceIds = useIRSoundFocus({
+  const { focusedSourceIds, focusedGroupId } = useIRSoundFocus({
     enabled: followSoundFocus,
     soundToPosKey,
     containerRef: scrollContainerRef,
-    revealSources,
+    revealGroup,
   });
 
   // Report peaks upward (used by the gain slider trim range / markers) whenever they change.
@@ -651,11 +656,6 @@ export function ImpulseResponseUpload({
     if (!isPanelOwner && pinnedIRId) setPinnedIRId(null);
   }, [isPanelOwner, pinnedIRId]);
 
-  const pinIR = useCallback((e: React.MouseEvent<HTMLElement>, ir: ImpulseResponseMetadata) => {
-    e.stopPropagation();
-    if (hideTimeoutRef.current) { clearTimeout(hideTimeoutRef.current); hideTimeoutRef.current = null; }
-    setHoveredIRId(null); setHoveredIRBuffer(null); setOverlayPosition(null); setIsOverlayHovered(false);
-    if (IR_HOVER_LINE.ENABLED && onIRHover) onIRHover(null, null);
   // Report the pair of the pinned IR (the selected IR) up; none when the panel closes or moves on.
   const onIRSelectRef = useRef(onIRSelect);
   onIRSelectRef.current = onIRSelect;
@@ -674,6 +674,11 @@ export function ImpulseResponseUpload({
   }, [pinnedPairKey]);
   useEffect(() => () => onIRSelectRef.current?.(null, null), []);
 
+  const pinIR = useCallback((e: React.MouseEvent<HTMLElement>, ir: ImpulseResponseMetadata) => {
+    e.stopPropagation();
+    if (hideTimeoutRef.current) { clearTimeout(hideTimeoutRef.current); hideTimeoutRef.current = null; }
+    setHoveredIRId(null); setHoveredIRBuffer(null); setOverlayPosition(null); setIsOverlayHovered(false);
+    if (IR_HOVER_LINE.ENABLED && onIRHover) onIRHover(null, null);
 
     // First opening (nothing remembered yet): sit where the hover preview appears.
     if (!useUIStore.getState().irPreviewPanel) {
@@ -1074,6 +1079,7 @@ export function ImpulseResponseUpload({
                   const isCollapsed = collapsedGroups.has(groupId);
                   const hasLowEnergy = sources.some((s) => s.ir && lowEnergyIRIds.has(s.ir.id));
                   const isActive = activeGroupId === groupId;
+                  const isListenerFocused = focusedGroupId === groupId;
                   const assignedCount = singleIRPerListener
                     ? (sources.some((s) => s.ir) ? 1 : 0)
                     : sources.filter((s) => s.ir).length;
@@ -1082,9 +1088,14 @@ export function ImpulseResponseUpload({
                     <div
                       key={groupId}
                       ref={(el) => setGroupRef(groupId, el)}
+                      {...{ [IR_GROUP_ATTR]: groupId }}
                       className="rounded transition-all duration-200"
                       style={{
-                        border: `1px solid ${isActive ? 'var(--color-primary)' : 'transparent'}`,
+                        border: `1px ${isActive ? 'solid' : 'dashed'} ${
+                          isActive ? 'var(--color-primary)'
+                            : isListenerFocused ? (onBlueBackground ? 'var(--color-on-blue-muted)' : 'var(--color-primary)')
+                            : 'transparent'
+                        }`,
                       }}
                     >
                       {/* Receiver header */}

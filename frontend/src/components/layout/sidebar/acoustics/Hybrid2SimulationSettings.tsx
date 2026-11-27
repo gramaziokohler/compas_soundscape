@@ -16,7 +16,8 @@
 
 'use client';
 
-import { useState, type CSSProperties } from 'react';
+import { useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
+import { getScrollParent } from '@/utils/scrollIntoContainer';
 import {
   PYROOMACOUSTICS_SIMULATION_MODE_FOA,
   PYROOMACOUSTICS_SIMULATION_MODE_MONO,
@@ -30,7 +31,6 @@ import { ModifiedMark, useIsFieldModified } from '@/components/ui/ModifiedMark';
 import { Notice } from '@/components/ui/Notice';
 import { pffdtdGridSpacing } from '@/lib/acoustics/pffdtd-grid';
 import {
-  crossoverReadout,
   hybridParts,
   lastRunSchroederHz,
   mismatchWarning,
@@ -70,6 +70,21 @@ export function Hybrid2SimulationSettings({ config, onUpdateConfig }: Hybrid2Sim
 
   const [selectedPart, setSelectedPart] = useState<HybridPart>(parts === 'rays' ? 'rays' : 'wave');
   const selected: HybridPart = parts === 'both' ? selectedPart : parts;
+
+  // Switching parts swaps the settings below the band, which changes the card's height: keep the
+  // sidebar where it was (no scroll anchoring, and the scroll offset restored before paint).
+  const rootRef = useRef<HTMLDivElement>(null);
+  const scrollKeep = useRef<{ el: HTMLElement; top: number } | null>(null);
+  const selectPart = (part: HybridPart) => {
+    const el = getScrollParent(rootRef.current);
+    scrollKeep.current = el ? { el, top: el.scrollTop } : null;
+    setSelectedPart(part);
+  };
+  useLayoutEffect(() => {
+    const keep = scrollKeep.current;
+    if (keep) keep.el.scrollTop = keep.top;
+    scrollKeep.current = null;
+  }, [selected]);
 
   // Recommended crossover: the last run's measured Schroeder frequency, else the Eyring estimate.
   const info = config.hybridInfo ?? null;
@@ -120,10 +135,10 @@ export function Hybrid2SimulationSettings({ config, onUpdateConfig }: Hybrid2Sim
     ? 'Rays over the full band: image sources, ray tracing and diffraction, no wave solver.'
     : parts === 'wave'
       ? `Wave solver alone up to ${formatHz(crossoverHz)}: nothing above it is simulated.`
-      : crossoverReadout(s, info, estimate?.schroederHz ?? null);
+      : `Crossover frequency: ${formatHz(crossoverHz)}${waveFmax !== null ? ` (solved up to ${formatHz(waveFmax)})` : ''}.`;
 
   return (
-    <div className="card-stack">
+    <div ref={rootRef} className="card-stack">
       <div>
         <label className="text-xxs card-label text-secondary-hover">
           Simulation Mode{isSettingModified('simulation_mode') && <ModifiedMark />}
@@ -151,7 +166,7 @@ export function Hybrid2SimulationSettings({ config, onUpdateConfig }: Hybrid2Sim
           usedTitle={usedTitle}
           disabled={disabled}
           onCrossoverChange={setCrossover}
-          onSelect={setSelectedPart}
+          onSelect={selectPart}
           onPartsChange={setParts}
         />
         <FrequencyText text={readout} className="text-xxs text-secondary-hover" />
@@ -176,7 +191,7 @@ export function Hybrid2SimulationSettings({ config, onUpdateConfig }: Hybrid2Sim
 
       <div
         className="card-stack--md border-l-2 pl-2"
-        style={{ borderColor: PART_COLOR[selected], '--section-accent': PART_COLOR[selected] } as CSSProperties}
+        style={{ borderColor: PART_COLOR[selected], overflowAnchor: 'none', '--section-accent': PART_COLOR[selected] } as CSSProperties}
       >
         <span className="text-xxs" style={{ color: selected === 'wave' ? PART_COLOR.wave : 'var(--color-blue-text)' }}>
           {selected === 'wave' ? 'Wave-based part' : 'Ray-tracing part'}

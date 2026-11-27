@@ -105,12 +105,14 @@ export function useSpeckleCoordinatorCallbacks({
           objectType: 'Receiver',
           receiverData: { position: receiver.position },
         });
+        useUIStore.getState().focusListener(receiverId);
         onListenerClicked?.(receiverId);
       }
     });
 
     // ── Grid listener point single-click ──────────────────────────────────────
     coordinator.setOnGridListenerClicked((pointId: string) => {
+      useUIStore.getState().focusListener(pointId);
       onListenerClicked?.(pointId);
     });
 
