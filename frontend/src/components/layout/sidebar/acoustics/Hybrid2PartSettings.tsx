@@ -45,10 +45,22 @@ interface WavePartSettingsProps extends PartSettingsProps {
   waveSpacing: number | null;
   ppwMax: number | null;
   gpuTitle?: string;
+  /** Points per wavelength / precision the simulation actually used when they differ from the card's (orange). */
+  usedPpw?: number | null;
+  usedPrecision?: HybridSettings['precision'] | null;
+  usedTitle?: string;
 }
 
-export function WavePartSettings({ settings: s, set, isModified, disabled, joined, waveSpacing, ppwMax, gpuTitle }: WavePartSettingsProps) {
+export function WavePartSettings({
+  settings: s, set, isModified, disabled, joined, waveSpacing, ppwMax, gpuTitle, usedPpw = null, usedPrecision = null, usedTitle,
+}: WavePartSettingsProps) {
   const autoDuration = s.duration === null;
+  const ppwMarkers = [
+    ...gpuMaxMarker(ppwMax, PFFDTD.PPW_MIN, PFFDTD.PPW_MAX),
+    ...(usedPpw !== null
+      ? [{ value: Math.min(Math.max(usedPpw, PFFDTD.PPW_MIN), PFFDTD.PPW_MAX), label: `used ${Math.round(usedPpw)}`, tone: 'warning' as const }]
+      : []),
+  ];
   return (
     <div className="card-stack--md">
       <RangeSlider
@@ -61,8 +73,8 @@ export function WavePartSettings({ settings: s, set, isModified, disabled, joine
         onChange={(v) => set('ppw', v)}
         disabled={disabled}
         defaultValue={HYBRID.DEFAULT_PPW}
-        markers={gpuMaxMarker(ppwMax, PFFDTD.PPW_MIN, PFFDTD.PPW_MAX)}
-        sliderTitle={gpuTitle}
+        markers={ppwMarkers}
+        sliderTitle={[gpuTitle, usedPpw !== null ? usedTitle : undefined].filter(Boolean).join('\n') || undefined}
       />
       <ToggleField
         checked={autoDuration}
@@ -94,6 +106,11 @@ export function WavePartSettings({ settings: s, set, isModified, disabled, joine
         asSelect
         accentColor={WAVE_COLOR}
       />
+      {usedPrecision !== null && (
+        <span className="text-xxs leading-4" style={{ color: 'var(--color-warning)' }} title={usedTitle}>
+          The simulation used {usedPrecision} precision.
+        </span>
+      )}
       {joined && (
         <ToggleField
           checked={s.level_match}

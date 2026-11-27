@@ -24,6 +24,7 @@ import { groupSimulationSources } from '@/utils/positionKey';
 import type { SoundDirectivity } from '@/types/directivity';
 import { isFreshHomeUrl } from '@/utils/homeStage';
 import { progressLanesFromPartial } from '@/utils/progressLanes';
+import { waveAdjustmentFrom } from '@/lib/acoustics/hybrid-wave-fit';
 import { isShareViewActive } from '@/store/shareViewStore';
 import { useUIStore } from '@/store/uiStore';
 import {
@@ -487,11 +488,13 @@ function updateProgress(jobType: JobType, progress: number, statusText: string, 
     case 'pffdtd': {
       const index = findAcousticsConfigIndex(record.jobId, record.jobId, record);
       if (index >= 0) {
+        const waveAdjustment = waveAdjustmentFrom(partial); // hybrid jobs run on the pffdtd queue
         useAcousticsSimulationStore.getState().handleUpdateConfig(index, {
           isRunning: true,
           progress,
           status: statusText,
           progressLanes: progressLanesFromPartial(partial),
+          ...(waveAdjustment ? { waveAdjustment } : {}),
           ...(jobType === 'pffdtd' ? pffdtdPartialPatch(partial as PffdtdJobPartial | null) : {}),
         } as any);
       }

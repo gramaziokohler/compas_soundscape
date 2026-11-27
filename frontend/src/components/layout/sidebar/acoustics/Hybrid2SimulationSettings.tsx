@@ -4,7 +4,9 @@
  * Simulation mode (Mono / FOA), the assigned materials as coloured chips (AcousticMaterialChips),
  * the GPU memory warning of the wave grid (it blocks the run), then "Simulation settings": the part
  * checkboxes and the crossover band (CrossoverBand) with the recommended crossover and the GPU limit
- * drawn as vertical lines. Clicking a part shows its settings below (Hybrid2PartSettings), coloured
+ * drawn as vertical lines, plus an orange "used" line (crossover, points per wavelength) when the
+ * running or last simulation had to fit the wave part (lib/acoustics/hybrid-wave-fit.ts). Clicking a
+ * part shows its settings below (Hybrid2PartSettings), coloured
  * with the part's colour; switching a part off runs the other alone (`settings.parts`).
  *
  * The settings stay editable while the card runs: the card then offers to re-run with them
@@ -34,6 +36,7 @@ import {
   mismatchWarning,
 } from '@/lib/acoustics/hybrid';
 import { bandGpuMaxHz, formatHz, hybridWaveBand, hybridWaveGpuWarning, notePart } from '@/lib/acoustics/crossover-band';
+import { cardWaveAdjustment, usedWaveValues } from '@/lib/acoustics/hybrid-wave-fit';
 import { AcousticMaterialChips } from './AcousticMaterialChips';
 import { CrossoverBand, type HybridPart } from './CrossoverBand';
 import { FrequencyText } from './FrequencyText';
@@ -85,6 +88,13 @@ export function Hybrid2SimulationSettings({ config, onUpdateConfig }: Hybrid2Sim
   const ppwMax = maxProduct !== null && waveFmax !== null ? maxProduct / waveFmax : null;
   const gpuTitle = maxProduct === null ? undefined
     : `GPU max: past this line the wave grid (${s.precision} precision, ${s.ppw} points per wavelength) no longer fits the GPU memory free now`;
+  // What the (running or last) simulation actually used when the job had to fit the wave part: orange lines
+  const used = usedWaveValues(cardWaveAdjustment(config), crossoverHz, s);
+  const usedTitle = used
+    ? `Used by the ${config.isRunning ? 'running' : 'last'} simulation (${used.option.key} option): `
+      + `${formatHz(used.option.crossover_hz)}, ${Math.round(used.option.run_ppw)} points per wavelength, `
+      + `${used.option.precision} precision. ${used.option.label}.`
+    : undefined;
   const recommendedTitle = lastRunHz !== null
     ? `Recommended: the last run's Schroeder frequency, ${Math.round(lastRunHz)} Hz`
     : estimate
@@ -137,6 +147,8 @@ export function Hybrid2SimulationSettings({ config, onUpdateConfig }: Hybrid2Sim
           recommendedTitle={recommendedTitle}
           gpuMaxHz={gpuMaxHz}
           gpuTitle={gpuTitle}
+          usedHz={used?.crossoverHz ?? null}
+          usedTitle={usedTitle}
           disabled={disabled}
           onCrossoverChange={setCrossover}
           onSelect={setSelectedPart}
@@ -179,6 +191,9 @@ export function Hybrid2SimulationSettings({ config, onUpdateConfig }: Hybrid2Sim
             waveSpacing={waveSpacing}
             ppwMax={ppwMax}
             gpuTitle={gpuTitle}
+            usedPpw={used?.ppw ?? null}
+            usedPrecision={used?.precision ?? null}
+            usedTitle={usedTitle}
           />
         ) : (
           <RaysPartSettings settings={s} set={set} isModified={isSettingModified} disabled={disabled} />

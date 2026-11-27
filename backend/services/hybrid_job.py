@@ -25,7 +25,7 @@ import json
 import threading
 import traceback
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import numpy as np
 from scipy.io import wavfile
@@ -39,6 +39,7 @@ from config.constants import (
     HYBRID_PARTS_RAYS,
     HYBRID_PARTS_WAVE,
     HYBRID_PROGRESS_WAVE_END,
+    HYBRID_WAVE_ADJUSTMENT_KEY,
     HYBRID_WAVE_DURATION_T60_FACTOR,
     PFFDTD_DEFAULT_PPW,
     PFFDTD_DURATION_MAX,
@@ -51,7 +52,9 @@ from config.constants import (
 )
 from models.schemas import MeshPrepSettings
 from services.pffdtd_job import _atomic_write, _run_from_geometry, _write_progress, geometry_dict, pffdtd_available
+from services.gpu_arbiter import wave_gpu_budget_bytes
 from services.hybrid_single_part import run_rays_only, run_wave_only, wave_only_fmax
+from services.pffdtd_scene_export import bounding_box
 from services.progress_lanes import HybridProgress
 from services.pyroomacoustics_room_builder import room_offset
 from services.simulation_geometry_loader import load_speckle_simulation_geometry
@@ -61,8 +64,10 @@ from utils.audio_processing import trim_ir
 from utils.geometry import seeds_from_pairs
 from utils.run_timing import solve_started, solve_time_s
 from utils.hybrid_crossover import (
-    CROSSOVER_SCHROEDER, CrossoverPlan, combine, plan_crossover, schroeder_frequency, wave_ppw,
+    CROSSOVER_MANUAL, CROSSOVER_SCHROEDER, CrossoverPlan, combine, plan_crossover, schroeder_frequency, wave_ppw,
 )
+from utils.hybrid_wave_fit import fit_wave
+from utils.pffdtd_grid import pffdtd_precision
 
 METHOD_NAME = "Hybrid (PFFDTD + compas_acoustics)"
 
@@ -111,6 +116,27 @@ def min_seed_surface_distance(mesh, seed_meta: list, pairs_data: list) -> Option
     except Exception as exc:  # noqa: BLE001 - only used to refine the grid
         print(f"[hybrid] seed clearance unavailable: {exc}")
         return None
+
+
+def fit_wave_part(mesh, parts: str, plan: CrossoverPlan, ppw: float, precision: str, duration: float,
+                  seed_distance: Optional[float], replan: Callable[[float], CrossoverPlan]):
+    """``(adjustment, plan, ppw, precision)`` the wave part runs with: the card's when its grid fits the GPU free
+    now and clears the sources / listeners as set (adjustment None), else the recommended fitted option
+    (utils/hybrid_wave_fit.py). Raises when no setting can run."""
+    bmin, bmax = bounding_box(mesh)
+    adjustment = fit_wave(np.asarray(bmax) - np.asarray(bmin), wave_gpu_budget_bytes(), precision, parts,
+                          plan.crossover_hz, ppw, duration, seed_distance)
+    if adjustment is None:
+        return None, plan, ppw, precision
+    option = adjustment.option(adjustment.applied)
+    if option is None:
+        raise RuntimeError(adjustment.message)
+    print(f"[hybrid] wave fit ({adjustment.reason}): {adjustment.message} -> {option.key}: {option.label}")
+    if abs(option.crossover_hz - plan.crossover_hz) > 1e-6:
+        notes = list(plan.notes)
+        plan = replan(option.crossover_hz)
+        plan.notes = notes + plan.notes
+    return adjustment, plan, float(option.ppw), option.precision
 
 
 def wave_duration(requested: Optional[float], rt60: Optional[float]) -> float:
@@ -302,6 +328,26 @@ def run_hybrid_from_geometry(
         plan = plan_crossover(crossover_mode, rt60, volume, manual_hz=crossover_hz, factor=crossover_factor,
                               wave_fmax_cap=wave_fmax_cap)
         run_duration = wave_duration(duration, rt60)
+
+        # The wave part as set may not run (GPU memory, a seed near a surface): run a fitted set instead
+        # and report both options live (progress partial) and in the results (utils/hybrid_wave_fit.py)
+        seed_distance = None
+        adjustment = None
+        if parts != HYBRID_PARTS_RAYS:
+            _write_progress(progress_file, 9.5, "Planning the wave grid...")
+            seed_distance = min_seed_surface_distance(mesh, seed_meta, pairs_data)
+            precision = precision or pffdtd_precision()
+            adjustment, plan, ppw, precision = fit_wave_part(
+                mesh, parts, plan, ppw, precision, run_duration, seed_distance,
+                lambda hz: plan_crossover(CROSSOVER_MANUAL, rt60, volume, manual_hz=hz, wave_fmax_cap=wave_fmax_cap),
+            )
+        extra = {HYBRID_WAVE_ADJUSTMENT_KEY: adjustment.as_dict()} if adjustment else {}
+
+        def write(value: float, text: str, partial: Optional[dict] = None) -> None:
+            _write_progress(progress_file, value, text, {**(partial or {}), **extra} or None)
+
+        if extra:
+            write(9.8, "Planning the wave grid...")
         if parts == HYBRID_PARTS_RAYS:
             run_rays_only(
                 simulation_id, progress_file, result_file, mesh, offset, pairs_data, settings,
@@ -311,17 +357,25 @@ def run_hybrid_from_geometry(
             return
         if parts == HYBRID_PARTS_WAVE:
             fmax = wave_only_fmax(plan.crossover_hz)
-            run_ppw, ppw_note = wave_ppw(ppw, fmax, min_seed_surface_distance(mesh, seed_meta, pairs_data))
-            run_wave_only(
-                simulation_id, progress_file, result_file, geometry, pairs_data, simulation_mode, simulation_name,
-                rir_output_dir, temp_dir, mesh_settings, header_meta, fmax, run_ppw, run_duration, air_absorption,
-                precision,
-                {**plan.as_dict(), "notes": plan.notes + ([ppw_note] if ppw_note else []), "rt60_source": rt60_source,
-                 "wave_duration_s": round(run_duration, 3), "wave_ppw": round(run_ppw, 1)},
-                started,
-            )
+            run_ppw, ppw_note = wave_ppw(ppw, fmax, seed_distance)
+            # the solver writes a sub-progress file; forwarded with the fit so the card keeps showing it
+            sub_progress = progress_file + ".wave"
+            mirror = threading.Thread(target=_mirror_progress, daemon=True, args=(sub_progress, write, stop))
+            mirror.start()
+            try:
+                run_wave_only(
+                    simulation_id, sub_progress, result_file, geometry, pairs_data, simulation_mode, simulation_name,
+                    rir_output_dir, temp_dir, mesh_settings, header_meta, fmax, run_ppw, run_duration, air_absorption,
+                    precision,
+                    {**plan.as_dict(), "notes": plan.notes + ([ppw_note] if ppw_note else []), "rt60_source": rt60_source,
+                     "wave_duration_s": round(run_duration, 3), "wave_ppw": round(run_ppw, 1), **extra},
+                    started,
+                )
+            finally:
+                stop.set()
+                mirror.join(timeout=2.0)
             return
-        run_ppw, ppw_note = wave_ppw(ppw, plan.wave_fmax, min_seed_surface_distance(mesh, seed_meta, pairs_data))
+        run_ppw, ppw_note = wave_ppw(ppw, plan.wave_fmax, seed_distance)
         if ppw_note:
             plan.notes.append(ppw_note)
         print(
@@ -332,7 +386,7 @@ def run_hybrid_from_geometry(
             print(f"  [note] {note}")
 
         # ── 2. Wave part (GPU, a thread driving the PFFDTD pipeline) and geometric part (CPU) at once ──
-        progress = HybridProgress(lambda value, text, partial: _write_progress(progress_file, value, text, partial))
+        progress = HybridProgress(write)
         sub_progress = progress_file + ".wave"
         sub_result = result_file + ".wave"
         mirror = threading.Thread(target=_mirror_progress, daemon=True, args=(sub_progress, progress.wave_part, stop))
@@ -380,7 +434,7 @@ def run_hybrid_from_geometry(
 
         # ── 3. Join ──────────────────────────────────────────────────────────
 
-        _write_progress(progress_file, HYBRID_PROGRESS_WAVE_END, f"Joining at {plan.crossover_hz:.0f} Hz...")
+        write(HYBRID_PROGRESS_WAVE_END, f"Joining at {plan.crossover_hz:.0f} Hz...")
         results_path = Path(temp_dir) / wave_result["result"]["results_file"]
         with open(results_path) as f:
             results_json = json.load(f)
@@ -398,6 +452,7 @@ def run_hybrid_from_geometry(
             "level_match": bool(level_match),
             "filter": "Linkwitz-Riley 4th order",
             "median_overlap_mismatch_db": round(float(np.median(mismatches)), 2) if mismatches else None,
+            **extra,
         }
         results_json["compas_acoustics"] = {**ga.generation, "notes": ga.notes}
         results_json["solve_time_s"] = solve_time_s(started)  # both parts + the join

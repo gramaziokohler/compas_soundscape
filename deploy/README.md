@@ -30,6 +30,7 @@ Python dependencies are declared in `requirements.txt`:
 ```powershell
 mamba activate compas-toy
 python -m pip install -r requirements.txt
+python -m pip install -r requirements-dev.txt   # dev tools (ruff); not needed to run the app
 ```
 
 `requirements.txt` installs the acoustics engine, `compas_acoustics`, non-editably from one

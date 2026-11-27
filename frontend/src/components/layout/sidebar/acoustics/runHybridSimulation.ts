@@ -16,6 +16,7 @@ import { captureGenerationSignature } from '@/utils/generationSignature';
 import { SIMULATION_STATUS_MISS_TOLERANCE, PFFDTD } from '@/utils/constants';
 import { simulationSourceSnapshot, type SimulationGeometryRequest } from '@/utils/simulationRequest';
 import { hybridResultLine, type HybridRoom } from '@/lib/acoustics/hybrid';
+import { waveAdjustmentFrom } from '@/lib/acoustics/hybrid-wave-fit';
 import { progressLanesFromPartial } from '@/utils/progressLanes';
 import type { GridListenerSnapshot, HybridSimulationConfig, SimulationConfig } from '@/types/acoustics';
 
@@ -40,7 +41,7 @@ export async function runHybridSimulation(deps: RunHybridSimulationDeps): Promis
   const runSignature = captureGenerationSignature(config);
   const { versionId } = request;
 
-  update({ isRunning: true, progress: 0, status: 'Submitting...', error: null });
+  update({ isRunning: true, progress: 0, status: 'Submitting...', error: null, waveAdjustment: null });
 
   let jobId: string;
   try {
@@ -82,7 +83,14 @@ export async function runHybridSimulation(deps: RunHybridSimulationDeps): Promis
       const statusStr = st.queue_position != null
         ? `Queued — position ${st.queue_position} of ${st.queue_total}`
         : st.status;
-      update({ progress: st.progress, status: statusStr, progressLanes: progressLanesFromPartial(st.partial) });
+      // the fitted wave parameters arrive once the job planned its grid, and stay on every later report
+      const waveAdjustment = waveAdjustmentFrom(st.partial);
+      update({
+        progress: st.progress,
+        status: statusStr,
+        progressLanes: progressLanesFromPartial(st.partial),
+        ...(waveAdjustment ? { waveAdjustment } : {}),
+      });
       if (!isLegacyJobTerminal(st)) return; // keep polling
 
       stop();
@@ -121,6 +129,7 @@ export async function runHybridSimulation(deps: RunHybridSimulationDeps): Promis
         simulatedVersionId: versionId,
         simulationResults: `${hybridResultLine(hybridInfo)}\n${metricsText}`,
         hybridInfo,
+        waveAdjustment: waveAdjustmentFrom(hybridInfo),
         importedIRIds: irImportResult.importedIRIds,
         sourceReceiverIRMapping: irImportResult.sourceReceiverMapping,
         currentSimulationRunId: null,

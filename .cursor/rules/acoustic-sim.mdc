@@ -535,12 +535,24 @@ Rules:
   `_plan_domain` cube-root PPW reduction solves the same fit by steps). Wave card: fmax tick = K / PPW,
   PPW tick = K / fmax. Hybrid (`hybridGpuLimits`): PPW tick = K / wave fmax, crossover tick =
   K / (1.5 x PPW) (x Schroeder Hz for the factor slider). Single precision lifts K by 2^(1/3).
-  Estimates: the backend may raise the hybrid PPW for seed clearance. One shared poll
+  Estimates: the backend may raise the hybrid PPW for seed clearance. **Wave fit (hybrid):** when
+  the card's wave grid does not fit the GPU free now, or a seed near a surface forces a finer grid,
+  the job does not fail: `utils/hybrid_wave_fit.fit_wave` (same `plan_grid` + clearance rule as the
+  solver) builds *conservative* (keep PPW, lower the crossover; near a wall: keep the crossover on the
+  refined grid) and *optimized* (keep the crossover, lower PPW to >= HYBRID_WAVE_FIT_PPW_MIN; near a
+  wall: raise the crossover the refined grid already resolves) options, double -> single precision
+  as a last resort, and runs the recommended (conservative). The fit rides in every progress
+  `partial` and in the results' `hybrid` header under `wave_adjustment`; Hybrid 2's Run step shows
+  it (Hybrid2WaveFitNotice: pick the other option -> confirm -> card set to it and restarted) and
+  its Setup step draws the used crossover / PPW as orange "used" lines. One shared poll
   (`usePffdtdGpuMemory`) serves every caller.
 - Wave-based cards' geometry check runs with engine `pffdtd` (grid, memory, runtime, clearance)
   and the card's fmax / ppw / duration / precision.
 - **Grid alignment:** cell faces start at the bbox minimum (CartGrid 3.5-cell offset); `plan_grid`
   picks h so the bbox extents are whole cells → axis-aligned walls exact (A3 passes from PPW ≈ 28).
+  The search goes up to 15% finer than c / (fmax·PPW), which can cost ~1.6x the nodes, so it only keeps
+  aligned spacings whose grid still fits the GPU budget: the frontend's GPU limit is drawn for the
+  unaligned h, and a setting below it must not fail on the alignment.
 - **Open scenes (padded domain):** by default the domain is the geometry bbox + 3.5 cells and
   `RoomGeo` rejects seeds outside it. `run_pffdtd_simulation_from_geometry(..., domain_bounds=(bmin, bmax))`
   pads it (job keys `bmin`/`bmax` → `SimSpec` via `sim_prepare.job_domain_bounds`); `plan_grid` keeps h

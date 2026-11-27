@@ -25,6 +25,8 @@ import { GA_ENGINE } from '@/utils/constants';
 import { progressLanesFromPartial } from '@/utils/progressLanes';
 import { useHybridRoomEstimate } from '@/hooks/useHybridRoomEstimate';
 import { hybridRoomForRun, lastRunSchroederHz } from '@/lib/acoustics/hybrid';
+import { settingsForWaveOption } from '@/lib/acoustics/hybrid-wave-fit';
+import type { HybridWaveOption } from '@/types/acoustics';
 import { resolveEngine, usesCompasAcoustics } from '@/lib/acoustics/geometric-engine';
 import { isEngineSimulation, isGeometricSimulation, materialColumnsType, simulationCardMode } from '@/types/acoustics';
 import { useAcousticPathsStore, useDirectivityStore, type RunAcousticPathsArgs } from '@/store';
@@ -950,8 +952,9 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   // the room a hybrid run plans its Schroeder crossover with, until a run has measured it
   const { estimate: hybridRoomEstimate } = useHybridRoomEstimate();
 
-  const dispatchSimulation = useCallback(async (index: number) => {
-    const config = simulationConfigs[index];
+  // `override`: the card as just changed (a fitted wave option), before the store update reaches `simulationConfigs`
+  const dispatchSimulation = useCallback(async (index: number, override?: SimulationConfig) => {
+    const config = override ?? simulationConfigs[index];
     if (!config) return;
 
     if (isEngineSimulation(config)) logSimulationLaunch(index, config);
@@ -1002,8 +1005,8 @@ export function AcousticsSection(props: AcousticsSectionProps) {
    * warnings never block. A preflight that itself fails (e.g. busy worker)
    * does not block either: the simulation reports its own errors.
    */
-  const runSimulation = useCallback(async (index: number) => {
-    const config = simulationConfigs[index];
+  const runSimulation = useCallback(async (index: number, override?: SimulationConfig) => {
+    const config = override ?? simulationConfigs[index];
     if (!config) return;
     setPreflightBlockedIndex((cur) => (cur === index ? null : cur));
 
@@ -1026,16 +1029,16 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         }
       }
     }
-    await dispatchSimulation(index);
+    await dispatchSimulation(index, override);
   }, [simulationConfigs, buildPreflightArgs, handleUpdateConfig, dispatchSimulation]);
 
   /** Hybrid simulation 2: run (geometry check first, as runSimulation), remember its inputs, show the Run step. */
-  const runHybrid2 = useCallback(async (index: number) => {
-    const config = simulationConfigs[index];
+  const runHybrid2 = useCallback(async (index: number, override?: SimulationConfig) => {
+    const config = override ?? simulationConfigs[index];
     if (!config) return;
     setHybrid2RunSignatures((cur) => ({ ...cur, [config.id]: getGenerationSignature(config) }));
     setHybrid2Step(config.id, 'run');
-    await runSimulation(index);
+    await runSimulation(index, override);
   }, [simulationConfigs, runSimulation, setHybrid2Step]);
 
   // Re-runs requested from the model-version review panel ("Re-run all outdated").
@@ -1089,6 +1092,19 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     cancelSimulation(index);
     void runHybrid2(index);
   }, [cancelSimulation, runHybrid2]);
+
+  /**
+   * Hybrid simulation 2: the user picked the other fitted wave option (Run step, Hybrid2WaveFitNotice):
+   * set the card to it, stop the run if one is going, and run with it.
+   */
+  const chooseHybrid2WaveOption = useCallback((index: number, option: HybridWaveOption) => {
+    const config = simulationConfigs[index];
+    if (config?.type !== 'hybrid') return;
+    const settings = settingsForWaveOption(config.settings, option);
+    handleUpdateConfig(index, { settings } as Partial<SimulationConfig>);
+    if (config.isRunning) cancelSimulation(index);
+    void runHybrid2(index, { ...config, settings });
+  }, [simulationConfigs, handleUpdateConfig, cancelSimulation, runHybrid2]);
 
   /**
    * Duplicate a simulation config.
@@ -1790,6 +1806,8 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         changedSinceStart={runSignature !== undefined && getGenerationSignature(config) !== runSignature}
         onRerun={() => rerunHybrid2(index)}
         onStop={() => cancelSimulation(index)}
+        waveAdjustment={config.type === 'hybrid' ? config.waveAdjustment ?? null : null}
+        onChooseWaveOption={canEdit ? (option) => chooseHybrid2WaveOption(index, option) : undefined}
       />
     ) : undefined;
     const hybrid2StepBody = showHybrid2Check && preflightControl

@@ -9,7 +9,9 @@
  *
  * Two vertical lines mark the recommended crossover (the room's Schroeder frequency) and the GPU
  * limit (past it the wave grid no longer fits the free GPU memory); the band past the GPU limit is
- * hatched red. Dragging near the recommended line snaps to it. The handle is a slider for the
+ * hatched red. An orange "used" line marks the crossover the simulation actually ran with when the
+ * job had to fit it (GPU memory, a seed near a surface; Hybrid2WaveFitNotice). Dragging near the
+ * recommended line snaps to it. The handle is a slider for the
  * keyboard (arrows, Shift for larger steps, Home = recommended).
  *
  * Usage:
@@ -50,6 +52,9 @@ export interface CrossoverBandProps {
   /** Handle value past which the wave grid no longer fits the GPU; Infinity = never, null = unknown. */
   gpuMaxHz: number | null;
   gpuTitle?: string;
+  /** The value the (running or last) simulation actually used, when it differs from the handle: an orange line. */
+  usedHz?: number | null;
+  usedTitle?: string;
   disabled?: boolean;
   onCrossoverChange: (hz: number) => void;
   onSelect: (part: HybridPart) => void;
@@ -121,6 +126,8 @@ export function CrossoverBand({
   recommendedTitle,
   gpuMaxHz,
   gpuTitle,
+  usedHz = null,
+  usedTitle,
   disabled = false,
   onCrossoverChange,
   onSelect,
@@ -283,6 +290,10 @@ export function CrossoverBand({
               onClick={hasHandle && !disabled && gpuMaxHz !== null
                 ? () => onCrossoverChange(floorCrossover(gpuMaxHz))
                 : undefined} />
+          )}
+          {waveOn && usedHz !== null && (
+            <MarkerLine position={bandPosition(usedHz)} color="var(--color-warning)" label="used" title={usedTitle} labelAt="top"
+              onClick={hasHandle && !disabled ? () => onCrossoverChange(usedHz) : undefined} />
           )}
 
           {hasHandle && (

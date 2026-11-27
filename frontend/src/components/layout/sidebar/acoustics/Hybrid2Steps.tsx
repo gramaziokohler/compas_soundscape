@@ -4,8 +4,9 @@
  * - `Hybrid2StepBar`: the four steps under the card title. While a run is going, the Run step
  *   spins and Setup / Check stay clickable (the run carries on); Run brings the progress back.
  * - `Hybrid2RunStep`: the Run step's body, the run's progress with every process row expanded
- *   (the card footer shows no progress for this card), and the offer to re-run when the settings
- *   changed after the run started.
+ *   (the card footer shows no progress for this card), the offer to re-run when the settings
+ *   changed after the run started, and the wave part's fitted parameters with the option to
+ *   restart with the other set (Hybrid2WaveFitNotice).
  * - `Hybrid2RerunPrompt`: the Results step's "Re-run simulation" with its confirmation.
  */
 
@@ -17,6 +18,8 @@ import { ProgressBar } from '@/components/ui/ProgressBar';
 import { ProgressLanes } from '@/components/ui/ProgressLanes';
 import { Spinner } from '@/components/ui/Spinner';
 import type { ProgressLane } from '@/types/card';
+import type { HybridWaveAdjustment, HybridWaveOption } from '@/types/acoustics';
+import { Hybrid2WaveFitNotice } from './Hybrid2WaveFitNotice';
 
 export type Hybrid2Step = 'setup' | 'check' | 'run' | 'results';
 
@@ -161,6 +164,9 @@ export interface Hybrid2RunStepProps {
   onRerun: () => void;
   /** Stop the run (the card footer shows no stop button for this card while it is open). */
   onStop: () => void;
+  /** The wave part runs fitted parameters (Hybrid2WaveFitNotice): why, and the other option to restart with. */
+  waveAdjustment?: HybridWaveAdjustment | null;
+  onChooseWaveOption?: (option: HybridWaveOption) => void;
 }
 
 /**
@@ -169,9 +175,12 @@ export interface Hybrid2RunStepProps {
  * <Hybrid2RunStep progress={42} status="Geometric 45% · Wave 20%" lanes={lanes} changedSinceStart onRerun={rerun} onStop={stop} />
  * ```
  */
-export function Hybrid2RunStep({ progress, status, lanes, changedSinceStart, onRerun, onStop }: Hybrid2RunStepProps) {
+export function Hybrid2RunStep({
+  progress, status, lanes, changedSinceStart, onRerun, onStop, waveAdjustment, onChooseWaveOption,
+}: Hybrid2RunStepProps) {
   return (
     <div className="card-stack">
+      {waveAdjustment && <Hybrid2WaveFitNotice adjustment={waveAdjustment} running onChoose={onChooseWaveOption} />}
       {changedSinceStart && (
         <div
           className="flex items-center gap-2 rounded border px-2 py-1.5"

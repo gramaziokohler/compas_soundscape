@@ -63,6 +63,19 @@ def test_plan_grid_cost_and_ppw():
     assert not big.fits_gpu
 
 
+def test_alignment_never_pushes_a_fitting_grid_past_the_gpu():
+    # A hybrid card at 1170 Hz (wave to 1755 Hz), 20 PPW, double: the frontend's limit uses the
+    # unaligned h (9.79 GB fits 9.9 GB); aligning the 4.14 m height shrank h to 0.86 cm (14.6 GB).
+    extents, budget = [13.72, 9.7256, 4.14], int(9.9e9)
+    h_target = 343.2 / (1755.0 * 20.0)
+    assert aligned_spacing(extents, h_target)[0] < 0.9 * h_target   # unconstrained: the fine aligned h
+    plan = plan_grid(extents, 1755.0, 20.0, 1.0, precision="double", gpu_budget_bytes=budget)
+    assert plan.fits_gpu and plan.h <= h_target
+    # with room to spare the alignment still applies
+    roomy = plan_grid(extents, 1755.0, 20.0, 1.0, precision="double", gpu_budget_bytes=int(20e9))
+    assert roomy.h < 0.9 * h_target and sum(roomy.misalignment_cells) < sum(plan.misalignment_cells) + 1e-12
+
+
 def test_oblique_fraction():
     n = np.array([[1, 0, 0], [0, 0, 1], [np.sqrt(0.5), np.sqrt(0.5), 0]])
     assert abs(oblique_area_fraction(n, np.array([1.0, 1.0, 2.0])) - 0.5) < 1e-9

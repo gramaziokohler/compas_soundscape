@@ -1,0 +1,8 @@
+# =============================================================================
+# Developer tools for the backend env (compas-toy on dev machines, compas-soundscape on the
+# production host). Not imported by the app: `compas deps` does not install this file.
+#   python -m pip install -r requirements-dev.txt
+# =============================================================================
+
+# Linter. Config: [tool.ruff] in pyproject.toml. See AGENTS.md § Run Commands for the gate.
+ruff>=0.17

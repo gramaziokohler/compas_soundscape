@@ -721,6 +721,14 @@ HYBRID_PARTS_BOTH = "both"
 HYBRID_PARTS_WAVE = "wave"
 HYBRID_PARTS_RAYS = "rays"
 HYBRID_PARTS = (HYBRID_PARTS_BOTH, HYBRID_PARTS_WAVE, HYBRID_PARTS_RAYS)
+# When the card's wave grid cannot run as set (GPU memory, a source / listener near a surface), the
+# job runs a fitted parameter set instead and offers the other (utils/hybrid_wave_fit.py): the
+# crossover moves on the card's step (frontend HYBRID.CROSSOVER_HZ_STEP), the points per wavelength
+# never go below WAVE_FIT_PPW_MIN (coarser grids are too dispersive to be worth the band they keep).
+HYBRID_CROSSOVER_STEP_HZ = 5.0
+HYBRID_WAVE_FIT_PPW_MIN = 10.0
+# Key of the job's progress `partial` (and of the results' hybrid header) that carries the fit
+HYBRID_WAVE_ADJUSTMENT_KEY = "wave_adjustment"
 
 # Sound paths for the 3D view (services/acoustic_paths_service.py)
 ACOUSTIC_PATHS_KINDS = ("reflections", "rays", "diffraction")

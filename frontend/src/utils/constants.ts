@@ -2877,6 +2877,8 @@ export const HYBRID = {
   CROSSOVER_FACTOR_STEP: 0.25,
   /** The wave solver runs to this x the crossover (headroom: its response is low-passed at its fmax). */
   WAVE_FMAX_MARGIN: 1.5,
+  /** Key of the job's progress `partial` and of the results' hybrid header carrying the fitted wave parameters. */
+  WAVE_ADJUSTMENT_KEY: 'wave_adjustment',
   LEVEL_MATCH_DEFAULT: false,
   DEFAULT_PPW: 12,
   /** |wave - rays| level in the crossover octave above which the join is flagged (dB). */

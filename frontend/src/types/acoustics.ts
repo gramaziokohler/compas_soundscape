@@ -268,6 +268,40 @@ export interface HybridRunInfo {
   median_overlap_mismatch_db?: number | null;
   /** Parts the run simulated (absent = both, joined). */
   parts?: HybridParts;
+  /** The wave part ran fitted parameters instead of the card's (absent = ran as set). */
+  wave_adjustment?: HybridWaveAdjustment;
+}
+
+/** A parameter set the hybrid's wave part can run with (backend utils/hybrid_wave_fit.py). */
+export interface HybridWaveOption {
+  /** conservative: keeps the wave part's accuracy; optimized: keeps more of the band in the wave solver. */
+  key: 'conservative' | 'optimized';
+  label: string;
+  detail: string;
+  /** Card settings to adopt: the handle value (crossover, or the wave band top alone), PPW, precision. */
+  crossover_hz: number;
+  ppw: number;
+  precision: PffdtdPrecision;
+  /** What the run then uses: the wave solver's top frequency, points per wavelength after refinement, cell (m). */
+  wave_fmax: number;
+  run_ppw: number;
+  h: number;
+  gpu_gb: number;
+  budget_gb: number;
+  runtime_s: number;
+}
+
+/**
+ * Why the hybrid's wave part could not run as set (grid too large for the GPU, a source / listener
+ * near a surface), the options that run, and which one the job runs (`applied`; null = none runs).
+ */
+export interface HybridWaveAdjustment {
+  reason: 'gpu' | 'clearance';
+  message: string;
+  requested: { crossover_hz: number; ppw: number; precision: PffdtdPrecision };
+  options: HybridWaveOption[];
+  recommended: HybridWaveOption['key'] | null;
+  applied: HybridWaveOption['key'] | null;
 }
 
 /**
@@ -294,6 +328,8 @@ export interface HybridSimulationConfig extends BaseSimulationConfig, CardExecut
   currentSimulationRunId?: string | null;
   /** Crossover of the last finished run. */
   hybridInfo?: HybridRunInfo | null;
+  /** The running job's fitted wave parameters (live from its progress; not saved). */
+  waveAdjustment?: HybridWaveAdjustment | null;
   /** 2 = "Hybrid simulation 2": crossover band, per-part settings, geometry check as its own step. */
   uiVersion?: 2;
   speckleMaterialAssignments?: Record<string, string>;

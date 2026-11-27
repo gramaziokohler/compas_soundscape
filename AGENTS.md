@@ -57,7 +57,19 @@ cd frontend && pnpm dev
 pnpm exec tsc --noEmit
 # or, after heavy frontend changes or new library installation:
 pnpm build
+
+# Python lint gate on the backend files you changed (ruff, from requirements-dev.txt), from backend/
+python -m ruff check --select F,E9 <changed .py files>
 ```
+
+**Ruff:** installed from `requirements-dev.txt` (`python -m pip install -r requirements-dev.txt` in
+`compas-toy`; already in `compas-soundscape` on the production host). Gate new and changed files
+with `--select F,E9` (pyflakes + syntax errors: unused or undefined names, redefinitions). The
+`[tool.ruff]` config in `pyproject.toml` (E, F, isort `force-single-line`) comes from the project
+template and was never applied: the backend has ~1,900 issues under it (~1,370 under `F`), so a bare
+`ruff check` is noise and its I001 suggestions are not the repo's style. Never `--fix` whole folders.
+On the production host, an agent's shell may have no `pnpm` on PATH: run the frontend's local
+binaries instead (`frontend\node_modules\.bin\tsc.cmd --noEmit`, `...\vitest.cmd run <files>`).
 
 ## Where Things Live (conventions the directory tree won't show)
 

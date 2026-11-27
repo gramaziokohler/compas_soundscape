@@ -11,7 +11,7 @@ from __future__ import annotations
 import math
 import os
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
 import numpy as np
 
@@ -95,9 +95,19 @@ def _misalignment(extents: np.ndarray, h: float) -> np.ndarray:
     return np.abs(r - np.round(r))
 
 
-def aligned_spacing(extents, h_target: float) -> tuple[float, list]:
+def grid_nodes(extents, h: float) -> int:
+    """Nodes of a grid of spacing ``h`` over ``extents``: ceil(L / h) + the halo cells per axis."""
+    # Python ints: np.prod is int32 on Windows with numpy < 2 and overflows past 2^31 nodes
+    return math.prod(int(math.ceil(L / h)) + PFFDTD_GRID_PADDING_CELLS for L in extents)
+
+
+def aligned_spacing(extents, h_target: float, fits: Optional[Callable[[float], bool]] = None) -> tuple[float, list]:
     """Largest h <= h_target (within PFFDTD_ALIGN_SEARCH_FRACTION) that best puts every
-    bounding-box extent on a whole number of cells. Returns (h, misalignment per axis)."""
+    bounding-box extent on a whole number of cells. Returns (h, misalignment per axis).
+
+    ``fits(h)`` (optional) rejects a finer aligned h that would no longer fit the GPU: the
+    alignment is a refinement, and the frontend's GPU limit is drawn for ``h_target`` itself, so a
+    setting below that limit must not fail because of it. ``h_target`` is always a candidate."""
     extents = np.asarray(extents, np.float64)
     h_min = h_target * (1.0 - PFFDTD_ALIGN_SEARCH_FRACTION)
     candidates = [h_target]
@@ -105,7 +115,8 @@ def aligned_spacing(extents, h_target: float) -> tuple[float, list]:
         if L <= 0:
             continue
         for n in range(math.ceil(L / h_target), math.floor(L / h_min) + 1):
-            candidates.append(L / n)
+            if fits is None or fits(L / n):
+                candidates.append(L / n)
     best = min(candidates, key=lambda h: (round(float(_misalignment(extents, h).sum()), 9), -h))
     return best, _misalignment(extents, best).tolist()
 
@@ -123,12 +134,14 @@ def plan_grid(extents, fmax: float, ppw: float, duration: float, domain_extents=
     """
     extents = np.asarray(extents, np.float64)
     h_target = PFFDTD_SPEED_OF_SOUND / (fmax * ppw)
+    sized = extents if domain_extents is None else np.asarray(domain_extents, np.float64)
+    budget = static_gpu_budget_bytes() if gpu_budget_bytes is None else int(gpu_budget_bytes)
+    node_bytes = bytes_per_node(precision)
     if h is None:
-        h, mis = aligned_spacing(extents, h_target)
+        h, mis = aligned_spacing(extents, h_target, fits=lambda hh: grid_nodes(sized, hh) * node_bytes <= budget)
     else:
         h = float(h)
         mis = _misalignment(extents, h).tolist()
-    sized = extents if domain_extents is None else np.asarray(domain_extents, np.float64)
     shape = tuple(int(math.ceil(L / h)) + PFFDTD_GRID_PADDING_CELLS for L in sized)
     nodes = math.prod(shape)  # Python ints: np.prod is int32 on Windows with numpy < 2 and overflows past 2^31 nodes
     Ts = h * PFFDTD_COURANT_CART / PFFDTD_SPEED_OF_SOUND
@@ -141,8 +154,8 @@ def plan_grid(extents, fmax: float, ppw: float, duration: float, domain_extents=
         shape=shape,
         nodes=nodes,
         steps=steps,
-        gpu_bytes=nodes * bytes_per_node(precision),
-        gpu_budget_bytes=static_gpu_budget_bytes() if gpu_budget_bytes is None else int(gpu_budget_bytes),
+        gpu_bytes=nodes * node_bytes,
+        gpu_budget_bytes=budget,
         est_runtime_s=estimate_runtime_s(nodes, steps, precision),
         domain_extents=None if domain_extents is None else sized.tolist(),
     )

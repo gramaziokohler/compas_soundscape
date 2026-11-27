@@ -60,7 +60,7 @@ const SIM_RUN_KEYS = [
   'simulationResults', 'currentSimulationId', 'currentSimulationRunId',
   'importedIRIds', 'importedIRMetadata', 'sourceReceiverIRMapping',
   'simulationPositions', 'savedSettings', 'generatedSignature', 'simulatedVersionId',
-  'queuePosition', 'queueTotal', 'runProblems', 'hybridInfo', 'progressLanes',
+  'queuePosition', 'queueTotal', 'runProblems', 'hybridInfo', 'progressLanes', 'waveAdjustment',
 ] as const;
 /** Transient execution fields of cards without a backend run (import-irs). */
 const EXECUTION_KEYS = ['isRunning', 'progress', 'status', 'error', 'currentSimulationRunId'] as const;
