@@ -203,6 +203,17 @@ describe('geometric engine settings', () => {
     expect(effectiveEngineSettings({ simulation_mode: 'foa', tail: 'ray_tracing' }, CAPS).settings.tail).toBe('auto');
   });
 
+  it('runs the SH-moments tail at FOA only, the FDN reference at SOA / TOA', () => {
+    const foa = effectiveEngineSettings({ simulation_mode: 'foa', tail: 'moments' }, CAPS);
+    expect(foa.settings.tail).toBe('moments');
+    expect(foa.changes).toEqual([]);
+    for (const order of [2, 3]) {
+      const hoa = effectiveEngineSettings({ simulation_mode: 'hoa', ambisonic_order: order, tail: 'moments' }, CAPS);
+      expect(hoa.settings.tail).toBe('reference');
+      expect(hoa.changes).toHaveLength(1);
+    }
+  });
+
   it('sends only what is set', () => {
     expect(engineFormFields({ simulation_mode: 'mono' })).toEqual({});
     expect(engineFormFields({

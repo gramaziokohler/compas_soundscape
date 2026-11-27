@@ -14,7 +14,7 @@ module hands the prepared mesh to compas_acoustics and gives back one response p
   scattering overrides the material's in every band.
 * methods   — mono: ``Mono`` (image sources + ray tracing, optional UDFA diffraction, emitter /
   ray processes, reciprocity); FOA/HOA: ``Ambisonics`` (hybrid: image sources + directional
-  FDN tail). The mono reference and the directional histogram are one ray trace, with the
+  FDN tail, or for FOA the rays' SH-moment late field with tail "moments"). The mono reference and the directional histogram are one ray trace, with the
   request's ray count, seed and receiver radius. Optional UDFA/BTMS diffraction. AmbiX
   ACN/SN3D in the listener frame (forward -Y, left +X, up +Z), like the legacy FOA output.
 * level     — responses are returned at the app's 1/r level (``CA_TO_APP_LEVEL_SCALE``).
@@ -47,6 +47,9 @@ from config.constants import (
     CA_RENDER_PAD_S,
     IR_TRIM_DECAY_DB,
     CA_HYBRID_SCATTERING_SPLIT,
+    CA_TAIL_MOMENTS,
+    CA_TAIL_MOMENTS_MAX_ORDER,
+    CA_TAILS,
     CA_TO_APP_LEVEL_SCALE,
     PYROOMACOUSTICS_CUSTOM_MATERIALS,
     PYROOMACOUSTICS_DEFAULT_SCATTERING,
@@ -82,7 +85,9 @@ class EngineSettings:
     seed: int = 42
     scattering_split: bool = CA_HYBRID_SCATTERING_SPLIT
     # Ambisonic late field: "auto" (ray-traced reference when ray tracing is on, else Eyring),
-    # "reference" (the request's ray-traced mono run), "eyring" or "sabine" (statistical decay).
+    # "reference" (the request's ray-traced mono run), "eyring" or "sabine" (statistical decay), all
+    # three with the FDN late field, or "moments" (the reference's own rays set the late field's SH
+    # energy moments; first order only).
     tail: str = "auto"
     n_slopes: int = 1                   # decay slopes of the late field (2 = coupled volumes)
     # Diffraction edges switched off by the user: [x1, y1, z1, x2, y2, z2] in model coordinates
@@ -322,9 +327,15 @@ def build_method(settings: EngineSettings, reference=None):
         tail = "reference" if settings.ray_tracing else "eyring"
         if not settings.ray_tracing:
             notes.append("Ray tracing is off: the ambisonic late field follows Eyring's decay of the room.")
-    if tail == "reference":
+    follows_rays = tail in ("reference", CA_TAIL_MOMENTS)
+    if tail == CA_TAIL_MOMENTS and settings.ambisonic_order > CA_TAIL_MOMENTS_MAX_ORDER:
+        raise ValueError("The SH-moments reverb tail is first order only (FOA); use an FDN tail for SOA / TOA.")
+    if follows_rays:
         # The late field follows a ray-traced mono run with the app's ray settings (also its W level reference).
-        kwargs["reference"] = reference if reference is not None else _mono(reference_settings(settings), air, False)
+        # The moments always get a Mono at the method's image source order, so their late energy is its own
+        # rays' (a precomputed dict would leave them only the network's energy).
+        given = reference if tail == "reference" else None
+        kwargs["reference"] = given if given is not None else _mono(reference_settings(settings), air, False)
         kwargs["n_slopes"] = int(settings.n_slopes)
     elif tail in ("eyring", "sabine"):
         kwargs["tail"] = tail
@@ -332,9 +343,10 @@ def build_method(settings: EngineSettings, reference=None):
         if settings.n_slopes != 1:
             notes.append(f"A {tail} tail has one decay slope; the {settings.n_slopes}-slope setting is ignored.")
     else:
-        raise ValueError(f"Unknown tail '{tail}'; one of auto, reference, eyring, sabine")
+        raise ValueError(f"Unknown tail '{tail}'; one of {', '.join(CA_TAILS)}")
+    kwargs["late_field"] = "moments" if tail == CA_TAIL_MOMENTS else "fdn"
     method = Ambisonics(**kwargs)
-    if settings.duration is None and tail == "reference":
+    if settings.duration is None and follows_rays:
         # The reference now exists inside the run (one ray trace). Shorten the network to what the
         # export keeps, which used to require tracing the reference first.
         method.limit_output = _limit_output
@@ -822,7 +834,7 @@ def simulate_pairs(
     responses.sort(key=lambda r: r.pair_index)
     summary = {k: run_generation.get(k) for k in (
         "method", "tail", "image_source_order", "n_rays", "seed", "diffraction", "air", "speed_of_sound",
-        "air_absorption", "reciprocal", "n_jobs", "scattering", "num_delays",
+        "air_absorption", "reciprocal", "n_jobs", "scattering", "num_delays", "late_field", "late_energy",
     ) if k in run_generation}
     summary["version"] = getattr(ca, "__version__", None)
     summary["n_jobs"] = n_workers

@@ -680,8 +680,12 @@ CA_AIR_HUMIDITY_DEFAULT = 50.0  # % relative humidity
 CA_HYBRID_SCATTERING_SPLIT = False  # Ambisonics(scattering=True): specular vs scattered early part
 # Ambisonic late field (EngineSettings.tail). Removed values "ray_tracing" (CA Mono defaults)
 # and "legacy" (pyroomacoustics FOA capsules) alias to "auto".
-CA_TAILS = ("auto", "reference", "eyring", "sabine")
+# "moments": Ambisonics(late_field="moments"), noise shaped by the SH energy moments of the reference's
+# own rays (compas_acoustics.hybrid.moments); every other tail runs the FDN (late_field="fdn").
+CA_TAIL_MOMENTS = "moments"
+CA_TAILS = ("auto", "reference", "eyring", "sabine", CA_TAIL_MOMENTS)
 CA_TAIL_DEFAULT = "auto"
+CA_TAIL_MOMENTS_MAX_ORDER = 1  # first order (FOA) only; disabled for SOA / TOA
 CA_TAIL_ALIASES = {"ray_tracing": "auto", "legacy": "auto"}
 CA_N_SLOPES_MAX = 3
 CA_SEED_DEFAULT = 42
@@ -766,7 +770,7 @@ CA_TO_APP_LEVEL_SCALE = 4.0 * 3.141592653589793
 CA_PROGRESS_STAGE_SIMULATING = "simulating"
 _CA_RENDER_STEPS = {
     "early reflections": "Early reflections",
-    "late reverberation": "Late reverberation (FDN)",
+    "late reverberation": "Late reverberation",
     "ambisonic encoding": "Ambisonic encoding",
     "binaural encoding": "Binaural encoding",
 }

@@ -62,6 +62,11 @@ export function isAmbisonicMode(mode: string): boolean {
   return mode === PYROOMACOUSTICS_SIMULATION_MODE_FOA || mode === PYROOMACOUSTICS_SIMULATION_MODE_HOA;
 }
 
+/** The SH-moments tail runs at first order only: FOA yes, SOA / TOA ("hoa") no. */
+export function supportsMomentsTail(mode: string): boolean {
+  return mode === PYROOMACOUSTICS_SIMULATION_MODE_FOA;
+}
+
 /** True when the card runs on compas_acoustics (the engine with diffraction, HOA and sound paths). */
 export function usesCompasAcoustics(
   settings: GeometricEngineSettings & { simulation_mode?: string },
@@ -129,6 +134,10 @@ export function effectiveEngineSettings<T extends GeometricEngineSettings & { si
   if (out.diffraction === 'btms' && !isAmbisonicMode(out.simulation_mode)) {
     out.diffraction = 'udfa';
     changes.push('BTMS diffraction needs an ambisonic output: running UDFA.');
+  }
+  if (out.tail === GA_ENGINE.TAIL_MOMENTS && !supportsMomentsTail(out.simulation_mode)) {
+    out.tail = GA_ENGINE.TAIL_MOMENTS_FALLBACK;
+    changes.push(`The ${GA_ENGINE.TAIL_NAMES[GA_ENGINE.TAIL_MOMENTS]} tail is first order only: running ${GA_ENGINE.TAIL_NAMES[GA_ENGINE.TAIL_MOMENTS_FALLBACK]}.`);
   }
   return { settings: out, changes };
 }

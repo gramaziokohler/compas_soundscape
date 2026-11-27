@@ -185,7 +185,7 @@ async def run_simulation_speckle(
         _check_range("duration", duration, PFFDTD_DURATION_MIN, PFFDTD_DURATION_MAX)
     _check_range("max_order", max_order, PYROOMACOUSTICS_MAX_ORDER_MIN, PYROOMACOUSTICS_MAX_ORDER_MAX)
     validate_engine_settings("compas_acoustics", simulation_mode, diffraction, None, air_temperature, air_humidity)
-    validate_tail_settings(tail, n_slopes)
+    validate_tail_settings(tail, n_slopes, simulation_mode)
     tail = normalize_tail(tail)
     excluded_edge_rows = parse_excluded_edges(excluded_edges)
 

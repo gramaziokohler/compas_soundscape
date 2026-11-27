@@ -160,6 +160,9 @@ describe('engine settings', () => {
     expect(praEngine).toContain('Higher-order ambisonics needs compas_acoustics');
     expect(praEngine).toContain('Edge diffraction needs compas_acoustics');
     expect(praEngine).not.toContain('Reverb tail'); // engine=pra has no FDN reverb-tail control
+    const soaMoments = engine({ simulation_mode: 'hoa', ambisonic_order: 2, tail: 'moments' });
+    expect(soaMoments).toContain('tail is first order only');
+    expect(engine({ simulation_mode: 'foa', tail: 'moments' })).not.toContain('first order only');
   });
 
   it('renders before the capabilities are known', () => {

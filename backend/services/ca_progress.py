@@ -1,7 +1,7 @@
 """Live progress of a compas_acoustics run (``services/compas_acoustics_engine.py``).
 
 compas_acoustics reports ``(stage, done, of)`` on the thread that runs it. A :class:`Lane` turns those
-reports into a bar fraction and one short line ("Late reverberation (FDN) · 2/3 pairs"). When the
+reports into a bar fraction and one short line ("Late reverberation · 2/3 pairs"). When the
 pairs render in several processes, each process writes its reports to a small JSON file
 (:class:`LaneWriter`); the job reads them back (:func:`read_lane`) and :func:`summary` makes the
 collapsed line and the job's ``partial["ca_progress"]``: one row per process, which the frontend

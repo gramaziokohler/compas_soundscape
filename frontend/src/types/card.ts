@@ -167,7 +167,7 @@ export interface CardExecutionState {
 export interface ProgressLane {
   /** What the part covers, e.g. "S1–2 → R1–3" */
   label: string;
-  /** Its current step with counts, e.g. "Late reverberation (FDN) · 2/3 pairs" */
+  /** Its current step with counts, e.g. "Late reverberation · 2/3 pairs" */
   text: string;
   /** 0-1 */
   fraction: number;

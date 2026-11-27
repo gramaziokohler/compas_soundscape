@@ -158,6 +158,24 @@ def test_tail_options(tail, ray_tracing, expected):
         assert method.reference.reciprocity is False
 
 
+@pytest.mark.parametrize("tail, late_field", [
+    ("auto", "fdn"), ("reference", "fdn"), ("eyring", "fdn"), ("sabine", "fdn"), ("moments", "moments"),
+])
+def test_tail_late_field(tail, late_field):
+    method, _ = engine.build_method(engine.EngineSettings(ambisonic_order=1, tail=tail, ray_tracing=True, n_rays=1234, seed=9))
+    assert method.late_field == late_field
+    if late_field == "moments":
+        # its own Mono at the method's order, so the late energy is the reference's rays'
+        assert method.reference.ray_tracing is True
+        assert method.reference.image_source_order == method.image_source_order
+
+
+@pytest.mark.parametrize("order", [2, 3])
+def test_moments_tail_is_first_order_only(order):
+    with pytest.raises(ValueError, match="first order"):
+        engine.build_method(engine.EngineSettings(ambisonic_order=order, tail="moments"))
+
+
 def test_unknown_tail():
     with pytest.raises(ValueError, match="tail"):
         engine.build_method(engine.EngineSettings(ambisonic_order=1, tail="plate"))

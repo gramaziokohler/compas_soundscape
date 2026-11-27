@@ -140,8 +140,12 @@ Step 5 above is the **legacy** engine. Since the compas_acoustics migration
   offers. `ACOUSTICS_ENGINE_DEFAULT` falls back to `pyroomacoustics` when compas_acoustics is not
   installed. The card disables what the engine cannot run and lists what the run will adjust.
 - **Tail** (`CA_TAILS`, ambisonic output only): `auto` (ray-traced reference when ray tracing is
-  on, else Eyring), `reference`, `eyring`, `sabine`. Removed values `ray_tracing` and `legacy`
-  alias to `auto`.
+  on, else Eyring), `reference`, `eyring`, `sabine` (all four the FDN, `late_field="fdn"`), and
+  `moments` (`late_field="moments"`: noise shaped by the SH energy moments of the reference Mono's
+  own rays, CA `hybrid.moments`; `generation.late_energy` says `rays` or `network`). `moments` is
+  FOA only (`CA_TAIL_MOMENTS_MAX_ORDER`): the router rejects it for `hoa`, the card disables it for
+  SOA / TOA and an SOA / TOA card that has it runs `reference`. Removed values `ray_tracing` and
+  `legacy` alias to `auto`.
 - **Sound paths:** `POST /api/acoustics/paths-speckle` (CPU job, variant `acoustic_paths`) →
   `GET /api/acoustics/paths/{id}`. `services/acoustic_paths_service.py` prepares the same mesh as
   the run and returns reflections (`SpecularReflections`), billiard rays (`RayField`) and the

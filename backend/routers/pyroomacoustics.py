@@ -32,6 +32,7 @@ from config.constants import CA_N_SLOPES_MAX
 from config.constants import CA_SEED_DEFAULT
 from config.constants import CA_TAIL_ALIASES
 from config.constants import CA_TAIL_DEFAULT
+from config.constants import CA_TAIL_MOMENTS
 from config.constants import CA_TAILS
 from config.constants import DEFAULT_SPEED_OF_SOUND
 from config.constants import PYROOMACOUSTICS_DEFAULT_ABSORPTION
@@ -79,9 +80,11 @@ def normalize_tail(tail: str) -> str:
     return CA_TAIL_ALIASES.get(tail, tail)
 
 
-def validate_tail_settings(tail: str, n_slopes: int) -> None:
+def validate_tail_settings(tail: str, n_slopes: int, simulation_mode: Optional[str] = None) -> None:
     if normalize_tail(tail) not in CA_TAILS:
         raise HTTPException(status_code=400, detail=f"tail must be one of {list(CA_TAILS)}")
+    if normalize_tail(tail) == CA_TAIL_MOMENTS and simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_HOA:
+        raise HTTPException(status_code=400, detail="The SH-moments reverb tail is first order only (FOA); use an FDN tail for SOA / TOA")
     if not 1 <= n_slopes <= CA_N_SLOPES_MAX:
         raise HTTPException(status_code=400, detail=f"n_slopes must be 1 to {CA_N_SLOPES_MAX}")
 
@@ -251,7 +254,7 @@ async def run_simulation_speckle(
         object_scattering_dict: dict[str, float] = json.loads(object_scattering) if object_scattering else {}
         mesh_prep = parse_mesh_settings(mesh_settings)
 
-        validate_tail_settings(tail, n_slopes)
+        validate_tail_settings(tail, n_slopes, simulation_mode)
         tail = normalize_tail(tail)
         validate_engine_settings(engine, simulation_mode, diffraction, ambisonic_order, air_temperature, air_humidity)
         from routers.acoustic_paths import parse_excluded_edges
@@ -355,7 +358,7 @@ async def run_simulation_geometry(body: PyroomacousticsGeometryRequest, http_req
 
     try:
         settings = req.settings
-        validate_tail_settings(settings.tail, settings.n_slopes)
+        validate_tail_settings(settings.tail, settings.n_slopes, settings.simulation_mode)
         engine = settings.engine
         simulation_mode = settings.simulation_mode
         diffraction = settings.diffraction

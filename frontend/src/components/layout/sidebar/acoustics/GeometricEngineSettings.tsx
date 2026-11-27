@@ -24,6 +24,7 @@ import {
   effectiveEngineSettings,
   isAmbisonicMode,
   normalizeTail,
+  supportsMomentsTail,
   temperatureForSoundSpeed,
   usesCompasAcoustics,
 } from '@/lib/acoustics/geometric-engine';
@@ -86,11 +87,16 @@ export function GeometricEngineSettings({
     title: value !== GA_ENGINE.AUTO && capabilities && !capabilities.engines[value]?.available
       ? 'Not installed on the server' : undefined,
   }));
-  const tailOptions = Object.keys(GA_ENGINE.TAIL_NAMES).map((value) => ({
-    value,
-    label: GA_ENGINE.TAIL_NAMES[value],
-    title: GA_ENGINE.TAIL_HINTS[value],
-  }));
+  const momentsBlocked = !supportsMomentsTail(settings.simulation_mode);
+  const tailOptions = Object.keys(GA_ENGINE.TAIL_NAMES).map((value) => {
+    const blocked = value === GA_ENGINE.TAIL_MOMENTS && momentsBlocked;
+    return {
+      value,
+      label: GA_ENGINE.TAIL_NAMES[value],
+      disabled: blocked,
+      title: blocked ? 'First order (FOA) only: not available for SOA / TOA' : GA_ENGINE.TAIL_HINTS[value],
+    };
+  });
 
   return (
     <div className="card-stack">
@@ -114,7 +120,7 @@ export function GeometricEngineSettings({
         />
       </div>
 
-      {/* Ambisonic late field (compas_acoustics FDN) */}
+      {/* Ambisonic late field (compas_acoustics: FDN, or the rays' SH moments at FOA) */}
       {showTail && (
         <div>
           <label className="text-xxs card-label text-secondary-hover" title={GA_ENGINE.TAIL_HINTS[tail]}>

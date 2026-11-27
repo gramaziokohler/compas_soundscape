@@ -2840,17 +2840,23 @@ export const GA_ENGINE = {
   } as Record<string, string>,
   TAIL_DEFAULT: 'auto',
   TAIL_NAMES: {
-    auto: 'Automatic',
-    reference: 'Ray-traced (this card\'s rays)',
-    eyring: 'Statistical (Eyring)',
-    sabine: 'Statistical (Sabine)',
+    auto: 'Automatic (FDN)',
+    reference: 'Ray-traced as reference (FDN)',
+    eyring: 'Statistical, Eyring (FDN)',
+    sabine: 'Statistical, Sabine (FDN)',
+    moments: 'Ray-traced SH moments',
   } as Record<string, string>,
   TAIL_HINTS: {
-    auto: 'Ray-traced when ray tracing is on, Eyring otherwise.',
+    auto: 'Ray-traced when ray tracing is on, Eyring otherwise (feedback-delay network).',
     reference: 'The late reverberation follows the energy decay of a ray-traced run with this card\'s rays (feedback-delay network).',
-    eyring: 'Diffuse-field decay from the room volume and absorption. No rays; best for evenly absorbing rooms.',
-    sabine: 'Sabine decay. No rays; only for lightly absorbing rooms.',
+    eyring: 'Diffuse-field decay from the room volume and absorption (feedback-delay network). No rays; best for evenly absorbing rooms.',
+    sabine: 'Sabine decay (feedback-delay network). No rays; only for lightly absorbing rooms.',
+    moments: 'Noise shaped by the spherical-harmonic energy moments of this card\'s rays: the late energy, its decay and the direction it arrives from are the rays\' own. FOA only.',
   } as Record<string, string>,
+  /** Late field from the rays' SH energy moments (compas_acoustics late_field="moments"); FOA only. */
+  TAIL_MOMENTS: 'moments',
+  /** What an SOA / TOA card with the moments tail runs instead. */
+  TAIL_MOMENTS_FALLBACK: 'reference',
   /** Cards saved with removed tail values still load as Automatic. */
   TAIL_ALIASES: { ray_tracing: 'auto', legacy: 'auto' } as Record<string, string>,
   AMBISONIC_ORDER_DEFAULT: 2,

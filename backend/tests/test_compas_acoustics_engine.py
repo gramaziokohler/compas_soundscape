@@ -253,9 +253,9 @@ def test_parallel_rendering_gives_the_serial_responses():
 def test_progress_lines_name_the_step_and_its_counts():
     from services import ca_progress
 
-    assert ca_progress.describe("rendering: late reverberation", 2, 3, 10000) == "Late reverberation (FDN) · 2/3 pairs"
+    assert ca_progress.describe("rendering: late reverberation", 2, 3, 10000) == "Late reverberation · 2/3 pairs"
     # the stage names since compas_acoustics b66a67e
-    assert ca_progress.describe("simulating: late reverberation", 2, 3, 10000) == "Late reverberation (FDN) · 2/3 pairs"
+    assert ca_progress.describe("simulating: late reverberation", 2, 3, 10000) == "Late reverberation · 2/3 pairs"
     assert ca_progress.describe("simulating", 1, 4, 10000) == "Simulating · 1/4 responses"
     assert ca_progress.describe("simulating", None, None, 10000) == "Simulating"
     assert ca_progress.describe("ray tracing", 6200, 20000, 10000) == "Ray tracing · 6,200/20,000 rays"
@@ -334,3 +334,23 @@ def test_render_duration_follows_what_the_export_keeps():
     assert engine.render_duration([click]) == CA_RENDER_MIN_S
     assert engine.render_duration([np.zeros(FS)]) is None
     assert engine.render_duration([]) is None
+
+
+def test_moments_tail_takes_the_rays_late_energy_serial_or_split():
+    """The SH-moments tail (FOA): late field from the reference's own rays, the same in one process or two."""
+    from services.pyroomacoustics_room_builder import room_offset
+
+    sources = {"s1": [1.5, 2.5, 1.5], "s2": [4.5, 1.5, 1.2]}
+    receivers = {"r1": [3.0, 3.5, 1.5]}
+    pairs = [{"source_id": s, "source_position": sp, "receiver_id": r, "receiver_position": rp}
+             for s, sp in sources.items() for r, rp in receivers.items()]
+    mesh = _prepared_shoebox(list(sources.values()) + list(receivers.values()))
+    offset = room_offset(mesh)
+    base = dict(ambisonic_order=1, max_order=1, ray_tracing=True, n_rays=2000, air_absorption=False, tail="moments")
+    serial = engine.simulate_pairs(mesh, offset, pairs, engine.EngineSettings(**base, n_jobs=1), lambda f, t, d: None)
+    parallel = engine.simulate_pairs(mesh, offset, pairs, engine.EngineSettings(**base, n_jobs=2), lambda f, t, d: None)
+    assert serial.generation["late_field"] == "moments"
+    for a, b in zip(serial.responses, parallel.responses):
+        assert a.generation["late_field"] == "moments" and a.generation["late_energy"] == "rays"
+        assert a.rir.shape[1] == 4 and np.any(a.rir[len(a.rir) // 4:, 0] != 0)  # it has a late field
+        np.testing.assert_allclose(b.rir, a.rir, rtol=1e-6, atol=1e-6)
