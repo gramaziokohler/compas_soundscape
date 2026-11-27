@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react
 import { Bubble, BubbleAddButton, BubbleHeading } from '@/components/ui/Bubble';
 import { WaveformRing } from '@/components/ui/BubbleIcons';
 import { BubblePanel } from '@/components/ui/BubblePanel';
+import { BubbleLink, bubbleAnchorId, bubblePanelId } from '@/components/ui/BubbleLink';
 import { BubbleScrollColumn } from '@/components/ui/BubbleScrollColumn';
 import { ContextMenu } from '@/components/ui/ContextMenu';
 import { SoundGenerationSection } from '@/components/layout/sidebar/SoundGenerationSection';
@@ -49,6 +50,10 @@ type LeftPanel =
 
 const COLUMN_TOP = SIMPLE_MODE.TOP_OFFSET + SIMPLE_MODE.HEADING_HEIGHT;
 const PANEL_LEFT = SIMPLE_MODE.EDGE_MARGIN + SIMPLE_MODE.BUBBLE_SIZE + SIMPLE_MODE.PANEL_GAP;
+/** BubbleLink ids: the open scene panel (workflow / sounds / chat) and the composer. */
+const LINK_COLUMN = 'scene';
+const SCENE_PANEL_ID = bubblePanelId(LINK_COLUMN);
+const COMPOSER_PANEL_ID = bubblePanelId(`${LINK_COLUMN}-composer`);
 
 const REMOVE_SCENE_MESSAGE = 'Remove this scene and its sounds?';
 /** A click on a sound sphere keeps the open scene panel (it targets the scene's sounds). */
@@ -97,6 +102,7 @@ function SceneBubble({ scene, selected, open, onClick, onOpen, onTogglePower, on
   const detail = `${progress.statusText} · click to ${action}`;
   return (
     <Bubble
+      id={bubbleAnchorId(LINK_COLUMN, scene.usageIndex)}
       label={scene.fullTitle}
       detail={detail}
       icon={<WaveformRing values={envelope} size={SIMPLE_MODE.BUBBLE_SIZE} />}
@@ -147,6 +153,7 @@ function WorkflowPanel({ scene, powered, onTogglePower, onReduce, onShowSounds, 
           onOpenExpert={() => switchUIMode('expert', scene.usageIndex)}
         />
       }
+      id={SCENE_PANEL_ID}
       style={{ position: 'fixed', left: PANEL_LEFT, top: COLUMN_TOP }}
     >
       <SceneWorkflowDetail scene={scene} progress={progress} onShowSounds={onShowSounds} />
@@ -401,6 +408,12 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
         onPointerDownCapture={frontLayer.onPointerDownCapture}
         style={{ position: 'relative', zIndex: frontLayer.zIndex }}
       >
+      {panel?.kind === 'composer' && (
+        <BubbleLink anchorId={NEW_SCENE_ADD_BUTTON_ID} panelId={COMPOSER_PANEL_ID} />
+      )}
+      {panel && panel.kind !== 'composer' && panelScene && (
+        <BubbleLink anchorId={bubbleAnchorId(LINK_COLUMN, panelScene.usageIndex)} panelId={SCENE_PANEL_ID} />
+      )}
       {composerMounted && (
         <div style={{ display: panel?.kind === 'composer' ? undefined : 'none' }}>
           <BubblePanel
@@ -408,7 +421,8 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
             title="New sound scene"
             onReduce={closePanel}
             width={SIMPLE_MODE.COMPOSER_WIDTH}
-            style={{ position: 'fixed', left: PANEL_LEFT, top: COLUMN_TOP }}
+            id={COMPOSER_PANEL_ID}
+          style={{ position: 'fixed', left: PANEL_LEFT, top: COLUMN_TOP }}
           >
             <ScenePromptComposer onSubmit={handleSubmit} onClose={closePanel} />
           </BubblePanel>
@@ -452,6 +466,7 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
               {SCENE_EDIT.TITLE}
             </button>
           ) : undefined}
+          id={SCENE_PANEL_ID}
           style={{ position: 'fixed', left: PANEL_LEFT, top: COLUMN_TOP }}
         >
           <div className="mb-2">
@@ -482,6 +497,7 @@ export function SimpleSoundscapes({ sidebarProps }: SimpleSoundscapesProps) {
               Show sounds
             </button>
           }
+          id={SCENE_PANEL_ID}
           style={{ position: 'fixed', left: PANEL_LEFT, top: COLUMN_TOP }}
         >
           <SceneEditChat usageIndex={panelScene.usageIndex} autoFocus />

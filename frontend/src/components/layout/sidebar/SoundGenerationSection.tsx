@@ -37,6 +37,7 @@ import {
   SOUND_CATEGORIES,
   normalizeSoundCategory,
   soundCategoryTooltip,
+  type SoundCategoryKey,
 } from "@/utils/constants";
 import { getGenerationSignature, getModifiedGenerationFields, isGenerationDirty } from '@/utils/generationSignature';
 import { soundMatchesCard } from '@/utils/sound-card-match';
@@ -181,6 +182,7 @@ export function SoundGenerationSection({
   const orchestrateBaselineSignature = useSoundscapeStore((s) => s.orchestrateBaselineSignature);
   const isReorchestrating           = useSoundscapeStore((s) => s.isReorchestrating);
   const reassignSoundParent         = useSoundscapeStore((s) => s.reassignSoundParent);
+  const setSoundCategory            = useSoundscapeStore((s) => s.setSoundCategory);
 
   // Full analysis configs — used to build the right-click "Send to sound section"
   // destination list (all usage/scenario cards across all contexts).
@@ -698,6 +700,30 @@ export function SoundGenerationSection({
           onClick: (e) => {
             e.stopPropagation();
             reassignSoundParent(originalIndex, target.index);
+          },
+        })),
+      });
+    }
+
+    // Sound category (right-click → Sound category) — re-assign background /
+    // sound event / speech. Syncs the config and every generated variant.
+    if (canEdit) {
+      const currentCategory = normalizeSoundCategory(config.category);
+      customButtons.push({
+        key: 'sound-category',
+        icon: (
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5a1.99 1.99 0 011.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+          </svg>
+        ),
+        label: 'Sound category',
+        subItems: (Object.keys(SOUND_CATEGORIES) as SoundCategoryKey[]).map((key) => ({
+          key: `category-${key}`,
+          label: SOUND_CATEGORIES[key].label,
+          isActive: currentCategory === key,
+          onClick: (e) => {
+            e.stopPropagation();
+            setSoundCategory(originalIndex, key);
           },
         })),
       });
@@ -1340,6 +1366,7 @@ export function SoundGenerationSection({
     setShowSpectrograms,
     usageTargets,
     reassignSoundParent,
+    setSoundCategory,
   ]);  
 
   // Footer with generate button

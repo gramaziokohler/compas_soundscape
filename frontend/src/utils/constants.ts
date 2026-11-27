@@ -3252,6 +3252,14 @@ export const SIMPLE_MODE = {
   WAVEFORM_MAX_RATIO: 0.40,     // max bar length as a fraction of the bubble radius
   /** Click-vs-drag threshold for click-outside dismissal (px). */
   DISMISS_DRAG_TOLERANCE: 4,
+  /** Connector from an expanded bubble to its panel (components/ui/BubbleLink.tsx). */
+  LINK_STROKE: 1.5,             // px — line width
+  LINK_DOT_RADIUS: 2.5,         // px — end dots on the bubble and panel edges
+  LINK_EDGE_INSET: 20,          // px — keeps the panel end clear of its rounded corners
+  /** DOM id prefix of bubbles a panel can link back to (bubbleAnchorId). */
+  LINK_ANCHOR_PREFIX: 'bubble-anchor-',
+  /** DOM id prefix of the panels themselves (bubblePanelId). */
+  LINK_PANEL_PREFIX: 'bubble-panel-',
 } as const;
 
 // Scene edit chat (store/sceneEditStore.ts, components/sceneEdit/). Limits mirror

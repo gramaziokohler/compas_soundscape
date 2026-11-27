@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { CardButton, CloseIcon } from "./Card";
 
 export type NoticeType = "error" | "warning" | "info" | "success";
@@ -17,11 +17,12 @@ interface NoticeProps {
   variant?: "bar" | "tag";
 }
 
-const BAR_STYLES: Record<NoticeType, string> = {
-  error: "bg-error-hover border-error text-white",
-  warning: "bg-warning-hover border-warning text-white",
-  info: "bg-info-hover border-info text-white",
-  success: "bg-success-hover border-success text-white",
+/** Severity accent fed to `.notice-bar` (globals.css) via `--notice-color`. */
+const BAR_COLORS: Record<NoticeType, string> = {
+  error: "var(--color-error)",
+  warning: "var(--color-warning)",
+  info: "var(--color-info)",
+  success: "var(--color-success)",
 };
 
 const TAG_STYLES: Record<NoticeType, string> = {
@@ -57,9 +58,10 @@ export function Notice({ type, message, onDismiss, variant = "bar" }: NoticeProp
   return (
     <div
       role="alert"
-      className={`px-2 py-1.5 text-xs rounded-lg border flex items-start gap-2 ${BAR_STYLES[type]}`}
+      className="notice-bar"
+      style={{ "--notice-color": BAR_COLORS[type] } as CSSProperties}
     >
-      <span className="flex-1">{message}</span>
+      <span className="notice-bar__message">{message}</span>
       {onDismiss && (
         <CardButton
           icon={<CloseIcon />}

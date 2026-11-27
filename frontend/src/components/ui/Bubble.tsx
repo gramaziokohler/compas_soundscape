@@ -12,6 +12,8 @@ export type BubbleTone = "primary" | "listener";
 export interface BubbleProps {
   /** Accessible name and hover label. */
   label: string;
+  /** DOM id on the bubble's wrapper (e.g. `bubbleAnchorId(...)` for a BubbleLink). */
+  id?: string;
   /** Pictogram drawn in `currentColor` (see BubbleIcons). */
   icon: ReactNode;
   /** Diameter in px. */
@@ -66,6 +68,7 @@ export interface BubbleProps {
  */
 export function Bubble({
   label,
+  id,
   icon,
   size = SIMPLE_MODE.BUBBLE_SIZE,
   ready = false,
@@ -97,7 +100,7 @@ export function Bubble({
     .join(" ");
 
   return (
-    <div className="bubble-wrap group" style={{ width: size, height: size }}>
+    <div id={id} className="bubble-wrap group" style={{ width: size, height: size }}>
       <button
         type="button"
         className={classes}

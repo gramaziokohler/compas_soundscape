@@ -56,6 +56,7 @@ import {
   ELEVENLABS_DURATION_MAX,
   ELEVENLABS_DURATION_MIN,
   normalizeSoundCategory,
+  type SoundCategoryKey,
   SOUND_GEN_CONCURRENCY,
 } from '@/utils/constants';
 import { mapWithConcurrency } from '@/utils/concurrency';
@@ -1057,6 +1058,8 @@ export interface SoundscapeStoreState {
    * cardFlow usage→sound linkage.
    */
   reassignSoundParent: (soundConfigIndex: number, targetParentUsageIndex: number) => void;
+  /** Re-assign a card's sound category (config + every generated variant/event of the card). */
+  setSoundCategory: (index: number, category: SoundCategoryKey) => void;
   handleTypeChange: (index: number, type: CardType) => Promise<void>;
   handleGlobalDurationChange: (duration: number) => void;
   handleGlobalStepsChange: (steps: number) => void;
@@ -1426,6 +1429,26 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             }),
             false,
             'soundscape/applyVariantGenerationSettings',
+          );
+        },
+
+        setSoundCategory: (index, category) => {
+          const { soundConfigs, soundscapeData, generatedSounds } = get();
+          const config = soundConfigs[index];
+          if (!config || normalizeSoundCategory(config.category) === category) return;
+          // The category lives on the config (scene/global-bed logic) AND on each
+          // generated event (DAW track colour, background tiling, sound spheres,
+          // speech FX) — keep both in sync. Match by card identity (config_id).
+          const syncCategory = (sounds: SoundEvent[]) =>
+            sounds.map((s) => (soundMatchesCard(s, soundConfigs, index) ? { ...s, category } : s));
+          set(
+            {
+              soundConfigs: soundConfigs.map((c, i) => (i === index ? { ...c, category } : c)),
+              soundscapeData: soundscapeData ? syncCategory(soundscapeData) : null,
+              generatedSounds: syncCategory(generatedSounds),
+            },
+            false,
+            'soundscape/setSoundCategory',
           );
         },
 

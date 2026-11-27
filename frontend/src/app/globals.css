@@ -967,6 +967,26 @@ canvas {
   box-shadow: var(--shadow-lg);
 }
 
+/* Connector from an expanded bubble to its panel (BubbleLink.tsx). */
+.bubble-link {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  color: var(--color-primary);
+}
+.bubble-link--listener {
+  color: var(--color-warning);
+}
+.bubble-link path {
+  stroke: currentColor;
+}
+.bubble-link circle {
+  fill: currentColor;
+}
+
 /* Waveform-ring icon (scene bubbles) */
 .waveform-ring__bar {
   stroke: currentColor;
@@ -3172,7 +3192,8 @@ body:has(#scene-view-mode-toolbar:hover) .share-tutorial-tip[data-step='viewMode
   color: var(--color-text-3);
   transition: color 0.15s ease;
 }
-.toggle-row.checked .toggle-row__label { color: var(--color-primary); }
+/* --section-accent: a card section's colour, set inline on the section (Hybrid simulation 2's parts) */
+.toggle-row.checked .toggle-row__label { color: var(--section-accent, var(--color-primary)); }
 .toggle-switch {
   position: relative;
   flex-shrink: 0;
@@ -3184,8 +3205,8 @@ body:has(#scene-view-mode-toolbar:hover) .share-tutorial-tip[data-step='viewMode
   transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 .toggle-switch.checked {
-  background: var(--color-primary);
-  border-color: var(--color-primary);
+  background: var(--section-accent, var(--color-primary));
+  border-color: var(--section-accent, var(--color-primary));
 }
 .toggle-switch::after {
   content: '';
@@ -3461,4 +3482,33 @@ body:has(#scene-view-mode-toolbar:hover) .share-tutorial-tip[data-step='viewMode
   font-size: 11px;
   background: var(--color-primary);
   color: var(--color-on-blue);
+}
+
+/* Notice bar (components/ui/Notice.tsx, variant="bar") — tinted severity panel.
+   `--notice-color` is set inline per severity. The surface mix stays readable on
+   pending cards, the blue generated shell, and both themes. Long messages
+   (URLs, tracebacks) wrap anywhere and scroll past a fixed height instead of
+   overflowing the card. */
+.notice-bar {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+  padding: 6px 6px 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--notice-color) 45%, transparent);
+  border-left: 3px solid var(--notice-color);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--notice-color) 12%, var(--color-surface-2));
+  color: var(--foreground);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.notice-bar__message {
+  flex: 1;
+  min-width: 0;
+  max-height: 6.5em;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
 }

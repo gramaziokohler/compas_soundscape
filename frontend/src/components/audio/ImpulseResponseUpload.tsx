@@ -23,6 +23,7 @@ import { isLowEnergyPeak } from "@/utils/irEnergy";
 import { clampToViewport } from "@/utils/scale";
 import { trimDisplayName } from "@/utils/utils";
 import { parsePositionKey } from "@/utils/positionKey";
+import { IR_SOURCE_ROW_ATTR, useIRSoundFocus } from "@/components/audio/useIRSoundFocus";
 
 type SourceReceiverPair = {
   sourceId: string;
@@ -73,6 +74,10 @@ interface ImpulseResponseUploadProps {
   irNormalizeEnabled?: boolean;
   /** Reports each IR's peak amplitude (metadata, falling back to the decoded buffer). */
   onIRPeaksChange?: (peaks: Record<string, number>) => void;
+  /** Sim-time sound ID → source position key; lets a sound focus (DAW track click) find its IRs. */
+  soundToPosKey?: Record<string, string>;
+  /** When true (card expanded), a sound focus scrolls to and highlights that sound's IRs. */
+  followSoundFocus?: boolean;
 }
 
 type ReceiverGroup = {
@@ -110,6 +115,8 @@ export function ImpulseResponseUpload({
   irGain = 0,
   irNormalizeEnabled = false,
   onIRPeaksChange,
+  soundToPosKey,
+  followSoundFocus = false,
 }: ImpulseResponseUploadProps) {
   const handleError = useApiErrorHandler();
   const [impulseResponses, setImpulseResponses] = useState<ImpulseResponseMetadata[]>([]);
@@ -474,6 +481,24 @@ export function ImpulseResponseUpload({
     return { groups: Array.from(groups.values()), unmapped };
   }, [sourceReceiverIRMapping, pairDefinitions, impulseResponses, receiverGroups, receiverDisplayNames]);
 
+  // Shared sound focus (DAW track / sphere / card click): expand + scroll to that sound's IRs.
+  const revealSources = useCallback((sourceIds: Set<string>) => {
+    const groups = groupedByReceiver?.groups ?? [];
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      for (const g of groups) {
+        if (g.sources.some((src) => sourceIds.has(src.sourceId))) next.delete(g.groupId);
+      }
+      return next.size === prev.size ? prev : next;
+    });
+  }, [groupedByReceiver]);
+  const focusedSourceIds = useIRSoundFocus({
+    enabled: followSoundFocus,
+    soundToPosKey,
+    containerRef: scrollContainerRef,
+    revealSources,
+  });
+
   // Report peaks upward (used by the gain slider trim range / markers) whenever they change.
   useEffect(() => {
     if (!onIRPeaksChange) return;
@@ -717,13 +742,18 @@ export function ImpulseResponseUpload({
     const tooltipNames = options?.fullName ?? soundNames;
     const irBuffer = bufferCache.get(ir.id) ?? null;
     const previewScale = computePreviewScale(getIRPeak(ir));
+    const isSoundFocused = focusedSourceIds.has(sourceId);
 
     return (
       <div
         key={`${sourceId}-${receiverId}-${ir.id}`}
+        {...{ [IR_SOURCE_ROW_ATTR]: sourceId }}
         className={`group flex items-center gap-2 px-1 py-1.5 rounded transition-colors ${
           isLowEnergy ? 'border-2 border-warning/70' : ''
         }`}
+        style={isSoundFocused && !isLowEnergy ? {
+          boxShadow: `inset 0 0 0 1px ${onBlueBackground ? 'var(--color-on-blue)' : 'var(--color-primary)'}`,
+        } : undefined}
         onMouseEnter={(e) => handleRowMouseEnter(e, ir, sourceId, receiverId)}
         onMouseLeave={handleRowMouseLeave}
       >

@@ -41,6 +41,8 @@ export interface BubblePanelProps {
   footerNote?: ReactNode;
   /** Panel positioning (fixed/absolute coordinates) supplied by the owning column. */
   style?: CSSProperties;
+  /** DOM id on the panel (e.g. `bubblePanelId(...)` for a BubbleLink). */
+  id?: string;
   width?: number | string;
   ariaLabel: string;
   children: ReactNode;
@@ -88,6 +90,7 @@ export function BubblePanel({
   powered = false,
   powerTitle,
   style,
+  id,
   width = SIMPLE_MODE.PANEL_WIDTH,
   ariaLabel,
   children,
@@ -116,6 +119,7 @@ export function BubblePanel({
   };
   return (
     <section
+      id={id}
       className="bubble-panel backdrop-blur-lg backdrop-saturate-150"
       style={{ width, maxHeight: SIMPLE_MODE.PANEL_MAX_HEIGHT, zIndex: SIMPLE_MODE.Z_INDEX, ...style }}
       aria-label={ariaLabel}
