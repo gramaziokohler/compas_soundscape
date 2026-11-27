@@ -8,11 +8,13 @@ import { CardSection } from '@/components/ui/CardSection';
 import { Card } from '@/components/ui/Card';
 import { SingleListenerContent } from './listeners/SingleListenerContent';
 import { GridListenerContent } from './listeners/GridListenerContent';
+import { HeatmapListenerContent } from './listeners/HeatmapListenerContent';
 import { ListenerBubbles, type FloatingCardOptions } from './listeners/ListenerBubbles';
 import type { ListenerItemConfig } from './listeners/listenerItems';
 import { useGridListenersStore } from '@/store/gridListenersStore';
 import { useReceiversStore } from '@/store/receiversStore';
-import { usePositionClipboardStore } from '@/store';
+import { usePositionClipboardStore, useHeatmapListenersStore } from '@/store';
+import { useHeatmapGradient } from '@/hooks/useHeatmapGradient';
 import { useOnFloatingPanelsCollapse } from '@/hooks/useOnFloatingPanelsCollapse';
 import { useCanEdit } from '@/hooks/useCanEdit';
 import { FpsLockedNotice } from './listeners/FpsLockedNotice';
@@ -51,10 +53,12 @@ const LISTENER_COLOR = 'var(--color-receiver)';
 
 const SINGLE_POWER_TITLES = { on: 'Stop listening', off: 'Listen from here' };
 const GRID_POWER_TITLES = { on: 'Hide grid points', off: 'Show grid points' };
+const HEATMAP_POWER_TITLES = { on: 'Hide heatmap', off: 'Show heatmap' };
 
 const AVAILABLE_TYPES: CardTypeOption[] = [
   { type: 'listener', label: 'Single listener', enabled: true },
   { type: 'grid-listener', label: 'Grid listener', enabled: true },
+  { type: 'heatmap-listener', label: 'Heatmap', enabled: true },
 ];
 
 export function ListenersSection({
@@ -79,6 +83,10 @@ export function ListenersSection({
 }: ListenersSectionProps) {
   const { updateGridListener, toggleGridListenerHiddenForSimulation, reorderGridListeners, duplicateGridListenerAt } = useGridListenersStore();
   const reorderReceivers = useReceiversStore((s) => s.reorderReceivers);
+  // Heatmaps live in their own store; their power (gradient plane shown) is store state too.
+  const heatmapListeners = useHeatmapListenersStore((s) => s.heatmapListeners);
+  const activeHeatmapId = useHeatmapListenersStore((s) => s.activeHeatmapId);
+  useHeatmapGradient();
   const duplicateReceiverAt = useReceiversStore((s) => s.duplicateReceiverAt);
 
   // Expanded card (single or grid) — UI only. Powering a listener (FPS view /
@@ -89,6 +97,7 @@ export function ListenersSection({
   // Opening a model / reloading the page starts with every listener pop-up reduced.
   useOnFloatingPanelsCollapse(() => setExpandedItemId(null));
   const prevGridCountRef = useRef(gridListeners.length);
+  const prevHeatmapCountRef = useRef(heatmapListeners.length);
 
   // Copied position for the right-click "Paste position" menu item (shared across
   // sound + listener cards). Null when nothing has been copied yet.
@@ -103,6 +112,23 @@ export function ListenersSection({
     prevGridCountRef.current = gridListeners.length;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gridListeners.length]);
+
+  // Auto-expand a newly added heatmap (power stays off until its surface is set)
+  useEffect(() => {
+    if (heatmapListeners.length > prevHeatmapCountRef.current) {
+      const newest = heatmapListeners[heatmapListeners.length - 1];
+      if (newest) setExpandedItemId(newest.id);
+    }
+    prevHeatmapCountRef.current = heatmapListeners.length;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [heatmapListeners.length]);
+
+  // One powered listener at a time: an FPS view or a powered grid turns the heatmap off.
+  useEffect(() => {
+    if (poweredListenerId !== null || activeGridListenerId !== null) {
+      useHeatmapListenersStore.getState().setActiveHeatmap(null);
+    }
+  }, [poweredListenerId, activeGridListenerId]);
 
   // Expand a card on request from outside (viewer click / double-click, go-to-listener)
   useEffect(() => {
@@ -127,7 +153,8 @@ export function ListenersSection({
   const items = useMemo<ListenerItemConfig[]>(() => [
     ...receivers.map(r => ({ ...r, type: 'listener' as const })),
     ...gridListeners.map(g => ({ ...g, type: 'grid-listener' as const })),
-  ], [receivers, gridListeners]);
+    ...heatmapListeners.map(h => ({ ...h, type: 'heatmap-listener' as const })),
+  ], [receivers, gridListeners, heatmapListeners]);
 
   const indexOfId = useCallback((id: string | null): number | null => {
     if (id == null) return null;
@@ -137,8 +164,8 @@ export function ListenersSection({
 
   const expandedIndex = useMemo(() => indexOfId(expandedItemId), [indexOfId, expandedItemId]);
   const poweredIndex = useMemo(
-    () => indexOfId(poweredListenerId) ?? indexOfId(activeGridListenerId),
-    [indexOfId, poweredListenerId, activeGridListenerId],
+    () => indexOfId(poweredListenerId) ?? indexOfId(activeGridListenerId) ?? indexOfId(activeHeatmapId),
+    [indexOfId, poweredListenerId, activeGridListenerId, activeHeatmapId],
   );
 
   const handleExpandedIndexChange = useCallback((index: number | null) => {
@@ -149,15 +176,30 @@ export function ListenersSection({
   const fpsGridListenerId = isFPSModeActive && poweredListenerId === null ? activeGridListenerId : null;
   const canEdit = useCanEdit();
 
-  const isItemPowered = useCallback((item: ListenerItemConfig) => (
-    item.type === 'listener' ? poweredListenerId === item.id : activeGridListenerId === item.id
-  ), [poweredListenerId, activeGridListenerId]);
+  const isItemPowered = useCallback((item: ListenerItemConfig) => {
+    if (item.type === 'listener') return poweredListenerId === item.id;
+    if (item.type === 'heatmap-listener') return activeHeatmapId === item.id;
+    return activeGridListenerId === item.id;
+  }, [poweredListenerId, activeGridListenerId, activeHeatmapId]);
 
   /** Toggle an item's power. Single → FPS view (onGoToReceiver toggles it off when active). */
   const toggleItemPower = useCallback((item: ListenerItemConfig) => {
-    if (item.type === 'listener') onGoToReceiver(item.id);
-    else onToggleGridListenerPower(item.id);
-  }, [onGoToReceiver, onToggleGridListenerPower]);
+    if (item.type === 'listener') {
+      onGoToReceiver(item.id);
+    } else if (item.type === 'grid-listener') {
+      onToggleGridListenerPower(item.id);
+    } else {
+      const heatmapStore = useHeatmapListenersStore.getState();
+      if (heatmapStore.activeHeatmapId === item.id) {
+        heatmapStore.setActiveHeatmap(null);
+        return;
+      }
+      // Powering a heatmap leaves the FPS view / hides the powered grid first.
+      if (poweredListenerId !== null) onExitFPS?.();
+      if (activeGridListenerId !== null) onToggleGridListenerPower(activeGridListenerId);
+      heatmapStore.setActiveHeatmap(item.id);
+    }
+  }, [onGoToReceiver, onToggleGridListenerPower, onExitFPS, poweredListenerId, activeGridListenerId]);
 
   // Bubbles: power an item on (index) or switch the powered one off (null)
   const handleBubblePower = useCallback((index: number | null) => {
@@ -170,6 +212,7 @@ export function ListenersSection({
   const handleAddItem = useCallback((type: CardType) => {
     if (type === 'listener') onAddReceiver('single');
     else if (type === 'grid-listener') onAddGridListener();
+    else if (type === 'heatmap-listener') useHeatmapListenersStore.getState().addHeatmapListener();
   }, [onAddReceiver, onAddGridListener]);
 
   const handleUpdateConfig = useCallback((index: number, updates: Partial<ListenerItemConfig>) => {
@@ -177,6 +220,8 @@ export function ListenersSection({
     if (!item || !('display_name' in updates) || updates.display_name === undefined) return;
     if (item.type === 'listener') {
       onUpdateReceiverName(item.id, updates.display_name);
+    } else if (item.type === 'heatmap-listener') {
+      useHeatmapListenersStore.getState().updateHeatmapListener(item.id, { name: updates.display_name });
     } else {
       updateGridListener(item.id, { name: updates.display_name });
     }
@@ -189,42 +234,51 @@ export function ListenersSection({
     if (item.type === 'listener') {
       if (poweredListenerId === item.id) onExitFPS?.();
       onDeleteReceiver(item.id);
+    } else if (item.type === 'heatmap-listener') {
+      useHeatmapListenersStore.getState().removeHeatmapListener(item.id);
     } else {
       if (activeGridListenerId === item.id) onToggleGridListenerPower(item.id);
       onDeleteGridListener(item.id);
     }
   }, [items, expandedItemId, poweredListenerId, activeGridListenerId, onDeleteReceiver, onDeleteGridListener, onExitFPS, onToggleGridListenerPower]);
 
-  // Within-type reorder only (cross-type moves are silently ignored)
+  // Items are laid out by type: [receivers | grids | heatmaps]. Reorder and duplicate
+  // stay within a type (cross-type moves are silently ignored).
+  const typeRanges = useMemo(() => {
+    const nR = receivers.length;
+    const nG = gridListeners.length;
+    return [
+      { start: 0, end: nR },
+      { start: nR, end: nR + nG },
+      { start: nR + nG, end: nR + nG + heatmapListeners.length },
+    ];
+  }, [receivers.length, gridListeners.length, heatmapListeners.length]);
+
+  const rangeOf = useCallback(
+    (index: number) => typeRanges.findIndex((r) => index >= r.start && index < r.end),
+    [typeRanges],
+  );
+
   const handleReorder = useCallback((from: number, to: number) => {
-    const nReceivers = receivers.length;
-    const fromIsReceiver = from < nReceivers;
-    const toIsReceiver = to < nReceivers;
-    if (fromIsReceiver && toIsReceiver) {
-      reorderReceivers(from, to);
-    } else if (!fromIsReceiver && !toIsReceiver) {
-      reorderGridListeners(from - nReceivers, to - nReceivers);
-    }
-  }, [receivers.length, reorderReceivers, reorderGridListeners]);
+    const kind = rangeOf(from);
+    if (kind < 0 || rangeOf(to) !== kind) return;
+    const { start } = typeRanges[kind];
+    if (kind === 0) reorderReceivers(from, to);
+    else if (kind === 1) reorderGridListeners(from - start, to - start);
+    else useHeatmapListenersStore.getState().reorderHeatmapListeners(from - start, to - start);
+  }, [rangeOf, typeRanges, reorderReceivers, reorderGridListeners]);
 
-  // Ctrl+drag duplicate — within-type only, cross-type drops are silently ignored
+  // Ctrl+drag duplicate — insert positions stay within the item's type range
+  // (end inclusive: after its last item); cross-type drops are silently ignored.
   const handleDuplicate = useCallback((from: number, toInsertion: number) => {
-    const nReceivers = receivers.length;
-    const nGrid = gridListeners.length;
-    const fromIsReceiver = from < nReceivers;
-
-    if (fromIsReceiver) {
-      // Only allow insert within receiver range
-      if (toInsertion > nReceivers) return;
-      duplicateReceiverAt(from, toInsertion);
-    } else {
-      // Grid listener: only allow insert within grid range
-      const fromGrid = from - nReceivers;
-      const toGridInsertion = toInsertion - nReceivers;
-      if (toGridInsertion < 0 || toGridInsertion > nGrid) return;
-      duplicateGridListenerAt(fromGrid, toGridInsertion);
-    }
-  }, [receivers.length, gridListeners.length, duplicateReceiverAt, duplicateGridListenerAt]);
+    const kind = rangeOf(from);
+    if (kind < 0) return;
+    const { start, end } = typeRanges[kind];
+    if (toInsertion < start || toInsertion > end) return;
+    if (kind === 0) duplicateReceiverAt(from, toInsertion);
+    else if (kind === 1) duplicateGridListenerAt(from - start, toInsertion - start);
+    else useHeatmapListenersStore.getState().duplicateHeatmapListenerAt(from - start, toInsertion - start);
+  }, [rangeOf, typeRanges, duplicateReceiverAt, duplicateGridListenerAt]);
 
 
   const header = (
@@ -237,6 +291,8 @@ export function ListenersSection({
 
   // Card / bubble right-click rows: the same menu on an expanded card and on its bubble.
   const buildListenerMenu = useCallback((item: ListenerItemConfig): CustomMenuItem[] => {
+    // Heatmaps never feed the IR simulations: nothing to hide or copy.
+    if (item.type === 'heatmap-listener') return [];
     const isHidden = item.hiddenForSimulation ?? false;
 
     const hideButton: CustomMenuItem = {
@@ -309,7 +365,7 @@ export function ListenersSection({
     floating?: FloatingCardOptions,
   ) => {
     const isPowered = isItemPowered(item);
-    const isHidden = item.hiddenForSimulation ?? false;
+    const isHidden = item.type !== 'heatmap-listener' && (item.hiddenForSimulation ?? false);
 
     // Share view: listeners are only powered on/off — no position / orientation /
     // grid editors, clipboard or hide buttons.
@@ -321,6 +377,14 @@ export function ListenersSection({
         color={LISTENER_COLOR}
         onUpdatePosition={onUpdateReceiverPosition}
         isPowered={isPowered}
+      />
+    ) : item.type === 'heatmap-listener' ? (
+      <HeatmapListenerContent
+        heatmap={item}
+        color={LISTENER_COLOR}
+        onComputeBounds={onComputeBounds}
+        isPowered={isPowered}
+        onPowerOn={() => { if (!isPowered) toggleItemPower(item); }}
       />
     ) : (
       <GridListenerContent
@@ -353,7 +417,7 @@ export function ListenersSection({
           onRemove={handleRemove}
           onTogglePower={() => toggleItemPower(item)}
           isPoweredOn={isPowered}
-          powerTitles={item.type === 'listener' ? SINGLE_POWER_TITLES : GRID_POWER_TITLES}
+          powerTitles={item.type === 'listener' ? SINGLE_POWER_TITLES : item.type === 'heatmap-listener' ? HEATMAP_POWER_TITLES : GRID_POWER_TITLES}
           beforeContent={content}
         />
       </div>

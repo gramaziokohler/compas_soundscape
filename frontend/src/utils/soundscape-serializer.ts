@@ -40,6 +40,8 @@ import { parseAuthoredSeconds } from '@/lib/audio/utils/timeline-utils';
 import { captureGenerationSignature } from '@/utils/generationSignature';
 import { customMaterialRecordsFor, useCustomMaterialStore } from '@/store/customMaterialStore';
 import { directivityRecordsFor, isLibraryDirectivityId, useDirectivityStore } from '@/store/directivityStore';
+import { useHeatmapListenersStore } from '@/store/heatmapListenersStore';
+import type { SavedHeatmapListener } from '@/types/heatmap';
 import type { SoundDirectivity } from '@/types/directivity';
 
 /** Plain copy of a sound directivity (omits an omni / missing one). */
@@ -439,6 +441,9 @@ export function buildSoundscapeSavePayload(
     drawnArea: g.drawnArea ?? null,
   }));
 
+  // Heatmap cards (read from their store, like the custom-material / directivity snapshots)
+  const serializedHeatmapListeners: SavedHeatmapListener[] = useHeatmapListenersStore.getState().getSavedHeatmapListeners();
+
   // Serialize simulation configs and collect IR URLs
   const irUrls: string[] = [];
   const serializedSimConfigs: SoundscapeSimulationConfig[] = [];
@@ -592,6 +597,7 @@ export function buildSoundscapeSavePayload(
       current_simulation_run_id: pyConfig.currentSimulationRunId,
       run_problems: config.type === 'pffdtd' && config.runProblems?.length ? config.runProblems : undefined,
       hybrid_info: config.type === 'hybrid' && config.hybridInfo ? config.hybridInfo : undefined,
+      ui_version: config.type === 'hybrid' && config.uiVersion === 2 ? 2 : undefined,
       imported_ir_ids: pyConfig.importedIRIds,
       source_receiver_ir_mapping: serializedMapping,
       receiver_positions: Object.keys(receiverPositions).length > 0 ? receiverPositions : undefined,
@@ -655,6 +661,7 @@ export function buildSoundscapeSavePayload(
     sound_events: serializedEvents,
     receivers: serializedReceivers.length > 0 ? serializedReceivers : undefined,
     grid_listeners: serializedGridListeners.length > 0 ? serializedGridListeners : undefined,
+    heatmap_listeners: serializedHeatmapListeners.length > 0 ? serializedHeatmapListeners : undefined,
     selected_receiver_id: selectedReceiverId ?? undefined,
     simulation_configs: serializedSimConfigs.length > 0 ? serializedSimConfigs : undefined,
     active_simulation_index: activeSimulationIndex ?? undefined,
@@ -706,6 +713,8 @@ export function restoreSoundscapeState(
   };
   receivers: ReceiverData[];
   gridListeners: GridListenerData[];
+  /** Heatmap cards — restore with useHeatmapListenersStore.restoreHeatmapListeners. */
+  heatmapListeners: SavedHeatmapListener[];
   selectedReceiverId: string | null;
   simulationConfigs: SimulationConfig[];
   activeSimulationIndex: number | null;
@@ -1140,6 +1149,7 @@ export function restoreSoundscapeState(
       currentSimulationRunId: saved.current_simulation_run_id,
       runProblems: saved.run_problems,
       hybridInfo: saved.hybrid_info ?? undefined,
+      ...(saved.type === 'hybrid' && saved.ui_version === 2 ? { uiVersion: 2 as const } : {}),
       importedIRIds: saved.imported_ir_ids,
       sourceReceiverIRMapping,
       // Restore simulation-time source/receiver positions (needed by the mismatch
@@ -1233,6 +1243,7 @@ export function restoreSoundscapeState(
     globalSettings,
     receivers: restoredReceivers,
     gridListeners: restoredGridListeners,
+    heatmapListeners: loadedData.heatmap_listeners ?? [],
     selectedReceiverId,
     simulationConfigs: restoredSimConfigs,
     activeSimulationIndex,

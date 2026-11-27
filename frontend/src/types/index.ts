@@ -14,6 +14,16 @@ export type { SEDAudioInfo, DetectedSound, SEDAnalysisResult, SEDAnalysisOptions
 // Import and re-export Receiver types
 import type { ReceiverData, ReceiverOverlay, GridListenerData } from './receiver';
 export type { ReceiverData, ReceiverOverlay, GridListenerData };
+export type {
+  HeatmapMetric,
+  HeatmapResultRef,
+  HeatmapListenerData,
+  SavedHeatmapListener,
+  HeatmapPayload,
+  HeatmapPayloadSource,
+  HeatmapJobResult,
+  HeatmapRunState,
+} from './heatmap';
 
 // Import and re-export source directivity types
 import type {

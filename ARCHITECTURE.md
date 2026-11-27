@@ -1409,3 +1409,45 @@ SimulationMeshService.prepare(seeds = sources + receivers, MeshPrepSettings)
   - The RT scatter lobe is mirrored into the side the ray arrived from.
   - `find_non_convex_walls` uses scale-aware hull planes and includes wall 0.
   - Two-sided surfaces fail loudly on a pra build without `two_sided`; there is no silent fallback.
+
+### Heatmap (EnergyMap) job
+
+The Heatmap listener card maps the sound level over the points the Grid listener surface UI generates,
+with the active simulation card's geometry and materials (compas_acoustics `EnergyMap`).
+
+```
+POST /api/acoustics/heatmap-speckle   (paths-speckle's form fields + points=[[x,y,z],...], model coords, ≤ HEATMAP_MAX_POINTS)
+  └─ CPU job, variant "heatmap" (queue:cpu-light) → services/heatmap_service.run_heatmap
+       load_speckle_simulation_geometry → SimulationMeshService.prepare → room_geometry (is_inside on)
+       build_scene (one source per source_id, spl = 0 dB in every band)
+       per source: EnergyMap.from_scene(scene, points - offset, source_index=i, seed=True)
+       → HEATMAP_DIR/<workspace>/heatmap_<id>.json ; job result {heatmap_id, payload_file}
+GET /api/acoustics/heatmap/{heatmap_id}   (UUID-checked, workspace-scoped)
+```
+
+Document: `{heatmap_id, bands: [Hz ×7], inside: [bool per point], points: [[x,y,z]] (model coords),
+sources: [{id, position, spl_bands: [[dB ×7] | null per point]}], n_rays, warnings}`. Each source is
+mapped alone at **0 dB re 1 m**, so the frontend weights it by the sound card's level
+(`10 log10 Σ 10^((spl + level)/10)`) and reacts to volume, mute and solo without rerunning the job.
+Points outside the room or inside a closed obstacle are `null` (`inside: false`); the simulation's
+`room_geometry` takes every point as inside, so the heatmap turns `check_inside` on.
+
+Frontend (Heatmap listener card, `ListenersSection` → `HeatmapListenerContent`):
+
+- **Surface:** `SurfaceGridEditor` (shared with the Grid listener: select objects / draw area,
+  X/Y spacing, Z offset; pure transitions in `utils/surfaceGrid.ts`). A drawn polygon commits to
+  whichever store owns the drawing id (`useSpeckleAreaDrawing.commitDrawnArea`).
+- **Store:** `heatmapListenersStore` — `heatmapListeners` (undoable surfaces); `results` / `metrics`
+  (saved, not undoable: undo never discards a run); `runs`, `payloads`, `activeHeatmapId` (runtime).
+  A running job is kept in localStorage `compas-inflight-heatmaps` and resumed after a refresh.
+- **Run:** `useHeatmapRun` builds the request of the **active simulation card** with
+  `buildCardGeometryRequest` (shared with the card's run / preflight / paths), every sound of the
+  active scene as a source and one placeholder receiver. The result stores `sourceSounds`
+  (source id → sound ids) and a signature (outdated badge).
+- **Live levels:** `useHeatmapLevels` → `lib/acoustics/heatmap-combine.ts` (pure, tested): each
+  source at `SPL_AT_0_DBFS + fader dBFS` (sounds at one source add in energy), muted / not-soloed
+  sounds and unselected variants left out, dB(A) or one band. `useHeatmapGradient` (mounted by
+  `ListenersSection`) draws the powered heatmap through `GradientMapManager`
+  (`activeGradientMap.ownerId` = the heatmap id; `clearGradientMap(ownerId)` clears only its own map).
+- **Saved:** `soundscape.json` → `heatmap_listeners` (`SoundscapeHeatmapListener`: surface + `metric`
+  + `result`). The share view gets none (`/api/acoustics/*` is not public).

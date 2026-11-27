@@ -6,7 +6,12 @@ import type { CardTypeOption } from '@/components/ui/CardSection';
 import type { ListenerItemConfig } from './listenerItems';
 import { useUIStore } from '@/store';
 import { Bubble, BubbleAddButton, BubbleExitButton, BubbleHeading } from '@/components/ui/Bubble';
-import { ListenerIcon, ListenerGridIcon } from '@/components/ui/BubbleIcons';
+import { HeatmapIcon, ListenerIcon, ListenerGridIcon } from '@/components/ui/BubbleIcons';
+import { BubbleLink, bubbleAnchorId, bubblePanelId } from '@/components/ui/BubbleLink';
+
+/** BubbleLink ids for the listener column. */
+const LINK_COLUMN = 'listener';
+const LISTENER_PANEL_ID = bubblePanelId(LINK_COLUMN);
 import { ContextMenu } from '@/components/ui/ContextMenu';
 import { CardContextMenu } from '@/components/ui/CardContextMenu';
 import { BubbleScrollColumn } from '@/components/ui/BubbleScrollColumn';
@@ -231,7 +236,13 @@ export function ListenerBubbles({
             : openIndex === index ? 'click to reduce' : 'click to open';
           const powerTitle = item.type === 'grid-listener'
             ? active ? 'Hide grid points' : 'Show grid points'
-            : active ? 'Leave first-person view' : 'Listen here (first-person view)';
+            : item.type === 'heatmap-listener'
+              ? active ? 'Hide heatmap' : 'Show heatmap'
+              : active ? 'Leave first-person view' : 'Listen here (first-person view)';
+          const typeLabel = item.type === 'grid-listener' ? 'Grid listener' : item.type === 'heatmap-listener' ? 'Heatmap' : 'Listener';
+          const typeIcon = item.type === 'grid-listener'
+            ? <ListenerGridIcon size={size / 2} />
+            : item.type === 'heatmap-listener' ? <HeatmapIcon size={size / 2} /> : <ListenerIcon size={size / 2} />;
           return (
             <div
               key={item.id}
@@ -254,9 +265,10 @@ export function ListenerBubbles({
             )}
             {showExit && <BubbleExitButton id={FPS_CONTROLS_HINT.EXIT_BUTTON_ID} label="Leave FPS view" labelSide="left" onClick={onExitFps} />}
             <Bubble
+              id={bubbleAnchorId(LINK_COLUMN, item.id)}
               label={item.name}
-              detail={`${active ? 'Active' : item.type === 'grid-listener' ? 'Grid listener' : 'Listener'} — ${action}`}
-              icon={item.type === 'grid-listener' ? <ListenerGridIcon size={size / 2} /> : <ListenerIcon size={size / 2} />}
+              detail={`${active ? 'Active' : typeLabel} — ${action}`}
+              icon={typeIcon}
               size={size}
               labelSide="left"
               // Share view: every listener is equally available — the designer's
@@ -315,7 +327,9 @@ export function ListenerBubbles({
             zIndex: frontLayer.zIndex,
           }}
         >
+          <BubbleLink anchorId={bubbleAnchorId(LINK_COLUMN, openItem.id)} panelId={LISTENER_PANEL_ID} tone="listener" />
           <div
+            id={LISTENER_PANEL_ID}
             className="bubble-card-host pointer-events-auto"
             onPointerDownCapture={frontLayer.onPointerDownCapture}
             style={{ position: 'relative', maxHeight: '100%', flexShrink: 0 }}

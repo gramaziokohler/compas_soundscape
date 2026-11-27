@@ -129,6 +129,8 @@ export interface UIStoreState {
   // ── Gradient map (acoustic metric overlay on grid listener surface) ────────
   activeGradientMap: GradientMapState | null;
   setActiveGradientMap: (state: GradientMapState | null) => void;
+  /** Clear the gradient map only if `ownerId` drew it (undefined = a simulation result's map). */
+  clearGradientMap: (ownerId?: string) => void;
 
   // ── Scene helpers ─────────────────────────────────────────────────────────
   showAxesHelper: boolean;
@@ -333,11 +335,15 @@ export interface UIStoreState {
   setShowLoadModelPanel: (open: boolean | ((open: boolean) => boolean)) => void;
 }
 
-/** A card single number the gradient map can show (keys of `AcousticParameters`). */
-export type GradientMetric = 't30' | 'edt' | 'c50' | 'c80' | 'd50' | 'sti';
+/** A card single number the gradient map can show (keys of `AcousticParameters`), or a heatmap's SPL. */
+export type GradientMetric = 't30' | 'edt' | 'c50' | 'c80' | 'd50' | 'sti' | 'spl';
+/** The gradient metrics a simulation result card offers (IR single numbers). */
+export type SimulationGradientMetric = Exclude<GradientMetric, 'spl'>;
 
 export interface GradientMapState {
   metric: GradientMetric;
+  /** Who drew the map (a heatmap card's id): only its owner clears it. Absent = a simulation result. */
+  ownerId?: string;
   /** Grid point positions with their scalar metric value */
   pointValues: Array<{ position: [number, number, number]; value: number }>;
   /** Bounding box of the grid listener surface */
@@ -451,6 +457,9 @@ export const useUIStore = create<UIStoreState>()(
       activeGradientMap: null,
       setActiveGradientMap: (state) =>
         set({ activeGradientMap: state }, false, 'ui/setActiveGradientMap'),
+      clearGradientMap: (ownerId) =>
+        set((s) => (s.activeGradientMap && s.activeGradientMap.ownerId === ownerId ? { activeGradientMap: null } : {}),
+          false, 'ui/clearGradientMap'),
 
       // ── Scene helpers ────────────────────────────────────────────────────
       showAxesHelper: false,

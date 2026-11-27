@@ -726,6 +726,10 @@ ACOUSTIC_PATHS_RAYS_MAX = 2000
 ACOUSTIC_PATHS_RAY_ORDER_DEFAULT = 8
 ACOUSTIC_PATHS_RAY_ORDER_MAX = 30
 ACOUSTIC_PATHS_MAX_EXCLUDED_EDGES = 5000
+# Heatmap listener card: compas_acoustics EnergyMap per source at 0 dB (services/heatmap_service.py)
+HEATMAP_DIR = str(BACKEND_DIR / "temp" / "simulations" / "heatmaps")  # + /<workspace id>/heatmap_<id>.json
+HEATMAP_MAX_POINTS = 5000
+HEATMAP_DECIMALS = 2
 # An ambisonic response is rendered only as long as it will be kept: the exported IR is cut where its
 # energy decay reaches IR_TRIM_DECAY_DB, so the render stops where the mono reference's decay is this
 # many dB further still (the two differ a little), plus a short pad. compas_acoustics' own default

@@ -2293,6 +2293,26 @@ export const GRID_LISTENER_CONFIG = {
   AREA_CARD_INDEX: -1,
 } as const;
 
+/** Heatmap listener (compas_acoustics EnergyMap over a surface). */
+export const HEATMAP_LISTENER_CONFIG = {
+  /** Default X / Y point spacing (m): finer than a grid listener, the energy map is cheap per point. */
+  DEFAULT_SPACING: 1,
+  /** Id prefix — tells a heatmap from a grid listener (shared area-drawing target id). */
+  ID_PREFIX: 'heatmap-listener-',
+  /** Backend limit (HEATMAP_MAX_POINTS in backend/config/constants.py). */
+  MAX_POINTS: 5000,
+  /**
+   * Source level at 1 m (dB SPL) of a sound whose fader is at 0 dBFS: a sound at the
+   * default -18 dBFS radiates 80 dB at 1 m. The map's absolute level follows this.
+   */
+  SPL_AT_0_DBFS: 98,
+  JOB_POLL_MS: 1500,
+  /** IEC 61672 A-weighting (dB) of the octave bands 125 Hz – 8 kHz, as compas_acoustics. */
+  A_WEIGHTS: { 125: -16.1, 250: -8.6, 500: -3.2, 1000: 0, 2000: 1.2, 4000: 1.0, 8000: -1.1 } as Record<number, number>,
+  /** Label prefix of the band options. */
+  BAND_LABELS: { 125: '125 Hz', 250: '250 Hz', 500: '500 Hz', 1000: '1 kHz', 2000: '2 kHz', 4000: '4 kHz', 8000: '8 kHz' } as Record<number, string>,
+} as const;
+
 // ============================================================================
 // SVG Configuration
 // ============================================================================

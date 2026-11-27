@@ -177,6 +177,8 @@ def filter_soundscape(data: dict) -> tuple[dict, set[str], set[str]]:
     grid_ids = {g["id"] for g in grids}
     out["receivers"] = receivers
     out["grid_listeners"] = grids
+    # Heatmaps read /api/acoustics/*, which the anonymous share view cannot call.
+    out["heatmap_listeners"] = []
     if not _listener_allowed(data.get("selected_receiver_id") or "", receiver_ids, grid_ids):
         out["selected_receiver_id"] = None
 

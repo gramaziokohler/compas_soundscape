@@ -23,7 +23,7 @@ import { Notice } from '@/components/ui/Notice';
 import { Spinner } from '@/components/ui/Spinner';
 import { CardSelect } from '@/components/ui/CardSelect';
 import { NumberField } from '@/components/ui/NumberField';
-import type { GradientMetric } from '@/store/uiStore';
+import type { SimulationGradientMetric } from '@/store/uiStore';
 import { useUIStore } from '@/store/uiStore';
 import { useGridListenersStore, usePffdtdFreeStore } from '@/store';
 import { aggregateMappedPairMetrics, perReceiverMetricsOf } from '@/utils/acousticMetrics';
@@ -92,8 +92,8 @@ interface SimulationResultContentProps {
   /** Whether the parent card is currently expanded */
   isExpanded?: boolean;
   /** Controlled selected metric — persisted by the parent across expand/collapse */
-  selectedMetric?: GradientMetric | null;
-  onMetricChange?: (metric: GradientMetric | null) => void;
+  selectedMetric?: SimulationGradientMetric | null;
+  onMetricChange?: (metric: SimulationGradientMetric | null) => void;
   /** Current positions of sound sources keyed by sound ID (per-sound drift detection) */
   currentSoundPositions?: Record<string, [number, number, number]>;
   /** Display names of sound sources keyed by sound ID (for per-sound mismatch labels) */
@@ -173,9 +173,11 @@ export function SimulationResultContent({
   const bandLimitHz = config.type === 'pffdtd' ? config.settings.fmax : null;
   // Import-irs cards carry per-IR metrics in their mapping — no simulation to fetch.
   const isImportIrs = config.type === 'import-irs';
-  const simulationSourcePositions = (simulationConfig.simulationPositions as {
+  const simulationPositions = simulationConfig.simulationPositions as {
     sources?: Record<string, [number, number, number]>;
-  } | undefined)?.sources;
+    soundToPosKey?: Record<string, string>;
+  } | undefined;
+  const simulationSourcePositions = simulationPositions?.sources;
 
   const gridListeners = useGridListenersStore((s) => s.gridListeners);
   // Current directivities: a changed pattern / orientation outdates the IR like a move.
@@ -282,6 +284,7 @@ export function SimulationResultContent({
 
   // ── Gradient map state ──────────────────────────────────────────────────
   const setActiveGradientMap = useUIStore((s) => s.setActiveGradientMap);
+  const clearGradientMap = useUIStore((s) => s.clearGradientMap);
 
   const hasGridReceivers = useMemo(() => detectGridReceivers(sourceReceiverIRMapping), [sourceReceiverIRMapping]);
   // Import-irs cards show the aggregate metrics table only (no per-listener gradient).
@@ -323,7 +326,7 @@ export function SimulationResultContent({
   // ── Gradient map: compute point values and dispatch to uiStore ──────────
   useEffect(() => {
     if (!isExpanded || !selectedMetric || !perReceiverMetrics) {
-      setActiveGradientMap(null);
+      clearGradientMap(); // never a heatmap card's map
       return;
     }
 
@@ -349,7 +352,7 @@ export function SimulationResultContent({
     }
 
     if (allPointValues.length === 0 || !primaryBbox) {
-      setActiveGradientMap(null);
+      clearGradientMap();
       return;
     }
 
@@ -359,12 +362,12 @@ export function SimulationResultContent({
       boundingBox: primaryBbox,
       ...(userMin !== null && userMax !== null ? { range: { min: userMin, max: userMax } } : {}),
     });
-  }, [isExpanded, selectedMetric, perReceiverMetrics, gridListeners, setActiveGradientMap, userMin, userMax]);
+  }, [isExpanded, selectedMetric, perReceiverMetrics, gridListeners, setActiveGradientMap, clearGradientMap, userMin, userMax]);
 
   // Clear gradient map when unmounted or card collapses
   useEffect(() => {
-    return () => { setActiveGradientMap(null); };
-  }, [setActiveGradientMap]);
+    return () => { clearGradientMap(); };
+  }, [clearGradientMap]);
 
   // ── Gradient legend values ──────────────────────────────────────────────
   const legendRange = useMemo(() => {
@@ -430,7 +433,7 @@ export function SimulationResultContent({
             <span className="text-[10px] shrink-0" style={{ color: 'var(--color-on-blue-muted)' }}>Metric</span>
             <CardSelect
               value={selectedMetric ?? ''}
-              onChange={(v) => setSelectedMetric((v || null) as GradientMetric | null)}
+              onChange={(v) => setSelectedMetric((v || null) as SimulationGradientMetric | null)}
               compact
               className="flex-1"
               placeholder="— select —"
@@ -482,7 +485,7 @@ export function SimulationResultContent({
         <AcousticMetricsTable params={shownParams} bands={bandMetrics} showPairCount />
       )}
 
-      {config.type === 'hybrid' && config.hybridInfo && (
+      {config.type === 'hybrid' && config.uiVersion !== 2 && config.hybridInfo && (
         <p className="text-[11px]" style={{ color: 'var(--color-on-blue-muted)' }}>
           {hybridRunSummary(config.hybridInfo)}
         </p>
@@ -544,6 +547,8 @@ export function SimulationResultContent({
         irGain={irGain}
         irNormalizeEnabled={irNormalizeEnabled}
         onIRPeaksChange={onIRPeaksChange}
+        soundToPosKey={simulationPositions?.soundToPosKey}
+        followSoundFocus={isExpanded}
       />
     </div>
   );

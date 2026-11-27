@@ -8,6 +8,7 @@
 import type { HybridRunInfo } from '@/types/acoustics';
 import type { DrawnArea } from './area-drawing';
 import type { GridPlacementMode } from './receiver';
+import type { SavedHeatmapListener } from './heatmap';
 import type { IRAcousticParameters, IRBandMetrics, ClipVariationMode, ClipVariationOverride } from './audio';
 import type { FoleySoundDetail, SceneLiveliness } from './analysis';
 import type { PffdtdVoxelProblem } from './pffdtd';
@@ -213,6 +214,8 @@ export interface SoundscapeSimulationSettings {
   /** Legacy (removed setting): the wave band is always the crossover x HYBRID.WAVE_FMAX_MARGIN. */
   wave_fmax_cap?: number;
   level_match?: boolean;
+  /** Hybrid: parts the run simulates (Hybrid simulation 2); absent = both. */
+  parts?: 'both' | 'wave' | 'rays';
   // PFFDTD (wave-based) only
   fmax?: number;
   ppw?: number;
@@ -269,6 +272,8 @@ export interface SoundscapeSimulationConfig {
   run_problems?: PffdtdVoxelProblem[];
   /** Hybrid: crossover of the finished run (results JSON `hybrid` block). */
   hybrid_info?: HybridRunInfo | null;
+  /** Hybrid: 2 = "Hybrid simulation 2" (crossover band card); absent = the original card. */
+  ui_version?: 2;
   imported_ir_ids?: string[];
   source_receiver_ir_mapping?: Record<string, Record<string, SoundscapeIRMetadata>>;
   receiver_positions?: Record<string, number[]>; // receiverId -> [x, y, z]
@@ -325,6 +330,8 @@ export interface SoundscapeData {
   // Simulation persistence (all optional, backward-compatible)
   receivers?: SoundscapeReceiver[];
   grid_listeners?: SoundscapeGridListener[];
+  /** Heatmap listener cards: surface + metric + the reference to their last run. */
+  heatmap_listeners?: SavedHeatmapListener[];
   selected_receiver_id?: string;
   simulation_configs?: SoundscapeSimulationConfig[];
   active_simulation_index?: number;

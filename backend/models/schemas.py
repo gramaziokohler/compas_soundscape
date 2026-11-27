@@ -2,7 +2,7 @@
 # Pydantic Models for Request Bodies
 
 from enum import Enum
-from typing import Any, Literal
+from typing import Any, Literal, Union
 from typing import Optional
 
 from config.constants import ACOUSTICS_ENGINE_DEFAULT
@@ -712,6 +712,20 @@ class SoundscapeGridListener(BaseModel):
     drawnArea: Optional[dict[str, Any]] = None  # frontend DrawnArea polygon (placementMode "area")
 
 
+class SoundscapeHeatmapResult(BaseModel):
+    """Reference to a heatmap card's last EnergyMap run (payload: GET /api/acoustics/heatmap/{heatmapId})."""
+    heatmapId: str
+    simulationConfigId: str
+    signature: str = ""
+    sourceSounds: dict[str, list[str]] = {}  # backend source id -> sound ids it stands for
+
+
+class SoundscapeHeatmapListener(SoundscapeGridListener):
+    """Heatmap listener card: a grid-listener surface + displayed metric + last run."""
+    metric: Union[str, int] = "spl_a"  # "spl_a" or an octave band index
+    result: Optional[SoundscapeHeatmapResult] = None
+
+
 class SoundscapeIRMetadata(BaseModel):
     """Serializable impulse response metadata for persistence"""
     id: str
@@ -930,6 +944,7 @@ class SoundscapeData(BaseModel):
     # Simulation persistence (all optional, backward-compatible)
     receivers: list[SoundscapeReceiver] = []
     grid_listeners: list[SoundscapeGridListener] = []
+    heatmap_listeners: list[SoundscapeHeatmapListener] = []
     selected_receiver_id: Optional[str] = None
     simulation_configs: list[SoundscapeSimulationConfig] = []
     active_simulation_index: Optional[int] = None

@@ -1,6 +1,6 @@
 "use client";
 
-import { isEngineSimulation, type AcousticSimulationMode as SimulationCardMode } from '@/types/acoustics';
+import { isEngineSimulation, type SimulationCardMode } from '@/types/acoustics';
 import { getSandboxResonanceBoundsFromScene } from '@/lib/three/placeholder-room-manager';
 import { useEffect, useState, useCallback, useRef, useMemo, Suspense } from "react";
 import { useRouter } from "next/navigation";
@@ -42,6 +42,7 @@ import {
   useUIStore,
   selectHasSaveTarget,
   useGridListenersStore,
+  useHeatmapListenersStore,
   useErrorsStore,
   useCardFlowStore,
   useWorkspaceStore,
@@ -278,6 +279,9 @@ function applyRestoredSoundscapePayload(
   }
   if (restored.gridListeners.length > 0) {
     useGridListenersStore.getState().restoreGridListeners(restored.gridListeners);
+  }
+  if (restored.heatmapListeners.length > 0) {
+    useHeatmapListenersStore.getState().restoreHeatmapListeners(restored.heatmapListeners);
   }
   if (restored.simulationConfigs.length > 0) {
     restored.simulationConfigs.forEach(config => {
@@ -666,6 +670,12 @@ function HomeContent() {
     const unsubAudio = useAudioControlsStore.subscribe(() => scheduleAutosave('audioControlsStore'));
     const unsubReceivers = useReceiversStore.subscribe(() => scheduleAutosave('receiversStore'));
     const unsubGridListeners = useGridListenersStore.subscribe(() => scheduleAutosave('gridListenersStore'));
+    // Heatmaps: only the saved fields (surfaces, results, metrics) — not job progress / payload loads.
+    const unsubHeatmaps = useHeatmapListenersStore.subscribe((s, prev) => {
+      if (s.heatmapListeners !== prev.heatmapListeners || s.results !== prev.results || s.metrics !== prev.metrics) {
+        scheduleAutosave('heatmapListenersStore');
+      }
+    });
     const unsubSim = useAcousticsSimulationStore.subscribe(() => scheduleAutosave('acousticsSimulationStore'));
     const unsubAnalysis = useAnalysisStore.subscribe(() => scheduleAutosave('analysisStore'));
     // Region edits are saved too; derived ticks (face counts) are no-ops via the signature.
@@ -679,6 +689,7 @@ function HomeContent() {
       unsubAudio();
       unsubReceivers();
       unsubGridListeners();
+      unsubHeatmaps();
       unsubSim();
       unsubAnalysis();
       unsubAcousticLayer();
@@ -2109,6 +2120,7 @@ function HomeContent() {
     useSoundscapeStore.getState().restoreSoundscape([], [], {});
     useReceiversStore.getState().clearReceivers();
     useGridListenersStore.getState().restoreGridListeners([]);
+    useHeatmapListenersStore.getState().restoreHeatmapListeners([]);
     useAcousticsSimulationStore.getState().restoreSimulationState([], null);
     useAnalysisStore.getState().restoreAnalysisState({
       analysisConfigs: [],
@@ -2398,6 +2410,7 @@ function HomeContent() {
         if (restored.gridListeners.length > 0) {
           console.log(`[page.tsx] Restored ${restored.gridListeners.length} grid listeners`);
         }
+        useHeatmapListenersStore.getState().restoreHeatmapListeners(restored.heatmapListeners);
 
         // Restore simulation state (authoritative — the domain was reset above)
         // Seed pyroom persistent states BEFORE restoring configs

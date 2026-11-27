@@ -149,6 +149,15 @@ Step 5 above is the **legacy** engine. Since the compas_acoustics migration
   Frontend: `acousticPathsStore` (transient, not undoable), `AcousticPathsPanel.tsx`,
   `lib/three/acoustic-paths-overlay.ts`, `useSpeckleAcousticPaths.ts`. Pure helpers (filters,
   particle positions, edge picking) are in `lib/acoustics/acoustic-paths.ts`.
+- **Heatmap (EnergyMap) job:** `POST /api/acoustics/heatmap-speckle` (paths-speckle's fields +
+  `points`, CPU job, variant `heatmap`) → `GET /api/acoustics/heatmap/{id}`.
+  `services/heatmap_service.py` runs `EnergyMap.from_scene` once per source with `Source.spl` at
+  0 dB, so `spl_bands` (per point, 7 bands, `null` outside) is weighted by each sound card's level on
+  the frontend (energy sum) without a rerun. Uses `heatmap_geometry` (`room_geometry` with
+  `check_inside=True`) inside `scene_geometry`. Contract: ARCHITECTURE.md § Heatmap (EnergyMap) job.
+  Frontend: `heatmapListenersStore`, `HeatmapListenerContent.tsx` (surface UI = `SurfaceGridEditor`),
+  `useHeatmapRun` (active card's request), `useHeatmapLevels` / `useHeatmapGradient` + pure
+  `lib/acoustics/heatmap-combine.ts` (volume / mute / solo applied live, never a rerun).
 - **Edge selection:** switched-off edges are the card setting `excluded_edges`
   (`[[x1,y1,z1,x2,y2,z2], ...]`, model coordinates), saved and undoable. Edges are matched **by
   position** (`edge_excluded`, 2 cm, either direction, pieces of a split edge), never by index, so

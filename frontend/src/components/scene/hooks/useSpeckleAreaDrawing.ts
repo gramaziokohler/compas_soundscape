@@ -6,6 +6,7 @@ import {
   useUIStore,
   useAnalysisPreviewStore,
   useGridListenersStore,
+  useHeatmapListenersStore,
   setUndoRedoOverride,
   notifyUndoRedoChanged,
 } from '@/store';
@@ -37,10 +38,15 @@ function analysisCardTitle(cardIndex: number): string {
 function commitDrawnArea(manager: AreaDrawingManager, area: DrawnArea, target: DrawingTarget) {
   const areaStore = useAreaDrawingStore.getState();
   if (target.gridListenerId !== null) {
+    // The target is a grid listener or a heatmap (same surface editor). It may have
+    // been deleted while drawing — then just leave drawing mode.
+    const id = target.gridListenerId;
     const gridStore = useGridListenersStore.getState();
-    // The grid may have been deleted while drawing — just leave drawing mode.
-    if (gridStore.gridListeners.some((g) => g.id === target.gridListenerId)) {
-      gridStore.setGridListenerArea(target.gridListenerId, area);
+    const heatmapStore = useHeatmapListenersStore.getState();
+    if (gridStore.gridListeners.some((g) => g.id === id)) {
+      gridStore.setGridListenerArea(id, area);
+    } else if (heatmapStore.heatmapListeners.some((h) => h.id === id)) {
+      heatmapStore.setHeatmapListenerArea(id, area);
     }
     areaStore.cancelDrawing();
     return;
@@ -94,7 +100,9 @@ export function useSpeckleAreaDrawing({
 
     // Start drawing — disable SelectionExtension to prevent surface selection
     const title = drawingGridListenerId !== null
-      ? useGridListenersStore.getState().gridListeners.find((g) => g.id === drawingGridListenerId)?.name ?? 'Grid'
+      ? useGridListenersStore.getState().gridListeners.find((g) => g.id === drawingGridListenerId)?.name
+        ?? useHeatmapListenersStore.getState().heatmapListeners.find((h) => h.id === drawingGridListenerId)?.name
+        ?? 'Grid'
       : analysisCardTitle(drawingCardIndex as number);
     // Fallback snap plane = floor of the model bounds (or world origin).
     const bounds = useUIStore.getState().speckleBounds;

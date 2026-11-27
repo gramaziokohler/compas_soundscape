@@ -3,6 +3,7 @@ import type { HybridSettings } from '@/types/acoustics';
 import { hybridFormFields, type HybridRoom } from '@/lib/acoustics/hybrid';
 import type { GeometricEngineSettings } from '@/types/acoustics';
 import type { AcousticPathKind, AcousticPathsJobResult, AcousticPathsPayload } from '@/types/acousticPaths';
+import type { HeatmapJobResult, HeatmapPayload } from '@/types/heatmap';
 import { API_BASE_URL, JOB_NOT_FOUND_ERROR, SCENE_EDIT, SHARE_VIEW, SPECKLE_DIRECT_UPLOAD, SPECKLE_INGESTION } from '@/utils/constants';
 import { isShareViewActive, useShareViewStore } from '@/store/shareViewStore';
 import type { CompasGeometry, SoundEvent, SoundGenerationConfig, FileUploadResponse, JobType, JobRecord, FinishedSimulation, UserPreferences, BugReportPayload, BugReportCreated, ClientDiagnosticEvent, SceneEditRequestBody } from '@/types';
@@ -270,6 +271,15 @@ interface UnifiedJobStatus {
   client_meta?: JobRecord['meta'] | null;
   /** Creation time (epoch seconds). */
   created?: number | null;
+}
+
+/** Inputs of a heatmap job: the active card's geometry request + the surface points. */
+export interface RunHeatmapParams {
+  request: SimulationGeometryRequest;
+  meshSettings: SimulationMeshSettings;
+  modelId?: string;
+  /** Surface points (model coordinates). */
+  points: Array<[number, number, number]>;
 }
 
 /** A workspace job as listed by `GET /api/jobs`, mapped to the frontend JobType. */
@@ -2071,6 +2081,67 @@ export const apiService = {
   },
 
   async cancelAcousticPaths(jobId: string): Promise<void> {
+    await cancelUnifiedJob(jobId);
+  },
+
+  /**
+   * Enqueue a heatmap (compas_acoustics EnergyMap) on a card's geometry inputs:
+   * SPL per source (0 dB reference), band and point. Poll with getHeatmapStatus().
+   */
+  async runHeatmap(params: RunHeatmapParams): Promise<{ job_id: string }> {
+    const { request } = params;
+    const formData = new FormData();
+    formData.append('speckle_project_id', request.projectId);
+    formData.append('speckle_version_id', request.versionId);
+    formData.append('object_materials', JSON.stringify(request.objectMaterials));
+    formData.append('custom_materials', JSON.stringify(request.customMaterials));
+    formData.append('layer_name', request.layerName);
+    if (params.modelId) formData.append('model_id', params.modelId);
+    if (request.geometryObjectIds?.length) {
+      formData.append('geometry_object_ids', JSON.stringify(request.geometryObjectIds));
+    }
+    formData.append('object_scattering', JSON.stringify(request.objectScattering ?? {}));
+    formData.append('source_receiver_pairs', JSON.stringify(request.sourceReceiverPairs));
+    formData.append('mesh_settings', JSON.stringify(params.meshSettings));
+    formData.append('points', JSON.stringify(params.points));
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/acoustics/heatmap-speckle`,
+      { method: 'POST', body: formData },
+      'Compute heatmap'
+    );
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: 'Heatmap failed' }));
+      throw new Error(err.detail || 'Heatmap failed');
+    }
+    return response.json();
+  },
+
+  async getHeatmapStatus(jobId: string): Promise<{
+    progress: number;
+    status: string;
+    completed: boolean;
+    cancelled: boolean;
+    error: string | null;
+    result: HeatmapJobResult | null;
+  }> {
+    const job = await getUnifiedJobStatus(jobId);
+    return toLegacyJobStatus(job);
+  },
+
+  async getHeatmapPayload(heatmapId: string): Promise<HeatmapPayload> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/acoustics/heatmap/${heatmapId}`,
+      undefined,
+      'Load heatmap'
+    );
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: 'Heatmap not found' }));
+      throw new Error(err.detail || 'Heatmap not found');
+    }
+    return response.json();
+  },
+
+  async cancelHeatmap(jobId: string): Promise<void> {
     await cancelUnifiedJob(jobId);
   },
 

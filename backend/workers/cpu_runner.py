@@ -28,6 +28,8 @@ from services.pyroomacoustics_worker import (
 from services.sed_worker import run_sed_analysis
 from services.simulation_preflight_worker import run_simulation_preflight
 from services.acoustic_paths_service import run_acoustic_paths
+from services.heatmap_service import run_heatmap
+from services.hybrid_job import run_hybrid_simulation
 from workers._subprocess_common import MultiSlotSubprocessRunner
 
 from config.constants import (
@@ -44,6 +46,8 @@ _TARGET_FNS = {
     "pyroomacoustics_geometry": run_pyroomacoustics_simulation_from_geometry,
     "pyroomacoustics_preflight": run_simulation_preflight,
     "acoustic_paths": run_acoustic_paths,  # reflections / rays / diffraction edges for the 3D view
+    "hybrid_rays": run_hybrid_simulation,  # hybrid card with the wave part off (parts="rays"): no GPU
+    "heatmap": run_heatmap,  # per-source EnergyMap (SPL per band per point) for the Heatmap card
     "pffdtd_voxel_preview": run_pffdtd_voxel_preview,  # voxelise only (compas-pffdtd subprocess)
     "sed": run_sed_analysis,
     "loop": run_loop_analysis,
@@ -58,7 +62,7 @@ class CpuRunner(MultiSlotSubprocessRunner):
     * ``slots`` simulation slots: card simulations from the simulation scheduler
       (services/sim_scheduler.py: fair across workspaces, at most SIM_MAX_CONCURRENT at once),
       then jobs left in the old shared ``queue:cpu``;
-    * CPU_LIGHT_SLOTS light slots: preflight, path views, voxel preview, SED, loop, directivity
+    * CPU_LIGHT_SLOTS light slots: preflight, path views, heatmaps, voxel preview, SED, loop, directivity
       (``queue:cpu-light``), so they never wait behind a simulation.
     """
 

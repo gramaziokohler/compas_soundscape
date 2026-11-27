@@ -81,6 +81,19 @@ export function ListenerGridIcon({ size = 18 }: BubbleIconProps) {
   );
 }
 
+/** Heatmap listener: a 3×3 tile grid whose tiles fade with the level. */
+export function HeatmapIcon({ size = 18 }: BubbleIconProps) {
+  const cells = [5, 12, 19];
+  const opacity = [[1, 0.75, 0.45], [0.75, 0.55, 0.3], [0.45, 0.3, 0.15]];
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      {cells.flatMap((x, i) => cells.map((y, j) => (
+        <rect key={`${x}-${y}`} x={x - 3} y={y - 3} width={6} height={6} rx={1} fill="currentColor" opacity={opacity[j][i]} />
+      )))}
+    </svg>
+  );
+}
+
 export interface SimulationTypeIconProps extends BubbleIconProps {
   type: string;
 }

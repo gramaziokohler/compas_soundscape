@@ -40,7 +40,7 @@ export type CardColor =
  *
  * Analysis types: 'audio', 'text'
  * Sound types: 'text-to-audio', 'upload', 'library', 'sample-audio'
- * Acoustics types: 'resonance', 'pyroomacoustics', 'pffdtd', 'hybrid', 'import-irs'
+ * Acoustics types: 'resonance', 'pyroomacoustics', 'pffdtd', 'hybrid', 'hybrid2', 'import-irs'
  */
 export type CardType =
   | 'audio'
@@ -55,9 +55,11 @@ export type CardType =
   | 'pyroomacoustics'
   | 'pffdtd'
   | 'hybrid'
+  | 'hybrid2'
   | 'import-irs'
   | 'listener'
   | 'grid-listener'
+  | 'heatmap-listener'
   | 'model-analysis'
   | 'scenario'
   | 'freeform';
@@ -78,9 +80,11 @@ export const CARD_TYPE_LABELS: Record<CardType, string> = {
   'pyroomacoustics': 'Ray-tracing simulation',
   'pffdtd': 'Wave-based simulation',
   'hybrid': 'Hybrid simulation',
+  'hybrid2': 'Hybrid simulation 2',
   'import-irs': 'Import IRs',
   'listener': 'Listener',
   'grid-listener': 'Grid Listener',
+  'heatmap-listener': 'Heatmap',
   'model-analysis': 'Spatial context',
   'scenario': 'scenario-based',
   'freeform': 'Untitled',
@@ -113,6 +117,8 @@ export const CARD_TYPE_DESCRIPTIONS: Record<CardType, string> = {
     'GPU finite-difference (FDTD) wave solver on a Cartesian voxel grid. Captures diffraction and room modes exactly up to the max frequency; the IR has no content above it. Axis-aligned walls are exact, oblique walls are staircased. Also records a strength-G SPL map and an optional pressure-wave animation on a horizontal plane.',
   'hybrid':
     'Wave solver below a crossover frequency, rays above it, joined into one full-band IR. The crossover defaults to the room\'s Schroeder frequency, 2000·√(T60 / V): below it the room has separate modes that only a wave solver models; above it image sources, ray tracing and edge diffraction are valid and much cheaper. Joined with a 4th-order Linkwitz-Riley crossover; mono or FOA.',
+  'hybrid2':
+    'Hybrid simulation with a crossover band: drag the split between the wave solver (low frequencies) and the rays (high frequencies), click a part to edit its settings, or switch a part off to run the other alone. The geometry check is its own step before the run.',
   'pyroomacoustics':
     'ISM + ray tracing on mesh faces. Multi-band absorption coefficients, single scattering coefficient per face. Computes RT60 / EDT / C80 and per-source-per-receiver IR WAVs (mono or FOA B-format).',
   'import-irs':
@@ -121,6 +127,8 @@ export const CARD_TYPE_DESCRIPTIONS: Record<CardType, string> = {
     'Add a single listener (receiver) at a point in the scene; the audio pipeline renders the soundscape binaurally from that position.',
   'grid-listener':
     'Place a grid of listeners over an area to evaluate the acoustics at multiple positions at once.',
+  'heatmap-listener':
+    'Map the sound level over a surface (compas_acoustics energy map) with the active simulation card; follows the volume, mute and solo of every sound live.',
   'model-analysis':
     "Runs LLM segmentation on the loaded 3D model to describe the space's geometry, typology and materials. Add an optional screenshot if you want to focus on a specific part.",
   'scenario':
@@ -278,6 +286,11 @@ export interface CardProps<TConfig extends CardBaseConfig = CardBaseConfig, TRes
    * Button label for the action button (default: "Start Simulation")
    */
   actionButtonLabel?: string;
+  /**
+   * The card shows its run's progress in its own body (Hybrid simulation 2's Run step): while it is
+   * expanded and running, the footer progress / stop bar is hidden. Collapsed, the footer still shows it.
+   */
+  runProgressInBody?: boolean;
 
   actionButtonColor?: string;
   /**

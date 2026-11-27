@@ -14,6 +14,7 @@
 
 import { useAcousticMaterialStore, acousticMaterialUndo } from './acousticMaterialStore';
 import { useGridListenersStore, gridListenersUndo } from './gridListenersStore';
+import { useHeatmapListenersStore, heatmapListenersUndo } from './heatmapListenersStore';
 import { useAudioControlsStore, audioControlsUndo } from './audioControlsStore';
 import { useReceiversStore, receiversUndo } from './receiversStore';
 import {
@@ -44,6 +45,7 @@ registerTemporalStore('analysis', useAnalysisStore, analysisUndo);
 registerTemporalStore('sed', useSEDStore, sedUndo);
 registerTemporalStore('areaDrawing', useAreaDrawingStore, areaDrawingUndo);
 registerTemporalStore('gridListeners', useGridListenersStore, gridListenersUndo);
+registerTemporalStore('heatmapListeners', useHeatmapListenersStore, heatmapListenersUndo);
 registerTemporalStore('soundFx', useSoundFxStore, soundFxUndo);
 registerTemporalStore('ui', useUIStore, uiUndo);
 registerTemporalStore('acousticLayer', useAcousticLayerStore, acousticLayerUndo);
@@ -131,6 +133,9 @@ export type {
 export { useGridListenersStore };
 export type { GridListenersStoreState } from './gridListenersStore';
 export { computeGridPoints } from './gridListenersStore';
+
+export { useHeatmapListenersStore };
+export type { HeatmapListenersStoreState, RunHeatmapArgs, PendingHeatmapResult } from './heatmapListenersStore';
 
 // Temporal stores
 export { useReceiversStore };

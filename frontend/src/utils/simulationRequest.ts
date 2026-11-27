@@ -21,6 +21,7 @@ import { groupSimulationSources, isOmniDirectivity } from '@/utils/positionKey';
 import type { SoundDirectivity } from '@/types/directivity';
 import type { CustomMaterialCoefficients } from '@/types/materials';
 import type { SimulationEngine, SimulationMeshSettings } from '@/types/simulationPreflight';
+import { isGeometricSimulation, type SimulationConfig } from '@/types/acoustics';
 
 export interface SourceReceiverPair {
   source_position: number[];
@@ -181,6 +182,30 @@ export function buildSimulationGeometryRequest(args: BuildArgs): BuildResult {
       uniqueSourceDirectivities,
     },
   };
+}
+
+/**
+ * Geometry inputs of a simulation card: its material / scattering assignments, layer
+ * and persisted region, with the given receivers and sounds. The card's run, preflight,
+ * sound paths and heatmaps all build their request here, so they send the same inputs.
+ */
+export function buildCardGeometryRequest(
+  config: SimulationConfig,
+  ctx: Pick<BuildArgs, 'receivers' | 'sounds' | 'selectedVariants'> & { speckleUrl: string | null | undefined },
+): BuildResult {
+  if (!ctx.speckleUrl) return { ok: false, error: 'No Speckle data' };
+  const fields = speckleCardFields(config);
+  return buildSimulationGeometryRequest({
+    materialAssignments: fields.speckleMaterialAssignments,
+    scatteringAssignments: isGeometricSimulation(config) ? fields.speckleScatteringAssignments : undefined,
+    layerName: fields.speckleLayerName,
+    persistedGeometryIds: fields.speckleGeometryObjectIds,
+    speckleUrl: ctx.speckleUrl,
+    receivers: ctx.receivers,
+    sounds: ctx.sounds,
+    selectedVariants: ctx.selectedVariants,
+    materialPrefix: /^pyroom_/,
+  });
 }
 
 /** `simulationPositions` fields derived from a built request (stored with the result). */

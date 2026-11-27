@@ -10,11 +10,15 @@ import { create } from 'zustand';
 import { temporal } from 'zundo';
 import { devtools } from 'zustand/middleware';
 import { GRID_LISTENER_CONFIG } from '@/utils/constants';
+import { computeGridPoints } from '@/lib/three/grid-listener-geometry';
 import {
-  computeAreaBounds,
-  computeGridPoints,
-  computeGridPointsInArea,
-} from '@/lib/three/grid-listener-geometry';
+  duplicateItemAt,
+  moveItem,
+  surfaceGridId,
+  withSurfaceArea,
+  withSurfaceBounds,
+  withSurfaceUpdates,
+} from '@/utils/surfaceGrid';
 import type { GridListenerData } from '@/types/receiver';
 import type { DrawnArea } from '@/types/area-drawing';
 import { UNDO_HISTORY_LIMIT, undoEquality, type RegisterTemporalStoreOptions } from './undoRedoRegistry';
@@ -23,12 +27,7 @@ import { UNDO_HISTORY_LIMIT, undoEquality, type RegisterTemporalStoreOptions } f
 
 export { computeGridPoints };
 
-/** Recompute a grid's points from its boundary (drawn area or bounding box). */
-function layoutGridPoints(g: GridListenerData): [number, number, number][] {
-  if (g.drawnArea) return computeGridPointsInArea(g.drawnArea, g.xSpacing, g.ySpacing, g.zOffset);
-  if (g.boundingBox) return computeGridPoints(g.boundingBox, g.xSpacing, g.ySpacing, g.zOffset);
-  return [];
-}
+const GRID_ID_PREFIX = 'grid-listener-';
 
 // ─── Partialize ───────────────────────────────────────────────────────────────
 
@@ -84,7 +83,7 @@ export const useGridListenersStore = create<GridListenersStoreState>()(
         gridListeners: [],
 
         addGridListener: () => {
-          const id = `grid-listener-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+          const id = surfaceGridId(GRID_ID_PREFIX);
           const count = get().gridListeners.length + 1;
           const newGrid: GridListenerData = {
             id,
@@ -117,12 +116,7 @@ export const useGridListenersStore = create<GridListenersStoreState>()(
 
         reorderGridListeners: (from, to) =>
           set(
-            (s) => {
-              const next = [...s.gridListeners];
-              const [removed] = next.splice(from, 1);
-              next.splice(to, 0, removed);
-              return { gridListeners: next };
-            },
+            (s) => ({ gridListeners: moveItem(s.gridListeners, from, to) }),
             false,
             'gridListeners/reorder',
           ),
@@ -130,19 +124,8 @@ export const useGridListenersStore = create<GridListenersStoreState>()(
         duplicateGridListenerAt: (from, toInsertion) =>
           set(
             (s) => {
-              const gl = s.gridListeners[from];
-              if (!gl) return {};
-
-              const cloned: GridListenerData = {
-                ...structuredClone(gl),
-                id: `grid-listener-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-                name: `${gl.name} (copy)`,
-              };
-
-              const next = [...s.gridListeners];
-              const insertAt = toInsertion > from ? toInsertion - 1 : toInsertion;
-              next.splice(insertAt, 0, cloned);
-              return { gridListeners: next };
+              const next = duplicateItemAt(s.gridListeners, from, toInsertion, surfaceGridId(GRID_ID_PREFIX));
+              return next ? { gridListeners: next } : {};
             },
             false,
             'gridListeners/duplicateAt',
@@ -151,14 +134,7 @@ export const useGridListenersStore = create<GridListenersStoreState>()(
         updateGridListener: (id, updates) =>
           set(
             (s) => ({
-              gridListeners: s.gridListeners.map((g) => {
-                if (g.id !== id) return g;
-                const next = { ...g, ...updates };
-                const spacingChanged =
-                  'xSpacing' in updates || 'ySpacing' in updates || 'zOffset' in updates;
-                if (spacingChanged) next.points = layoutGridPoints(next);
-                return next;
-              }),
+              gridListeners: s.gridListeners.map((g) => (g.id === id ? withSurfaceUpdates(g, updates) : g)),
             }),
             false,
             'gridListeners/update',
@@ -167,18 +143,7 @@ export const useGridListenersStore = create<GridListenersStoreState>()(
         setGridListenerBounds: (id, objectIds, bbox) =>
           set(
             (s) => ({
-              gridListeners: s.gridListeners.map((g) => {
-                if (g.id !== id) return g;
-                const points = computeGridPoints(bbox, g.xSpacing, g.ySpacing, g.zOffset);
-                return {
-                  ...g,
-                  placementMode: 'objects',
-                  drawnArea: null,
-                  selectedObjectIds: objectIds,
-                  boundingBox: bbox,
-                  points,
-                };
-              }),
+              gridListeners: s.gridListeners.map((g) => (g.id === id ? withSurfaceBounds(g, objectIds, bbox) : g)),
             }),
             false,
             'gridListeners/setBounds',
@@ -187,17 +152,7 @@ export const useGridListenersStore = create<GridListenersStoreState>()(
         setGridListenerArea: (id, area) =>
           set(
             (s) => ({
-              gridListeners: s.gridListeners.map((g) => {
-                if (g.id !== id) return g;
-                const next: GridListenerData = {
-                  ...g,
-                  placementMode: 'area',
-                  drawnArea: area,
-                  selectedObjectIds: [],
-                  boundingBox: computeAreaBounds(area),
-                };
-                return { ...next, points: layoutGridPoints(next) };
-              }),
+              gridListeners: s.gridListeners.map((g) => (g.id === id ? withSurfaceArea(g, area) : g)),
             }),
             false,
             'gridListeners/setArea',

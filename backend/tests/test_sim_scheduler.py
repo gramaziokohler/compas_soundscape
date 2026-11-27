@@ -39,7 +39,7 @@ def run(coro):
 def test_routing():
     assert sched.queue_for(JOB_TYPE_PYROOMACOUSTICS, SIM, "ws") == "simq:ws"
     assert sched.queue_for(JOB_TYPE_PYROOMACOUSTICS, {"variant": "pyroomacoustics_geometry"}, "ws") == "simq:ws"
-    for variant in ("pyroomacoustics_preflight", "acoustic_paths", "pffdtd_voxel_preview"):
+    for variant in ("pyroomacoustics_preflight", "acoustic_paths", "heatmap", "pffdtd_voxel_preview"):
         assert sched.queue_for(JOB_TYPE_PYROOMACOUSTICS, {"variant": variant}, "ws") == QUEUE_CPU_LIGHT
     assert sched.queue_for(JOB_TYPE_SED, {}, "ws") == QUEUE_CPU_LIGHT
     assert sched.queue_for(JOB_TYPE_LOOP, {}, None) == QUEUE_CPU_LIGHT
