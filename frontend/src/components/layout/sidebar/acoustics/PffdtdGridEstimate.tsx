@@ -11,7 +11,7 @@
 
 import { useAcousticRegionBounds } from '@/hooks/useAcousticRegionBounds';
 import { usePffdtdGpuMemory } from '@/hooks/usePffdtdGpuMemory';
-import { pffdtdGridEstimate } from '@/lib/acoustics/pffdtd-grid';
+import { waveGridFit } from '@/lib/acoustics/pffdtd-grid';
 import type { PffdtdPrecision } from '@/types/pffdtd';
 import { Notice } from '@/components/ui/Notice';
 
@@ -21,6 +21,8 @@ interface PffdtdGridEstimateProps {
   precision: PffdtdPrecision;
   /** IR length (s); null = unknown (hybrid's length from the room's decay): no runtime shown. */
   duration: number | null;
+  /** The card shows the "does not fit" notice elsewhere (Hybrid simulation 2: at the top of the card). */
+  hideWarning?: boolean;
 }
 
 const gb = (bytes: number) => `${(bytes / 1e9).toFixed(bytes < 1e9 ? 2 : 1)} GB`;
@@ -31,15 +33,15 @@ function formatDuration(s: number): string {
   return `${(s / 3600).toFixed(1)} h`;
 }
 
-export function PffdtdGridEstimate({ gridSpacing, precision, duration }: PffdtdGridEstimateProps) {
+export function PffdtdGridEstimate({ gridSpacing, precision, duration, hideWarning = false }: PffdtdGridEstimateProps) {
   const { bounds } = useAcousticRegionBounds();
   const memory = usePffdtdGpuMemory();
   if (gridSpacing === null || !bounds) return null;
 
   const extents = [0, 1, 2].map((i) => bounds.max[i] - bounds.min[i]) as [number, number, number];
-  const grid = pffdtdGridEstimate(extents, gridSpacing, precision, duration);
   const available = memory?.available_bytes ?? null;
-  const tooLarge = available !== null && grid.bytes > available;
+  const { grid, warning } = waveGridFit(extents, gridSpacing, precision, duration, available);
+  if (!grid) return null;
   const availableTitle = memory
     ? memory.source === 'live'
       ? `Available now: ${gb(memory.free_bytes ?? 0)} free`
@@ -56,16 +58,7 @@ export function PffdtdGridEstimate({ gridSpacing, precision, duration }: PffdtdG
         {available !== null ? ` of ${gb(available)} available` : ''}
         {grid.runtimeS !== null ? ` · ~${formatDuration(grid.runtimeS)} per run` : ''}
       </span>
-      {tooLarge && (
-        <Notice
-          type="error"
-          message={
-            `The grid needs ${gb(grid.bytes)} of GPU memory, ${gb(available)} available` +
-            (precision === 'double' ? ': switch to single precision, or lower' : ': lower') +
-            ' the max frequency or the points per wavelength.'
-          }
-        />
-      )}
+      {warning && !hideWarning && <Notice type="error" message={warning} />}
     </>
   );
 }

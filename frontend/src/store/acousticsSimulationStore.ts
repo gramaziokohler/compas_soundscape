@@ -18,7 +18,7 @@ import { create } from 'zustand';
 import { temporal } from 'zundo';
 import { devtools } from 'zustand/middleware';
 import type {
-  AcousticSimulationMode,
+  SimulationCardMode,
   SimulationConfig,
   ResonanceSimulationConfig,
   ResonanceRoom,
@@ -178,7 +178,7 @@ export interface AcousticsSimulationStoreState {
    * `resonanceBounds` overrides the new ShoeBox room's initial AABB (default:
    * the model bounds). The Home stage passes bounds fitted to its sounds.
    */
-  handleAddConfig: (mode: AcousticSimulationMode, resonanceBounds?: ResonanceRoomBounds) => void;
+  handleAddConfig: (mode: SimulationCardMode, resonanceBounds?: ResonanceRoomBounds) => void;
   handleRemoveConfig: (index: number) => void;
   handleReorderConfigs: (from: number, to: number) => void;
   /** Ctrl+drag duplicate — deep-clones the config at `from` and inserts at `toInsertion`. */
@@ -287,6 +287,8 @@ export const useAcousticsSimulationStore = create<AcousticsSimulationStoreState>
               break;
 
             case 'hybrid':
+            case 'hybrid2':
+              // Hybrid simulation 2 is a hybrid card (same run, results, recovery) with the crossover-band UI
               newConfig = {
                 id,
                 display_name: name,
@@ -295,6 +297,7 @@ export const useAcousticsSimulationStore = create<AcousticsSimulationStoreState>
                 createdAt: timestamp,
                 simulationInstanceId: `hybrid_${timestamp}`,
                 settings: defaultHybridSettings(),
+                ...(mode === 'hybrid2' ? { uiVersion: 2 as const } : {}),
                 faceToMaterialMap: new Map(),
                 isRunning: false,
                 progress: 0,

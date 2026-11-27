@@ -5,6 +5,7 @@ POST /hybrid/run-simulation-speckle
   Same geometry inputs as the other run endpoints, the settings of the geometric part
   (compas_acoustics: order, rays, diffraction, ...), of the wave part (PFFDTD: points per
   wavelength, duration) and the crossover (Schroeder frequency x factor, or a frequency).
+  ``parts`` (both | wave | rays) runs both engines joined, or one alone (services/hybrid_single_part.py).
   Enqueues one job on the PFFDTD queue (payload variant "hybrid", services/hybrid_job.py).
   Returns {job_id, position, total}; poll GET /api/jobs/{job_id}. Results are read through
   the PFFDTD file endpoint (GET /api/pffdtd/get-result-file/...).
@@ -35,6 +36,11 @@ from config.constants import (
     HYBRID_CROSSOVER_MAX_HZ,
     HYBRID_CROSSOVER_MIN_HZ,
     HYBRID_CROSSOVER_MODES,
+    HYBRID_PARTS,
+    HYBRID_PARTS_BOTH,
+    HYBRID_PARTS_RAYS,
+    HYBRID_RAYS_VARIANT,
+    JOB_TYPE_PYROOMACOUSTICS,
     HYBRID_WAVE_FMAX_MARGIN,
     JOB_TYPE_PFFDTD,
     PFFDTD_DEFAULT_PPW,
@@ -70,9 +76,9 @@ import json
 router = APIRouter(prefix="/api")
 
 
-def hybrid_unavailable() -> Optional[str]:
-    """Why the hybrid simulation cannot run here, or None."""
-    reason = pffdtd_available()
+def hybrid_unavailable(parts: str = HYBRID_PARTS_BOTH) -> Optional[str]:
+    """Why the hybrid simulation (with these parts) cannot run here, or None."""
+    reason = None if parts == HYBRID_PARTS_RAYS else pffdtd_available()
     if reason:
         return f"wave solver: {reason}"
     if importlib.util.find_spec("compas_acoustics") is None:
@@ -126,6 +132,8 @@ async def run_simulation_speckle(
     crossover_hz: Optional[float] = Form(None),
     crossover_factor: float = Form(HYBRID_CROSSOVER_FACTOR_DEFAULT),
     level_match: bool = Form(False),
+    # which parts run: both (joined at the crossover), wave (solver alone up to the crossover), rays (alone)
+    parts: str = Form(HYBRID_PARTS_BOTH),
     # Schroeder mode: the room the card plans with (its last run's measurement, or its Eyring estimate)
     room_rt60: Optional[float] = Form(None),
     room_volume: Optional[float] = Form(None),
@@ -150,8 +158,9 @@ async def run_simulation_speckle(
     air_humidity: float = Form(CA_AIR_HUMIDITY_DEFAULT),
     excluded_edges: Optional[str] = Form(None),
 ):
-    """Validate and enqueue; both engines and the join run in the PFFDTD worker's child process."""
-    reason = hybrid_unavailable()
+    """Validate and enqueue; both engines and the join run in the PFFDTD worker's child process.
+    Rays alone need no GPU: they run in a CPU worker's simulation slot (variant ``hybrid_rays``)."""
+    reason = hybrid_unavailable(parts)
     if reason:
         raise HTTPException(status_code=503, detail=f"The hybrid simulation is not available: {reason}")
     if simulation_mode not in (PYROOMACOUSTICS_SIMULATION_MODE_MONO, PYROOMACOUSTICS_SIMULATION_MODE_FOA):
@@ -162,6 +171,8 @@ async def run_simulation_speckle(
         if crossover_hz is None:
             raise HTTPException(status_code=400, detail="A manual crossover needs crossover_hz")
         _check_range("crossover_hz", crossover_hz, HYBRID_CROSSOVER_MIN_HZ, HYBRID_CROSSOVER_MAX_HZ)
+    if parts not in HYBRID_PARTS:
+        raise HTTPException(status_code=400, detail=f"parts must be one of {list(HYBRID_PARTS)}")
     _check_range("crossover_factor", crossover_factor, HYBRID_CROSSOVER_FACTOR_MIN, HYBRID_CROSSOVER_FACTOR_MAX)
     for name, value in (("room_rt60", room_rt60), ("room_volume", room_volume)):
         if value is not None and not value > 0:
@@ -195,8 +206,9 @@ async def run_simulation_speckle(
             source_positions=[p["source_position"] for p in pairs_data],
             receiver_positions=[p["receiver_position"] for p in pairs_data],
         )
+        rays_only = parts == HYBRID_PARTS_RAYS
         payload = {
-            "variant": "hybrid",
+            "variant": HYBRID_RAYS_VARIANT if rays_only else "hybrid",
             "kwargs": dict(
                 simulation_id=simulation_id,
                 speckle_project_id=speckle_project_id,
@@ -215,6 +227,7 @@ async def run_simulation_speckle(
                 crossover_hz=crossover_hz,
                 crossover_factor=crossover_factor,
                 level_match=level_match,
+                parts=parts,
                 room_rt60=room_rt60,
                 room_volume=room_volume,
                 room_estimate_source=room_estimate_source,
@@ -237,7 +250,7 @@ async def run_simulation_speckle(
                 excluded_edges=excluded_edge_rows,
             ),
         }
-        job_id = await job_store.enqueue(JOB_TYPE_PFFDTD, session_id, payload)
+        job_id = await job_store.enqueue(JOB_TYPE_PYROOMACOUSTICS if rays_only else JOB_TYPE_PFFDTD, session_id, payload)
         view = await job_store.get(job_id)
         print(f"Hybrid simulation {job_id} queued at position {view.position} of {view.total}")
         return JobEnqueueResponse(job_id=job_id, position=view.position or 1, total=view.total or 1)

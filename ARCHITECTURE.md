@@ -49,6 +49,7 @@ compas_soundscape/
 │   │   ├── llm_service.py           # Google Gemini LLM
 │   │   ├── modal_analysis_service.py    # Modal analysis & mode shape visualization
 │   │   ├── pffdtd_job.py            # PFFDTD worker child: mesh prep → compas-pffdtd pipeline → WAV/results/field
+│   │   ├── hybrid_single_part.py    # Hybrid card with one part off: wave solver alone / rays alone (parts)
 │   │   ├── pffdtd_preview_job.py    # CPU worker child: voxelise-only grid check → preview payload + points
 │   │   ├── pffdtd_animation_job.py  # pffdtd worker child: wave animation of a finished run on a chosen plane
 │   │   ├── pffdtd_scene_export.py   # SimulationMesh → PFFDTD scene + material coefficients

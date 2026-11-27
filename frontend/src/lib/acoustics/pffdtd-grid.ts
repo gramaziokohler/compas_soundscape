@@ -78,3 +78,27 @@ export function gpuMaxMarker(
   if (value === null || !Number.isFinite(value) || value >= max) return [];
   return [{ value: Math.max(value, min), label: PFFDTD.GPU_MAX_MARKER_LABEL, tone: 'error' }];
 }
+
+const gbText = (bytes: number) => `${(bytes / 1e9).toFixed(bytes < 1e9 ? 2 : 1)} GB`;
+
+/**
+ * Whether a wave grid of spacing `h` over the acoustic region's box fits the GPU memory a wave
+ * solve can use now, and the warning shown when it does not (null when it fits or is unknown).
+ */
+export function waveGridFit(
+  extents: [number, number, number] | null,
+  h: number | null,
+  precision: PffdtdPrecision,
+  duration: number | null,
+  availableBytes: number | null,
+): { grid: { nodes: number; bytes: number; runtimeS: number | null } | null; tooLarge: boolean; warning: string | null } {
+  if (!extents || h === null) return { grid: null, tooLarge: false, warning: null };
+  const grid = pffdtdGridEstimate(extents, h, precision, duration);
+  const tooLarge = availableBytes !== null && grid.bytes > availableBytes;
+  const warning = tooLarge && availableBytes !== null
+    ? `The grid needs ${gbText(grid.bytes)} of GPU memory, ${gbText(availableBytes)} available`
+      + (precision === 'double' ? ': switch to single precision, or lower' : ': lower')
+      + ' the max frequency or the points per wavelength.'
+    : null;
+  return { grid, tooLarge, warning };
+}

@@ -24,9 +24,9 @@
 import { GA_ENGINE } from '@/utils/constants';
 import { progressLanesFromPartial } from '@/utils/progressLanes';
 import { useHybridRoomEstimate } from '@/hooks/useHybridRoomEstimate';
-import { hybridRoomForRun } from '@/lib/acoustics/hybrid';
+import { hybridRoomForRun, lastRunSchroederHz } from '@/lib/acoustics/hybrid';
 import { resolveEngine, usesCompasAcoustics } from '@/lib/acoustics/geometric-engine';
-import { isEngineSimulation, isGeometricSimulation } from '@/types/acoustics';
+import { isEngineSimulation, isGeometricSimulation, materialColumnsType, simulationCardMode } from '@/types/acoustics';
 import { useAcousticPathsStore, useDirectivityStore, type RunAcousticPathsArgs } from '@/store';
 import { runHybridSimulation } from './acoustics/runHybridSimulation';
 import { useCanEdit } from '@/hooks/useCanEdit';
@@ -40,6 +40,7 @@ import { Notice } from '@/components/ui/Notice';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Bubble, BubbleAddButton, BubbleHeading } from '@/components/ui/Bubble';
 import { SimulationTypeIcon } from '@/components/ui/BubbleIcons';
+import { BubbleLink, bubbleAnchorId, bubblePanelId } from '@/components/ui/BubbleLink';
 import { ContextMenu } from '@/components/ui/ContextMenu';
 import { CardContextMenu } from '@/components/ui/CardContextMenu';
 import { buildSavedVisibilityRows } from '@/utils/savedObjectVisibility';
@@ -62,7 +63,7 @@ import { SimulationOutdatedNotice } from '@/components/layout/sidebar/acoustics/
 import { SimulationVersionBadge } from '@/components/layout/sidebar/acoustics/SimulationVersionBadge';
 import { SimulationSolveTime } from '@/components/layout/sidebar/acoustics/SimulationSolveTime';
 import { SimulationSettingsRecap } from '@/components/layout/sidebar/acoustics/SimulationSettingsRecap';
-import { buildSimulationGeometryRequest, simulationRequestSignature, simulationSourceSnapshot, speckleCardFields, type BuildResult } from '@/utils/simulationRequest';
+import { buildCardGeometryRequest, simulationRequestSignature, simulationSourceSnapshot, type BuildResult } from '@/utils/simulationRequest';
 import type { SimulationEngine } from '@/types/simulationPreflight';
 
 // Content Components
@@ -73,6 +74,12 @@ import {
 } from '@/components/layout/sidebar/acoustics/SimulationResultContent';
 import { PffdtdRunProblems } from '@/components/layout/sidebar/acoustics/PffdtdRunProblems';
 import { SimulationSetupContent } from '@/components/layout/sidebar/acoustics/SimulationSetupContent';
+import { Hybrid2RerunPrompt, Hybrid2RunStep, Hybrid2StepBar, type Hybrid2Step } from '@/components/layout/sidebar/acoustics/Hybrid2Steps';
+import { Hybrid2CheckPanel } from '@/components/layout/sidebar/acoustics/Hybrid2CheckPanel';
+import { hybridWaveGpuWarning } from '@/lib/acoustics/crossover-band';
+import { useAcousticRegionBounds } from '@/hooks/useAcousticRegionBounds';
+import { usePffdtdGpuMemory } from '@/hooks/usePffdtdGpuMemory';
+import type { PreflightPanelControl } from '@/components/layout/sidebar/acoustics/SimulationPreflightPanel';
 import { SimulationSummaryBar } from '@/components/layout/sidebar/acoustics/SimulationSummaryBar';
 import { runPffdtdSimulation } from '@/components/layout/sidebar/acoustics/runPffdtdSimulation';
 import { SpeckleSurfaceMaterialsSection } from '@/components/acoustics/SpeckleSurfaceMaterialsSection';
@@ -92,6 +99,7 @@ import {
 import type {
   SimulationConfig,
   AcousticSimulationMode,
+  SimulationCardMode,
   PyroomAcousticsSimulationConfig,
   PffdtdSimulationConfig,
   GridListenerSnapshot,
@@ -128,7 +136,7 @@ import { audibleSoundsInScene } from '@/lib/audio/utils/mute-solo';
 import { useServiceVersions } from '@/hooks/useServiceVersions';
 import { logSimulationLaunch, logSimulationResult } from '@/lib/study/simulationEvents';
 import { recordInflightJob, removeInflightJob, claimSimulationResult, releaseSimulationResult } from '@/lib/job-tracker';
-import { captureGenerationSignature, getGenerationRevertPatch, getModifiedGenerationFields, isGenerationDirty } from '@/utils/generationSignature';
+import { captureGenerationSignature, getGenerationRevertPatch, getGenerationSignature, getModifiedGenerationFields, isGenerationDirty } from '@/utils/generationSignature';
 
 interface AcousticsSectionProps {
   // IR Library props
@@ -160,7 +168,7 @@ interface AcousticsSectionProps {
   // Simulation state (passed from page/hook)
   simulationConfigs?: SimulationConfig[];
   activeSimulationIndex?: number | null;
-  onAddSimulationConfig?: (mode: AcousticSimulationMode) => void;
+  onAddSimulationConfig?: (mode: SimulationCardMode) => void;
   onRemoveSimulationConfig?: (index: number) => void;
   onUpdateSimulationConfig?: (index: number, updates: Partial<SimulationConfig>) => void;
   onSetActiveSimulation?: (index: number | null) => void;
@@ -198,6 +206,8 @@ interface AcousticsSectionProps {
 
 /** Column label row height above the first simulation bubble (px). */
 const BUBBLE_LABEL_HEIGHT = SIMPLE_MODE.HEADING_HEIGHT;
+/** BubbleLink ids for the simulation column. */
+const SIM_LINK_COLUMN = 'simulation';
 
 /** Stable empty assignments (a fresh `{}` per render would re-run the auto-hide sync). */
 const NO_SAVED_ASSIGNMENTS: Record<string, string> = {};
@@ -532,11 +542,11 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   const handleAddItem = useCallback((type: CardType) => {
     if (!onAddSimulationConfig) return;
 
-    const mode = type as AcousticSimulationMode;
+    const mode = type as SimulationCardMode;
     onAddSimulationConfig(mode);
 
     // Check for large layers to exclude
-    if (geometryData && geometryData.face_entity_map && (mode === 'pyroomacoustics' || mode === 'pffdtd' || mode === 'hybrid')) {
+    if (geometryData && geometryData.face_entity_map && (mode === 'pyroomacoustics' || mode === 'pffdtd' || mode === 'hybrid' || mode === 'hybrid2')) {
       const layerFaceCounts = new Map<string, number>();
 
       geometryData.face_entity_map.forEach((entityIndex, faceIndex) => {
@@ -623,23 +633,29 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   const simulationMeshSettings = useUIStore((s) => s.simulationMeshSettings);
   /** Card whose run was stopped by preflight errors (awaiting "Run anyway"). */
   const [preflightBlockedIndex, setPreflightBlockedIndex] = useState<number | null>(null);
+  /** Hybrid simulation 2: the step each card shows (transient, per config id). */
+  const [hybrid2Steps, setHybrid2Steps] = useState<Record<string, Hybrid2Step>>({});
+  /** Geometry checks in flight: Hybrid simulation 2 does not start a run while its check runs. */
+  const preflightEntries = useSimulationPreflightStore((st) => st.entries);
+  const setHybrid2Step = useCallback((configId: string, step: Hybrid2Step) => {
+    setHybrid2Steps((cur) => (cur[configId] === step ? cur : { ...cur, [configId]: step }));
+  }, []);
+  /** Hybrid simulation 2: the generation signature each running card started with (offers a re-run when it changes). */
+  const [hybrid2RunSignatures, setHybrid2RunSignatures] = useState<Record<string, string | null>>({});
+  // GPU memory check of Hybrid simulation 2's wave grid: a run does not start while it fails
+  const { bounds: acousticRegionBounds } = useAcousticRegionBounds();
+  const gpuMemory = usePffdtdGpuMemory();
+  const acousticRegionExtents = acousticRegionBounds
+    ? [0, 1, 2].map((i) => acousticRegionBounds.max[i] - acousticRegionBounds.min[i]) as [number, number, number]
+    : null;
 
   /** Geometry inputs of a card — identical for the run and its preflight. */
-  const buildCardRequest = useCallback((config: SimulationConfig): BuildResult => {
-    if (!speckleData?.url) return { ok: false, error: 'No Speckle data' };
-    const fields = speckleCardFields(config);
-    return buildSimulationGeometryRequest({
-      materialAssignments: fields.speckleMaterialAssignments,
-      scatteringAssignments: isGeometricSimulation(config) ? fields.speckleScatteringAssignments : undefined,
-      layerName: fields.speckleLayerName,
-      persistedGeometryIds: fields.speckleGeometryObjectIds,
-      speckleUrl: speckleData.url,
-      receivers: allReceivers,
-      sounds: activeSoundscapeData,
-      selectedVariants: useAudioControlsStore.getState().selectedVariants,
-      materialPrefix: /^pyroom_/,
-    });
-  }, [speckleData, allReceivers, activeSoundscapeData]);
+  const buildCardRequest = useCallback((config: SimulationConfig): BuildResult => buildCardGeometryRequest(config, {
+    speckleUrl: speckleData?.url,
+    receivers: allReceivers,
+    sounds: activeSoundscapeData,
+    selectedVariants: useAudioControlsStore.getState().selectedVariants,
+  }), [speckleData, allReceivers, activeSoundscapeData]);
 
   /** Preflight job arguments (incl. the staleness signature) of a card. */
   const buildPreflightArgs = useCallback(
@@ -725,6 +741,20 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     store.setPreviewConfig(config.id);
     void store.runPreflight(prepared.args);
   }, [buildPreflightArgs]);
+
+  /**
+   * Hybrid simulation 2, "Check geometry": opens the Check step and runs the geometry check unless
+   * one for exactly these inputs is done or running (the run then re-uses it).
+   */
+  const openHybrid2Check = useCallback((config: SimulationConfig) => {
+    setHybrid2Step(config.id, 'check');
+    const prepared = buildPreflightArgs(config);
+    const entry = useSimulationPreflightStore.getState().entries[config.id];
+    const current = prepared.ok && entry
+      && (entry.status === 'running' || (entry.status === 'done' && entry.signature === prepared.args.signature));
+    if (current) useSimulationPreflightStore.getState().setPreviewConfig(config.id);
+    else runPreflightForCard(config);
+  }, [buildPreflightArgs, runPreflightForCard, setHybrid2Step]);
 
   /**
    * Voxel-preview inputs of a wave-based card (same geometry as its run). The
@@ -997,6 +1027,15 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     await dispatchSimulation(index);
   }, [simulationConfigs, buildPreflightArgs, handleUpdateConfig, dispatchSimulation]);
 
+  /** Hybrid simulation 2: run (geometry check first, as runSimulation), remember its inputs, show the Run step. */
+  const runHybrid2 = useCallback(async (index: number) => {
+    const config = simulationConfigs[index];
+    if (!config) return;
+    setHybrid2RunSignatures((cur) => ({ ...cur, [config.id]: getGenerationSignature(config) }));
+    setHybrid2Step(config.id, 'run');
+    await runSimulation(index);
+  }, [simulationConfigs, runSimulation, setHybrid2Step]);
+
   // Re-runs requested from the model-version review panel ("Re-run all outdated").
   const rerunQueue = useModelVersionStore((s) => s.rerunQueue);
   useEffect(() => {
@@ -1043,6 +1082,12 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     handleUpdateConfig(index, { isRunning: false, status: 'Cancelled', progress: 0, currentSimulationRunId: null } as any);
   }, [simulationConfigs, handleUpdateConfig]);
 
+  /** Hybrid simulation 2: stop the run and start one with the card's current settings. */
+  const rerunHybrid2 = useCallback((index: number) => {
+    cancelSimulation(index);
+    void runHybrid2(index);
+  }, [cancelSimulation, runHybrid2]);
+
   /**
    * Duplicate a simulation config.
    * - Before-simulation: copies all settings and material assignments into a new card.
@@ -1054,7 +1099,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     if (!config || !onAddSimulationConfig || !onUpdateSimulationConfig) return;
 
     const newIndex = simulationConfigs.length;
-    onAddSimulationConfig(config.type as AcousticSimulationMode);
+    onAddSimulationConfig(simulationCardMode(config));
 
     // Resonance cards have no per-card settings to copy — just add the new card.
     if (config.type === 'resonance') return;
@@ -1535,6 +1580,14 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         ? 'Hybrid simulation needs a loaded model. Load one from the Home stage first.'
         : hybridUnavailableReason ?? undefined,
     },
+    {
+      type: 'hybrid2',
+      label: CARD_TYPE_LABELS['hybrid2'],
+      enabled: !isSandbox && hybridUnavailableReason === null,
+      disabledTooltip: isSandbox
+        ? 'Hybrid simulation needs a loaded model. Load one from the Home stage first.'
+        : hybridUnavailableReason ?? undefined,
+    },
     { type: 'import-irs', label: CARD_TYPE_LABELS['import-irs'], enabled: true },
   ];
 
@@ -1643,8 +1696,21 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     const hasSounds = activeSoundscapeData.length > 0;
     const solverUnavailable = (config.type === 'pffdtd' && !pffdtdStatus.available)
       || (config.type === 'hybrid' && hybridUnavailableReason !== null);
-    const actionButtonDisabled = isSimulationType && (!hasValidGeometry || !hasReceivers || !hasSounds || solverUnavailable);
-    const actionButtonDisabledReason = solverUnavailable
+    const isHybrid2 = config.type === 'hybrid' && config.uiVersion === 2;
+    const hybrid2GpuWarning = isHybrid2 && config.type === 'hybrid'
+      ? hybridWaveGpuWarning(
+        config.settings,
+        lastRunSchroederHz(config.hybridInfo) ?? hybridRoomEstimate?.schroederHz ?? null,
+        acousticRegionExtents,
+        gpuMemory?.available_bytes ?? null,
+      )
+      : null;
+    const hybrid2Checking = isHybrid2 && preflightEntries[config.id]?.status === 'running';
+    const actionButtonDisabled = isSimulationType
+      && (!hasValidGeometry || !hasReceivers || !hasSounds || solverUnavailable || !!hybrid2GpuWarning || hybrid2Checking);
+    const actionButtonDisabledReason = hybrid2GpuWarning ? hybrid2GpuWarning
+      : hybrid2Checking ? 'Wait for the geometry check to finish'
+      : solverUnavailable
       ? (config.type === 'hybrid' ? hybridUnavailableReason : pffdtdStatus.reason) ?? 'Wave solver unavailable'
       : !hasValidGeometry
       ? 'No geometry loaded'
@@ -1686,6 +1752,59 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       return prepared.ok ? prepared.args.signature : null;
     })();
 
+    const preflightControl: PreflightPanelControl | undefined = hasGeometryCheck ? {
+      currentSignature: preflightSignature,
+      onRun: () => runPreflightForCard(config),
+      runBlocked: preflightBlockedIndex === index,
+      onRunAnyway: () => {
+        setPreflightBlockedIndex(null);
+        void dispatchSimulation(index);
+      },
+      onDismissBlocked: () => setPreflightBlockedIndex(null),
+      disabled: isRunning,
+    } : undefined;
+
+    // Hybrid simulation 2: Setup → Check → Run → Results. Check and Run replace the settings (the
+    // material section stays mounted); while it runs, Setup and Check stay open to the user and the
+    // Run step offers a re-run when the inputs changed. A run stopped by geometry errors (also a
+    // Regenerate) shows Check so "Run anyway" is reachable.
+    const chosenHybrid2Step = hybrid2Steps[config.id];
+    const hybrid2View: Hybrid2Step = !isRunning && preflightBlockedIndex === index
+      ? 'check'
+      : isRunning
+        ? (chosenHybrid2Step === 'setup' || chosenHybrid2Step === 'check' ? chosenHybrid2Step : 'run')
+        : isCompleted
+          ? (chosenHybrid2Step === 'setup' || chosenHybrid2Step === 'check' ? chosenHybrid2Step : 'results')
+          : (chosenHybrid2Step === 'check' || chosenHybrid2Step === 'run' ? 'check' : 'setup');
+    const hybrid2Reached: Hybrid2Step = isRunning ? 'run' : isCompleted ? 'results' : hybrid2View;
+    const hybrid2Dirty = isHybrid2 && isCompleted && isGenerationDirty(config);
+    const showHybrid2Check = isHybrid2 && preflightControl !== undefined && hybrid2View === 'check';
+    const runSignature = hybrid2RunSignatures[config.id];
+    const hybrid2RunStep = isHybrid2 && isRunning && hybrid2View === 'run' ? (
+      <Hybrid2RunStep
+        progress={(config as any).progress ?? 0}
+        status={(config as any).status}
+        lanes={(config as any).progressLanes ?? null}
+        changedSinceStart={runSignature !== undefined && getGenerationSignature(config) !== runSignature}
+        onRerun={() => rerunHybrid2(index)}
+        onStop={() => cancelSimulation(index)}
+      />
+    ) : undefined;
+    const hybrid2StepBody = showHybrid2Check && preflightControl
+      ? (
+        <Hybrid2CheckPanel
+          configId={config.id}
+          {...preflightControl}
+          // A completed card has no footer button: its Check step starts the run itself.
+          onStart={isCompleted && !isRunning ? () => void runHybrid2(index) : undefined}
+          startDisabled={actionButtonDisabled}
+          startDisabledReason={actionButtonDisabledReason}
+        />
+      )
+      : !isCompleted ? hybrid2RunStep : undefined;
+    // On a completed card the Results / Run views keep only the (headless) material section mounted.
+    const hybrid2BodyHidden = isHybrid2 && isCompleted && (hybrid2View === 'results' || hybrid2View === 'run');
+
     // Simulation setup component — always rendered for non-resonance types
     // so that settings stay available regardless of completion state
     const simulationSetup = config.type !== 'resonance' && config.type !== 'import-irs' ? (
@@ -1702,17 +1821,9 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             }
             onUpdateConfig={(updates) => handleUpdateConfig(index, updates)}
             onIsolationChange={(ids) => handleUpdateConfig(index, { speckleIsolatedObjectIds: ids } as any)}
-            preflight={hasGeometryCheck ? {
-              currentSignature: preflightSignature,
-              onRun: () => runPreflightForCard(config),
-              runBlocked: preflightBlockedIndex === index,
-              onRunAnyway: () => {
-                setPreflightBlockedIndex(null);
-                void dispatchSimulation(index);
-              },
-              onDismissBlocked: () => setPreflightBlockedIndex(null),
-              disabled: isRunning,
-            } : undefined}
+            preflight={preflightControl}
+            stepBody={hybrid2StepBody}
+            bodyHidden={hybrid2BodyHidden}
             paths={pathsControl}
             voxelPreview={config.type === 'pffdtd' ? {
               currentSignature: preflightSignature,
@@ -2205,11 +2316,49 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       ? <PffdtdRunProblems problems={config.runProblems} />
       : null;
 
+    // Hybrid simulation 2: the step bar above the card's body (on-blue once generated). Setup's reset
+    // restores the last run's settings when they changed; Results then offers a re-run.
+    const resetHybrid2 = () => {
+      const patch = getGenerationRevertPatch(config);
+      if (patch) handleUpdateConfig(index, patch as Partial<SimulationConfig>);
+    };
+    const hybrid2StepBar = isHybrid2 ? (
+      <Hybrid2StepBar
+        step={hybrid2View}
+        reached={hybrid2Reached}
+        running={isRunning}
+        onBlue={isCompleted}
+        clickable={isRunning ? ['setup', 'check', 'run'] : isCompleted ? ['setup', 'check', 'results'] : ['setup', 'check']}
+        onReset={hybrid2Dirty && !isRunning && canEdit ? resetHybrid2 : undefined}
+        onStep={canEdit
+          ? (step) => {
+            setPreflightBlockedIndex((cur) => (cur === index ? null : cur));
+            if (step === 'check' && !isRunning) openHybrid2Check(config);
+            else setHybrid2Step(config.id, step);
+          }
+          : undefined}
+      />
+    ) : null;
+    const hybrid2CompletedBody = isHybrid2 && isCompleted ? (
+      hybrid2View === 'setup' || hybrid2View === 'check' ? (
+        <div className="card-settings-inset">{simulationSetup}</div>
+      ) : (
+        <>
+          {simulationSetup}
+          {hybrid2RunStep}
+          {hybrid2Dirty && !isRunning && canEdit && (
+            <Hybrid2RerunPrompt onRunNow={() => void runHybrid2(index)} onCheckFirst={() => openHybrid2Check(config)} />
+          )}
+          {simResultContent}
+        </>
+      )
+    ) : null;
+
     const beforeContent = config.type === 'resonance'
       ? resonanceContent
       : config.type === 'import-irs'
         ? (!isCompleted ? <>{soundSectionMismatchWarning}{importIrsContent}</> : undefined)
-        : (!isCompleted ? <>{simulationSetup}{runProblems}</> : undefined);
+        : (!isCompleted ? <>{hybrid2StepBar}{simulationSetup}{runProblems}</> : undefined);
 
     // Collapsed header summary for the import-irs card: awaiting vs x/N assigned.
     const importIrsCollapsedInfo = (() => {
@@ -2255,7 +2404,8 @@ export function AcousticsSection(props: AcousticsSectionProps) {
               <span>{missingPairCount} source-listener pair{missingPairCount === 1 ? '' : 's'} still need an IR. Auralization stays disabled for listener groups with missing assignments.</span>
             </div>
           )} */}
-          {config.type === 'import-irs' ? importIrsContent : simResultContent}
+          {hybrid2StepBar}
+          {hybrid2CompletedBody ?? (config.type === 'import-irs' ? importIrsContent : simResultContent)}
         </>
     ) : undefined;
 
@@ -2315,9 +2465,10 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             afterContent={afterContent}
             // Completed ray-tracing / wave-based cards: editable settings + Regenerate
             // (footerPrefix dots also sit left of Regenerate)
-            settingsContent={isSimulationType && isCompleted ? simulationSetup : undefined}
-            settingsDirty={isSimulationType && isCompleted && isGenerationDirty(config)}
-            onRegenerate={isSimulationType ? () => runSimulation(index) : undefined}
+            // (Hybrid simulation 2: its steps replace the settings section and Regenerate)
+            settingsContent={isSimulationType && isCompleted && !isHybrid2 ? simulationSetup : undefined}
+            settingsDirty={isSimulationType && isCompleted && !isHybrid2 && isGenerationDirty(config)}
+            onRegenerate={isSimulationType && !isHybrid2 ? () => runSimulation(index) : undefined}
             onRevertSettings={isSimulationType ? () => {
               // Settings + material assignments of the last run (materials re-sync
               // into the Object Explorer through SpeckleSurfaceMaterialsSection).
@@ -2343,10 +2494,18 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             customButtons={customButtons.length > 0 ? customButtons : undefined}
             renameRequest={renameRequest?.index === index ? renameRequest.seq : undefined}
             // Simulation action button props (for pyroomacoustics/pffdtd)
-            onRun={isSimulationType ? async () => await runSimulation(index) : undefined}
+            // Hybrid simulation 2: Setup's button opens the Check step; Check's starts the run
+            onRun={isSimulationType
+              ? isHybrid2 && hybrid2View === 'setup'
+                ? async () => openHybrid2Check(config)
+                : isHybrid2
+                  ? async () => await runHybrid2(index)
+                  : async () => await runSimulation(index)
+              : undefined}
             onCancel={isSimulationType ? () => cancelSimulation(index) : undefined}
             footerPrefix={isSimulationType ? <SimulationSummaryBar /> : undefined}
-            actionButtonLabel="Start Simulation"
+            actionButtonLabel={isHybrid2 && hybrid2View === 'setup' ? 'Check geometry' : 'Start Simulation'}
+            runProgressInBody={isHybrid2}
             actionButtonDisabled={actionButtonDisabled}
             actionButtonDisabledReason={actionButtonDisabledReason}
             actionButtonColor='primary'
@@ -2382,7 +2541,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
           viewerRef={viewerRef}
           worldTree={localWorldTree}
           availableMaterials={pyroomMaterials}
-          cardType={activeConfig.type === 'hybrid' ? 'pyroomacoustics' : activeConfig.type}
+          cardType={materialColumnsType(activeConfig)}
           filteringEnabled={filteringEnabled}
           isReadOnly
           isActive
@@ -2644,6 +2803,7 @@ function AcousticsBubbles({
           return (
             <Bubble
               key={config.id ?? index}
+              id={bubbleAnchorId(SIM_LINK_COLUMN, index)}
               label={label}
               detail={detail}
               icon={<SimulationTypeIcon type={config.type} size={SIMPLE_MODE.BUBBLE_SIZE / 2} />}
@@ -2704,7 +2864,11 @@ function AcousticsBubbles({
       )}
 
       {openConfig && openIndex !== null && (
+        <BubbleLink anchorId={bubbleAnchorId(SIM_LINK_COLUMN, openIndex)} panelId={bubblePanelId(SIM_LINK_COLUMN)} />
+      )}
+      {openConfig && openIndex !== null && (
         <div
+          id={bubblePanelId(SIM_LINK_COLUMN)}
           className="bubble-card-host"
           onPointerDownCapture={frontLayer.onPointerDownCapture}
           style={{

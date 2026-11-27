@@ -35,6 +35,9 @@ from config.constants import (
     CA_DIFFRACTION_DEFAULT,
     CA_SEED_DEFAULT,
     HYBRID_CROSSOVER_FACTOR_DEFAULT,
+    HYBRID_PARTS_BOTH,
+    HYBRID_PARTS_RAYS,
+    HYBRID_PARTS_WAVE,
     HYBRID_PROGRESS_WAVE_END,
     HYBRID_WAVE_DURATION_T60_FACTOR,
     PFFDTD_DEFAULT_PPW,
@@ -48,6 +51,7 @@ from config.constants import (
 )
 from models.schemas import MeshPrepSettings
 from services.pffdtd_job import _atomic_write, _run_from_geometry, _write_progress, geometry_dict, pffdtd_available
+from services.hybrid_single_part import run_rays_only, run_wave_only, wave_only_fmax
 from services.progress_lanes import HybridProgress
 from services.pyroomacoustics_room_builder import room_offset
 from services.simulation_geometry_loader import load_speckle_simulation_geometry
@@ -192,7 +196,7 @@ def run_hybrid_simulation(
     """Job entry (PFFDTD queue, variant "hybrid"): Speckle geometry, then ``run_hybrid_from_geometry``."""
     started = solve_started()
     try:
-        reason = pffdtd_available()
+        reason = None if options.get("parts") == HYBRID_PARTS_RAYS else pffdtd_available()
         if reason:
             raise RuntimeError(reason)
         inputs = load_speckle_simulation_geometry(
@@ -256,6 +260,8 @@ def run_hybrid_from_geometry(
     room_volume: Optional[float] = None,
     room_estimate_source: Optional[str] = None,
     started: Optional[float] = None,
+    # which parts run: both (joined), the wave solver alone, or the rays alone (services/hybrid_single_part.py)
+    parts: str = HYBRID_PARTS_BOTH,
 ) -> None:
     """The geometric part (compas_acoustics, CPU processes) and the wave part (PFFDTD, GPU) run at once, then join.
 
@@ -264,7 +270,7 @@ def run_hybrid_from_geometry(
     started = solve_started(started)
     stop = threading.Event()
     try:
-        reason = pffdtd_available()
+        reason = None if parts == HYBRID_PARTS_RAYS else pffdtd_available()
         if reason:
             raise RuntimeError(reason)
         if simulation_mode not in (PYROOMACOUSTICS_SIMULATION_MODE_MONO, PYROOMACOUSTICS_SIMULATION_MODE_FOA):
@@ -296,6 +302,25 @@ def run_hybrid_from_geometry(
         plan = plan_crossover(crossover_mode, rt60, volume, manual_hz=crossover_hz, factor=crossover_factor,
                               wave_fmax_cap=wave_fmax_cap)
         run_duration = wave_duration(duration, rt60)
+        if parts == HYBRID_PARTS_RAYS:
+            run_rays_only(
+                simulation_id, progress_file, result_file, mesh, offset, pairs_data, settings,
+                simulation_mode, simulation_name, rir_output_dir, temp_dir, header_meta, air_absorption,
+                {**plan.as_dict(), "rt60_source": rt60_source}, measured_rt60, schroeder_frequency, volume, started,
+            )
+            return
+        if parts == HYBRID_PARTS_WAVE:
+            fmax = wave_only_fmax(plan.crossover_hz)
+            run_ppw, ppw_note = wave_ppw(ppw, fmax, min_seed_surface_distance(mesh, seed_meta, pairs_data))
+            run_wave_only(
+                simulation_id, progress_file, result_file, geometry, pairs_data, simulation_mode, simulation_name,
+                rir_output_dir, temp_dir, mesh_settings, header_meta, fmax, run_ppw, run_duration, air_absorption,
+                precision,
+                {**plan.as_dict(), "notes": plan.notes + ([ppw_note] if ppw_note else []), "rt60_source": rt60_source,
+                 "wave_duration_s": round(run_duration, 3), "wave_ppw": round(run_ppw, 1)},
+                started,
+            )
+            return
         run_ppw, ppw_note = wave_ppw(ppw, plan.wave_fmax, min_seed_surface_distance(mesh, seed_meta, pairs_data))
         if ppw_note:
             plan.notes.append(ppw_note)

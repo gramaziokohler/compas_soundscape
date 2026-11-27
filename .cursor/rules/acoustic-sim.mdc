@@ -221,6 +221,41 @@ One job on the PFFDTD queue (`JOB_TYPE_PFFDTD`, payload `variant: "hybrid"`,
 - Frontend: `HybridSimulationSettings.tsx`, `lib/acoustics/hybrid.ts` (defaults, plan, form
   fields, read-outs). Type guards `isEngineSimulation` / `isGeometricSimulation` replace the
   `type === 'pyroomacoustics' || type === 'pffdtd'` checks: use them for any new card logic.
+- **Hybrid simulation 2** (menu type `hybrid2`): a `hybrid` config with `uiVersion: 2` (saved as
+  `ui_version`), so the run, results, recovery and serializer are the hybrid's. The original hybrid
+  card is unchanged.
+  - **Setup** (`Hybrid2SimulationSettings.tsx`): mode dropdown, material chips
+    (`AcousticMaterialChips.tsx`: absorption colour + object count), the wave grid's GPU memory
+    warning (`hybridWaveGpuWarning`; it disables the run), then the part checkboxes and
+    `CrossoverBand.tsx` (log band 20 Hz–20 kHz, draggable crossover, dashed lines for the
+    recommended crossover and the GPU max; helpers in `lib/acoustics/crossover-band.ts`). Dragging
+    onto the recommended line sets Schroeder × 1, anywhere else a manual frequency. The selected
+    part's settings (`Hybrid2PartSettings.tsx`) are tinted with its colour (`--section-accent` on
+    the section; `ToggleField color` for the wave part), with "Additional settings" as a section
+    header (`CollapsibleGroup`); precision is a dropdown (`PffdtdPrecisionToggle asSelect`).
+  - **Steps** (`Hybrid2Steps.tsx`, transient `hybrid2Steps` in AcousticsSection): Setup → Check →
+    Run → Results. Setup's button is "Check geometry" (opens Check, runs the preflight unless one
+    is current); Check (`Hybrid2CheckPanel.tsx`: verdict, figures, issues, 3D preview, details)
+    starts the run; the start is disabled while the check runs. Check and Run replace the settings
+    through `SimulationSetupContent stepBody` (`bodyHidden` on Results), so the headless material
+    section stays mounted.
+  - **Run**: progress, expanded process rows and Stop inside the card (`Card runProgressInBody`
+    hides the footer bar while expanded). Setup and Check stay open during a run (settings stay
+    editable); the Run tab spins, and when the generation signature differs from the one the run
+    started with, Run offers a re-run (cancel + run).
+  - **Results**: on-blue step bar, no settings section or Regenerate; Setup / Check open on the
+    completed card (inside `.card-settings-inset`). When the settings changed, the Setup tab has a
+    reset (the generation revert patch) and Results a "Re-run simulation" with a confirmation:
+    run now (Run) or check the geometry first (Check).
+  - The Object Explorer drops the scattering column when the rays are off (`materialColumnsType`).
+- **Parts** (`settings.parts`, form field `parts`, `HYBRID_PARTS`): `both` (default, the join),
+  `wave` (PFFDTD alone up to the crossover itself, no margin; the band above is "not simulated") or
+  `rays` (compas_acoustics alone, full band). `services/hybrid_single_part.py` runs them and writes
+  the hybrid's file names, results JSON and payload with `hybrid.parts`; the rays-only run still
+  reports `measured_rt60` for the next plan. Rays alone need no GPU: they are enqueued as the
+  pyroomacoustics job variant `hybrid_rays` (`HYBRID_RAYS_VARIANT`, a `SIMULATION_VARIANTS`
+  entry), so a CPU worker's simulation slot runs them, not `queue:pffdtd`. GPU max on the band:
+  `maxProduct / PPW`, divided by `WAVE_FMAX_MARGIN` only when both parts run (`bandGpuMaxHz`).
 
 ### Room Creation — Prepared Mesh, Not ShoeBox
 

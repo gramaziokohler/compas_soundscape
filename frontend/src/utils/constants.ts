@@ -2889,6 +2889,24 @@ export const HYBRID = {
   ESTIMATE_ABSORPTION_MAX: 0.95,
   /** 24·ln(10) / c at 343 m/s (s/m), the Sabine / Eyring constant. */
   SABINE_CONSTANT: 0.161,
+  PARTS_DEFAULT: 'both' as 'both' | 'wave' | 'rays',
+} as const;
+
+/** Crossover band of Hybrid simulation 2 (CrossoverBand.tsx): a log frequency axis. */
+export const HYBRID_BAND = {
+  AXIS_MIN_HZ: 20,
+  AXIS_MAX_HZ: 20000,
+  AXIS_TICKS_HZ: [20, 100, 1000, 10000, 20000],
+  HEIGHT_PX: 42,
+  /** Dragging within this ratio of the recommended frequency snaps back to it (Schroeder × 1). */
+  SNAP_RATIO: 0.04,
+  /** Arrow keys move the handle by this ratio (Shift: the large one). */
+  KEY_STEP_RATIO: 1.02,
+  KEY_STEP_RATIO_LARGE: 1.15,
+  /** Decorative curves: wave cycles across the wave part, ray zig-zags in the ray part. */
+  WAVE_CYCLES: 7,
+  RAY_LINES: 3,
+  RAY_BOUNCES: 6,
 } as const;
 
 /** Sound paths in the 3D view: reflections, billiard rays, diffraction edges (acousticPathsStore). */
@@ -3678,6 +3696,13 @@ export const NESTED_MENU = {
 export const ACOUSTIC_MATERIALS_SUMMARY = {
   NAME_SEPARATOR: ', ',
   TOOLTIP_SEPARATOR: '\n',
+} as const;
+
+/** Material chips of Hybrid simulation 2 (AcousticMaterialChips): chips shown before "+N". */
+export const ACOUSTIC_MATERIAL_CHIPS = {
+  MAX_VISIBLE: 4,
+  /** Chip fill: the material's absorption colour mixed at this % over the card. */
+  TINT_PCT: 18,
 } as const;
 
 // Byte sizes shared by the IR cache, the performance monitor and the meter.

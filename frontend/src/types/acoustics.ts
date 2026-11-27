@@ -33,6 +33,14 @@ export interface GridListenerSnapshot {
  */
 export type AcousticSimulationMode = 'resonance' | 'pyroomacoustics' | 'pffdtd' | 'hybrid' | 'import-irs';
 
+/** What the "add simulation" menu creates: a simulation type, or 'hybrid2' (a hybrid card with uiVersion 2). */
+export type SimulationCardMode = AcousticSimulationMode | 'hybrid2';
+
+/** The add-menu mode that recreates a card (duplicate): Hybrid simulation 2 stays a version-2 card. */
+export function simulationCardMode(config: { type: AcousticSimulationMode; uiVersion?: number }): SimulationCardMode {
+  return config.type === 'hybrid' && config.uiVersion === 2 ? 'hybrid2' : config.type;
+}
+
 /**
  * Simulation states for UI display
  */
@@ -205,8 +213,16 @@ export interface PffdtdSimulationConfig extends BaseSimulationConfig, CardExecut
   };
 }
 
+/**
+ * Which parts a hybrid run simulates: both (wave below the crossover, rays above), the wave solver
+ * alone up to the crossover, or the rays alone over the full band. Only Hybrid simulation 2 sets it.
+ */
+export type HybridParts = 'both' | 'wave' | 'rays';
+
 /** Settings of the hybrid (wave below the crossover, rays above) card. */
 export interface HybridSettings extends GeometricEngineSettings {
+  /** Parts the run simulates; absent = both. */
+  parts?: HybridParts;
   simulation_mode: string; // "mono" | "foa"
   /** 'schroeder': crossover_factor x the room's Schroeder frequency; 'manual': crossover_hz. */
   crossover_mode: 'schroeder' | 'manual';
@@ -250,6 +266,8 @@ export interface HybridRunInfo {
   level_match?: boolean;
   filter?: string;
   median_overlap_mismatch_db?: number | null;
+  /** Parts the run simulated (absent = both, joined). */
+  parts?: HybridParts;
 }
 
 /**
@@ -276,6 +294,8 @@ export interface HybridSimulationConfig extends BaseSimulationConfig, CardExecut
   currentSimulationRunId?: string | null;
   /** Crossover of the last finished run. */
   hybridInfo?: HybridRunInfo | null;
+  /** 2 = "Hybrid simulation 2": crossover band, per-part settings, geometry check as its own step. */
+  uiVersion?: 2;
   speckleMaterialAssignments?: Record<string, string>;
   speckleLayerName?: string | null;
   speckleGeometryObjectIds?: string[];
@@ -302,6 +322,16 @@ export function isGeometricSimulation(
   config: SimulationConfig | null | undefined,
 ): config is PyroomAcousticsSimulationConfig | HybridSimulationConfig {
   return !!config && (config.type === 'pyroomacoustics' || config.type === 'hybrid');
+}
+
+/**
+ * Which material columns the Object Explorer shows for a card: 'pyroomacoustics' adds scattering
+ * (rays use it), 'pffdtd' shows absorption only. A hybrid card whose rays are off is wave-only.
+ */
+export function materialColumnsType(config: SimulationConfig | null | undefined): 'pyroomacoustics' | 'pffdtd' | null {
+  if (!isEngineSimulation(config)) return null;
+  if (config.type === 'hybrid') return config.settings.parts === 'wave' ? 'pffdtd' : 'pyroomacoustics';
+  return config.type;
 }
 
 /**

@@ -149,6 +149,7 @@ function CardView<TConfig extends CardBaseConfig>({
   onRun,
   onCancel,
   actionButtonLabel = 'Start Simulation',
+  runProgressInBody = false,
   actionButtonDisabled = false,
   actionButtonColor,
   actionIsAi = false,
@@ -215,9 +216,10 @@ function CardView<TConfig extends CardBaseConfig>({
     accentColor: `var(--color-${color})`,
   } as React.CSSProperties;
 
-  // Whole shell turns solid blue once a result exists (and no error) — signals
-  // "generated" without needing the separate accent strip.
-  const isGenerated = hasResult && !error;
+  // Whole shell turns solid blue once a result exists — signals "generated"
+  // without needing the separate accent strip. An error (e.g. a failed
+  // regenerate) keeps the blue shell; the red border + Notice bar flag it.
+  const isGenerated = hasResult;
   // A generated card that is reduced (collapsed) drops the solid blue for a
   // recessed surface — visibly neither the active generated card nor a pending
   // surface card.
@@ -626,7 +628,7 @@ function CardView<TConfig extends CardBaseConfig>({
       {/* Bottom bar — unified run / stop / progress UI. Always visible while
           generating (both expanded and reduced states); idle/done actions only
           show when the card is expanded (nothing actionable in reduced state). */}
-      {(generateStatus === 'generating' ||
+      {((generateStatus === 'generating' && !(runProgressInBody && isExpanded)) ||
         (isExpanded && generateStatus === 'idle' && !!onRun) ||
         (isExpanded && generateStatus === 'done' && !!doneActionLabel && !!onDoneAction)) && (
         <div

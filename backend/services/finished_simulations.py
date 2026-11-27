@@ -34,7 +34,7 @@ from utils.atomic_json import write_json
 
 # Job variants whose result is a card's simulation (not a preflight, path view, SED ...).
 _SIMULATION_VARIANTS = {
-    JOB_TYPE_PYROOMACOUSTICS: {"pyroomacoustics_speckle", "pyroomacoustics_geometry"},
+    JOB_TYPE_PYROOMACOUSTICS: {"pyroomacoustics_speckle", "pyroomacoustics_geometry", "hybrid_rays"},
     JOB_TYPE_PFFDTD: {None, "pffdtd", "hybrid"},
 }
 

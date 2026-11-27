@@ -24,8 +24,10 @@ import { SimulationPreflightPanel, type PreflightPanelControl } from './Simulati
 import { PffdtdVoxelPreviewPanel, type VoxelPreviewControl } from './PffdtdVoxelPreviewPanel';
 import { AcousticPathsPanel, type AcousticPathsControl } from './AcousticPathsPanel';
 import { HybridSimulationSettings } from './HybridSimulationSettings';
+import { Hybrid2SimulationSettings } from './Hybrid2SimulationSettings';
+import { hybridParts } from '@/lib/acoustics/hybrid';
 import { GA_ENGINE } from '@/utils/constants';
-import { isEngineSimulation, isGeometricSimulation } from '@/types/acoustics';
+import { isGeometricSimulation, materialColumnsType } from '@/types/acoustics';
 import { useCanEdit } from '@/hooks/useCanEdit';
 import type { SimulationConfig, PyroomAcousticsSimulationConfig } from '@/types/acoustics';
 import type { AcousticMaterial } from '@/types/materials';
@@ -52,6 +54,13 @@ interface SimulationSetupContentProps {
   voxelPreview?: VoxelPreviewControl;
   /** Sound-path wiring (ray-tracing and hybrid cards). */
   paths?: AcousticPathsControl;
+  /**
+   * Hybrid simulation 2: the body of its Check or Run step. When given, it replaces the
+   * settings; the headless material section stays mounted so the materials keep showing.
+   */
+  stepBody?: React.ReactNode;
+  /** Hybrid simulation 2 on its Results / Run step: only the headless material section is mounted. */
+  bodyHidden?: boolean;
 }
 
 /**
@@ -72,7 +81,12 @@ export function SimulationSetupContent({
   preflight,
   voxelPreview,
   paths,
+  stepBody,
+  bodyHidden = false,
 }: SimulationSetupContentProps) {
+  // the settings, panels and previews give way to a step's body, or to nothing (bodyHidden)
+  const replaced = bodyHidden || !!stepBody;
+  const isHybrid2 = config.type === 'hybrid' && config.uiVersion === 2;
   const canEdit = useCanEdit();
   // Extract persisted Speckle state from config
   const initialAssignments = (config as any).speckleMaterialAssignments as Record<string, string> | undefined;
@@ -88,7 +102,7 @@ export function SimulationSetupContent({
         viewerRef={viewerRef}
         worldTree={worldTree}
         availableMaterials={availableMaterials}
-        cardType={isEngineSimulation(config) ? (config.type === 'hybrid' ? 'pyroomacoustics' : config.type) : null}
+        cardType={materialColumnsType(config)}
         filteringEnabled={filteringEnabled}
         isReadOnly={isReadOnly}
         isActive={isActive}
@@ -100,8 +114,11 @@ export function SimulationSetupContent({
         onIsolationChange={onIsolationChange}
       />
 
+      {/* Hybrid simulation 2, Check step: the geometry check in place of the settings */}
+      {!bodyHidden && stepBody}
+
       {/* Pyroomacoustics Settings */}
-      {config.type === 'pyroomacoustics' && (
+      {!replaced && config.type === 'pyroomacoustics' && (
         <PyroomAcousticsSimulationSettings
           config={config as PyroomAcousticsSimulationConfig}
           onUpdateConfig={(updates) => onUpdateConfig(updates as Partial<SimulationConfig>)}
@@ -109,7 +126,7 @@ export function SimulationSetupContent({
       )}
 
       {/* Wave-based (PFFDTD) Settings */}
-      {config.type === 'pffdtd' && (
+      {!replaced && config.type === 'pffdtd' && (
         <PffdtdSimulationSettings
           config={config}
           onUpdateConfig={(updates) => onUpdateConfig(updates as Partial<SimulationConfig>)}
@@ -117,7 +134,13 @@ export function SimulationSetupContent({
       )}
 
       {/* Hybrid (wave below the crossover, rays above) settings */}
-      {config.type === 'hybrid' && (
+      {!replaced && config.type === 'hybrid' && isHybrid2 && (
+        <Hybrid2SimulationSettings
+          config={config}
+          onUpdateConfig={(updates) => onUpdateConfig(updates as Partial<SimulationConfig>)}
+        />
+      )}
+      {!replaced && config.type === 'hybrid' && !isHybrid2 && (
         <HybridSimulationSettings
           config={config}
           onUpdateConfig={(updates) => onUpdateConfig(updates as Partial<SimulationConfig>)}
@@ -125,7 +148,8 @@ export function SimulationSetupContent({
       )}
 
       {/* Pre-simulation geometry check: the exact mesh the engine will use */}
-      {preflight && isGeometricSimulation(config) && (
+      {/* (Hybrid simulation 2 shows it as its own step: stepBody) */}
+      {preflight && isGeometricSimulation(config) && !isHybrid2 && (
         <SimulationPreflightPanel
           configId={config.id}
           engine="pyroomacoustics"
@@ -134,7 +158,8 @@ export function SimulationSetupContent({
       )}
 
       {/* Sound paths: reflections, billiard rays, diffraction edges and their selection */}
-      {paths && isGeometricSimulation(config) && (
+      {paths && !replaced && isGeometricSimulation(config)
+        && !(config.type === 'hybrid' && hybridParts(config.settings) === 'wave') && (
         <AcousticPathsPanel
           configId={config.id}
           excludedEdges={config.settings.excluded_edges ?? []}
@@ -148,7 +173,7 @@ export function SimulationSetupContent({
       )}
 
       {/* PFFDTD voxel grid: what the wave solver will actually see */}
-      {voxelPreview && config.type === 'pffdtd' && (
+      {voxelPreview && !replaced && config.type === 'pffdtd' && (
         <PffdtdVoxelPreviewPanel configId={config.id} {...voxelPreview} />
       )}
 

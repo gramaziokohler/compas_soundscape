@@ -771,6 +771,7 @@ class SoundscapeSimulationSettings(BaseModel):
     crossover_factor: Optional[float] = None
     wave_fmax_cap: Optional[float] = None
     level_match: Optional[bool] = None
+    parts: Optional[str] = None               # hybrid: "both" | "wave" | "rays" (Hybrid simulation 2)
     fmax: Optional[float] = None
     ppw: Optional[float] = None
     duration: Optional[float] = None
@@ -860,6 +861,8 @@ class SoundscapeSimulationConfig(BaseModel):
     run_problems: Optional[list[dict]] = None
     # Hybrid: crossover of the finished run (results JSON `hybrid` block)
     hybrid_info: Optional[dict] = None
+    # Hybrid: 2 = "Hybrid simulation 2" (crossover band card); None = the original card
+    ui_version: Optional[int] = None
     imported_ir_ids: Optional[list[str]] = None
     source_receiver_ir_mapping: Optional[dict[str, dict[str, SoundscapeIRMetadata]]] = None
     receiver_positions: Optional[dict[str, list[float]]] = None  # receiverId -> [x, y, z]

@@ -306,13 +306,16 @@ export function getSettingsRows(config: CardBaseConfig): SettingsRow[] {
     const hybrid = config as unknown as HybridSimulationConfig;
     const s = hybrid.settings;
     rows.push({ label: 'Simulation Mode', value: s.simulation_mode === 'foa' ? 'FOA' : 'Mono' });
+    if (s.parts === 'wave' || s.parts === 'rays') {
+      rows.push({ label: 'Parts', value: s.parts === 'wave' ? 'Wave-based only' : 'Ray tracing only' });
+    }
     rows.push({
-      label: 'Crossover',
+      label: s.parts === 'wave' ? 'Wave Up To' : 'Crossover',
       value: s.crossover_mode === 'manual'
         ? `${s.crossover_hz} Hz`
         : `${s.crossover_factor === 1 ? '' : `${s.crossover_factor} × `}Schroeder frequency`,
     });
-    if (hybrid.hybridInfo) rows.push({ label: 'Joined At', value: `${Math.round(hybrid.hybridInfo.crossover_hz)} Hz` });
+    if (hybrid.hybridInfo && (hybrid.hybridInfo.parts ?? 'both') === 'both') rows.push({ label: 'Joined At', value: `${Math.round(hybrid.hybridInfo.crossover_hz)} Hz` });
     if (hybrid.hybridInfo) rows.push({ label: 'Wave Solved Up To', value: `${Math.round(hybrid.hybridInfo.wave_fmax)} Hz` });
     rows.push({ label: 'Points per Wavelength', value: String(s.ppw) });
     rows.push({ label: 'Wave IR Length', value: s.duration === null ? 'From the decay' : `${s.duration} s` });

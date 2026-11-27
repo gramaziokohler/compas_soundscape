@@ -144,7 +144,8 @@ export function RangeSlider({
   const fieldWidthCh = estimateFieldWidthCh(min, max, resolvedPrecision);
   const fillPercent = max > min ? Math.min(100, Math.max(0, ((value - min) / (max - min)) * 100)) : 0;
   const sliderStyle = {
-    "--slider-color": color ?? (onBlueBackground ? "var(--color-on-blue)" : "var(--color-primary)"),
+    // --section-accent: a card section's colour (e.g. the selected part of Hybrid simulation 2)
+    "--slider-color": color ?? (onBlueBackground ? "var(--color-on-blue)" : "var(--section-accent, var(--color-primary))"),
     "--slider-fill": `${fillPercent}%`,
   } as CSSProperties;
 
@@ -178,7 +179,7 @@ export function RangeSlider({
   const markerToneColor = (tone?: 'primary' | 'warning' | 'error'): string => {
     if (tone === 'warning') return 'var(--color-warning)';
     if (tone === 'error') return 'var(--color-error)';
-    if (tone === 'primary') return color ?? (onBlueBackground ? 'var(--color-on-blue)' : 'var(--color-primary)');
+    if (tone === 'primary') return color ?? (onBlueBackground ? 'var(--color-on-blue)' : 'var(--section-accent, var(--color-primary))');
     return onBlueBackground ? 'var(--color-on-blue-muted)' : 'var(--color-secondary-hover)';
   };
 

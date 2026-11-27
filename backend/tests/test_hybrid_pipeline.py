@@ -174,3 +174,30 @@ def test_foa_bands_point_at_the_source(tmp_path):
     window = slice(max(arrival - 240, 0), arrival + 240)       # low frequencies smear: a wider look around the arrival
     front, left, up = direction(low)
     assert left < 0 and abs(left) > abs(front)
+
+
+def test_wave_part_alone_runs_to_the_crossover(tmp_path):
+    """parts="wave" (Hybrid simulation 2 with the rays off): PFFDTD alone, up to the crossover."""
+    from services.hybrid_single_part import METHOD_WAVE_ONLY
+
+    result, results, entry, ir = _run(tmp_path, "mono", parts="wave", crossover_mode="manual", crossover_hz=300.0, duration=0.4)
+    hybrid = results["hybrid"]
+    assert results["method"] == METHOD_WAVE_ONLY and results["engine"] == "hybrid"
+    assert hybrid["parts"] == "wave" and hybrid["wave_fmax"] == pytest.approx(300.0)
+    assert result["result"]["hybrid"]["parts"] == "wave"
+    assert entry["engine"] == "pffdtd" and entry["band_limited"] is True
+    assert band_energy(ir, AUDIO_SAMPLE_RATE, 2000.0, 8000.0) < 1e-3 * band_energy(ir, AUDIO_SAMPLE_RATE, 60.0, 250.0)
+
+
+def test_rays_alone_cover_the_full_band(tmp_path):
+    """parts="rays" (Hybrid simulation 2 with the wave part off): compas_acoustics alone, full band."""
+    from services.hybrid_single_part import METHOD_RAYS_ONLY
+
+    result, results, entry, ir = _run(tmp_path, "mono", parts="rays")
+    hybrid = results["hybrid"]
+    assert results["method"] == METHOD_RAYS_ONLY and hybrid["parts"] == "rays"
+    assert result["result"]["ir_files"] == [entry["ir_file"]] and entry["ir_file"].startswith("pffdtd_hybrid_mono_")
+    assert entry["engine"] == "compas_acoustics" and entry["band_limited"] is False
+    assert "acoustic_parameters" in entry
+    assert 0.15 < hybrid["measured_rt60"] < 1.5
+    assert band_energy(ir, AUDIO_SAMPLE_RATE, 2000.0, 8000.0) > 0

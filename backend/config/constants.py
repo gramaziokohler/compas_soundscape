@@ -714,6 +714,13 @@ HYBRID_PROGRESS_PARTS_START = 10.0
 HYBRID_PROGRESS_WAVE_END = 94.0
 HYBRID_PROGRESS_GA_WEIGHT = 0.5
 HYBRID_ROOM_SOURCE_MAX_CHARS = 120   # the card's note on where its room estimate comes from
+# Which parts a hybrid run simulates (Hybrid simulation 2 can switch one off; services/hybrid_single_part.py):
+# both = wave below the crossover + rays above; wave = the wave solver alone up to the crossover;
+# rays = compas_acoustics alone over the full band.
+HYBRID_PARTS_BOTH = "both"
+HYBRID_PARTS_WAVE = "wave"
+HYBRID_PARTS_RAYS = "rays"
+HYBRID_PARTS = (HYBRID_PARTS_BOTH, HYBRID_PARTS_WAVE, HYBRID_PARTS_RAYS)
 
 # Sound paths for the 3D view (services/acoustic_paths_service.py)
 ACOUSTIC_PATHS_KINDS = ("reflections", "rays", "diffraction")
@@ -1614,7 +1621,10 @@ CPU_LIGHT_SLOTS = int(os.environ.get("CPU_LIGHT_SLOTS", "2"))
 # SIM_MAX_CONCURRENT at once on the host. Benchmark 2026-11-21 (8-core host): one simulation
 # saturates the machine at 4-8 processes; more at once barely raise throughput, delay every
 # result and can run out of memory.
-SIMULATION_VARIANTS = ("pyroomacoustics_speckle", "pyroomacoustics_geometry")
+# "hybrid_rays": a hybrid card with its wave part off (services/hybrid_single_part.py) needs no GPU, so it
+# runs here like a ray-tracing card instead of on queue:pffdtd.
+HYBRID_RAYS_VARIANT = "hybrid_rays"
+SIMULATION_VARIANTS = ("pyroomacoustics_speckle", "pyroomacoustics_geometry", HYBRID_RAYS_VARIANT)
 SIM_QUEUE_PREFIX = "simq:"
 SIM_WORKSPACES_KEY = "sim:workspaces"   # set of workspaces with queued simulations
 SIM_ACTIVE_KEY = "sim:active"           # hash job_id -> workspace of running simulations

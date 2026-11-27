@@ -14,7 +14,7 @@ import type { ReceiverData, GridListenerData, ListenerExpandRequest } from '@/ty
 import type { ImpulseResponseMetadata, AuralizationConfig } from '@/types/audio';
 import type { SelectedGeometry, AcousticMaterial } from '@/types/materials';
 import type { CompasGeometry, EntityData, SoundEvent } from '@/types';
-import type { SimulationConfig, AcousticSimulationMode } from '@/types/acoustics';
+import type { SimulationConfig, AcousticSimulationMode, SimulationCardMode } from '@/types/acoustics';
 import type { AudioRenderingMode } from '@/components/audio/AudioRenderingModeSelector';
 import type { UIMode } from '@/types/sceneWorkflow';
 
@@ -59,7 +59,7 @@ interface RightSidebarProps {
   irRefreshTrigger?: number;
   simulationConfigs?: SimulationConfig[];
   activeSimulationIndex?: number | null;
-  onAddSimulationConfig?: (mode: AcousticSimulationMode) => void;
+  onAddSimulationConfig?: (mode: SimulationCardMode) => void;
   onRemoveSimulationConfig?: (index: number) => void;
   onUpdateSimulationConfig?: (index: number, updates: Partial<SimulationConfig>) => void;
   onSetActiveSimulation?: (index: number | null) => void;

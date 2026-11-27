@@ -19,7 +19,7 @@ import {
   engineFormFields,
   pickGeometricEngineSettings,
 } from '@/lib/acoustics/geometric-engine';
-import type { HybridRunInfo, HybridSettings } from '@/types/acoustics';
+import type { HybridParts, HybridRunInfo, HybridSettings } from '@/types/acoustics';
 
 export function defaultHybridSettings(): HybridSettings {
   return {
@@ -66,7 +66,14 @@ export function restoreHybridSettings(saved: Partial<HybridSettings> | null | un
     n_rays: num(s.n_rays, d.n_rays, 1, 1e7),
     air_absorption: typeof s.air_absorption === 'boolean' ? s.air_absorption : d.air_absorption,
     parallel: typeof s.parallel === 'boolean' ? s.parallel : d.parallel,
+    // only Hybrid simulation 2 sets it; absent = both
+    ...(s.parts === 'wave' || s.parts === 'rays' ? { parts: s.parts } : {}),
   };
+}
+
+/** The parts a card runs (absent = both). */
+export function hybridParts(settings: Pick<HybridSettings, 'parts'>): HybridParts {
+  return settings.parts ?? HYBRID.PARTS_DEFAULT;
 }
 
 /** 2000·√(T60 / V) in Hz; null when either is unknown. */
@@ -214,6 +221,7 @@ export function hybridFormFields(settings: HybridSettings, soundSpeed: number, r
     fields.room_estimate_source = room.source;
   }
   if (settings.duration !== null) fields.duration = String(settings.duration);
+  fields.parts = hybridParts(settings);
   // the hybrid always runs compas_acoustics, at first order at most
   delete fields.engine;
   delete fields.ambisonic_order;
@@ -253,7 +261,9 @@ export function hybridRunSummary(info: HybridRunInfo): string {
   } else {
     parts.push('Last run');
   }
-  parts.push(`joined at ${hz(info.crossover_hz)}`);
+  if (info.parts === 'wave') parts.push(`wave only, up to ${hz(info.wave_fmax)}`);
+  else if (info.parts === 'rays') parts.push('rays only');
+  else parts.push(`joined at ${hz(info.crossover_hz)}`);
   if (info.median_overlap_mismatch_db !== null && info.median_overlap_mismatch_db !== undefined) {
     const d = info.median_overlap_mismatch_db;
     parts.push(`wave ${d >= 0 ? '+' : '−'}${Math.abs(d).toFixed(1)} dB vs rays at the join`);
@@ -272,5 +282,7 @@ export function mismatchWarning(info: HybridRunInfo | null): string | null {
 
 /** "Hybrid: wave below 230 Hz, rays above" — the card's result line. */
 export function hybridResultLine(info: HybridRunInfo | null | undefined): string {
+  if (info?.parts === 'wave') return `Wave-based only, up to ${hz(info.wave_fmax)}`;
+  if (info?.parts === 'rays') return 'Ray tracing only, full band';
   return info ? `Wave below ${hz(info.crossover_hz)}, rays above` : 'Wave below the crossover, rays above';
 }

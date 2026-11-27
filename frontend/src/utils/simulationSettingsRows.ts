@@ -56,9 +56,12 @@ export function getSimulationSettingsRows(config: EngineSimulationConfig, solved
     );
   } else {
     const s = config.settings;
+    if (s.parts === 'wave' || s.parts === 'rays') {
+      rows.push({ label: 'Parts', value: s.parts === 'wave' ? 'Wave-based only' : 'Ray tracing only' });
+    }
     rows.push(
       {
-        label: 'Crossover',
+        label: s.parts === 'wave' ? 'Wave up to' : 'Crossover',
         value: config.hybridInfo
           ? `${Math.round(config.hybridInfo.crossover_hz)} Hz`
           : s.crossover_mode === 'manual'

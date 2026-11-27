@@ -16,6 +16,8 @@ export interface ToggleFieldProps {
   onBlueBackground?: boolean;
   /** Flags the label with a "*" — value changed since the card was generated. */
   modified?: boolean;
+  /** Colour of the switch and the label when checked (a card section's colour); default primary. */
+  color?: string;
 }
 
 /**
@@ -45,7 +47,9 @@ export function ToggleField({
   className = "",
   onBlueBackground = false,
   modified = false,
+  color,
 }: ToggleFieldProps) {
+  const tint = checked && color ? color : undefined;
   return (
     <label
       className={`toggle-row ${checked ? "checked" : ""} ${className}`}
@@ -58,7 +62,7 @@ export function ToggleField({
       }}
     >
       <span className="toggle-row__content">
-        <span className="toggle-row__label">{label}{modified && <ModifiedMark />}</span>
+        <span className="toggle-row__label" style={tint ? { color: tint } : undefined}>{label}{modified && <ModifiedMark />}</span>
         {badge != null && badge !== "" && (
           <Badge
             variant={checked ? "primary" : "neutral"}
@@ -73,6 +77,7 @@ export function ToggleField({
         role="switch"
         aria-checked={checked}
         className={`toggle-switch ${checked ? "checked" : ""}`}
+        style={tint ? { background: tint, borderColor: tint } : undefined}
       />
     </label>
   );
