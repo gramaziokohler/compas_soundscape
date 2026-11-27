@@ -27,9 +27,9 @@ import { useHybridRoomEstimate } from '@/hooks/useHybridRoomEstimate';
 import { hybridRoomForRun, lastRunSchroederHz } from '@/lib/acoustics/hybrid';
 import { settingsForWaveOption } from '@/lib/acoustics/hybrid-wave-fit';
 import type { HybridWaveOption } from '@/types/acoustics';
-import { resolveEngine, usesCompasAcoustics } from '@/lib/acoustics/geometric-engine';
+import { resolveEngine } from '@/lib/acoustics/geometric-engine';
 import { isEngineSimulation, isGeometricSimulation, materialColumnsType, simulationCardMode } from '@/types/acoustics';
-import { useAcousticPathsStore, useDirectivityStore, type RunAcousticPathsArgs } from '@/store';
+import { useAcousticPathsStore, useDirectivityStore } from '@/store';
 import { runHybridSimulation } from './acoustics/runHybridSimulation';
 import { useCanEdit } from '@/hooks/useCanEdit';
 import { createMoveIndexMapper, remapIndexKeyedRecord, remapNullableIndex } from '@/utils/cardIndexRemap';
@@ -700,38 +700,6 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     [buildCardRequest, simulationMeshSettings, engineCapabilities],
   );
 
-  /** Sound-path trace of a geometric card: same geometry inputs as its run. */
-  const pathOptions = useAcousticPathsStore((s) => s.options);
-  const buildPathsArgs = useCallback(
-    (config: SimulationConfig): { ok: true; args: RunAcousticPathsArgs } | { ok: false; error: string } => {
-      if (!isGeometricSimulation(config)) return { ok: false, error: 'Sound paths need a ray-tracing or hybrid card' };
-      const built = buildCardRequest(config);
-      if (!built.ok) return built;
-      const excludedEdges = config.settings.excluded_edges ?? [];
-      return {
-        ok: true,
-        args: {
-          configId: config.id,
-          request: built.request,
-          meshSettings: simulationMeshSettings,
-          excludedEdges,
-          signature: simulationRequestSignature('pyroomacoustics', built.request, simulationMeshSettings)
-            + JSON.stringify([pathOptions, excludedEdges]),
-        },
-      };
-    },
-    [buildCardRequest, simulationMeshSettings, pathOptions],
-  );
-
-  const runPathsForCard = useCallback((config: SimulationConfig) => {
-    const prepared = buildPathsArgs(config);
-    if (!prepared.ok) {
-      notifyError(prepared.error, 'warning');
-      return;
-    }
-    void useAcousticPathsStore.getState().runPaths(prepared.args);
-  }, [buildPathsArgs]);
-
   /** "Check geometry" button of a card. */
   const runPreflightForCard = useCallback((config: SimulationConfig) => {
     const prepared = buildPreflightArgs(config);
@@ -1074,9 +1042,6 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       }
     }
 
-    // Stop a sound-path trace still in flight for this card
-    const pathsStore = useAcousticPathsStore.getState();
-    if (config && pathsStore.entries[config.id]?.status === 'running') pathsStore.cancelPaths(config.id);
 
     // Stop a pre-simulation geometry check still in flight for this card
     const preflightStore = useSimulationPreflightStore.getState();
@@ -1747,19 +1712,6 @@ export function AcousticsSection(props: AcousticsSectionProps) {
 
     // Input signature of this card right now (marks an older preflight / voxel preview as outdated)
     const hasGeometryCheck = isGeometricSimulation(config);
-    // Sound paths (reflections, billiard, diffraction edges) need the compas_acoustics engine
-    const pathsControl = isGeometricSimulation(config) ? (() => {
-      const prepared = buildPathsArgs(config);
-      const onCa = config.type === 'hybrid' || usesCompasAcoustics(config.settings, engineCapabilities);
-      return {
-        currentSignature: prepared.ok ? prepared.args.signature : null,
-        onRun: () => runPathsForCard(config),
-        disabled: !hasValidGeometry || !hasReceivers || !hasSounds,
-        unavailableReason: !compasAcousticsAvailable
-          ? 'Sound paths need the compas_acoustics engine, which is not installed on the server.'
-          : !onCa ? 'Sound paths need the compas_acoustics engine (Additional settings → Engine).' : null,
-      };
-    })() : undefined;
     const preflightSignature = (() => {
       if (config.type === 'pffdtd') {
         const prepared = buildVoxelPreviewArgs(config);
@@ -1844,7 +1796,6 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             preflight={preflightControl}
             stepBody={hybrid2StepBody}
             bodyHidden={hybrid2BodyHidden}
-            paths={pathsControl}
             voxelPreview={config.type === 'pffdtd' ? {
               currentSignature: preflightSignature,
               onRun: () => runVoxelPreviewForCard(config),

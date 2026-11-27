@@ -31,6 +31,7 @@ from config.constants import (
 from services.metadata_store import metadata_store
 from services.paths import user_audio_dir, user_model_dir
 from services.scene_transfer_core import PROMPT_INDEX_BASE
+from utils.acoustic_paths import filter_paths_receivers
 
 logger = logging.getLogger(__name__)
 
@@ -320,6 +321,9 @@ class ShareService:
             r for r in data.get("results") or []
             if _listener_allowed(r.get("receiver_id") or "", share.receiver_ids, share.grid_ids)
         ]
+        if data.get("paths"):
+            data["paths"] = filter_paths_receivers(
+                data["paths"], lambda rid: _listener_allowed(rid, share.receiver_ids, share.grid_ids))
         return data
 
     @staticmethod

@@ -1,10 +1,8 @@
 /**
- * Sound paths of a geometric-acoustics card for the 3D view
- * (backend/services/acoustic_paths_service.py; GET /api/acoustics/paths/{id}).
+ * Sound paths a geometric-acoustics run stores in its results JSON (`paths`, written by
+ * backend/services/acoustic_paths_service.py), drawn in the 3D view for the hovered / selected IR.
  * Points are flat [x, y, z, ...] in model coordinates (metres).
  */
-
-export type AcousticPathKind = 'reflections' | 'rays' | 'diffraction';
 
 export interface AcousticPathPoint {
   id: string;
@@ -24,28 +22,9 @@ export interface ReflectionPath {
   level_db: number | null;
 }
 
-export interface TracedRay {
-  s: number;
-  points: number[];
-}
-
-export interface DiffractionEdge {
-  id: number;
-  /** [x1, y1, z1, x2, y2, z2] */
-  segment: number[];
-  length: number;
-  /** Solid angle of the wedge seen from the air: 0 = a thin panel's rim, 90 = a box corner. */
-  wedge_deg: number;
-  kind: 'obstacle' | 'boundary';
-  excluded: boolean;
-  /** A diffracted path of the current pairs passes over it. */
-  used: boolean;
-}
-
 export interface DiffractedPath {
   s: number;
   r: number;
-  edge: number;
   zone: 'shadow' | 'view' | 'reflection';
   order: number;
   points: number[];
@@ -55,48 +34,19 @@ export interface DiffractedPath {
 }
 
 export interface AcousticPathsPayload {
-  paths_id: string;
   speed_of_sound: number;
   sources: AcousticPathPoint[];
   receivers: AcousticPathPoint[];
   notes: string[];
-  reflections?: { max_order: number; paths: ReflectionPath[]; truncated: boolean };
-  rays?: { n_rays: number; max_order: number; rays: TracedRay[]; duration_ms: number };
-  diffraction?: { edges: DiffractionEdge[]; paths: DiffractedPath[] };
+  /** Image-source paths up to `max_order` (the backend's ACOUSTIC_PATHS_MAX_ORDER, capped at the run's order). */
+  reflections?: { max_order: number; paths: ReflectionPath[] };
+  /** First-order diffracted paths, when the card's "Show diffracted paths" was on for the run. */
+  diffraction?: { paths: DiffractedPath[] };
 }
 
-export interface AcousticPathsJobResult {
-  paths_id: string;
-  n_reflections: number;
-  n_rays: number;
-  n_edges: number;
-  n_diffracted: number;
-}
-
-export interface AcousticPathsEntry {
-  status: 'idle' | 'running' | 'done' | 'error';
-  progress: number;
-  statusText: string;
-  error: string | null;
-  jobId: string | null;
-  /** Input signature the payload was computed for (stale when the card's differs). */
-  signature: string | null;
-  payload: AcousticPathsPayload | null;
-}
-
-/** What the 3D view draws of a payload (shared by all cards). */
-export interface AcousticPathsView {
-  showReflections: boolean;
-  showDiffraction: boolean;
-  showEdges: boolean;
-  showRays: boolean;
-  /** Reflection orders up to this are drawn. */
-  maxOrder: number;
-  /** Paths arriving within this window (ms after the direct sound of their pair) are drawn; null = all. */
-  timeWindowMs: number | null;
-  /** Only paths of this source / receiver id (null = all). */
-  sourceId: string | null;
-  receiverId: string | null;
-  /** Hide boundary (room corner) edges, keeping the obstacles' edges. */
-  obstacleEdgesOnly: boolean;
+/** One source-listener pair of a simulation card (an IR row). */
+export interface AcousticPathsFocus {
+  configId: string;
+  sourceId: string;
+  receiverId: string;
 }

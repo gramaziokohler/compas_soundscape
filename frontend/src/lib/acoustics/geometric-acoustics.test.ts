@@ -1,17 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  cumulativeDistances,
-  firstArrivals,
-  pathCounts,
-  pickScreenEdge,
-  pointAtDistance,
-  pointSegmentDistance2D,
-  reflectionsPassed,
-  visibleDiffracted,
-  visibleEdges,
-  visibleRays,
-  visibleReflections,
-} from './acoustic-paths';
+import { pairPaths } from './acoustic-paths';
 import {
   ambisonicOrder,
   channelCount,
@@ -21,10 +9,8 @@ import {
   outputChoice,
   pickGeometricEngineSettings,
   resolveEngine,
-  sameEdge,
   settingsForOutputChoice,
   temperatureForSoundSpeed,
-  toggleExcludedEdge,
   usesCompasAcoustics,
   type EngineCapabilities,
 } from './geometric-engine';
@@ -43,125 +29,50 @@ import {
   schroederFrequency,
 } from './hybrid';
 import { HYBRID } from '@/utils/constants';
-import type { AcousticPathsPayload, AcousticPathsView } from '@/types/acousticPaths';
+import type { AcousticPathsPayload } from '@/types/acousticPaths';
 import type { HybridRunInfo } from '@/types/acoustics';
 
-const VIEW: AcousticPathsView = {
-  showReflections: true, showDiffraction: true, showEdges: true, showRays: true,
-  maxOrder: 3, timeWindowMs: null, sourceId: null, receiverId: null, obstacleEdgesOnly: false,
-};
-
 const payload = (): AcousticPathsPayload => ({
-  paths_id: 'p', speed_of_sound: 343, notes: [],
+  speed_of_sound: 343, notes: [],
   sources: [{ id: 's1', position: [0, 0, 0] }, { id: 's2', position: [5, 0, 0] }],
-  receivers: [{ id: 'r1', position: [2, 0, 0] }],
+  receivers: [{ id: 'r1', position: [2, 0, 0] }, { id: 'r2', position: [2, 3, 0] }],
   reflections: {
-    max_order: 2, truncated: false,
+    max_order: 1,
     paths: [
       { s: 0, r: 0, order: 0, points: [0, 0, 0, 2, 0, 0], distance: 2, delay_ms: 5.8, level_db: -6 },
       { s: 0, r: 0, order: 1, points: [0, 0, 0, 1, 1, 0, 2, 0, 0], distance: 2.8, delay_ms: 8.2, level_db: -10 },
-      { s: 0, r: 0, order: 2, points: [0, 0, 0, 1, 9, 0, 1, -9, 0, 2, 0, 0], distance: 36, delay_ms: 105, level_db: -32 },
       { s: 1, r: 0, order: 0, points: [5, 0, 0, 2, 0, 0], distance: 3, delay_ms: 8.7, level_db: -9.5 },
+      { s: 0, r: 1, order: 0, points: [0, 0, 0, 2, 3, 0], distance: 3.6, delay_ms: 10.5, level_db: -11 },
     ],
   },
-  rays: { n_rays: 2, max_order: 2, duration_ms: 20, rays: [{ s: 0, points: [0, 0, 0, 3, 0, 0, 3, 4, 0] }, { s: 1, points: [5, 0, 0, 5, 2, 0] }] },
   diffraction: {
-    edges: [
-      { id: 0, segment: [1, 0, 0, 1, 0, 2], length: 2, wedge_deg: 0, kind: 'obstacle', excluded: false, used: true },
-      { id: 1, segment: [0, 5, 0, 6, 5, 0], length: 6, wedge_deg: 90, kind: 'boundary', excluded: true, used: false },
-    ],
-    paths: [{ s: 0, r: 0, edge: 0, zone: 'shadow', order: 0, points: [0, 0, 0, 1, 0, 2, 2, 0, 0], distance: 4.5, delay_ms: 13, level_db: -20 }],
+    paths: [{ s: 0, r: 0, zone: 'shadow', order: 0, points: [0, 0, 0, 1, 0, 2, 2, 0, 0], distance: 4.5, delay_ms: 13, level_db: -20 }],
   },
 });
 
-describe('sound-path view filters', () => {
-  it('filters reflections by order, pair and arrival window', () => {
-    expect(visibleReflections(payload(), VIEW)).toHaveLength(4);
-    expect(visibleReflections(payload(), { ...VIEW, maxOrder: 1 }).map((p) => p.order)).toEqual([0, 1, 0]);
-    expect(visibleReflections(payload(), { ...VIEW, sourceId: 's2' })).toHaveLength(1);
-    // 50 ms after each pair's first arrival: the 105 ms second-order path of s1 drops out
-    expect(visibleReflections(payload(), { ...VIEW, timeWindowMs: 50 })).toHaveLength(3);
-    expect(visibleReflections(payload(), { ...VIEW, showReflections: false })).toEqual([]);
+describe('stored sound paths of an IR', () => {
+  it('keeps the paths of the hovered pair only', () => {
+    const pair = pairPaths(payload(), 's1', 'r1');
+    expect(pair.reflections.map((p) => p.order)).toEqual([0, 1]);
+    expect(pair.diffracted).toHaveLength(1);
+    expect(pairPaths(payload(), 's2', 'r1').reflections).toHaveLength(1);
+    expect(pairPaths(payload(), 's2', 'r1').diffracted).toEqual([]);
+    expect(pairPaths(payload(), 's1', 'r2').reflections.map((p) => p.distance)).toEqual([3.6]);
   });
 
-  it('references the window to the first arrival of each pair', () => {
-    const first = firstArrivals(payload().reflections!.paths);
-    expect(first.get('0:0')).toBe(5.8);
-    expect(first.get('1:0')).toBe(8.7);
-  });
-
-  it('filters diffracted paths, edges and rays', () => {
-    expect(visibleDiffracted(payload(), VIEW)).toHaveLength(1);
-    expect(visibleDiffracted(payload(), { ...VIEW, timeWindowMs: 5 })).toHaveLength(0);
-    expect(visibleDiffracted(payload(), { ...VIEW, sourceId: 's2' })).toHaveLength(0);
-    expect(visibleEdges(payload(), VIEW)).toHaveLength(2);
-    expect(visibleEdges(payload(), { ...VIEW, obstacleEdgesOnly: true }).map((e) => e.id)).toEqual([0]);
-    expect(visibleEdges(payload(), { ...VIEW, showEdges: false })).toEqual([]);
-    expect(visibleRays(payload(), { ...VIEW, sourceId: 's1' })).toHaveLength(1);
-    // a listener filter does not hide rays: they belong to a source only
-    expect(visibleRays(payload(), { ...VIEW, receiverId: 'r1' })).toHaveLength(2);
-  });
-
-  it('counts what a payload holds', () => {
-    expect(pathCounts(payload())).toEqual({ reflections: 4, diffracted: 1, edges: 2, excluded: 1, used: 1, rays: 2 });
-    expect(pathCounts(null).edges).toBe(0);
-  });
-});
-
-describe('billiard particle positions', () => {
-  const points = [0, 0, 0, 3, 0, 0, 3, 4, 0];
-  const cumulative = cumulativeDistances(points);
-
-  it('accumulates distance along the ray', () => {
-    expect(Array.from(cumulative)).toEqual([0, 3, 7]);
-  });
-
-  it('interpolates within a segment and reports it', () => {
-    expect(pointAtDistance(points, cumulative, 1.5)).toEqual([1.5, 0, 0, 0]);
-    expect(pointAtDistance(points, cumulative, 5)).toEqual([3, 2, 0, 1]);
-    expect(pointAtDistance(points, cumulative, 0)).toEqual([0, 0, 0, 0]);
-    expect(pointAtDistance(points, cumulative, 7)).toEqual([3, 4, 0, 1]);
-  });
-
-  it('has no particle before the start or after the end', () => {
-    expect(pointAtDistance(points, cumulative, -0.1)).toBeNull();
-    expect(pointAtDistance(points, cumulative, 7.01)).toBeNull();
-    expect(pointAtDistance([0, 0, 0], cumulativeDistances([0, 0, 0]), 0)).toBeNull();
-  });
-
-  it('counts the reflections passed', () => {
-    expect(reflectionsPassed(cumulative, 2)).toBe(0);
-    expect(reflectionsPassed(cumulative, 3)).toBe(0); // on the wall: reflected once it moves on
-    expect(reflectionsPassed(cumulative, 3.1)).toBe(1);
-    expect(reflectionsPassed(cumulative, 7)).toBe(1); // the end of a ray is no reflection
-  });
-});
-
-describe('edge picking', () => {
-  it('measures the distance to a segment, not its line', () => {
-    expect(pointSegmentDistance2D(5, 3, 0, 0, 10, 0)).toBe(3);
-    expect(pointSegmentDistance2D(13, 4, 0, 0, 10, 0)).toBe(5);
-    expect(pointSegmentDistance2D(1, 1, 2, 2, 2, 2)).toBeCloseTo(Math.SQRT2);
-  });
-
-  it('picks the nearest edge within the tolerance, the front one on a tie', () => {
-    const edges = [
-      { id: 1, ax: 0, ay: 0, bx: 100, by: 0, depth: 0.9 },
-      { id: 2, ax: 0, ay: 20, bx: 100, by: 20, depth: 0.5 },
-      { id: 3, ax: 0, ay: 0.5, bx: 100, by: 0.5, depth: 0.2 },
-    ];
-    expect(pickScreenEdge(edges, 50, 18, 8)).toBe(2);
-    expect(pickScreenEdge(edges, 50, 10, 8)).toBeNull();
-    expect(pickScreenEdge(edges, 50, 0, 8)).toBe(3); // 1 and 3 overlap on screen: 3 is nearer the camera
-    expect(pickScreenEdge([], 0, 0, 8)).toBeNull();
+  it('has nothing for an unknown pair or a run without paths', () => {
+    expect(pairPaths(payload(), 's1', 'gone')).toEqual({ reflections: [], diffracted: [] });
+    expect(pairPaths(null, 's1', 'r1')).toEqual({ reflections: [], diffracted: [] });
+    const noDiffraction = { ...payload(), diffraction: undefined };
+    expect(pairPaths(noDiffraction, 's1', 'r1').diffracted).toEqual([]);
   });
 });
 
 const CAPS: EngineCapabilities = {
   default: 'compas_acoustics',
   engines: {
-    compas_acoustics: { available: true, modes: ['mono', 'foa', 'hoa'], diffraction: ['off', 'udfa', 'btms'], tails: [], max_ambisonic_order: 3, paths: ['reflections'] },
-    pyroomacoustics: { available: true, modes: ['mono', 'foa'], diffraction: ['off'], tails: [], max_ambisonic_order: 1, paths: [] },
+    compas_acoustics: { available: true, modes: ['mono', 'foa', 'hoa'], diffraction: ['off', 'udfa', 'btms'], tails: [], max_ambisonic_order: 3 },
+    pyroomacoustics: { available: true, modes: ['mono', 'foa'], diffraction: ['off'], tails: [], max_ambisonic_order: 1 },
   },
 };
 const LEGACY_ONLY: EngineCapabilities = {
@@ -236,18 +147,6 @@ describe('geometric engine settings', () => {
   it('converts the sound speed like the backend', () => {
     expect(temperatureForSoundSpeed(343)).toBeCloseTo(19.6, 1);
     expect(temperatureForSoundSpeed(331.3)).toBeCloseTo(0, 6);
-  });
-
-  it('matches and toggles edges by position, in either direction', () => {
-    const edge = [0, 0, 0, 2, 0, 0];
-    expect(sameEdge(edge, [2, 0, 0, 0, 0, 0])).toBe(true);
-    expect(sameEdge(edge, [0, 0.01, 0, 2, 0, 0])).toBe(true);
-    expect(sameEdge(edge, [0, 0.1, 0, 2, 0.1, 0])).toBe(false);
-    const off = toggleExcludedEdge(undefined, edge);
-    expect(off).toEqual([edge]);
-    expect(toggleExcludedEdge(off, [2, 0, 0, 0, 0, 0])).toEqual([]);
-    expect(toggleExcludedEdge(off, [0, 5, 0, 2, 5, 0])).toHaveLength(2);
-    expect(off[0]).not.toBe(edge); // a copy: undo history keeps references
   });
 
   it('summarises only what differs from the defaults', () => {

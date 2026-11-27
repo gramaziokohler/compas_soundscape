@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { simulationResultsJsonUrl } from '@/services/api';
 import type { RunPairResult } from '@/lib/acoustics/band-metrics';
 import type { AcousticSimulationMode } from '@/types/acoustics';
+import type { AcousticPathsPayload } from '@/types/acousticPaths';
 
 /** Engine whose result routes serve a run's files (hybrid runs are served like PFFDTD ones). */
 export type RunResultsEngine = 'pyroomacoustics' | 'pffdtd';
@@ -13,6 +14,8 @@ interface RunResultsJson {
   results?: RunPairResult[];
   /** Wall-clock time of the run (geometry fetch to results), seconds; absent on older runs. */
   solve_time_s?: number;
+  /** Sound paths the run stored (compas_acoustics runs; absent on older runs and other engines). */
+  paths?: AcousticPathsPayload | null;
 }
 
 /** The results route of a card type, or undefined for cards without a backend run. */
@@ -84,4 +87,12 @@ export function useRunSolveTime(
 ): number | null {
   const time = useRunResultsJson(simulationId, engine)?.solve_time_s;
   return typeof time === 'number' && Number.isFinite(time) && time >= 0 ? time : null;
+}
+
+/** The sound paths a run stored (direct sound, image sources, optional diffracted paths), or null. */
+export function useRunPaths(
+  simulationId: string | null | undefined,
+  engine: RunResultsEngine | undefined,
+): AcousticPathsPayload | null {
+  return useRunResultsJson(simulationId, engine)?.paths ?? null;
 }

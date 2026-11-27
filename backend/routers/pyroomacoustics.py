@@ -64,7 +64,7 @@ from services.custom_materials_service import inline_custom_materials
 from services.directivity_service import attach_directivity_specs
 from services.job_store import job_store
 from services.pyroomacoustics_service import PyroomacousticsService
-from utils.request_parsing import parse_mesh_settings, parse_source_receiver_pairs
+from utils.request_parsing import parse_excluded_edges, parse_mesh_settings, parse_source_receiver_pairs
 
 router = APIRouter(prefix="/api")
 
@@ -236,6 +236,7 @@ async def run_simulation_speckle(
     seed: int = Form(CA_SEED_DEFAULT),
     scattering_split: bool = Form(False),
     excluded_edges: Optional[str] = Form(None),      # JSON [[x1,y1,z1,x2,y2,z2], ...]
+    paths_diffraction: bool = Form(False),           # store the diffracted paths with the run's paths
 ):
     """
     Validate basic params and enqueue the simulation.  Returns {job_id,
@@ -257,7 +258,6 @@ async def run_simulation_speckle(
         validate_tail_settings(tail, n_slopes, simulation_mode)
         tail = normalize_tail(tail)
         validate_engine_settings(engine, simulation_mode, diffraction, ambisonic_order, air_temperature, air_humidity)
-        from routers.acoustic_paths import parse_excluded_edges
         excluded_edge_rows = parse_excluded_edges(excluded_edges)
 
         unique_sources: dict[str, list] = {}
@@ -313,6 +313,7 @@ async def run_simulation_speckle(
                 seed=seed,
                 scattering_split=scattering_split,
                 excluded_edges=excluded_edge_rows,
+                paths_diffraction=paths_diffraction,
             ),
         }
 
@@ -484,6 +485,7 @@ async def run_simulation_geometry(body: PyroomacousticsGeometryRequest, http_req
                 seed=settings.seed,
                 scattering_split=settings.scattering_split,
                 excluded_edges=settings.excluded_edges,
+                paths_diffraction=settings.paths_diffraction,
             ),
         }
 

@@ -146,14 +146,25 @@ Step 5 above is the **legacy** engine. Since the compas_acoustics migration
   FOA only (`CA_TAIL_MOMENTS_MAX_ORDER`): the router rejects it for `hoa`, the card disables it for
   SOA / TOA and an SOA / TOA card that has it runs `reference`. Removed values `ray_tracing` and
   `legacy` alias to `auto`.
-- **Sound paths:** `POST /api/acoustics/paths-speckle` (CPU job, variant `acoustic_paths`) →
-  `GET /api/acoustics/paths/{id}`. `services/acoustic_paths_service.py` prepares the same mesh as
-  the run and returns reflections (`SpecularReflections`), billiard rays (`RayField`) and the
-  diffracting edges with the first-order diffracted paths. Coordinates are model coordinates.
-  Frontend: `acousticPathsStore` (transient, not undoable), `AcousticPathsPanel.tsx`,
-  `lib/three/acoustic-paths-overlay.ts`, `useSpeckleAcousticPaths.ts`. Pure helpers (filters,
-  particle positions, edge picking) are in `lib/acoustics/acoustic-paths.ts`.
-- **Heatmap (EnergyMap) job:** `POST /api/acoustics/heatmap-speckle` (paths-speckle's fields +
+- **Sound paths are the run's own, never searched twice** (no endpoint, no job). `_simulate_group`
+  simulates inside CA's `record_paths(order)` (`compas_acoustics.path_recorder`, fork-only commit on
+  the integration): CA's `search_images` traces each searched room's visible images up to that order
+  and `diffraction_paths` keeps its paths, in this process, in CA's per-source processes
+  (`emitter_rirs` hands them back) and on the hybrid's render threads; a reciprocal run's paths come
+  back source first. `paths_from_recorder` builds each group's document and `merge_paths_docs` joins
+  the groups and CS processes. Order: `paths_order_of` = `ACOUSTIC_PATHS_MAX_ORDER` (1) capped at the
+  run's image-source order (order 0 = direct sound); diffracted paths when `paths_diffracted`
+  (`paths_diffraction` on and the run diffracts, over the edges left on, with the run's air and source
+  pattern). At most `ACOUSTIC_PATHS_MAX_PATHS_PER_PAIR` per pair (earliest kept). A CA without
+  `record_paths` (an older pin) falls back to `run_paths` → `compute_paths`, a second search. A
+  failure is a note, never a failed run. The CA, hybrid and rays-only runs write it as `"paths"` in their
+  results JSON (model coordinates); the share route prunes it to the shared listeners
+  (`utils/acoustic_paths.filter_paths_receivers`). Frontend: `SimulationResultContent` reads it
+  (`useRunPaths`) into `acousticPathsStore.payloads`; hovering an IR row (`hoverPair`) or opening
+  its preview panel (`ImpulseResponseUpload.onIRSelect` → `selectPair`) picks the pair, hover
+  winning; `useSpeckleAcousticPaths` draws it with `lib/three/acoustic-paths-overlay.ts`
+  (`pairPaths` in `lib/acoustics/acoustic-paths.ts`). Old runs without `paths` draw nothing.
+- **Heatmap (EnergyMap) job:** `POST /api/acoustics/heatmap-speckle` (the run's Speckle geometry fields +
   `points`, CPU job, variant `heatmap`) → `GET /api/acoustics/heatmap/{id}`.
   `services/heatmap_service.py` runs `EnergyMap.from_scene` once per source with `Source.spl` at
   0 dB, so `spl_bands` (per point, 7 bands, `null` outside) is weighted by each sound card's level on
@@ -165,8 +176,9 @@ Step 5 above is the **legacy** engine. Since the compas_acoustics migration
 - **Edge selection:** switched-off edges are the card setting `excluded_edges`
   (`[[x1,y1,z1,x2,y2,z2], ...]`, model coordinates), saved and undoable. Edges are matched **by
   position** (`edge_excluded`, 2 cm, either direction, pieces of a split edge), never by index, so
-  a changed weld or merge does not shift the selection. Clicking an edge in 3D is a primary-button
-  press and release without a drag (pointer events; same on Windows and macOS).
+  a changed weld or merge does not shift the selection. There is no edge picker in the UI any
+  more (it lived in the removed Sound paths panel): a card keeps its saved selection, and Additional
+  settings offers to switch every edge back on.
 - **Edges come from the prepared room.** `RoomGeometry.from_prepared` finds them with CA's sector
   detector (the air around each edge, from the walls' normals, two-sided flags and hits), so an
   open model's corners and fused pillars diffract too; there is no "open model" preflight issue.

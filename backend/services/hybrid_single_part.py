@@ -170,6 +170,7 @@ def run_rays_only(
         "results": results,
         "hybrid": header,
         "compas_acoustics": {**ga.generation, "notes": ga.notes},
+        "paths": ga.paths,  # sound paths of the IRs (services/acoustic_paths_service.py)
         **(header_meta or {}),
         "solve_time_s": solve_time_s(started),
     }

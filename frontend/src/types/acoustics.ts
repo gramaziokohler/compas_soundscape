@@ -123,6 +123,8 @@ export interface GeometricEngineSettings {
   air_humidity?: number;
   /** Diffraction edges switched off: [x1, y1, z1, x2, y2, z2] in model coordinates. */
   excluded_edges?: number[][];
+  /** Also store the diffracted paths with the run's image-source paths (drawn on IR hover / select). */
+  paths_diffraction?: boolean;
 }
 
 /**

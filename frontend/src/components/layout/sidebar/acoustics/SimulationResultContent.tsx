@@ -11,12 +11,12 @@
 'use client';
 
 import { useCanEdit } from '@/hooks/useCanEdit';
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { ImpulseResponseUpload } from '@/components/audio/ImpulseResponseUpload';
 import type { SimulationConfig } from '@/types/acoustics';
 import { ACOUSTIC_METRICS, AcousticMetricsTable, acousticMetricMeta } from './AcousticMetricsTable';
 import { aggregateMappedBandMetrics, metricBlocksByPair, withBandHeadline } from '@/lib/acoustics/band-metrics';
-import { runResultsEngine, useRunResults } from '@/hooks/useRunResults';
+import { runResultsEngine, useRunPaths, useRunResults } from '@/hooks/useRunResults';
 import { hybridRunSummary } from '@/lib/acoustics/hybrid';
 import type { ImpulseResponseMetadata, SourceReceiverIRMapping } from '@/types/audio';
 import { Notice } from '@/components/ui/Notice';
@@ -25,7 +25,7 @@ import { CardSelect } from '@/components/ui/CardSelect';
 import { NumberField } from '@/components/ui/NumberField';
 import type { SimulationGradientMetric } from '@/store/uiStore';
 import { useUIStore } from '@/store/uiStore';
-import { useGridListenersStore, usePffdtdFreeStore } from '@/store';
+import { useAcousticPathsStore, useGridListenersStore, usePffdtdFreeStore } from '@/store';
 import { aggregateMappedPairMetrics, perReceiverMetricsOf } from '@/utils/acousticMetrics';
 import { PffdtdFieldResults } from './PffdtdFieldResults';
 import { PffdtdFreePositioningResults } from './PffdtdFreePositioningResults';
@@ -306,6 +306,21 @@ export function SimulationResultContent({
   const metricsLoading = !!simulationId && !!simType && runResults === undefined;
   const runPairMetrics = useMemo(() => metricBlocksByPair(runResults), [runResults]);
 
+  // The sound paths the run stored: hovering or selecting an IR draws its pair's paths in 3D.
+  const runPaths = useRunPaths(simulationId, simType);
+  const configId = config.id;
+  useEffect(() => {
+    useAcousticPathsStore.getState().setPayload(configId, runPaths);
+  }, [configId, runPaths]);
+  useEffect(() => () => useAcousticPathsStore.getState().setPayload(configId, null), [configId]);
+  const handleIRHover = useCallback((sourceId: string | null, receiverId: string | null) => {
+    onIRHover?.(sourceId, receiverId);
+    useAcousticPathsStore.getState().hoverPair(configId, sourceId, receiverId);
+  }, [onIRHover, configId]);
+  const handleIRSelect = useCallback((sourceId: string | null, receiverId: string | null) => {
+    useAcousticPathsStore.getState().selectPair(configId, sourceId, receiverId);
+  }, [configId]);
+
   const perReceiverMetrics = useMemo(
     () => (canUseGrid ? perReceiverMetricsOf(runPairMetrics, sourceReceiverIRMapping) : null),
     [canUseGrid, runPairMetrics, sourceReceiverIRMapping],
@@ -526,7 +541,8 @@ export function SimulationResultContent({
         simulationIRIds={simulationConfig.importedIRIds}
         sourceReceiverIRMapping={sourceReceiverIRMapping}
         runPairMetrics={runPairMetrics}
-        onIRHover={onIRHover}
+        onIRHover={handleIRHover}
+        onIRSelect={handleIRSelect}
         sourceDisplayNames={sourceDisplayNames}
         receiverDisplayNames={receiverDisplayNames}
         simulationSourcePositions={simulationSourcePositions}

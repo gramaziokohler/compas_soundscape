@@ -280,6 +280,7 @@ def run_hybrid_from_geometry(
     air_temperature: Optional[float] = None,
     air_humidity: float = 50.0,
     excluded_edges: Optional[list] = None,
+    paths_diffraction: bool = False,
     parallel: bool = True,
     # the room the crossover is planned with (Schroeder mode), from the card; else predicted here
     room_rt60: Optional[float] = None,
@@ -322,6 +323,7 @@ def run_hybrid_from_geometry(
             n_jobs=PYROOMACOUSTICS_MAX_PROCESSES if parallel else 1,
             reciprocity=PYROOMACOUSTICS_RECIPROCITY_ENABLED, seed=int(seed), tail=tail or "auto",
             n_slopes=int(n_slopes), scattering_split=bool(scattering_split), excluded_edges=list(excluded_edges or []),
+            paths_diffraction=bool(paths_diffraction),
         )
         room = room_geometry(mesh, offset)
         rt60, volume, rt60_source = plan_room(room_rt60, room_volume, room, room_estimate_source)
@@ -455,6 +457,7 @@ def run_hybrid_from_geometry(
             **extra,
         }
         results_json["compas_acoustics"] = {**ga.generation, "notes": ga.notes}
+        results_json["paths"] = ga.paths  # sound paths of the IRs (services/acoustic_paths_service.py)
         results_json["solve_time_s"] = solve_time_s(started)  # both parts + the join
         with open(results_path, "w") as f:
             json.dump(results_json, f, indent=2)

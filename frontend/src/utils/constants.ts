@@ -2917,46 +2917,20 @@ export const HYBRID_BAND = {
   RAY_BOUNCES: 6,
 } as const;
 
-/** Sound paths in the 3D view: reflections, billiard rays, diffraction edges (acousticPathsStore). */
+/** Sound paths a run stores, drawn in the 3D view for the hovered / selected IR (acousticPathsStore). */
 export const ACOUSTIC_PATHS = {
-  POLL_INTERVAL_MS: 800,
   RENDER_ORDER: 9850,
-  REFLECTION_ORDER_MAX: 6,
-  REFLECTION_ORDER_DEFAULT: 2,
-  RAYS_MIN: 20,
-  RAYS_MAX: 2000,
-  RAYS_STEP: 20,
-  RAYS_DEFAULT: 200,
-  RAY_ORDER_MAX: 30,
-  RAY_ORDER_DEFAULT: 8,
   /** Reflection lines fade with order: opacity = BASE * FALLOFF^order. */
   PATH_OPACITY: 0.95,
   PATH_OPACITY_FALLOFF: 0.72,
-  /** Level window of the reflection lines (dB below the strongest path maps to the faintest line). */
-  LEVEL_RANGE_DB: 40,
-  EDGE_OPACITY: 0.95,
-  EDGE_EXCLUDED_OPACITY: 0.35,
-  EDGE_DASH_SIZE_M: 0.12,
-  EDGE_GAP_SIZE_M: 0.08,
-  /** Pick tolerance (px) when clicking a diffraction edge in the 3D view. */
-  EDGE_PICK_PX: 8,
-  /** A press that moves less than this (px) is a click on an edge, not a camera drag. */
-  CLICK_SLOP_PX: 4,
-  PARTICLE_SIZE_M: 0.09,
-  /** Length (ms of travel) of the fading tail behind each billiard particle. */
-  PARTICLE_TRAIL_MS: 6,
-  /** Slow-motion factors of the billiard animation: 1 s of sound takes 1/speed s. */
-  PLAYBACK_SPEEDS: [0.005, 0.01, 0.02, 0.05] as readonly number[],
-  PLAYBACK_SPEED_DEFAULT: 0.01,
+  /** Dashes of the diffracted paths. */
+  DASH_SIZE_M: 0.12,
+  GAP_SIZE_M: 0.08,
   COLOR_VARS: {
     DIRECT: '--color-foreground',
     /** Reflection order 1..n cycles through these. */
     ORDERS: ['--color-primary', '--color-material-start', '--color-material-mid', '--color-material-end', '--color-info', '--color-success'],
-    EDGE: '--color-warning',
-    EDGE_USED: '--color-error',
-    EDGE_EXCLUDED: '--color-secondary-hover',
     DIFFRACTED: '--color-warning',
-    PARTICLE: '--color-primary',
   },
 } as const;
 
@@ -3560,10 +3534,11 @@ export interface FpsControlDef {
   mouse?: MouseControl;
 }
 
-/** First-person (FPS) view controls — shortcuts popover + first-time FPS help popup. */
+/** First-person (FPS) view controls (useSpeckleFPS) — shortcuts popover + first-time FPS help popup. */
 export const FPS_CONTROLS: readonly FpsControlDef[] = [
-  { label: 'Look around', keys: 'Left-drag', mouse: 'left' },
-  { label: 'Roll', keys: 'Right-drag', mouse: 'right' },
+  { label: 'Select', keys: 'Left-click', mouse: 'left' },
+  { label: 'Look around', keys: 'Right-drag', mouse: 'right' },
+  { label: 'Roll', keys: 'Middle-drag', mouse: 'wheel' },
   { label: 'Focal length', keys: 'Scroll', mouse: 'wheel' },
   { label: 'Rotate view', keys: 'Arrow keys' },
   { label: 'Exit first-person', keys: 'Esc' },
@@ -3661,8 +3636,8 @@ export const SHARE_SCENE_INFO = {
   ],
   /** First-person view (useSpeckleFPS). */
   FPS_CONTROLS: [
-    { label: 'Look', mouse: 'left', action: 'drag' },
-    { label: 'Roll', mouse: 'right', action: 'drag' },
+    { label: 'Look', mouse: 'right', action: 'drag' },
+    { label: 'Roll', mouse: 'wheel', action: 'drag' },
     { label: 'Zoom', mouse: 'wheel', action: 'scroll' },
   ],
   FPS_LEAVE_KEY: 'Esc',

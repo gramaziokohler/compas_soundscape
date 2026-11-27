@@ -1414,10 +1414,32 @@ SimulationMeshService.prepare(seeds = sources + receivers, MeshPrepSettings)
 ### Heatmap (EnergyMap) job
 
 The Heatmap listener card maps the sound level over the points the Grid listener surface UI generates,
+### Stored sound paths (IR hover / select)
+
+Every compas_acoustics run (ray-tracing card, hybrid, rays-only) stores the sound paths of its pairs
+in its results JSON, taken from its own image-source and diffraction searches; nothing is searched twice
+or traced on demand.
+
+```
+simulate_pairs (services/compas_acoustics_engine.py)
+  └─ _simulate_group (each group / CS process):  with compas_acoustics.record_paths(order):  scene.simulate(...)
+       CA search_images(room)      → visible images up to order traced back (order = min(ACOUSTIC_PATHS_MAX_ORDER = 1, ISM order))
+       CA diffraction_paths(pair)  → kept when settings.paths_diffraction and diffraction != off
+       CA emitter_rirs processes   → hand their records back; a reciprocal run's paths are reversed
+     → acoustic_paths_service.paths_from_recorder → utils.acoustic_paths.merge_paths_docs
+     (a CA without record_paths: run_paths → compute_paths, a second search)
+  → results JSON "paths": {speed_of_sound, sources, receivers, notes, reflections{max_order, paths}, diffraction?{paths}}
+     (share route: pruned to the shared listeners)
+
+SimulationResultContent ── useRunPaths ──▶ acousticPathsStore.payloads[configId]
+ImpulseResponseUpload row hover ──▶ hoverPair    preview panel open ──▶ selectPair
+useSpeckleAcousticPaths: hovered ?? selected pair → AcousticPathsOverlay (direct, order 1, dashed diffracted)
+```
+
 with the active simulation card's geometry and materials (compas_acoustics `EnergyMap`).
 
 ```
-POST /api/acoustics/heatmap-speckle   (paths-speckle's form fields + points=[[x,y,z],...], model coords, ≤ HEATMAP_MAX_POINTS)
+POST /api/acoustics/heatmap-speckle   (the run's Speckle geometry form fields + points=[[x,y,z],...], model coords, ≤ HEATMAP_MAX_POINTS)
   └─ CPU job, variant "heatmap" (queue:cpu-light) → services/heatmap_service.run_heatmap
        load_speckle_simulation_geometry → SimulationMeshService.prepare → room_geometry (is_inside on)
        build_scene (one source per source_id, spl = 0 dB in every band)

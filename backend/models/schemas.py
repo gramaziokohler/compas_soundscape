@@ -765,6 +765,7 @@ class SoundscapeSimulationSettings(BaseModel):
     air_temperature: Optional[float] = None
     air_humidity: Optional[float] = None
     excluded_edges: Optional[list[list[float]]] = None
+    paths_diffraction: Optional[bool] = None
     # hybrid (wave + geometric) only; ppw / duration below are shared with PFFDTD
     crossover_mode: Optional[str] = None
     crossover_hz: Optional[float] = None
@@ -1067,6 +1068,7 @@ class PyroomacousticsGeometrySettings(BaseModel):
     seed: int = 42
     scattering_split: bool = False
     excluded_edges: list[list[float]] = Field(default_factory=list)  # [[x1,y1,z1,x2,y2,z2], ...]
+    paths_diffraction: bool = False  # also store the diffracted paths with the run's image-source paths
 
 
 class PyroomacousticsGeometrySource(BaseModel):

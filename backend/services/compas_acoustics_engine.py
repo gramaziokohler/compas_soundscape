@@ -24,6 +24,7 @@ compas_acoustics is imported lazily: the legacy engine and the rest of the backe
 
 from __future__ import annotations
 
+import contextlib
 import math
 import os
 import re
@@ -36,6 +37,7 @@ from typing import Any, Callable, Optional
 import numpy as np
 
 from config.constants import (
+    ACOUSTIC_PATHS_MAX_ORDER,
     CA_AIR_HUMIDITY_DEFAULT,
     CA_AIR_TEMPERATURE_RANGE_C,
     CA_AMBISONIC_NORMALIZATION,
@@ -92,6 +94,8 @@ class EngineSettings:
     n_slopes: int = 1                   # decay slopes of the late field (2 = coupled volumes)
     # Diffraction edges switched off by the user: [x1, y1, z1, x2, y2, z2] in model coordinates
     excluded_edges: list = field(default_factory=list)
+    # Also store the first-order diffracted paths with the run's image-source paths (needs diffraction on)
+    paths_diffraction: bool = False
     # Length (s) of the rendered ambisonic responses; None = from the mono reference when there is
     # one (render_duration), else compas_acoustics' default.
     duration: Optional[float] = None
@@ -114,6 +118,8 @@ class EngineRun:
     responses: list[PairResponse]
     notes: list[str] = field(default_factory=list)
     generation: dict = field(default_factory=dict)
+    # The sound paths of the pairs (services/acoustic_paths_service.py), None when they failed
+    paths: Optional[dict] = None
 
 
 def get_service_version_info() -> dict:
@@ -564,11 +570,15 @@ def _simulate_group(
     report: Optional[Callable] = None,
     metrics: bool = True,
     geometry=None,
-) -> tuple[list[PairResponse], list[str]]:
-    """The responses of one group of pairs, in this process: ``(responses, notes)``.
+    paths_order: Optional[int] = None,
+) -> tuple[list[PairResponse], list[str], Optional[dict]]:
+    """The responses of one group of pairs, in this process: ``(responses, notes, paths)``.
 
     ``references``: ``{pair index: (mono response on the package scale, its generation)}`` computed
     beforehand, which the ambisonic tail then follows instead of tracing its own.
+    ``paths_order``: keep the specular paths the run's own search finds up to this order (and its
+    diffracted paths when ``paths_diffracted(settings)``) as the group's paths document
+    (services/acoustic_paths_service.py); None, or a compas_acoustics without ``record_paths``: no paths.
     """
     import compas_acoustics as ca
     from compas_acoustics.progress import reporting
@@ -596,9 +606,25 @@ def _simulate_group(
             for i in indices
         }
     method, notes = build_method(settings, reference=reference)
+    from services.acoustic_paths_service import paths_from_recorder, recording_available
+
+    recording = paths_order is not None and recording_available()
+    if recording:
+        from compas_acoustics.path_recorder import record_paths
     with reporting(report or (lambda stage, done, of: None)), edge_warnings(notes), \
-            diffraction_edge_filter(settings.excluded_edges, offset, geometry):
+            diffraction_edge_filter(settings.excluded_edges, offset, geometry), \
+            (record_paths(int(paths_order)) if recording else contextlib.nullcontext()) as recorded:
         results = scene.simulate(method, geometry=geometry)
+    paths = None
+    if recording:
+        try:
+            air = air_conditions(settings)[0]
+            paths = paths_from_recorder(
+                recorded, scene, source_of, receiver_of, pairs, indices, offset, geometry, air, int(paths_order),
+                diffraction=paths_diffracted(settings), speed_of_sound=float(air.speed_of_sound),
+            )
+        except Exception as exc:  # display only: the responses are computed
+            notes.append(f"The sound paths could not be stored: {exc}")
 
     responses = []
     for i in indices:
@@ -610,7 +636,17 @@ def _simulate_group(
         generation = _json_safe(dict(ir.generation or {}))
         found = pair_metrics(rir, generation, f"{p['source_id']}->{p['receiver_id']}") if metrics else None
         responses.append(PairResponse(pair_index=i, rir=rir, generation=generation, metrics=found))
-    return responses, notes
+    return responses, notes, paths
+
+
+def paths_diffracted(settings: EngineSettings) -> bool:
+    """Whether a run stores its diffracted paths: the card asks for them and the run diffracts."""
+    return bool(settings.paths_diffraction) and settings.diffraction != CA_DIFFRACTION_OFF
+
+
+def paths_order_of(settings: EngineSettings) -> int:
+    """The last reflection order of the stored paths: ``ACOUSTIC_PATHS_MAX_ORDER``, never above the run's own."""
+    return min(ACOUSTIC_PATHS_MAX_ORDER, int(settings.max_order))
 
 
 def _one_thread_per_process() -> None:
@@ -634,7 +670,7 @@ def _one_thread_per_process() -> None:
         pass
 
 
-def _simulate_group_task(mesh, offset, pairs, indices, settings, references, lane_path=None):
+def _simulate_group_task(mesh, offset, pairs, indices, settings, references, lane_path=None, paths_order=None):
     """Pool entry of ``_simulate_group`` (one process per chunk; float32 responses to keep the hand-back small).
 
     ``lane_path``: the file this process writes its progress to (``ca_progress.LaneWriter``).
@@ -654,13 +690,14 @@ def _simulate_group_task(mesh, offset, pairs, indices, settings, references, lan
         if lane is not None and stage != "end":
             lane(stage, done, of)
 
-    responses, notes = _simulate_group(mesh, offset, pairs, indices, settings, references, report=report)
+    responses, notes, paths = _simulate_group(mesh, offset, pairs, indices, settings, references, report=report,
+                                              paths_order=paths_order)
     report("end", None, None)
     print(f"  compas_acoustics part of {len(indices)} pair(s): {time.perf_counter() - started:.0f} s "
           f"{ {k: round(v, 1) for k, v in stages.items()} }", flush=True)
     for response in responses:
         response.rir = response.rir.astype(np.float32)
-    return responses, notes
+    return responses, notes, paths
 
 
 def _metrics_task(items: list) -> list:
@@ -746,6 +783,8 @@ def simulate_pairs(
 
     groups = _groups(pairs)
     n_workers = max(1, int(settings.n_jobs))
+    paths_order = paths_order_of(settings)
+    path_docs: list[Optional[dict]] = []
     spread = n_workers > 1 and len(pairs) > 1
     shared_mesh = dataclasses.replace(mesh, visibility=None)  # the pool only needs walls and materials
     responses: list[PairResponse] = []
@@ -769,8 +808,10 @@ def simulate_pairs(
         worker_settings = dataclasses.replace(settings, n_jobs=1)
         chunks = [chunk for indices in groups for chunk in render_chunks(pairs, indices, n_workers)]
         if len(chunks) == 1:
-            found, new = _simulate_group(mesh, offset, pairs, chunks[0], settings, geometry=geometry, report=staged(0.0, 1.0))
+            found, new, doc = _simulate_group(mesh, offset, pairs, chunks[0], settings, geometry=geometry,
+                                              report=staged(0.0, 1.0), paths_order=paths_order)
             add_notes(new)
+            path_docs.append(doc)
             responses.extend(found)
         else:
             # every part writes its last report to a file of its own; the job reads them as one row per part
@@ -778,7 +819,8 @@ def simulate_pairs(
             with tempfile.TemporaryDirectory(prefix="ca_lanes_", dir=TEMP_SIMULATIONS_DIR) as lane_dir:
                 paths = [os.path.join(lane_dir, f"lane{k}.json") for k in range(len(chunks))]
                 lanes = [Lane(lane_label(pairs, chunk), len(chunk), spans, settings.n_rays) for chunk in chunks]
-                tasks = [(_simulate_group_task, (shared_mesh, offset, pairs, chunk, worker_settings, None, path), len(chunk))
+                tasks = [(_simulate_group_task, (shared_mesh, offset, pairs, chunk, worker_settings, None, path, paths_order),
+                          len(chunk))
                          for chunk, path in zip(chunks, paths)]
 
                 def report_lanes() -> None:
@@ -795,8 +837,9 @@ def simulate_pairs(
 
                 report_lanes()
                 with child_pool(min(n_workers, len(tasks))) as pool:
-                    for found, new in _gather(pool, tasks, rendered, on_tick=report_lanes):
+                    for found, new, doc in _gather(pool, tasks, rendered, on_tick=report_lanes):
                         add_notes(new)
+                        path_docs.append(doc)
                         for r in found:
                             r.rir = np.asarray(r.rir, dtype=np.float64)
                             responses.append(r)
@@ -810,9 +853,10 @@ def simulate_pairs(
             lo, hi = top * g / len(groups), top * (g + 1) / len(groups)
             prefix = f"Group {g + 1}/{len(groups)}: " if len(groups) > 1 else ""
             progress(lo, f"{prefix}Simulating {len(indices)} pair(s)…")
-            found, new = _simulate_group(mesh, offset, pairs, indices, settings, report=staged(lo, lo + 0.95 * (hi - lo), prefix),
-                                         metrics=not pooled_metrics, geometry=geometry)
+            found, new, doc = _simulate_group(mesh, offset, pairs, indices, settings, report=staged(lo, lo + 0.95 * (hi - lo), prefix),
+                                              metrics=not pooled_metrics, geometry=geometry, paths_order=paths_order)
             add_notes(new)
+            path_docs.append(doc)
             responses.extend(found)
         if pooled_metrics:
             by_index = {r.pair_index: r for r in responses}
@@ -843,4 +887,32 @@ def simulate_pairs(
     summary["volume_m3"] = float(geometry.volume)
     summary["sampling_rate"] = PYROOMACOUSTICS_SAMPLE_RATE
     summary["excluded_edges"] = len(settings.excluded_edges or [])
-    return EngineRun(responses=responses, notes=notes, generation=summary)
+    if path_docs and all(doc is not None for doc in path_docs):
+        from utils.acoustic_paths import merge_paths_docs
+
+        paths = merge_paths_docs(path_docs)  # the run's own searches: no second pass
+    else:
+        paths = run_paths(pairs, offset, geometry, settings, summary.get("speed_of_sound"),
+                          lambda text: progress(0.999, text), add_notes)
+    return EngineRun(responses=responses, notes=notes, generation=summary, paths=paths)
+
+
+def run_paths(pairs: list[dict], offset: np.ndarray, geometry, settings: EngineSettings,
+              speed_of_sound, progress: Callable[[str], None], add_notes: Callable[[list[str]], None]) -> Optional[dict]:
+    """The sound paths of a run searched again: the fallback when the installed compas_acoustics does not
+    keep the run's own (``record_paths``). Image sources up to ``paths_order_of(settings)``, plus the
+    diffracted paths when asked and the run diffracts. A failure is a note, never a failed run."""
+    from services.acoustic_paths_service import compute_paths
+
+    speed = float(speed_of_sound) if isinstance(speed_of_sound, (int, float)) else float(settings.sound_speed)
+    try:
+        doc = compute_paths(
+            pairs, offset, geometry, paths_order_of(settings),
+            diffraction=paths_diffracted(settings), excluded_edges=settings.excluded_edges, speed_of_sound=speed,
+            progress=progress,
+        )
+    except Exception as exc:  # display only: the responses are already computed
+        add_notes([f"The sound paths could not be stored: {exc}"])
+        return None
+    add_notes(doc["notes"])
+    return doc

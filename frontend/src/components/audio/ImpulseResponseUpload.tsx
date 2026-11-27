@@ -39,6 +39,8 @@ interface ImpulseResponseUploadProps {
    *  metadata carries none (imported before IRs kept their own). */
   runPairMetrics?: Record<string, IRMetricBlocks>;
   onIRHover?: (sourceId: string | null, receiverId: string | null) => void;
+  /** The pair of the IR whose preview panel is open in this list (null ids when none). */
+  onIRSelect?: (sourceId: string | null, receiverId: string | null) => void;
   onLowEnergyIdsChange?: (ids: Set<string>) => void;
   sourceDisplayNames?: Record<string, string>;
   receiverDisplayNames?: Record<string, string>;
@@ -93,6 +95,7 @@ export function ImpulseResponseUpload({
   sourceReceiverIRMapping,
   runPairMetrics,
   onIRHover,
+  onIRSelect,
   onLowEnergyIdsChange,
   sourceDisplayNames,
   receiverDisplayNames,
@@ -653,6 +656,24 @@ export function ImpulseResponseUpload({
     if (hideTimeoutRef.current) { clearTimeout(hideTimeoutRef.current); hideTimeoutRef.current = null; }
     setHoveredIRId(null); setHoveredIRBuffer(null); setOverlayPosition(null); setIsOverlayHovered(false);
     if (IR_HOVER_LINE.ENABLED && onIRHover) onIRHover(null, null);
+  // Report the pair of the pinned IR (the selected IR) up; none when the panel closes or moves on.
+  const onIRSelectRef = useRef(onIRSelect);
+  onIRSelectRef.current = onIRSelect;
+  const pinnedPairKey = useMemo(() => {
+    if (!isPanelOwner || !pinnedIRId) return '';
+    for (const [sourceId, receivers] of Object.entries(sourceReceiverIRMapping ?? {})) {
+      for (const [receiverId, meta] of Object.entries(receivers)) {
+        if (meta.id === pinnedIRId) return JSON.stringify([sourceId, receiverId]);
+      }
+    }
+    return '';
+  }, [isPanelOwner, pinnedIRId, sourceReceiverIRMapping]);
+  useEffect(() => {
+    const pair = pinnedPairKey ? (JSON.parse(pinnedPairKey) as [string, string]) : null;
+    onIRSelectRef.current?.(pair?.[0] ?? null, pair?.[1] ?? null);
+  }, [pinnedPairKey]);
+  useEffect(() => () => onIRSelectRef.current?.(null, null), []);
+
 
     // First opening (nothing remembered yet): sit where the hover preview appears.
     if (!useUIStore.getState().irPreviewPanel) {

@@ -63,14 +63,13 @@ from config.constants import (
 )
 from fastapi import APIRouter, Form, HTTPException, Request
 from models.schemas import JobEnqueueResponse
-from routers.acoustic_paths import parse_excluded_edges
 from routers.pffdtd import RIR_OUTPUT_DIR, TEMP_DIR, _check_directional_runs, _check_range, _parse_geometry_fields
 from routers.pyroomacoustics import normalize_tail, validate_engine_settings, validate_tail_settings
 from services.job_store import job_store
 from services.pffdtd_job import pffdtd_available
 from services.pyroomacoustics_service import PyroomacousticsService
 from utils.hybrid_crossover import CROSSOVER_MANUAL, plan_crossover
-from utils.request_parsing import parse_mesh_settings
+from utils.request_parsing import parse_excluded_edges, parse_mesh_settings
 import json
 
 router = APIRouter(prefix="/api")
@@ -157,6 +156,7 @@ async def run_simulation_speckle(
     air_temperature: Optional[float] = Form(None),
     air_humidity: float = Form(CA_AIR_HUMIDITY_DEFAULT),
     excluded_edges: Optional[str] = Form(None),
+    paths_diffraction: bool = Form(False),
 ):
     """Validate and enqueue; both engines and the join run in the PFFDTD worker's child process.
     Rays alone need no GPU: they run in a CPU worker's simulation slot (variant ``hybrid_rays``)."""
@@ -248,6 +248,7 @@ async def run_simulation_speckle(
                 air_temperature=air_temperature,
                 air_humidity=air_humidity,
                 excluded_edges=excluded_edge_rows,
+                paths_diffraction=paths_diffraction,
             ),
         }
         job_id = await job_store.enqueue(JOB_TYPE_PYROOMACOUSTICS if rays_only else JOB_TYPE_PFFDTD, session_id, payload)

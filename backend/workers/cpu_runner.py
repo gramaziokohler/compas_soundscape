@@ -27,7 +27,6 @@ from services.pyroomacoustics_worker import (
 )
 from services.sed_worker import run_sed_analysis
 from services.simulation_preflight_worker import run_simulation_preflight
-from services.acoustic_paths_service import run_acoustic_paths
 from services.heatmap_service import run_heatmap
 from services.hybrid_job import run_hybrid_simulation
 from workers._subprocess_common import MultiSlotSubprocessRunner
@@ -45,7 +44,6 @@ _TARGET_FNS = {
     "pyroomacoustics_speckle": run_pyroomacoustics_simulation,
     "pyroomacoustics_geometry": run_pyroomacoustics_simulation_from_geometry,
     "pyroomacoustics_preflight": run_simulation_preflight,
-    "acoustic_paths": run_acoustic_paths,  # reflections / rays / diffraction edges for the 3D view
     "hybrid_rays": run_hybrid_simulation,  # hybrid card with the wave part off (parts="rays"): no GPU
     "heatmap": run_heatmap,  # per-source EnergyMap (SPL per band per point) for the Heatmap card
     "pffdtd_voxel_preview": run_pffdtd_voxel_preview,  # voxelise only (compas-pffdtd subprocess)

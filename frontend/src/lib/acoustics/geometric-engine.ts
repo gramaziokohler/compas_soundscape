@@ -3,7 +3,7 @@
  * (edge diffraction, higher-order ambisonics, the late-field model, air, seed, edge selection).
  *
  * One place decides what is sent to the backend, saved with the soundscape and shown as a
- * summary, so the run, its geometry check and its sound-path preview cannot drift apart.
+ * summary, so the run and its geometry check cannot drift apart.
  */
 
 import {
@@ -19,7 +19,7 @@ import type { GeometricEngineSettings } from '@/types/acoustics';
 
 const KEYS = [
   'engine', 'diffraction', 'ambisonic_order', 'tail', 'n_slopes', 'seed', 'scattering_split',
-  'air_temperature', 'air_humidity', 'excluded_edges',
+  'air_temperature', 'air_humidity', 'excluded_edges', 'paths_diffraction',
 ] as const satisfies readonly (keyof GeometricEngineSettings)[];
 
 /** The engine fields that are set on `settings` (undefined ones are left out). */
@@ -42,7 +42,6 @@ export interface EngineCapabilities {
     diffraction: string[];
     tails: string[];
     max_ambisonic_order: number;
-    paths: string[];
   }>;
 }
 
@@ -159,26 +158,13 @@ export function engineFormFields(settings: GeometricEngineSettings & { simulatio
   }
   if (settings.air_humidity !== undefined) fields.air_humidity = String(settings.air_humidity);
   if (settings.excluded_edges?.length) fields.excluded_edges = JSON.stringify(settings.excluded_edges);
+  if (settings.paths_diffraction) fields.paths_diffraction = 'true';
   return fields;
 }
 
 /** Air temperature (deg C) whose speed of sound is `c` m/s — the backend's conversion (dry air). */
 export function temperatureForSoundSpeed(c: number): number {
   return 273.15 * ((c / 331.3) ** 2 - 1);
-}
-
-/** Same segment whichever end comes first, within `tolerance` metres. */
-export function sameEdge(a: readonly number[], b: readonly number[], tolerance = 0.02): boolean {
-  const close = (i: number, j: number) =>
-    Math.hypot(a[i] - b[j], a[i + 1] - b[j + 1], a[i + 2] - b[j + 2]) <= tolerance;
-  return (close(0, 0) && close(3, 3)) || (close(0, 3) && close(3, 0));
-}
-
-/** `edges` with `segment` added when absent, removed when present. */
-export function toggleExcludedEdge(edges: readonly number[][] | undefined, segment: readonly number[]): number[][] {
-  const list = edges ?? [];
-  const without = list.filter((e) => !sameEdge(e, segment));
-  return without.length === list.length ? [...list, [...segment]] : without;
 }
 
 /** Summary rows (label, value) of the engine settings that differ from their defaults. */
@@ -190,6 +176,7 @@ export function engineSummaryRows(settings: GeometricEngineSettings & { simulati
   if (settings.diffraction && settings.diffraction !== GA_ENGINE.DIFFRACTION_OFF) {
     rows.push({ label: 'Edge Diffraction', value: GA_ENGINE.DIFFRACTION_NAMES[settings.diffraction] ?? settings.diffraction });
     if (settings.excluded_edges?.length) rows.push({ label: 'Edges Switched Off', value: String(settings.excluded_edges.length) });
+    if (settings.paths_diffraction) rows.push({ label: 'Diffracted Paths Shown', value: 'Yes' });
   }
   const tail = normalizeTail(settings.tail);
   if (isAmbisonicMode(settings.simulation_mode) && tail && tail !== GA_ENGINE.TAIL_DEFAULT) {

@@ -33,7 +33,7 @@ def test_skips_jobs_that_are_not_card_simulations(tmp_path, monkeypatch):
     monkeypatch.setattr(fs, "TEMP_FINISHED_SIMULATIONS_DIR", str(tmp_path))
     for job_type, payload in (
         ("pyroomacoustics", {"variant": "pyroomacoustics_preflight"}),
-        ("pyroomacoustics", {"variant": "acoustic_paths"}),
+        ("pyroomacoustics", {"variant": "heatmap"}),
         ("pffdtd_animation", {}),
         ("sed", {"variant": "sed"}),
     ):

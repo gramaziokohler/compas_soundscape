@@ -207,6 +207,7 @@ export interface SoundscapeSimulationSettings {
   air_temperature?: number | null;
   air_humidity?: number;
   excluded_edges?: number[][];
+  paths_diffraction?: boolean;
   // Hybrid (wave + geometric) only; ppw / duration below are shared with PFFDTD
   crossover_mode?: 'schroeder' | 'manual';
   crossover_hz?: number;

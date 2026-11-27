@@ -734,16 +734,12 @@ HYBRID_WAVE_FIT_PPW_MIN = 10.0
 # Key of the job's progress `partial` (and of the results' hybrid header) that carries the fit
 HYBRID_WAVE_ADJUSTMENT_KEY = "wave_adjustment"
 
-# Sound paths for the 3D view (services/acoustic_paths_service.py)
-ACOUSTIC_PATHS_KINDS = ("reflections", "rays", "diffraction")
-ACOUSTIC_PATHS_DIR = str(BACKEND_DIR / "temp" / "simulations" / "paths")  # + /<workspace id>/paths_<id>.json
+# Sound paths stored with every compas_acoustics run (services/acoustic_paths_service.py), drawn in
+# the 3D view for the hovered / selected IR: image sources up to this order (direct sound = 0), capped
+# at the run's own image-source order, plus the first-order diffracted paths when the card asks.
+ACOUSTIC_PATHS_MAX_ORDER = 1
 ACOUSTIC_PATHS_DECIMALS = 4
-ACOUSTIC_PATHS_MAX_REFLECTION_PATHS = 20000
-ACOUSTIC_PATHS_REFLECTION_ORDER_MAX = 6
-ACOUSTIC_PATHS_RAYS_DEFAULT = 200
-ACOUSTIC_PATHS_RAYS_MAX = 2000
-ACOUSTIC_PATHS_RAY_ORDER_DEFAULT = 8
-ACOUSTIC_PATHS_RAY_ORDER_MAX = 30
+ACOUSTIC_PATHS_MAX_PATHS_PER_PAIR = 500  # earliest arrivals kept per source-listener pair
 ACOUSTIC_PATHS_MAX_EXCLUDED_EDGES = 5000
 # Heatmap listener card: compas_acoustics EnergyMap per source at 0 dB (services/heatmap_service.py)
 HEATMAP_DIR = str(BACKEND_DIR / "temp" / "simulations" / "heatmaps")  # + /<workspace id>/heatmap_<id>.json

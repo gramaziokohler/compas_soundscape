@@ -359,6 +359,7 @@ def _run_pyroomacoustics_compute_loop(
     seed: int = CA_SEED_DEFAULT,
     scattering_split: bool = False,
     excluded_edges: Optional[list] = None,
+    paths_diffraction: bool = False,
     started: Optional[float] = None,
 ) -> None:
     """
@@ -425,7 +426,7 @@ def _run_pyroomacoustics_compute_loop(
             ambisonic_order=ambisonic_order, air_temperature=air_temperature, air_humidity=air_humidity,
             geometry_diagnostics=geometry_diagnostics,
             tail=tail, n_slopes=n_slopes, seed=seed, scattering_split=scattering_split,
-            excluded_edges=excluded_edges, started=started,
+            excluded_edges=excluded_edges, paths_diffraction=paths_diffraction, started=started,
         )
         return
     if engine != ACOUSTICS_ENGINE_PYROOMACOUSTICS:
@@ -564,7 +565,7 @@ def _run_compas_acoustics(
     header_meta: Optional[dict], parallel: bool, diffraction: str, ambisonic_order: Optional[int],
     air_temperature: Optional[float], air_humidity: float, geometry_diagnostics: dict,
     tail: str = CA_TAIL_DEFAULT, n_slopes: int = 1, seed: int = CA_SEED_DEFAULT,
-    scattering_split: bool = False, excluded_edges: Optional[list] = None,
+    scattering_split: bool = False, excluded_edges: Optional[list] = None, paths_diffraction: bool = False,
     started: Optional[float] = None,
 ) -> None:
     """The compute half of the job on compas_acoustics (services/compas_acoustics_engine.py):
@@ -593,6 +594,7 @@ def _run_compas_acoustics(
         seed=int(seed),
         scattering_split=bool(scattering_split),
         excluded_edges=list(excluded_edges or []),
+        paths_diffraction=bool(paths_diffraction),
     )
     output = "mono" if order == 0 else f"ambisonic order {order}"
     rays = f"on ({n_rays} rays)" if ray_tracing else "off"
@@ -652,6 +654,7 @@ def _run_compas_acoustics(
     results_json["geometry_diagnostics"] = geometry_diagnostics
     results_json["engine"] = ACOUSTICS_ENGINE_COMPAS_ACOUSTICS
     results_json["compas_acoustics"] = {**run.generation, "notes": run.notes}
+    results_json["paths"] = run.paths  # sound paths of the IRs (services/acoustic_paths_service.py)
     results_json["reciprocity"] = {
         "flipped": bool(run.generation.get("reciprocal", False)),
         "reason": "compas_acoustics Mono(reciprocity=...)",
@@ -708,6 +711,7 @@ def run_pyroomacoustics_simulation(
     seed: int = CA_SEED_DEFAULT,
     scattering_split: bool = False,
     excluded_edges: Optional[list] = None,
+    paths_diffraction: bool = False,
 ) -> None:
     """
     Full pyroomacoustics simulation pipeline, runs in a subprocess.
@@ -782,6 +786,7 @@ def run_pyroomacoustics_simulation(
             seed=seed,
             scattering_split=scattering_split,
             excluded_edges=excluded_edges,
+            paths_diffraction=paths_diffraction,
             started=started,
         )
 
@@ -817,6 +822,7 @@ def run_pyroomacoustics_simulation_from_geometry(
     seed: int = CA_SEED_DEFAULT,
     scattering_split: bool = False,
     excluded_edges: Optional[list] = None,
+    paths_diffraction: bool = False,
 ) -> None:
     """
     Direct-geometry pyroomacoustics pipeline, runs in a subprocess.
@@ -946,6 +952,7 @@ def run_pyroomacoustics_simulation_from_geometry(
             seed=seed,
             scattering_split=scattering_split,
             excluded_edges=excluded_edges,
+            paths_diffraction=paths_diffraction,
         )
 
     except Exception as exc:

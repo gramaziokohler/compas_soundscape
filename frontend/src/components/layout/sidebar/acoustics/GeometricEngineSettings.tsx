@@ -48,7 +48,7 @@ interface GeometricEngineSettingsProps {
 }
 
 const ADDITIONAL_FIELDS: (keyof EngineSettings)[] = [
-  'engine', 'n_slopes', 'scattering_split', 'air_temperature', 'air_humidity', 'seed',
+  'engine', 'paths_diffraction', 'excluded_edges', 'n_slopes', 'scattering_split', 'air_temperature', 'air_humidity', 'seed',
 ];
 
 export function GeometricEngineSettings({
@@ -158,6 +158,28 @@ export function GeometricEngineSettings({
           </div>
         )}
 
+        {/* Sound paths the run stores, drawn when an IR is hovered / selected */}
+        <div title={!ca ? needsCa : diffraction === GA_ENGINE.DIFFRACTION_OFF
+          ? 'Turn edge diffraction on first'
+          : 'Hovering or selecting an IR also draws the first-order diffracted paths'}>
+          <ToggleField
+            checked={!!settings.paths_diffraction && diffraction !== GA_ENGINE.DIFFRACTION_OFF}
+            onChange={(v) => onChange('paths_diffraction', v)}
+            label="Show diffracted paths"
+            modified={isModified('paths_diffraction')}
+            disabled={disabled || !ca || diffraction === GA_ENGINE.DIFFRACTION_OFF}
+          />
+        </div>
+        {settings.excluded_edges && settings.excluded_edges.length > 0 && (
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => onChange('excluded_edges', undefined)}
+            className="cursor-pointer self-start text-xxs text-secondary-hover underline-offset-2 hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Switch the {settings.excluded_edges.length} edge{settings.excluded_edges.length > 1 ? 's' : ''} switched off back on
+          </button>
+        )}
 
         {ambisonic && ca && (
           <div className="card-stack--tight">

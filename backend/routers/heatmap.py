@@ -2,7 +2,7 @@
 Heatmap endpoints for the Heatmap listener card (compas_acoustics EnergyMap).
 
 POST /acoustics/heatmap-speckle
-  Same geometry inputs as /acoustics/paths-speckle plus ``points`` (JSON list of
+  Same Speckle geometry inputs as a simulation run plus ``points`` (JSON list of
   [x, y, z], model coordinates). Enqueues a CPU job (variant "heatmap") that
   prepares the same mesh as the simulation and maps every source at 0 dB
   (services/heatmap_service.py). Returns {job_id, position, total}; poll
