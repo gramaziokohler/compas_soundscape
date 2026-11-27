@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { bandFrequency, bandGpuMaxHz, bandPosition, formatHz, hybridWaveGpuWarning, snapCrossover } from './crossover-band';
+import { bandFrequency, bandGpuMaxHz, bandPosition, formatHz, hybridWaveGpuWarning, notePart, snapCrossover } from './crossover-band';
 import { materialColumnsType, type SimulationConfig } from '@/types/acoustics';
 import { FrequencyText } from '@/components/layout/sidebar/acoustics/FrequencyText';
 import { hybridFormFields, defaultHybridSettings, restoreHybridSettings } from './hybrid';
@@ -79,5 +79,13 @@ describe('FrequencyText', () => {
     expect(html).toContain('<strong class="font-semibold text-foreground">875 Hz</strong>');
     expect(html).toContain('<strong class="font-semibold text-foreground">1.3 kHz</strong>');
     expect(html).toContain('Wave below ');
+  });
+});
+
+describe('notePart', () => {
+  it('colours a note with the part it is about', () => {
+    expect(notePart('Wave grid refined from 12 to 31 points per wavelength at 139 Hz (11 cm cells).')).toBe('wave');
+    expect(notePart('Edge diffraction skipped for 3 open edges.')).toBe('rays');
+    expect(notePart('Crossover raised from 30 Hz to the 40 Hz minimum.')).toBeNull();
   });
 });

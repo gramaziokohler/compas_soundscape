@@ -29,6 +29,8 @@ export interface CardSelectOption {
 }
 
 export interface CardSelectProps {
+  /** Colour of the selected chip when the options show inline (TextSelect); default primary. */
+  accentColor?: string;
   value: string;
   onChange: (value: string) => void;
   options: CardSelectOption[];
@@ -94,6 +96,7 @@ export function CardSelect({
   disabled = false,
   className = "",
   compact = false,
+  accentColor,
   triggerStyle,
   menuMaxHeight = MENU_MAX_HEIGHT,
   forceMenu = false,
@@ -208,6 +211,7 @@ export function CardSelect({
         disabled={disabled}
         className={className}
         compact={compact}
+        accentColor={accentColor}
       />
     );
   }

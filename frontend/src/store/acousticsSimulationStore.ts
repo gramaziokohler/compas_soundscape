@@ -296,7 +296,8 @@ export const useAcousticsSimulationStore = create<AcousticsSimulationStoreState>
                 state: 'before-simulation',
                 createdAt: timestamp,
                 simulationInstanceId: `hybrid_${timestamp}`,
-                settings: defaultHybridSettings(),
+                // Hybrid simulation 2 matches the parts' levels at the crossover unless the user turns it off
+                settings: mode === 'hybrid2' ? { ...defaultHybridSettings(), level_match: true } : defaultHybridSettings(),
                 ...(mode === 'hybrid2' ? { uiVersion: 2 as const } : {}),
                 faceToMaterialMap: new Map(),
                 isRunning: false,

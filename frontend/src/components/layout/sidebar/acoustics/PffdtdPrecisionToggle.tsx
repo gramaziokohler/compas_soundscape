@@ -25,6 +25,8 @@ interface PffdtdPrecisionToggleProps {
   modified?: boolean;
   /** A "Single / Double precision" dropdown instead of the toggle (Hybrid simulation 2). */
   asSelect?: boolean;
+  /** Colour of the selected precision (the card section's colour). */
+  accentColor?: string;
 }
 
 const PRECISION_HINT = 'Single precision stores each grid point in half the GPU memory of double (½ GPU memory) and runs '
@@ -38,7 +40,7 @@ const PRECISION_OPTIONS = [
 
 const cm = (m: number) => `${(m * 100).toFixed(1)} cm`;
 
-export function PffdtdPrecisionToggle({ precision, gridSpacing, onChange, disabled, modified, asSelect = false }: PffdtdPrecisionToggleProps) {
+export function PffdtdPrecisionToggle({ precision, gridSpacing, onChange, disabled, modified, asSelect = false, accentColor }: PffdtdPrecisionToggleProps) {
   const single = precision === 'single';
   const tooFine = single && gridSpacing !== null && gridSpacing < PFFDTD.SINGLE_MIN_SPACING_M;
   return (
@@ -53,6 +55,7 @@ export function PffdtdPrecisionToggle({ precision, gridSpacing, onChange, disabl
             onChange={(v) => onChange(v as PffdtdPrecision)}
             disabled={disabled}
             options={PRECISION_OPTIONS}
+            accentColor={accentColor}
           />
         </div>
       ) : (

@@ -16,6 +16,8 @@ export interface TextSelectProps {
   className?: string;
   /** Smaller padding/font, matching CardSelect compact triggers. */
   compact?: boolean;
+  /** Colour of the selected option (a card section's colour); default primary. */
+  accentColor?: string;
 }
 
 /**
@@ -45,6 +47,7 @@ export function TextSelect({
   disabled = false,
   className = "",
   compact = false,
+  accentColor,
 }: TextSelectProps) {
   return (
     <div
@@ -66,6 +69,7 @@ export function TextSelect({
               onChange(opt.value);
             }}
             className={`text-select-opt ${active ? "active" : ""}`}
+            style={active && accentColor ? { color: accentColor, borderColor: accentColor } : undefined}
             title={opt.title}
           >
             {opt.label}

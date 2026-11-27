@@ -33,7 +33,7 @@ import {
   lastRunSchroederHz,
   mismatchWarning,
 } from '@/lib/acoustics/hybrid';
-import { bandGpuMaxHz, formatHz, hybridWaveBand, hybridWaveGpuWarning } from '@/lib/acoustics/crossover-band';
+import { bandGpuMaxHz, formatHz, hybridWaveBand, hybridWaveGpuWarning, notePart } from '@/lib/acoustics/crossover-band';
 import { AcousticMaterialChips } from './AcousticMaterialChips';
 import { CrossoverBand, type HybridPart } from './CrossoverBand';
 import { FrequencyText } from './FrequencyText';
@@ -143,7 +143,22 @@ export function Hybrid2SimulationSettings({ config, onUpdateConfig }: Hybrid2Sim
           onPartsChange={setParts}
         />
         <FrequencyText text={readout} className="text-xxs text-secondary-hover" />
-        {info?.notes.map((note) => <Notice key={note} type="info" message={note} />)}
+        {info?.notes.map((note) => {
+          // a note about one part takes that part's colour; one about the crossover stays neutral
+          const part = notePart(note);
+          if (!part) return <Notice key={note} type="info" message={note} />;
+          return (
+            <FrequencyText
+              key={note}
+              text={note}
+              className="border-l-2 px-2 py-1 text-xxs leading-4"
+              style={{
+                borderColor: PART_COLOR[part],
+                backgroundColor: `color-mix(in srgb, ${PART_COLOR[part]} 12%, transparent)`,
+              }}
+            />
+          );
+        })}
         {mismatch && <Notice type="warning" message={mismatch} />}
       </div>
 

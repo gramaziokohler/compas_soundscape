@@ -9,12 +9,14 @@
 
 'use client';
 
+import type { CSSProperties } from 'react';
+
 const FREQUENCY = /(\d[\d,.]*\s?k?Hz)/g;
 
-export function FrequencyText({ text, className }: { text: string; className?: string }) {
+export function FrequencyText({ text, className, style }: { text: string; className?: string; style?: CSSProperties }) {
   const pieces = text.split(FREQUENCY);
   return (
-    <p className={className}>
+    <p className={className} style={style}>
       {pieces.map((piece, i) => (i % 2 === 1
         ? <strong key={i} className="font-semibold text-foreground">{piece}</strong>
         : piece))}

@@ -109,3 +109,16 @@ export function hybridWaveGpuWarning(
   const h = waveFmax !== null ? pffdtdGridSpacing(waveFmax, settings.ppw) : null;
   return waveGridFit(extents, h, settings.precision, settings.duration, availableBytes).warning;
 }
+
+/** Which part a run's note is about (coloured with that part on the card), or null for the crossover itself. */
+export function notePart(note: string): 'wave' | 'rays' | null {
+  if (/wave|grid|points per wavelength/i.test(note)) return 'wave';
+  if (/\brays?\b|ray tracing|image source|diffraction/i.test(note)) return 'rays';
+  return null;
+}
+
+/** The highest handle value at or below `hz` (on the crossover step, within the handle's range). */
+export function floorCrossover(hz: number): number {
+  const stepped = Math.floor(hz / HYBRID.CROSSOVER_HZ_STEP) * HYBRID.CROSSOVER_HZ_STEP;
+  return Math.min(HYBRID.CROSSOVER_HZ_MAX, Math.max(HYBRID.CROSSOVER_HZ_MIN, stepped));
+}

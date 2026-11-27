@@ -229,14 +229,19 @@ One job on the PFFDTD queue (`JOB_TYPE_PFFDTD`, payload `variant: "hybrid"`,
     warning (`hybridWaveGpuWarning`; it disables the run), then the part checkboxes and
     `CrossoverBand.tsx` (log band 20 Hz–20 kHz, draggable crossover, dashed lines for the
     recommended crossover and the GPU max; helpers in `lib/acoustics/crossover-band.ts`). Dragging
-    onto the recommended line sets Schroeder × 1, anywhere else a manual frequency. The selected
-    part's settings (`Hybrid2PartSettings.tsx`) are tinted with its colour (`--section-accent` on
-    the section; `ToggleField color` for the wave part), with "Additional settings" as a section
-    header (`CollapsibleGroup`); precision is a dropdown (`PffdtdPrecisionToggle asSelect`).
+    onto the recommended line, or clicking its "rec" label, sets Schroeder × 1; clicking "GPU max"
+    moves the handle to the highest frequency that fits (`floorCrossover`); anywhere else is a
+    manual frequency. The crossover is set on the band only (no mode dropdown). The selected part's
+    settings (`Hybrid2PartSettings.tsx`, no "Additional settings" group) are tinted with its colour
+    (`--section-accent` on the section; explicit `ToggleField color` / `CardSelect accentColor` for
+    the wave part); precision is a dropdown (`PffdtdPrecisionToggle asSelect`). New cards match the
+    parts' levels at the crossover (`level_match: true`). The run's notes take the colour of the
+    part they are about (`notePart`).
   - **Steps** (`Hybrid2Steps.tsx`, transient `hybrid2Steps` in AcousticsSection): Setup → Check →
     Run → Results. Setup's button is "Check geometry" (opens Check, runs the preflight unless one
     is current); Check (`Hybrid2CheckPanel.tsx`: verdict, figures, issues, 3D preview, details)
-    starts the run; the start is disabled while the check runs. Check and Run replace the settings
+    starts the run; the start is disabled while the check runs. Opening Check turns the preview's
+    see-through surfaces on (`setGhost(true)`). Check and Run replace the settings
     through `SimulationSetupContent stepBody` (`bodyHidden` on Results), so the headless material
     section stays mounted.
   - **Run**: progress, expanded process rows and Stop inside the card (`Card runProgressInBody`

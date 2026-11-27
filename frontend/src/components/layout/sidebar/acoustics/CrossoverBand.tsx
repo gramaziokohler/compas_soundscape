@@ -30,6 +30,7 @@ import {
   bandPosition,
   formatHz,
   rayPath,
+  floorCrossover,
   snapCrossover,
   tickLabel,
   wavePath,
@@ -86,9 +87,9 @@ function PartCurves({ part }: { part: HybridPart }) {
   );
 }
 
-/** A full-height marker line with a small label on top. */
-function MarkerLine({ position, color, label, title, labelAt }: {
-  position: number; color: string; label: string; title?: string; labelAt: 'top' | 'bottom';
+/** A full-height marker line with a small label; clicking the label moves the handle onto the line. */
+function MarkerLine({ position, color, label, title, labelAt, onClick }: {
+  position: number; color: string; label: string; title?: string; labelAt: 'top' | 'bottom'; onClick?: () => void;
 }) {
   return (
     <div
@@ -96,12 +97,18 @@ function MarkerLine({ position, color, label, title, labelAt }: {
       style={{ left: pct(position), width: 0, borderLeft: `1.5px dashed ${color}` }}
       title={title}
     >
-      <span
-        className={`absolute ${labelAt === 'top' ? 'top-0.5' : 'bottom-0.5'} left-0.5 whitespace-nowrap rounded px-0.5 text-xxs leading-3`}
+      <button
+        type="button"
+        disabled={!onClick}
+        onClick={onClick}
+        onPointerDown={(e) => e.stopPropagation()}
+        className={`absolute ${labelAt === 'top' ? 'top-0.5' : 'bottom-0.5'} left-0.5 whitespace-nowrap rounded px-0.5 text-xxs leading-3 transition-opacity enabled:cursor-pointer enabled:hover:underline`}
         style={{ color, backgroundColor: 'var(--color-surface)' }}
+        title={onClick ? `${title ? `${title}
+` : ''}Click to move the crossover here` : title}
       >
         {label}
-      </span>
+      </button>
     </div>
   );
 }
@@ -268,10 +275,14 @@ export function CrossoverBand({
           </div>
 
           {waveOn && recommendedHz !== null && (
-            <MarkerLine position={bandPosition(recommendedHz)} color="var(--color-success)" label="rec" title={recommendedTitle} labelAt="top" />
+            <MarkerLine position={bandPosition(recommendedHz)} color="var(--color-success)" label="rec" title={recommendedTitle} labelAt="top"
+              onClick={hasHandle && !disabled ? () => onCrossoverChange(recommendedHz) : undefined} />
           )}
           {gpuPosition !== null && (
-            <MarkerLine position={gpuPosition} color="var(--color-error)" label="GPU max" title={gpuTitle} labelAt="bottom" />
+            <MarkerLine position={gpuPosition} color="var(--color-error)" label="GPU max" title={gpuTitle} labelAt="bottom"
+              onClick={hasHandle && !disabled && gpuMaxHz !== null
+                ? () => onCrossoverChange(floorCrossover(gpuMaxHz))
+                : undefined} />
           )}
 
           {hasHandle && (

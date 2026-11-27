@@ -38,8 +38,8 @@ interface GeometricEngineSettingsProps {
   disabled?: boolean;
   /** The hybrid card always runs compas_acoustics: no engine choice. */
   lockEngine?: boolean;
-  /** Look of the "Additional settings" header (CollapsibleGroup); default the small link. */
-  additionalVariant?: 'link' | 'section';
+  /** Look of the "Additional settings" header (CollapsibleGroup); default the small link, `inline` = no group. */
+  additionalVariant?: 'link' | 'section' | 'inline';
   /** Controls placed first in "Additional settings" (e.g. Hybrid simulation 2's parallel processing). */
   additionalExtra?: ReactNode;
   /** The extra controls changed since the card was generated (flags the header). */

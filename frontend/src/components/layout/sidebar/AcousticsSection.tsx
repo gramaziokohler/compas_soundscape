@@ -748,6 +748,8 @@ export function AcousticsSection(props: AcousticsSectionProps) {
    */
   const openHybrid2Check = useCallback((config: SimulationConfig) => {
     setHybrid2Step(config.id, 'check');
+    // the Check step shows the mesh see-through by default (the model stays readable behind it)
+    useSimulationPreflightStore.getState().setGhost(true);
     const prepared = buildPreflightArgs(config);
     const entry = useSimulationPreflightStore.getState().entries[config.id];
     const current = prepared.ok && entry

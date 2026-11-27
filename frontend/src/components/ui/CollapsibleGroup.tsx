@@ -11,8 +11,9 @@ export interface CollapsibleGroupProps {
   /**
    * `link`: a small chevron + text row (the cards' default "Additional settings").
    * `section`: a section header like the card's own ("Simulation settings"): label, hairline, chevron.
+   * `inline`: no header, the controls always shown (a card that does not group them).
    */
-  variant?: 'link' | 'section';
+  variant?: 'link' | 'section' | 'inline';
   /** Flags the header with "*" when a field inside changed since the card was generated. */
   modified?: boolean;
   defaultOpen?: boolean;
@@ -40,6 +41,7 @@ export function CollapsibleGroup({
 }: CollapsibleGroupProps) {
   const [open, setOpen] = useState(defaultOpen);
   const Chevron = open ? ChevronDown : ChevronRight;
+  if (variant === 'inline') return <div className={bodyClassName}>{children}</div>;
   return (
     <div>
       {variant === 'section' ? (

@@ -1,8 +1,8 @@
 /**
  * Hybrid2PartSettings — the settings of the part selected on the crossover band of Hybrid
- * simulation 2: the wave solver's (grid, IR length; precision, crossover rule and level match under
- * "Additional settings") or the rays' (rays, image sources, air, diffraction; parallel processing and
- * the engine options under "Additional settings").
+ * simulation 2: the wave solver's (grid, IR length, precision, level match) or the rays' (rays, image
+ * sources, air, diffraction, parallel processing and the engine options). No "Additional settings"
+ * group: every control shows. The crossover itself is set on the band only.
  *
  * The controls are the ones of the original hybrid card (HybridSimulationSettings), split by part.
  * The parent colours them with the part's colour (`--section-accent`).
@@ -20,22 +20,12 @@ import {
   PYROOMACOUSTICS_RAY_TRACING_N_RAYS_MAX,
   PYROOMACOUSTICS_RAY_TRACING_N_RAYS_MIN,
 } from '@/utils/constants';
-import { CollapsibleGroup } from '@/components/ui/CollapsibleGroup';
-import { ModifiedMark } from '@/components/ui/ModifiedMark';
 import { RangeSlider } from '@/components/ui/RangeSlider';
-import { TextSelect } from '@/components/ui/TextSelect';
 import { ToggleField } from '@/components/ui/ToggleField';
 import { gpuMaxMarker } from '@/lib/acoustics/pffdtd-grid';
 import { GeometricEngineSettings } from './GeometricEngineSettings';
 import { PffdtdPrecisionToggle } from './PffdtdPrecisionToggle';
 import type { GeometricEngineSettings as EngineSettings, HybridSettings } from '@/types/acoustics';
-
-const CROSSOVER_MODES = [
-  { value: 'schroeder', label: 'Schroeder frequency', title: "From the room: 2000·√(T60 / V), with the last run's measured T60, else the Eyring estimate" },
-  { value: 'manual', label: 'Manual', title: 'The frequency set on the band' },
-];
-
-const WAVE_ADDITIONAL: (keyof HybridSettings)[] = ['precision', 'crossover_mode', 'crossover_factor', 'level_match'];
 
 type SetField = <K extends keyof HybridSettings>(field: K, value: HybridSettings[K]) => void;
 
@@ -95,53 +85,25 @@ export function WavePartSettings({ settings: s, set, isModified, disabled, joine
           defaultValue={PFFDTD.DEFAULT_DURATION}
         />
       )}
-      <CollapsibleGroup label="Additional settings" variant="section" modified={WAVE_ADDITIONAL.some(isModified)}>
-        <PffdtdPrecisionToggle
-          precision={s.precision}
-          gridSpacing={waveSpacing}
-          onChange={(v) => set('precision', v)}
+      <PffdtdPrecisionToggle
+        precision={s.precision}
+        gridSpacing={waveSpacing}
+        onChange={(v) => set('precision', v)}
+        disabled={disabled}
+        modified={isModified('precision')}
+        asSelect
+        accentColor={WAVE_COLOR}
+      />
+      {joined && (
+        <ToggleField
+          checked={s.level_match}
+          onChange={(v) => set('level_match', v)}
+          label="Match levels at the crossover"
+          modified={isModified('level_match')}
           disabled={disabled}
-          modified={isModified('precision')}
-          asSelect
+          color={WAVE_COLOR}
         />
-        <div>
-          <label className="text-xxs card-label text-secondary-hover">
-            {joined ? 'Crossover' : 'Wave band top'}{isModified('crossover_mode') && <ModifiedMark />}
-          </label>
-          <TextSelect
-            compact
-            value={s.crossover_mode}
-            onChange={(v) => set('crossover_mode', v as HybridSettings['crossover_mode'])}
-            options={CROSSOVER_MODES}
-            disabled={disabled}
-          />
-        </div>
-        {s.crossover_mode === 'schroeder' && (
-          <RangeSlider
-            label="× Schroeder frequency"
-            modified={isModified('crossover_factor')}
-            value={s.crossover_factor}
-            min={HYBRID.CROSSOVER_FACTOR_MIN}
-            max={HYBRID.CROSSOVER_FACTOR_MAX}
-            step={HYBRID.CROSSOVER_FACTOR_STEP}
-            onChange={(v) => set('crossover_factor', v)}
-            disabled={disabled}
-            defaultValue={HYBRID.CROSSOVER_FACTOR_DEFAULT}
-            markers={[{ value: 1, label: 'rec', tone: 'primary' }]}
-            hoverText="1 = the Schroeder frequency. Up to 4 puts the join where the room's modes overlap strongly, at the cost of a longer wave run."
-          />
-        )}
-        {joined && (
-          <ToggleField
-            checked={s.level_match}
-            onChange={(v) => set('level_match', v)}
-            label="Match levels at the crossover"
-            modified={isModified('level_match')}
-            disabled={disabled}
-            color={WAVE_COLOR}
-          />
-        )}
-      </CollapsibleGroup>
+      )}
     </div>
   );
 }
@@ -194,7 +156,7 @@ export function RaysPartSettings({ settings: s, set, isModified, disabled }: Par
         isModified={(field: keyof EngineSettings) => isModified(field)}
         disabled={disabled}
         lockEngine
-        additionalVariant="section"
+        additionalVariant="inline"
         additionalExtraModified={isModified('parallel')}
         additionalExtra={(
           <ToggleField
