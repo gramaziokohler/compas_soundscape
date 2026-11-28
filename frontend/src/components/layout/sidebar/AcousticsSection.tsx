@@ -2608,6 +2608,9 @@ export interface FloatingCardOptions {
   extraMenu?: CustomMenuItem[];
 }
 
+/** Viewer objects whose click keeps an open simulation card (it scrolls to their IRs). */
+const SIM_CARD_KEEP_ON_TYPES = ['sound', 'receiver', 'grid-receiver'] as const;
+
 interface AcousticsBubblesProps {
   simulationConfigs: SimulationConfig[];
   activeSimulationIndex: number | null;
@@ -2694,10 +2697,12 @@ function AcousticsBubbles({
     return () => useUIStore.getState().setBubbleColumnCount('acoustics', 0);
   }, [simulationCount]);
 
+  // A sound sphere / listener click focuses its IR in the open card: it never reduces it.
   useDismissOnSceneClick(
     onReduce,
     openIndex !== null,
     () => useUIStore.getState().showObjectExplorer,
+    SIM_CARD_KEEP_ON_TYPES,
   );
 
   const isReady = (config: SimulationConfig) => config.state === 'completed' || config.type === 'resonance';

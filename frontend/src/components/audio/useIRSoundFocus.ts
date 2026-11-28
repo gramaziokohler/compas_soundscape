@@ -23,6 +23,8 @@ interface UseIRSoundFocusOptions {
   /** The IR list's own scroll container. */
   containerRef: RefObject<HTMLDivElement | null>;
   revealGroup: RevealIRGroup;
+  /** FPS (go-to-listener) group: a sound click targets only this listener's IR. */
+  pinnedGroupId?: string | null;
 }
 
 interface UseIRSoundFocusResult {
@@ -44,6 +46,7 @@ function findByAttr(root: ParentNode, attr: string, values: Set<string>): HTMLEl
  *   card click), inside the last clicked listener's group when it has one;
  * - the clicked listener's group (`uiStore.listenerFocus`: receiver / grid point click),
  *   on the focused sound's row when the group has one.
+ * In FPS mode (`pinnedGroupId`) a sound click targets the powered listener's group only.
  * The target group is expanded (an expanded one stays expanded); nothing else collapses.
  *
  * Usage:
@@ -57,6 +60,7 @@ export function useIRSoundFocus({
   soundToPosKey,
   containerRef,
   revealGroup,
+  pinnedGroupId = null,
 }: UseIRSoundFocusOptions): UseIRSoundFocusResult {
   const soundFocus = useUIStore((s) => s.soundFocus);
   const listenerFocus = useUIStore((s) => s.listenerFocus);
@@ -98,7 +102,10 @@ export function useIRSoundFocus({
     // A sound click needs IRs of that sound; a listener click scrolls to its group anyway.
     if (soundChanged && !listenerChanged && focusedSourceIds.size === 0) return;
 
-    const groupId = revealGroup(listenerId, focusedSourceIds, listenerChanged);
+    // FPS: the powered listener's group wins over any earlier listener click.
+    const groupId = pinnedGroupId && !listenerChanged
+      ? revealGroup(pinnedGroupId, focusedSourceIds, true)
+      : revealGroup(listenerId, focusedSourceIds, listenerChanged);
     if (!groupId) return;
     if (timerRef.current) clearTimeout(timerRef.current);
     // Wait for the revealed group to lay out before measuring it.

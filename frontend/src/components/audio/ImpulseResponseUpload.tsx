@@ -505,6 +505,7 @@ export function ImpulseResponseUpload({
     soundToPosKey,
     containerRef: scrollContainerRef,
     revealGroup,
+    pinnedGroupId: activeGroupId,
   });
 
   // Report peaks upward (used by the gain slider trim range / markers) whenever they change.
@@ -768,7 +769,9 @@ export function ImpulseResponseUpload({
     const tooltipNames = options?.fullName ?? soundNames;
     const irBuffer = bufferCache.get(ir.id) ?? null;
     const previewScale = computePreviewScale(getIRPeak(ir));
-    const isSoundFocused = focusedSourceIds.has(sourceId);
+    // FPS (go-to-listener): only the powered listener's IR of the sound is highlighted.
+    const rowGroupId = receiverGroups?.[receiverId]?.groupId ?? receiverId;
+    const isSoundFocused = focusedSourceIds.has(sourceId) && (!activeGroupId || activeGroupId === rowGroupId);
 
     return (
       <div
