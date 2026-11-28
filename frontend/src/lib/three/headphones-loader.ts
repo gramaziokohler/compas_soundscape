@@ -87,6 +87,10 @@ export function loadHeadphonesGeometry(scaleForSounds: number): Promise<Headphon
         }
 
         const merged = mergeGeos(geometries);
+        // Headphones.obj has its origin at the bounding-box min corner. The mesh's position is the
+        // listener's acoustic point (simulated receiver, sound paths, audio listener, FPS eye), and
+        // screen-space scaling scales about it, so the geometry must be centred on its origin.
+        merged.center();
         merged.computeBoundingBox();
 
         const bbox = merged.boundingBox!;
