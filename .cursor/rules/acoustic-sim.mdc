@@ -79,7 +79,12 @@ Step 5 above is the **legacy** engine. Since the compas_acoustics migration
   material's; without either, scattering is 0.05.
 - **Mono** uses `ca.Mono`: ISM + ray tracing, `n_jobs = PYROOMACOUSTICS_MAX_PROCESSES` when
   parallel, `reciprocity=True` (CA swaps the roles only when every source is omni and there are
-  more sources than listeners), and `diffraction="udfa"` when asked.
+  more sources than listeners), and `diffraction="udfa"` when asked. A ray ends once it is
+  `ray_energy_threshold_db` below its start (the card's "Ray energy cut", default
+  `CA_RAY_ENERGY_THRESHOLD_DB_DEFAULT` = 120 dB, range 60-160), not pyroomacoustics' 70 dB: at 70 dB the
+  rays still carry the mid-band tail and end together, which bends the decay (T30 1.2-2.4 s against
+  0.8 s over seeds) and every ambisonic late field that follows the reference. 120 dB costs about 40 %
+  more ray tracing.
 - **FOA (`foa`) / HOA (`hoa` + `ambisonic_order` 2–3)** use `ca.Ambisonics`: a hybrid of an ISM
   early part and a directional FDN tail. The mono reference and the directional histogram are one
   ray trace, with the request's `n_rays`, seed and receiver radius (not a second trace at the mono
@@ -128,7 +133,7 @@ Step 5 above is the **legacy** engine. Since the compas_acoustics migration
 ### Engine settings, sound paths and edge selection (compas_acoustics)
 
 - **Settings** live on the card as optional `GeometricEngineSettings` (`types/acoustics.ts`):
-  `engine`, `diffraction`, `ambisonic_order`, `tail`, `n_slopes`, `seed`, `scattering_split`,
+  `engine`, `diffraction`, `ambisonic_order`, `tail`, `n_slopes`, `ray_energy_threshold_db`, `seed`, `scattering_split`,
   `air_temperature`, `air_humidity`, `excluded_edges`. Absent means default, so older saved cards
   load unchanged. The card never shows `hoa`: its Simulation Mode offers SOA (9-ch) and TOA
   (16-ch), which set `simulation_mode: "hoa"` with `ambisonic_order` 2 / 3 in one update

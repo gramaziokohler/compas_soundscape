@@ -124,6 +124,11 @@ gramaziokohler, never push or open PRs there without asking). There is **one** l
   5. In CS, pin the new `engine-integration` commit in `requirements.txt`, run the CS tests that
      import `compas_acoustics` (`backend/tests/`, `compas-toy`), commit. Pushing `master` deploys it:
      production reinstalls CA on the requirements hash change, no manual `compas deps`.
+  - **"Push" or "publish" from the user always includes the pin.** Whenever the user asks to push or
+    publish CA work, finish with step 5 in the same go: pin `requirements.txt` to the newest
+    `origin/engine-integration` commit (full SHA, after `git fetch origin`) and commit that in CS, even
+    when the push was only a PR branch and `engine-integration` did not move (then the pin is already
+    current: say so). Pushing CS `master` stays a separate go-ahead, since it deploys to production.
   - A fork-only change (never meant for upstream) is the one thing committed directly on top of
     `engine-integration`; each rebuild replays it. Push it with step 4's `--publish`.
 - **No `git worktree add`, no second clone** (`compas_acoustics_dev`/`_orient` were folded back on

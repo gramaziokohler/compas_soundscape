@@ -689,6 +689,14 @@ CA_TAIL_MOMENTS_MAX_ORDER = 1  # first order (FOA) only; disabled for SOA / TOA
 CA_TAIL_ALIASES = {"ray_tracing": "auto", "legacy": "auto"}
 CA_N_SLOPES_MAX = 3
 CA_SEED_DEFAULT = 42
+# Mono(energy_thres=10 ** (-dB / 10)): a ray ends once its energy has fallen this many dB below its start
+# (EngineSettings.ray_energy_threshold_db, the card's "Ray energy cut"; pyroomacoustics' default is 70 dB). At 70 dB
+# the rays still carry the 500 Hz-4 kHz tail of a furnished room, and they end together: the decay bends into a
+# plateau and a cliff, T30 reads 1.2-2.4 s against 0.8 s over seeds, and every ambisonic late field (FDN and SH
+# moments) follows that reference. At 120 dB the T30 spread over seeds drops from 0.3-0.5 s to about 0.1 s, for
+# about 40 % more ray-tracing time (HIL D 24.1, 10 000 rays, 2026-11-28).
+CA_RAY_ENERGY_THRESHOLD_DB_DEFAULT = 120.0
+CA_RAY_ENERGY_THRESHOLD_DB_RANGE = (60.0, 160.0)
 # Mono/Ambisonics(per_pair_seeds=True): each source's rays and each pair's ray-traced tail restart from
 # the seed, so a pair's response does not depend on the other pairs of the run (the app splits pairs
 # over jobs and re-runs single pairs). compas_acoustics' default (False) follows pyroomacoustics.

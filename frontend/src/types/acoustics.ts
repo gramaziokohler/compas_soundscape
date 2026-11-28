@@ -113,6 +113,8 @@ export interface GeometricEngineSettings {
   tail?: string;
   /** Decay slopes of the late field (2+ for coupled volumes). */
   n_slopes?: number;
+  /** A ray ends once its energy is this many dB below its start (default GA_ENGINE.RAY_ENERGY_THRESHOLD_DB_DEFAULT). */
+  ray_energy_threshold_db?: number;
   /** Random seed of the ray tracing and the late field (same seed = same result). */
   seed?: number;
   /** Split the early part into specular and scattered contributions. */

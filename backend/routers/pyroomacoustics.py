@@ -29,6 +29,8 @@ from config.constants import CA_DIFFRACTION_DEFAULT
 from config.constants import CA_DIFFRACTION_MODELS
 from config.constants import CA_DIFFRACTION_OFF
 from config.constants import CA_N_SLOPES_MAX
+from config.constants import CA_RAY_ENERGY_THRESHOLD_DB_DEFAULT
+from config.constants import CA_RAY_ENERGY_THRESHOLD_DB_RANGE
 from config.constants import CA_SEED_DEFAULT
 from config.constants import CA_TAIL_ALIASES
 from config.constants import CA_TAIL_DEFAULT
@@ -87,6 +89,12 @@ def validate_tail_settings(tail: str, n_slopes: int, simulation_mode: Optional[s
         raise HTTPException(status_code=400, detail="The SH-moments reverb tail is first order only (FOA); use an FDN tail for SOA / TOA")
     if not 1 <= n_slopes <= CA_N_SLOPES_MAX:
         raise HTTPException(status_code=400, detail=f"n_slopes must be 1 to {CA_N_SLOPES_MAX}")
+
+
+def validate_ray_energy_threshold(db: float) -> None:
+    low, high = CA_RAY_ENERGY_THRESHOLD_DB_RANGE
+    if not low <= db <= high:
+        raise HTTPException(status_code=400, detail=f"ray_energy_threshold_db must be {low:g} to {high:g} dB")
 
 
 def validate_engine_settings(
@@ -233,6 +241,7 @@ async def run_simulation_speckle(
     air_humidity: float = Form(CA_AIR_HUMIDITY_DEFAULT),
     tail: str = Form(CA_TAIL_DEFAULT),              # ambisonic late field (CA_TAILS)
     n_slopes: int = Form(1),
+    ray_energy_threshold_db: float = Form(CA_RAY_ENERGY_THRESHOLD_DB_DEFAULT),  # a ray ends this far below its start
     seed: int = Form(CA_SEED_DEFAULT),
     scattering_split: bool = Form(False),
     excluded_edges: Optional[str] = Form(None),      # JSON [[x1,y1,z1,x2,y2,z2], ...]
@@ -256,6 +265,7 @@ async def run_simulation_speckle(
         mesh_prep = parse_mesh_settings(mesh_settings)
 
         validate_tail_settings(tail, n_slopes, simulation_mode)
+        validate_ray_energy_threshold(ray_energy_threshold_db)
         tail = normalize_tail(tail)
         validate_engine_settings(engine, simulation_mode, diffraction, ambisonic_order, air_temperature, air_humidity)
         excluded_edge_rows = parse_excluded_edges(excluded_edges)
@@ -310,6 +320,7 @@ async def run_simulation_speckle(
                 air_humidity=air_humidity,
                 tail=tail,
                 n_slopes=n_slopes,
+                ray_energy_threshold_db=ray_energy_threshold_db,
                 seed=seed,
                 scattering_split=scattering_split,
                 excluded_edges=excluded_edge_rows,
@@ -360,6 +371,7 @@ async def run_simulation_geometry(body: PyroomacousticsGeometryRequest, http_req
     try:
         settings = req.settings
         validate_tail_settings(settings.tail, settings.n_slopes, settings.simulation_mode)
+        validate_ray_energy_threshold(settings.ray_energy_threshold_db)
         engine = settings.engine
         simulation_mode = settings.simulation_mode
         diffraction = settings.diffraction
@@ -482,6 +494,7 @@ async def run_simulation_geometry(body: PyroomacousticsGeometryRequest, http_req
                 air_humidity=settings.air_humidity,
                 tail=tail,
                 n_slopes=settings.n_slopes,
+                ray_energy_threshold_db=settings.ray_energy_threshold_db,
                 seed=settings.seed,
                 scattering_split=settings.scattering_split,
                 excluded_edges=settings.excluded_edges,
