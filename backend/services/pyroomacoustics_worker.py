@@ -31,6 +31,7 @@ from config.constants import ACOUSTICS_ENGINE_DEFAULT
 from config.constants import ACOUSTICS_ENGINE_PYROOMACOUSTICS
 from config.constants import CA_AIR_HUMIDITY_DEFAULT
 from config.constants import CA_DIFFRACTION_DEFAULT
+from config.constants import CA_RAY_ENERGY_THRESHOLD_DB_DEFAULT
 from config.constants import CA_SEED_DEFAULT
 from config.constants import CA_TAIL_DEFAULT
 from config.constants import PYROOMACOUSTICS_DEFAULT_PARALLEL
@@ -356,6 +357,7 @@ def _run_pyroomacoustics_compute_loop(
     air_humidity: float = CA_AIR_HUMIDITY_DEFAULT,
     tail: str = CA_TAIL_DEFAULT,
     n_slopes: int = 1,
+    ray_energy_threshold_db: float = CA_RAY_ENERGY_THRESHOLD_DB_DEFAULT,
     seed: int = CA_SEED_DEFAULT,
     scattering_split: bool = False,
     excluded_edges: Optional[list] = None,
@@ -425,7 +427,8 @@ def _run_pyroomacoustics_compute_loop(
             header_meta=header_meta, parallel=parallel, diffraction=diffraction,
             ambisonic_order=ambisonic_order, air_temperature=air_temperature, air_humidity=air_humidity,
             geometry_diagnostics=geometry_diagnostics,
-            tail=tail, n_slopes=n_slopes, seed=seed, scattering_split=scattering_split,
+            tail=tail, n_slopes=n_slopes, ray_energy_threshold_db=ray_energy_threshold_db, seed=seed,
+            scattering_split=scattering_split,
             excluded_edges=excluded_edges, paths_diffraction=paths_diffraction, started=started,
         )
         return
@@ -565,6 +568,7 @@ def _run_compas_acoustics(
     header_meta: Optional[dict], parallel: bool, diffraction: str, ambisonic_order: Optional[int],
     air_temperature: Optional[float], air_humidity: float, geometry_diagnostics: dict,
     tail: str = CA_TAIL_DEFAULT, n_slopes: int = 1, seed: int = CA_SEED_DEFAULT,
+    ray_energy_threshold_db: float = CA_RAY_ENERGY_THRESHOLD_DB_DEFAULT,
     scattering_split: bool = False, excluded_edges: Optional[list] = None, paths_diffraction: bool = False,
     started: Optional[float] = None,
 ) -> None:
@@ -591,6 +595,7 @@ def _run_compas_acoustics(
         reciprocity=PYROOMACOUSTICS_RECIPROCITY_ENABLED,
         tail=tail or CA_TAIL_DEFAULT,
         n_slopes=int(n_slopes),
+        ray_energy_threshold_db=float(ray_energy_threshold_db),
         seed=int(seed),
         scattering_split=bool(scattering_split),
         excluded_edges=list(excluded_edges or []),
@@ -708,6 +713,7 @@ def run_pyroomacoustics_simulation(
     air_humidity: float = CA_AIR_HUMIDITY_DEFAULT,
     tail: str = CA_TAIL_DEFAULT,
     n_slopes: int = 1,
+    ray_energy_threshold_db: float = CA_RAY_ENERGY_THRESHOLD_DB_DEFAULT,
     seed: int = CA_SEED_DEFAULT,
     scattering_split: bool = False,
     excluded_edges: Optional[list] = None,
@@ -783,6 +789,7 @@ def run_pyroomacoustics_simulation(
             air_humidity=air_humidity,
             tail=tail,
             n_slopes=n_slopes,
+            ray_energy_threshold_db=ray_energy_threshold_db,
             seed=seed,
             scattering_split=scattering_split,
             excluded_edges=excluded_edges,
@@ -819,6 +826,7 @@ def run_pyroomacoustics_simulation_from_geometry(
     air_humidity: float = CA_AIR_HUMIDITY_DEFAULT,
     tail: str = CA_TAIL_DEFAULT,
     n_slopes: int = 1,
+    ray_energy_threshold_db: float = CA_RAY_ENERGY_THRESHOLD_DB_DEFAULT,
     seed: int = CA_SEED_DEFAULT,
     scattering_split: bool = False,
     excluded_edges: Optional[list] = None,
@@ -949,6 +957,7 @@ def run_pyroomacoustics_simulation_from_geometry(
             air_humidity=air_humidity,
             tail=tail,
             n_slopes=n_slopes,
+            ray_energy_threshold_db=ray_energy_threshold_db,
             seed=seed,
             scattering_split=scattering_split,
             excluded_edges=excluded_edges,

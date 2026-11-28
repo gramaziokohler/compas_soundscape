@@ -18,7 +18,7 @@ import {
 import type { GeometricEngineSettings } from '@/types/acoustics';
 
 const KEYS = [
-  'engine', 'diffraction', 'ambisonic_order', 'tail', 'n_slopes', 'seed', 'scattering_split',
+  'engine', 'diffraction', 'ambisonic_order', 'tail', 'n_slopes', 'ray_energy_threshold_db', 'seed', 'scattering_split',
   'air_temperature', 'air_humidity', 'excluded_edges', 'paths_diffraction',
 ] as const satisfies readonly (keyof GeometricEngineSettings)[];
 
@@ -151,6 +151,7 @@ export function engineFormFields(settings: GeometricEngineSettings & { simulatio
   }
   if (settings.tail) fields.tail = settings.tail;
   if (settings.n_slopes !== undefined) fields.n_slopes = String(settings.n_slopes);
+  if (settings.ray_energy_threshold_db !== undefined) fields.ray_energy_threshold_db = String(settings.ray_energy_threshold_db);
   if (settings.seed !== undefined) fields.seed = String(settings.seed);
   if (settings.scattering_split !== undefined) fields.scattering_split = String(settings.scattering_split);
   if (settings.air_temperature !== undefined && settings.air_temperature !== null) {
@@ -189,6 +190,9 @@ export function engineSummaryRows(settings: GeometricEngineSettings & { simulati
   }
   if (settings.air_humidity !== undefined && settings.air_humidity !== GA_ENGINE.AIR_HUMIDITY_DEFAULT) {
     rows.push({ label: 'Humidity', value: `${settings.air_humidity} %` });
+  }
+  if (settings.ray_energy_threshold_db !== undefined && settings.ray_energy_threshold_db !== GA_ENGINE.RAY_ENERGY_THRESHOLD_DB_DEFAULT) {
+    rows.push({ label: 'Ray Energy Cut', value: `${settings.ray_energy_threshold_db} dB` });
   }
   if (settings.seed !== undefined && settings.seed !== GA_ENGINE.SEED_DEFAULT) rows.push({ label: 'Seed', value: String(settings.seed) });
   return rows;

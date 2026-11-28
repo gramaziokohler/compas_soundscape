@@ -8,6 +8,7 @@ from typing import Optional
 from config.constants import ACOUSTICS_ENGINE_DEFAULT
 from config.constants import CA_AIR_HUMIDITY_DEFAULT
 from config.constants import CA_DIFFRACTION_DEFAULT
+from config.constants import CA_RAY_ENERGY_THRESHOLD_DB_DEFAULT
 from config.constants import AUDIO_SAMPLE_RATE
 from config.constants import BUG_REPORT_MAX_DESCRIPTION_CHARS
 from config.constants import CLIENT_DIAGNOSTICS_MAX_TEXT_CHARS
@@ -760,6 +761,7 @@ class SoundscapeSimulationSettings(BaseModel):
     ambisonic_order: Optional[int] = None
     tail: Optional[str] = None
     n_slopes: Optional[int] = None
+    ray_energy_threshold_db: Optional[float] = None
     seed: Optional[int] = None
     scattering_split: Optional[bool] = None
     air_temperature: Optional[float] = None
@@ -1065,6 +1067,7 @@ class PyroomacousticsGeometrySettings(BaseModel):
     air_humidity: float = CA_AIR_HUMIDITY_DEFAULT
     tail: str = "auto"                       # ambisonic late field (config.constants.CA_TAILS)
     n_slopes: int = 1
+    ray_energy_threshold_db: float = CA_RAY_ENERGY_THRESHOLD_DB_DEFAULT  # ray ends this many dB below its start
     seed: int = 42
     scattering_split: bool = False
     excluded_edges: list[list[float]] = Field(default_factory=list)  # [[x1,y1,z1,x2,y2,z2], ...]

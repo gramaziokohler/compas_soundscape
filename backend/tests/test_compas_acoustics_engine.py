@@ -336,6 +336,17 @@ def test_render_duration_follows_what_the_export_keeps():
     assert engine.render_duration([]) is None
 
 
+def test_ray_energy_threshold_reaches_the_reference_mono():
+    """The card's "Ray energy cut" (dB) is the Mono's relative energy_thres, for mono runs and ambisonic references."""
+    from config.constants import CA_RAY_ENERGY_THRESHOLD_DB_DEFAULT
+
+    air = engine.air_conditions(engine.EngineSettings())[0]
+    assert engine._mono(engine.EngineSettings(), air, False).energy_thres == pytest.approx(
+        10 ** (-CA_RAY_ENERGY_THRESHOLD_DB_DEFAULT / 10))
+    settings = engine.EngineSettings(ambisonic_order=1, ray_energy_threshold_db=90.0)
+    assert engine._mono(engine.reference_settings(settings), air, False).energy_thres == pytest.approx(1e-9)
+
+
 def test_moments_tail_takes_the_rays_late_energy_serial_or_split():
     """The SH-moments tail (FOA): late field from the reference's own rays, the same in one process or two."""
     from services.pyroomacoustics_room_builder import room_offset

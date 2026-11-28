@@ -52,6 +52,7 @@ PR_BRANCHES = (
     "feat/udfa-polar-lowpass",
     "docs/contributing-checks",
     "feat/sh-moment-late-field",
+    "feat/udfa-smooth-encoding",
 )
 GH_PUSH = ("-c", "credential.helper=", "-c", "credential.helper=!'/c/Program Files/GitHub CLI/gh.exe' auth git-credential")
 CONFLICT_BLOCK = re.compile(r"^<<<<<<< [^\r\n]*\r?\n(.*?)^=======\r?\n(.*?)^>>>>>>> [^\r\n]*\r?\n", re.S | re.M)

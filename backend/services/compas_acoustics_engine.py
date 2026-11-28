@@ -44,6 +44,7 @@ from config.constants import (
     CA_DIFFRACTION_OFF,
     CA_PER_PAIR_SEEDS,
     CA_PROGRESS_POLL_S,
+    CA_RAY_ENERGY_THRESHOLD_DB_DEFAULT,
     CA_RENDER_MARGIN_DB,
     CA_RENDER_MIN_S,
     CA_RENDER_PAD_S,
@@ -92,6 +93,8 @@ class EngineSettings:
     # energy moments; first order only).
     tail: str = "auto"
     n_slopes: int = 1                   # decay slopes of the late field (2 = coupled volumes)
+    # A ray ends once its energy is this many dB below its start (config.constants: why 120, not 70)
+    ray_energy_threshold_db: float = CA_RAY_ENERGY_THRESHOLD_DB_DEFAULT
     # Diffraction edges switched off by the user: [x1, y1, z1, x2, y2, z2] in model coordinates
     excluded_edges: list = field(default_factory=list)
     # Also store the first-order diffracted paths with the run's image-source paths (needs diffraction on)
@@ -263,6 +266,7 @@ def _mono(settings: EngineSettings, air, diffraction: bool):
         kwargs.update(
             n_rays=int(settings.n_rays),
             seed=int(settings.seed),
+            energy_thres=10.0 ** (-float(settings.ray_energy_threshold_db) / 10.0),
             receiver_radius=PYROOMACOUSTICS_RAY_TRACING_RECEIVER_RADIUS,
             per_pair_seeds=CA_PER_PAIR_SEEDS,
         )

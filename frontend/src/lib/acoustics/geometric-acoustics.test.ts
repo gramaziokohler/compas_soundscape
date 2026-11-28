@@ -130,8 +130,10 @@ describe('geometric engine settings', () => {
     expect(engineFormFields({
       simulation_mode: 'hoa', engine: 'auto', diffraction: 'udfa', ambisonic_order: 3, tail: 'eyring', n_slopes: 2,
       seed: 7, scattering_split: true, air_temperature: 18.5, air_humidity: 40, excluded_edges: [[0, 0, 0, 1, 0, 0]],
+      ray_energy_threshold_db: 90,
     })).toEqual({
       diffraction: 'udfa', ambisonic_order: '3', tail: 'eyring', n_slopes: '2', seed: '7', scattering_split: 'true',
+      ray_energy_threshold_db: '90',
       air_temperature: '18.5', air_humidity: '40', excluded_edges: '[[0,0,0,1,0,0]]',
     });
     // an order is only sent for HOA; a null temperature means "from the sound speed"
@@ -139,8 +141,8 @@ describe('geometric engine settings', () => {
   });
 
   it('keeps only the engine fields when saving', () => {
-    const picked = pickGeometricEngineSettings({ diffraction: 'udfa', air_temperature: null, max_order: 3 } as never);
-    expect(picked).toEqual({ diffraction: 'udfa' });
+    const picked = pickGeometricEngineSettings({ diffraction: 'udfa', air_temperature: null, max_order: 3, ray_energy_threshold_db: 100 } as never);
+    expect(picked).toEqual({ diffraction: 'udfa', ray_energy_threshold_db: 100 });
     expect(pickGeometricEngineSettings(undefined)).toEqual({});
   });
 

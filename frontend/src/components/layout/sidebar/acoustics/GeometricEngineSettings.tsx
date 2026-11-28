@@ -1,7 +1,7 @@
 /**
  * GeometricEngineSettings — the controls of the geometric (ray) engine that go beyond image
  * sources and rays: edge diffraction, the ambisonic reverb tail, and, collapsed under
- * "Additional settings", the engine itself, ambisonic order, decay slopes, air and seed.
+ * "Additional settings", the engine itself, ambisonic order, decay slopes, air, ray energy cut and seed.
  *
  * Shared by the ray-tracing card and the hybrid (wave + rays) card. What the chosen engine
  * cannot run is disabled with the reason in its tooltip, and anything the run will adjust is
@@ -48,7 +48,7 @@ interface GeometricEngineSettingsProps {
 }
 
 const ADDITIONAL_FIELDS: (keyof EngineSettings)[] = [
-  'engine', 'paths_diffraction', 'excluded_edges', 'n_slopes', 'scattering_split', 'air_temperature', 'air_humidity', 'seed',
+  'engine', 'paths_diffraction', 'excluded_edges', 'n_slopes', 'scattering_split', 'air_temperature', 'air_humidity', 'ray_energy_threshold_db', 'seed',
 ];
 
 export function GeometricEngineSettings({
@@ -241,6 +241,20 @@ export function GeometricEngineSettings({
             hoverText="Sets the air absorption (ISO 9613-1) together with the temperature"
           />
         </div>
+
+        <RangeSlider
+          label="Ray energy cut"
+          unit="dB"
+          modified={isModified('ray_energy_threshold_db')}
+          value={settings.ray_energy_threshold_db ?? GA_ENGINE.RAY_ENERGY_THRESHOLD_DB_DEFAULT}
+          min={GA_ENGINE.RAY_ENERGY_THRESHOLD_DB_MIN}
+          max={GA_ENGINE.RAY_ENERGY_THRESHOLD_DB_MAX}
+          step={10}
+          onChange={(v) => onChange('ray_energy_threshold_db', v)}
+          disabled={disabled || !ca}
+          defaultValue={GA_ENGINE.RAY_ENERGY_THRESHOLD_DB_DEFAULT}
+          hoverText="A ray stops once it has lost this much energy. Lower is faster, but below about 100 dB the late decay can bend and T30 read long; 70 is pyroomacoustics' own."
+        />
 
         <RangeSlider
           label="Seed"

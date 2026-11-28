@@ -202,6 +202,7 @@ export interface SoundscapeSimulationSettings {
   ambisonic_order?: number;
   tail?: string;
   n_slopes?: number;
+  ray_energy_threshold_db?: number;
   seed?: number;
   scattering_split?: boolean;
   air_temperature?: number | null;

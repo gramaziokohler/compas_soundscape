@@ -33,6 +33,7 @@ from scipy.io import wavfile
 from config.constants import (
     AUDIO_SAMPLE_RATE,
     CA_DIFFRACTION_DEFAULT,
+    CA_RAY_ENERGY_THRESHOLD_DB_DEFAULT,
     CA_SEED_DEFAULT,
     HYBRID_CROSSOVER_FACTOR_DEFAULT,
     HYBRID_PARTS_BOTH,
@@ -275,6 +276,7 @@ def run_hybrid_from_geometry(
     diffraction: str = CA_DIFFRACTION_DEFAULT,
     tail: str = "auto",
     n_slopes: int = 1,
+    ray_energy_threshold_db: float = CA_RAY_ENERGY_THRESHOLD_DB_DEFAULT,
     seed: int = CA_SEED_DEFAULT,
     scattering_split: bool = False,
     air_temperature: Optional[float] = None,
@@ -322,7 +324,7 @@ def run_hybrid_from_geometry(
             diffraction=diffraction or CA_DIFFRACTION_DEFAULT,
             n_jobs=PYROOMACOUSTICS_MAX_PROCESSES if parallel else 1,
             reciprocity=PYROOMACOUSTICS_RECIPROCITY_ENABLED, seed=int(seed), tail=tail or "auto",
-            n_slopes=int(n_slopes), scattering_split=bool(scattering_split), excluded_edges=list(excluded_edges or []),
+            n_slopes=int(n_slopes), ray_energy_threshold_db=float(ray_energy_threshold_db), scattering_split=bool(scattering_split), excluded_edges=list(excluded_edges or []),
             paths_diffraction=bool(paths_diffraction),
         )
         room = room_geometry(mesh, offset)

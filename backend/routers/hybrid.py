@@ -26,6 +26,7 @@ from typing import Optional
 from config.constants import (
     CA_AIR_HUMIDITY_DEFAULT,
     CA_DIFFRACTION_DEFAULT,
+    CA_RAY_ENERGY_THRESHOLD_DB_DEFAULT,
     CA_SEED_DEFAULT,
     CA_TAIL_DEFAULT,
     DEFAULT_SPEED_OF_SOUND,
@@ -64,7 +65,7 @@ from config.constants import (
 from fastapi import APIRouter, Form, HTTPException, Request
 from models.schemas import JobEnqueueResponse
 from routers.pffdtd import RIR_OUTPUT_DIR, TEMP_DIR, _check_directional_runs, _check_range, _parse_geometry_fields
-from routers.pyroomacoustics import normalize_tail, validate_engine_settings, validate_tail_settings
+from routers.pyroomacoustics import normalize_tail, validate_engine_settings, validate_ray_energy_threshold, validate_tail_settings
 from services.job_store import job_store
 from services.pffdtd_job import pffdtd_available
 from services.pyroomacoustics_service import PyroomacousticsService
@@ -151,6 +152,7 @@ async def run_simulation_speckle(
     diffraction: str = Form(CA_DIFFRACTION_DEFAULT),
     tail: str = Form(CA_TAIL_DEFAULT),
     n_slopes: int = Form(1),
+    ray_energy_threshold_db: float = Form(CA_RAY_ENERGY_THRESHOLD_DB_DEFAULT),  # a ray ends this far below its start
     seed: int = Form(CA_SEED_DEFAULT),
     scattering_split: bool = Form(False),
     air_temperature: Optional[float] = Form(None),
@@ -186,6 +188,7 @@ async def run_simulation_speckle(
     _check_range("max_order", max_order, PYROOMACOUSTICS_MAX_ORDER_MIN, PYROOMACOUSTICS_MAX_ORDER_MAX)
     validate_engine_settings("compas_acoustics", simulation_mode, diffraction, None, air_temperature, air_humidity)
     validate_tail_settings(tail, n_slopes, simulation_mode)
+    validate_ray_energy_threshold(ray_energy_threshold_db)
     tail = normalize_tail(tail)
     excluded_edge_rows = parse_excluded_edges(excluded_edges)
 
@@ -243,6 +246,7 @@ async def run_simulation_speckle(
                 diffraction=diffraction,
                 tail=tail,
                 n_slopes=n_slopes,
+                ray_energy_threshold_db=ray_energy_threshold_db,
                 seed=seed,
                 scattering_split=scattering_split,
                 air_temperature=air_temperature,
